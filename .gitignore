@@ -24,7 +24,6 @@ go/*.test
 go/coverage.out
 *.prof
 *.pprof
-go/internal/statebridge/tool/bd2-state.exe
 plugins/**/bin/
 plugins/**/obj/
 TestResults/
