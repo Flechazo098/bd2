@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,6 +83,11 @@ type GachaSelection struct {
 	ItemID  uint64 `json:"item_id"`
 }
 
+// FirstGachaCompletedIdentity is the persisted account flag represented in
+// the existing collection grant ledger. It is written atomically with the
+// official GachaSubType=3 first-pick transaction.
+const FirstGachaCompletedIdentity = "account:first-gacha-completed"
+
 type collectionSnapshot struct {
 	Version             string                        `json:"version"`
 	NextCharacterIndex  uint64                        `json:"next_character_index"`
@@ -92,6 +98,7 @@ type collectionSnapshot struct {
 	Characters          []Character                   `json:"characters,omitempty"`
 	Costumes            []Costume                     `json:"costumes,omitempty"`
 	BaseCostumeLevels   map[string]uint64             `json:"base_costume_levels,omitempty"`
+	CostumePotential    map[string][]uint64           `json:"costume_potential"`
 	GachaSelections     map[string][]GachaSelection   `json:"gacha_selections,omitempty"`
 	StepUpProgress      map[string]uint64             `json:"step_up_progress,omitempty"`
 	GachaUsers          map[string]GachaUserState     `json:"gacha_users,omitempty"`
@@ -117,7 +124,8 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	s := &CollectionStore{path: filepath.Clean(path), base: append([]Costume(nil), base...), data: collectionSnapshot{
 		Version: "2.34.13", NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
 		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{},
-		StepUpProgress: map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
+		CostumePotential: map[string][]uint64{},
+		StepUpProgress:   map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
 	}}
 	b, err := os.ReadFile(s.path)
@@ -135,6 +143,9 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	}
 	if s.data.BaseCostumeLevels == nil {
 		s.data.BaseCostumeLevels = map[string]uint64{}
+	}
+	if s.data.CostumePotential == nil {
+		return nil, errors.New("player: collection save requires costume_potential; migrate the development save")
 	}
 	if s.data.GachaSelections == nil {
 		s.data.GachaSelections = map[string][]GachaSelection{}
@@ -154,10 +165,21 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	if s.data.GachaPointExchange == nil {
 		s.data.GachaPointExchange = map[string]GachaPointExchange{}
 	}
+	if marker, exists := s.data.Grants[FirstGachaCompletedIdentity]; exists && !emptyCollectionGrant(marker) {
+		return nil, errors.New("player: invalid first-gacha completion marker")
+	}
 	if err := validateCharacters(s.data.Characters); err != nil && len(s.data.Characters) != 0 {
 		return nil, err
 	}
 	return s, nil
+}
+
+func emptyCollectionGrant(grant CollectionGrant) bool {
+	return len(grant.CharacterIndices) == 0 && len(grant.CostumeIndices) == 0 &&
+		len(grant.Upgrades) == 0 && len(grant.Exchanges) == 0 &&
+		len(grant.ViewCostumeIDs) == 0 && grant.GachaGroupID == 0 &&
+		grant.GachaPoint == 0 && len(grant.GachaFixed) == 0 &&
+		len(grant.SelectionApplySortIDs) == 0
 }
 
 // AttachBaseCharacters supplies the character instances owned by the world
@@ -239,6 +261,29 @@ func (s *CollectionStore) BindBaseCharacters(base []Character) error {
 		seen[character.ID] = character.InvenIndex
 	}
 	s.baseCharacters = append([]Character(nil), base...)
+	return nil
+}
+
+// AttachRewardCostume joins an already-earned quest costume to the same
+// account-owned view used by gacha and starter costumes. The quest condition
+// must be checked by the caller; this does not grant an unearned costume.
+func (s *CollectionStore) AttachRewardCostume(reward Costume) error {
+	if reward.InvenIndex == 0 || reward.ID == 0 || reward.UseChar == 0 {
+		return errors.New("player: invalid earned quest costume")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.base {
+		if existing.InvenIndex == reward.InvenIndex || existing.ID == reward.ID {
+			return fmt.Errorf("player: duplicate earned quest costume %d", reward.InvenIndex)
+		}
+	}
+	for _, existing := range s.data.Costumes {
+		if existing.InvenIndex == reward.InvenIndex || existing.ID == reward.ID {
+			return fmt.Errorf("player: earned quest costume overlaps collection %d", reward.InvenIndex)
+		}
+	}
+	s.base = append(s.base, reward)
 	return nil
 }
 
@@ -399,6 +444,9 @@ func (s *CollectionStore) GrantRegularPurchase(identity string, costumeIDs []uin
 	}
 	return s.grantCostumes(identity, costumeIDs, design.Character, func(next *collectionSnapshot, grant *CollectionGrant) error {
 		applyGachaPurchase(next, identity, costumeIDs, purchase, grant)
+		if purchase.Group.GachaSubType == 3 {
+			next.Grants[FirstGachaCompletedIdentity] = CollectionGrant{}
+		}
 		return nil
 	})
 }
@@ -639,12 +687,49 @@ func (s *CollectionStore) FindCharacter(index uint64) (Character, bool) {
 	return Character{}, false
 }
 
-func (s *CollectionStore) UpdateCharacter(character Character) error {
+// CanUpdateCharacter validates a growth mutation before any currency or
+// inventory is charged. Promotion changes character.ID but not InvenIndex.
+func (s *CollectionStore) CanUpdateCharacter(oldID uint64, character Character) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.validateCharacterUpdate(oldID, character)
+}
+
+func (s *CollectionStore) validateCharacterUpdate(oldID uint64, character Character) error {
+	if oldID == 0 || character.ID == 0 || character.InvenIndex == 0 {
+		return errors.New("player: invalid collection character update")
+	}
+	found := false
+	for _, existing := range s.data.Characters {
+		if existing.InvenIndex == character.InvenIndex {
+			if existing.ID != oldID {
+				return fmt.Errorf("player: collection character %d changed before growth", character.InvenIndex)
+			}
+			found = true
+		} else if existing.ID == character.ID {
+			return fmt.Errorf("player: duplicate collection character design %d", character.ID)
+		}
+	}
+	if !found {
+		return fmt.Errorf("player: collection character %d not found", character.InvenIndex)
+	}
+	for _, existing := range s.baseCharacters {
+		if existing.ID == character.ID {
+			return fmt.Errorf("player: duplicate base character design %d", character.ID)
+		}
+	}
+	return nil
+}
+
+func (s *CollectionStore) UpdateCharacter(oldID uint64, character Character) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.validateCharacterUpdate(oldID, character); err != nil {
+		return err
+	}
 	next := cloneCollection(s.data)
 	for i := range next.Characters {
-		if next.Characters[i].InvenIndex == character.InvenIndex && next.Characters[i].ID == character.ID {
+		if next.Characters[i].InvenIndex == character.InvenIndex {
 			next.Characters[i] = character
 			return s.commit(next)
 		}
@@ -660,8 +745,63 @@ func (s *CollectionStore) Costumes() []Costume {
 		if level := s.data.BaseCostumeLevels[strconv.FormatUint(result[i].InvenIndex, 10)]; level > result[i].Level {
 			result[i].Level = level
 		}
+		result[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[strconv.FormatUint(result[i].InvenIndex, 10)]...)
 	}
-	return append(result, s.data.Costumes...)
+	collection := append([]Costume(nil), s.data.Costumes...)
+	for i := range collection {
+		collection[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[strconv.FormatUint(collection[i].InvenIndex, 10)]...)
+	}
+	return append(result, collection...)
+}
+
+func (s *CollectionStore) ValidateCostumePotentialActivation(costumeIndex uint64, nodes []uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validateCostumePotentialActivation(costumeIndex, nodes)
+}
+
+func (s *CollectionStore) validateCostumePotentialActivation(costumeIndex uint64, nodes []uint64) error {
+	if costumeIndex == 0 || len(nodes) == 0 {
+		return errors.New("player: invalid costume potential activation")
+	}
+	found := false
+	for _, costume := range s.base {
+		found = found || costume.InvenIndex == costumeIndex
+	}
+	for _, costume := range s.data.Costumes {
+		found = found || costume.InvenIndex == costumeIndex
+	}
+	if !found {
+		return fmt.Errorf("player: costume %d not found", costumeIndex)
+	}
+	key := strconv.FormatUint(costumeIndex, 10)
+	active := make(map[uint64]bool, len(s.data.CostumePotential[key])+len(nodes))
+	for _, id := range s.data.CostumePotential[key] {
+		if id == 0 || active[id] {
+			return fmt.Errorf("player: invalid saved potential node for costume %d", costumeIndex)
+		}
+		active[id] = true
+	}
+	for _, id := range nodes {
+		if id == 0 || active[id] {
+			return fmt.Errorf("player: duplicate potential node %d for costume %d", id, costumeIndex)
+		}
+		active[id] = true
+	}
+	return nil
+}
+
+func (s *CollectionStore) ActivateCostumePotential(costumeIndex uint64, nodes []uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.validateCostumePotentialActivation(costumeIndex, nodes); err != nil {
+		return err
+	}
+	next := cloneCollection(s.data)
+	key := strconv.FormatUint(costumeIndex, 10)
+	next.CostumePotential[key] = append(next.CostumePotential[key], nodes...)
+	sort.Slice(next.CostumePotential[key], func(i, j int) bool { return next.CostumePotential[key][i] < next.CostumePotential[key][j] })
+	return s.commit(next)
 }
 
 func (s *CollectionStore) Grant(identity string) (CollectionGrant, bool) {
@@ -669,6 +809,13 @@ func (s *CollectionStore) Grant(identity string) (CollectionGrant, bool) {
 	defer s.mu.Unlock()
 	grant, ok := s.data.Grants[identity]
 	return cloneGrant(grant), ok
+}
+
+func (s *CollectionStore) FirstGachaCompleted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, completed := s.data.Grants[FirstGachaCompletedIdentity]
+	return completed
 }
 
 func (s *CollectionStore) CharacterByIndex(index uint64) (Character, bool) {
@@ -731,6 +878,10 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	out.BaseCostumeLevels = make(map[string]uint64, len(in.BaseCostumeLevels))
 	for k, v := range in.BaseCostumeLevels {
 		out.BaseCostumeLevels[k] = v
+	}
+	out.CostumePotential = make(map[string][]uint64, len(in.CostumePotential))
+	for k, v := range in.CostumePotential {
+		out.CostumePotential[k] = append([]uint64(nil), v...)
 	}
 	out.GachaSelections = make(map[string][]GachaSelection, len(in.GachaSelections))
 	for k, v := range in.GachaSelections {

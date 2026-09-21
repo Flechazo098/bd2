@@ -66,10 +66,18 @@ def running_processes() -> list[str]:
         encoding="utf-8",
         errors="replace",
     )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            "cannot verify that the client/server are stopped; "
+            f"tasklist failed with exit code {result.returncode}: {detail}"
+        )
     return [
         line
         for line in result.stdout.splitlines()
-        if "browndust2" in line.lower() or "bd2server.exe" in line.lower()
+        if "browndust2" in line.lower()
+        or "brown dust ii" in line.lower()
+        or "bd2server.exe" in line.lower()
     ]
 
 

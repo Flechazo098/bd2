@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestStarterAnswersMailInfoWithoutCapture(t *testing.T) {
 func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	seed := &Starter{Version: "2.34.13", MailCount: 3, MaxMailID: 12, Mails: []MailDBInfo{
-		{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{3}, RewardIDs: []uint64{0}, RewardCounts: []uint64{70}},
+		{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{3, 4}, RewardIDs: []uint64{0, 0}, RewardCounts: []uint64{70, 123456789}},
 		{MailID: 12, MailType: 2, ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{8}, RewardIDs: []uint64{9}, RewardCounts: []uint64{10}},
 	}}
 	starter := &player.Starter{Version: "2.34.13"}
@@ -38,7 +39,7 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{Gold: 321})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +55,9 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	}
 	if wallet.Snapshot().FreeJewelry != 70 {
 		t.Fatalf("wallet=%+v", wallet.Snapshot())
+	}
+	if wallet.Snapshot().Gold != 123457110 {
+		t.Fatalf("gold did not stack into wallet: %+v", wallet.Snapshot())
 	}
 	if len(inv.All()) != 1 || inv.All()[0].ID != 9 || inv.All()[0].Count != 10 {
 		t.Fatalf("items=%+v", inv.All())
@@ -82,6 +86,98 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	if _, found, _ := wire.Bytes(info, 1); found {
 		t.Fatal("opened mail was not persisted")
 	}
+}
+
+func TestMailOpenGrantsNonResourceItemDBInfoType(t *testing.T) {
+	dir := t.TempDir()
+	seed := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 13, Mails: []MailDBInfo{{
+		MailID: 13, MailType: 2, ExpiresAt: 100, SentAt: 10,
+		RewardTypes: []uint64{14}, RewardIDs: []uint64{1}, RewardCounts: []uint64{2},
+	}}}
+	starter := &player.Starter{Version: "2.34.13"}
+	inv, err := player.OpenInventory(filepath.Join(dir, "items.json"), starter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(filepath.Join(dir, "mail.json"), seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(nil, 1, 1)
+	request = wire.AppendBytes(request, 2, packed([]uint64{13}))
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	items := inv.All()
+	if len(items) != 1 || items[0].ID != 1 || items[0].Type != 14 || items[0].Count != 2 {
+		t.Fatalf("items=%+v", items)
+	}
+}
+
+func TestWatchedSeedReloadsOnlyValidAtomicReplacement(t *testing.T) {
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "seed.json")
+	first := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 11, Mails: []MailDBInfo{{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10}}}
+	if err := first.Write(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	starter, err := Load(seedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := player.OpenInventory(filepath.Join(dir, "items.json"), &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(filepath.Join(dir, "mail.json"), starter, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AttachSeedPath(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(nil, 1, 1)
+	if _, response, _, err := service.Handle("/MailInfo", request); err != nil {
+		t.Fatal(err)
+	} else if id, _, _ := wire.Varint(mustFirstMail(t, response), 1); id != 11 {
+		t.Fatalf("initial mail ID=%d", id)
+	}
+	second := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 12, Mails: []MailDBInfo{{MailID: 12, MailType: 2, ExpiresAt: 100, SentAt: 10}}}
+	if err := second.Write(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, response, _, err := service.Handle("/MailInfo", request); err != nil {
+		t.Fatal(err)
+	} else if id, _, _ := wire.Varint(mustFirstMail(t, response), 1); id != 12 {
+		t.Fatalf("reloaded mail ID=%d", id)
+	}
+	if err := os.WriteFile(seedPath, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", request); err == nil {
+		t.Fatal("accepted malformed watched seed")
+	}
+	// The malformed file did not replace the last known-good mailbox.
+	if service.Starter.Mails[0].MailID != 12 {
+		t.Fatalf("last known-good seed lost: %+v", service.Starter.Mails)
+	}
+}
+
+func mustFirstMail(t *testing.T, response []byte) []byte {
+	t.Helper()
+	entry, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("missing first mail: found=%v err=%v", found, err)
+	}
+	return entry
 }
 
 func TestMailOpenAcceptsOfficialPackedRequest(t *testing.T) {

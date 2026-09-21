@@ -84,7 +84,7 @@ def running_game_processes() -> list[str]:
     names = []
     for line in result.stdout.splitlines():
         lowered = line.lower()
-        if "browndust2" in lowered or "bd2server.exe" in lowered:
+        if "browndust2" in lowered or "brown dust ii" in lowered or "bd2server.exe" in lowered:
             names.append(line)
     return names
 

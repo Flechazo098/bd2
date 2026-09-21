@@ -19,6 +19,23 @@ func TestInstalledPack21FirstMonsterRewards(t *testing.T) {
 	}
 }
 
+func TestInstalledPack22DeckAbsentFromPack21Rewards(t *testing.T) {
+	root := os.Getenv("BD2_REAL_GAMEDATA")
+	if root == "" {
+		t.Skip("BD2_REAL_GAMEDATA not configured")
+	}
+	rewards, err := BattleDeckRewards(root, "20260910162539", 22, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rewards) != 1 || rewards[0] != (BattleReward{Type: 8, ID: 14, Count: 1}) {
+		t.Fatalf("pack22 deck9 rewards = %+v, want type8/item14 x1", rewards)
+	}
+	if _, err := BattleDeckRewards(root, "20260910162539", 21, 9); err == nil {
+		t.Fatal("pack21 unexpectedly contains pack22-only deck9")
+	}
+}
+
 func TestInstalledTutorialGrowthReachesLevel20(t *testing.T) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
