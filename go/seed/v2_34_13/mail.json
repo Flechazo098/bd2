@@ -1,0 +1,70 @@
+{
+  "version": "2.34.13",
+  "mails": [
+    {
+      "mail_id": 13042978139,
+      "mail_type": 2,
+      "title": "Special Reward for New Users",
+      "body": "Your reward has arrived.",
+      "expires_at": 1792427149000,
+      "reward_types": [8, 8, 8, 8, 8],
+      "reward_ids": [1000, 1000, 1003, 1003, 1004],
+      "reward_counts": [1, 1, 1, 1, 1],
+      "sent_at": 1789835149000
+    },
+    {
+      "mail_id": 13042978140,
+      "mail_type": 2,
+      "title": "社群 Boost 活动第 3 阶段达成奖励",
+      "body": "现已发放社群 Boost 活动第 3 阶段达成奖励。\n也请今后继续多多关注",
+      "expires_at": 1792427149000,
+      "reward_types": [8],
+      "reward_ids": [1000],
+      "reward_counts": [10],
+      "sent_at": 1789835149000
+    },
+    {
+      "mail_id": 13042978141,
+      "mail_type": 2,
+      "title": "联动 PV 分享活动奖励",
+      "body": "今后也请多多参与各种活动。",
+      "expires_at": 1792427149000,
+      "reward_types": [3],
+      "reward_ids": [0],
+      "reward_counts": [1000],
+      "sent_at": 1789835149000
+    },
+    {
+      "mail_id": 13043056707,
+      "template_id": 5,
+      "sender": "0",
+      "expires_at": 1790440414000,
+      "reward_types": [4],
+      "reward_ids": [0],
+      "reward_counts": [5000],
+      "sent_at": 1789835614000
+    },
+    {
+      "mail_id": 13043056708,
+      "template_id": 429,
+      "sender": "0",
+      "expires_at": 1790440414000,
+      "reward_types": [8],
+      "reward_ids": [9],
+      "reward_counts": [10],
+      "sent_at": 1789835614000
+    },
+    {
+      "mail_id": 13043056709,
+      "template_id": 429,
+      "sender": "0",
+      "expires_at": 1790440414000,
+      "reward_types": [8],
+      "reward_ids": [2063],
+      "reward_counts": [7],
+      "sent_at": 1789835614000
+    }
+  ],
+  "mail_count": 7,
+  "max_mail_id": 13043056709
+}

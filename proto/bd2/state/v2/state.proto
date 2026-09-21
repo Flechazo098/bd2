@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package bd2.state.v2;
+option go_package = "bd2server/gen/state/v2;statev2";
+
+import "bd2/state/v1/state.proto";
+
+// Version 2 is an incremental semantic schema. Unchanged frozen V1 value
+// messages are reused deliberately; the ownership layout below is V2-owned.
+message Snapshot {
+  uint32 format_version = 1;
+  string client_version = 2;
+  string game_data_version = 3;
+
+  bd2.state.v1.Progress progress = 10;
+  bd2.state.v1.Deck deck = 11;
+  bd2.state.v1.Inventory inventory = 12;
+  bd2.state.v1.EquipmentInventory equipment = 13;
+  CharacterRoster roster = 14;
+  CollectionLedger collection = 15;
+  bd2.state.v1.Wallet wallet = 16;
+  bd2.state.v1.MailState mail = 17;
+  bd2.state.v1.MissionState missions = 18;
+}
+
+enum CharacterOrigin {
+  CHARACTER_ORIGIN_UNSPECIFIED = 0;
+  // Character supplied by story/bootstrap state (V1 CharacterState).
+  CHARACTER_ORIGIN_BASE = 1;
+  // Durable account-owned character (V1 Collection.characters).
+  CHARACTER_ORIGIN_ACQUIRED = 2;
+}
+
+message CharacterRecord {
+  bd2.state.v1.Character character = 1;
+  CharacterOrigin origin = 2;
+}
+
+message CharacterRoster {
+  // These allocators apply only to acquired characters and costumes. Base
+  // character identities are allocated by the bootstrap source.
+  uint64 next_acquired_character_index = 1;
+  uint64 next_costume_index = 2;
+  repeated CharacterRecord characters = 3;
+  repeated bd2.state.v1.Costume costumes = 4;
+}
+
+// Collection no longer owns character entities. It contains only preview,
+// gacha accounting and idempotent grant history.
+message CollectionLedger {
+  repeated uint64 latest_preview = 1;
+  uint64 preview_event_index = 2;
+  bool preview_locked = 3;
+  repeated bd2.state.v1.NamedCount base_costume_levels = 4;
+  repeated bd2.state.v1.NamedSelections gacha_selections = 5;
+  repeated bd2.state.v1.NamedCount step_up_progress = 6;
+  repeated bd2.state.v1.NamedGachaUser gacha_users = 7;
+  repeated bd2.state.v1.NamedGachaFixed gacha_fixed = 8;
+  repeated string gacha_applied = 9;
+  repeated bd2.state.v1.NamedGachaPointExchange gacha_point_exchanges = 10;
+  bool gacha_count_corrected = 11;
+  repeated bd2.state.v1.CollectionGrant grants = 12;
+}

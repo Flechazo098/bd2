@@ -1,0 +1,49 @@
+# Local editor and workspace state
+.vscode/
+.vs/
+.idea/
+*.suo
+*.user
+.env
+.env.*
+!.env.example
+go/config.json
+
+# Project notes and local/runtime data are intentionally outside source control
+docs/
+data/
+
+# Release and language build products
+.build/
+dist/
+**/dist-newstyle/
+go/.cache/
+go/bd2server.exe
+go/bd2server
+go/*.test
+go/coverage.out
+*.prof
+*.pprof
+go/internal/statebridge/tool/bd2-state.exe
+plugins/**/bin/
+plugins/**/obj/
+TestResults/
+.ghc.environment.*
+
+# Python caches and temporary files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# General temporary/log output
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
+.DS_Store
+Thumbs.db

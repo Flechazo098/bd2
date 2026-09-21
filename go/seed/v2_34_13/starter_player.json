@@ -1,0 +1,126 @@
+{
+  "version": "2.34.13",
+  "items": [
+    {
+      "inven_index": 853258187,
+      "id": 1,
+      "type": 14,
+      "count": 1,
+      "time_value": 1789835146000,
+      "pictorialbook": {"id": 4, "group_id": 1}
+    },
+    {
+      "inven_index": 72020332,
+      "id": 27,
+      "type": 13,
+      "count": 1,
+      "time_value": 1789835146000,
+      "pictorialbook": {"id": 5, "group_id": 30021}
+    },
+    {
+      "inven_index": 0,
+      "id": 1,
+      "type": 25,
+      "count": 1,
+      "time_value": 1789835146000
+    },
+    {
+      "inven_index": 0,
+      "id": 181,
+      "type": 25,
+      "count": 1,
+      "time_value": 1789835146000
+    }
+  ],
+  "costumes": [
+    {
+      "inven_index": 609336977,
+      "id": 64701,
+      "use_char": 535604116,
+      "time_value": 1789835146000
+    },
+    {
+      "inven_index": 609336978,
+      "id": 64801,
+      "use_char": 535604117,
+      "time_value": 1789835146000
+    },
+    {
+      "inven_index": 609336979,
+      "id": 64901,
+      "use_char": 535604118,
+      "time_value": 1789835146000
+    },
+    {
+      "inven_index": 609336980,
+      "id": 65001,
+      "use_char": 535604119,
+      "time_value": 1789835146000
+    },
+    {
+      "inven_index": 609336981,
+      "id": 60101,
+      "use_char": 535604120,
+      "time_value": 1789835146000
+    }
+  ],
+  "characters": [
+    {
+      "inven_index": 535604120,
+      "id": 6010,
+      "hp": 7,
+      "level": 1,
+      "use_costume": 609336981,
+      "talent_level": 1,
+      "solidarity_reward": 1,
+      "expiry_time": 18446744073677151616,
+      "connect_potential_costume": 60101
+    },
+    {
+      "inven_index": 535604116,
+      "id": 6470,
+      "hp": 264,
+      "level": 1,
+      "use_costume": 609336977,
+      "talent_level": 1,
+      "solidarity_reward": 1,
+      "expiry_time": 18446744073677151616,
+      "connect_potential_costume": 64701
+    },
+    {
+      "inven_index": 535604117,
+      "id": 6480,
+      "hp": 181,
+      "level": 1,
+      "use_costume": 609336978,
+      "talent_level": 1,
+      "solidarity_reward": 1,
+      "expiry_time": 18446744073677151616,
+      "connect_potential_costume": 64801
+    },
+    {
+      "inven_index": 535604118,
+      "id": 6490,
+      "hp": 164,
+      "level": 1,
+      "use_costume": 609336979,
+      "talent_level": 1,
+      "solidarity_reward": 1,
+      "expiry_time": 18446744073677151616,
+      "connect_potential_costume": 64901
+    },
+    {
+      "inven_index": 535604119,
+      "id": 6500,
+      "hp": 160,
+      "level": 1,
+      "use_costume": 609336980,
+      "talent_level": 1,
+      "solidarity_reward": 1,
+      "expiry_time": 18446744073677151616,
+      "connect_potential_costume": 65001
+    }
+  ],
+  "pictorialbook": [{"id": 2, "group_id": 1}],
+  "field_char_control_deck_type": 2
+}

@@ -1,0 +1,318 @@
+using System;
+using System.Diagnostics;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using BepInEx;
+using BepInEx.Logging;
+using HarmonyLib;
+using UnityEngine;
+
+namespace Bd2LocalIdentity;
+
+[BepInPlugin(Guid, Name, Version)]
+public sealed class Plugin : BaseUnityPlugin
+{
+    public const string Guid = "bd2.localidentity";
+    public const string Name = "BD2 Local Identity";
+    public const string Version = "0.4.0";
+    private const string LocalServerURL = "http://127.0.0.1:8080/game/";
+    private static ManualLogSource Log;
+
+    private void Awake()
+    {
+        try
+        {
+            Log = Logger;
+            // The non-SDK branch creates/uses this local token and calls
+            // SendMaintenanceInfo directly, bypassing Neon account UI.
+            PlayerPrefs.SetString("AccessToken", "bd2-local-development-user");
+            PlayerPrefs.Save();
+
+            Type appManager = FindType("AppManager");
+            PropertyInfo useSdk = appManager?.GetProperty(
+                "ὬὡὬὢὩὬὬὧὨὩὦ",
+                BindingFlags.Instance | BindingFlags.Public);
+            MethodInfo getter = useSdk?.GetGetMethod();
+            if (getter == null)
+            {
+                throw new MissingMethodException("AppManager.UseSdk getter was not found (client version mismatch)");
+            }
+
+            MethodInfo prefix = typeof(Plugin).GetMethod(
+                nameof(UseSdkPrefix),
+                BindingFlags.Static | BindingFlags.NonPublic);
+            Harmony harmony = new Harmony(Guid);
+            harmony.Patch(getter, prefix: new HarmonyMethod(prefix));
+
+            Type introUI = FindType("IntroUI");
+            MethodInfo sendMaintenance = introUI?.GetMethod(
+                "SendMaintenanceInfo",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                new[] { typeof(bool) },
+                null);
+            MethodInfo maintenancePrefix = typeof(Plugin).GetMethod(
+                nameof(SendMaintenancePrefix),
+                BindingFlags.Static | BindingFlags.NonPublic);
+            if (sendMaintenance == null || maintenancePrefix == null)
+            {
+                throw new MissingMethodException("IntroUI.SendMaintenanceInfo(bool) was not found");
+            }
+            harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(maintenancePrefix));
+
+            MethodInfo finishMaintenance = introUI?.GetMethod(
+                "OnFinishMaintenanceRequest",
+                BindingFlags.Instance | BindingFlags.Public);
+            if (finishMaintenance == null)
+            {
+                throw new MissingMethodException("IntroUI.OnFinishMaintenanceRequest was not found");
+            }
+            harmony.Patch(
+                finishMaintenance,
+                postfix: new HarmonyMethod(typeof(Plugin), nameof(OnFinishMaintenancePostfix)));
+
+            MethodInfo falseTimeoutTelemetry = introUI?.GetMethod(
+                "ὭὭὦὫὤὡὪὪὡὨὧ",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (falseTimeoutTelemetry == null)
+            {
+                throw new MissingMethodException("IntroUI maintenance timeout telemetry method was not found");
+            }
+            harmony.Patch(
+                falseTimeoutTelemetry,
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(SkipLocalTimeoutTelemetry)));
+
+            InstallLocalPurchaseBypass(harmony);
+
+            InstallDatabaseDiagnostics(harmony);
+            Logger.LogInfo("Local identity active: AppManager.UseSdk => false");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Local identity patch failed: " + ex);
+        }
+    }
+
+    private static bool UseSdkPrefix(ref bool __result)
+    {
+        __result = false;
+        return false;
+    }
+
+    private static void SendMaintenancePrefix()
+    {
+        Type serverURLInfo = FindType("ὫὢὮὢὣὥὯὪὡὦὯ");
+        FieldInfo maintenanceUri = serverURLInfo?.GetField(
+            "ὢὭὪὨὣὮὧὦὠὮὦ",
+            BindingFlags.Static | BindingFlags.Public);
+        if (maintenanceUri == null)
+        {
+            throw new MissingFieldException("BDNetwork.ServerURLInfo.MaintenanceUri was not found");
+        }
+        maintenanceUri.SetValue(null, new Uri(LocalServerURL));
+        Log?.LogInfo("MaintenanceUri => " + LocalServerURL);
+    }
+
+    private static void OnFinishMaintenancePostfix(object __instance)
+    {
+        // 2.34.13's CancelMaintenanceTimeout cancels the active CTS and then
+        // immediately stores a fresh CTS. Depending on async scheduling, the
+        // timeout task can capture that fresh token after the successful
+        // response and emit a false 10-second timeout. Cancel the replacement
+        // token only after OnFinishMaintenanceRequest has completed.
+        FieldInfo timeout = __instance.GetType().GetField(
+            "ὬὭὥὪὢὭὫὩὭὭὬ",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        CancellationTokenSource source = timeout?.GetValue(__instance) as CancellationTokenSource;
+        source?.Cancel();
+        Log?.LogInfo("Maintenance timeout guard cancelled after successful response");
+    }
+
+    private static bool SkipLocalTimeoutTelemetry()
+    {
+        // This method only emits intro_server_info_timeout telemetry after ten
+        // seconds. Network request failures have their own callbacks. In
+        // 2.34.13 it can outlive a successful local maintenance response.
+        return false;
+    }
+
+    private static void InstallLocalPurchaseBypass(Harmony harmony)
+    {
+        Type platformRuler = FindType("ὮὮὫὭὢὩὭὢὦὪὠ");
+        MethodInfo getProducts = platformRuler?
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(method =>
+                method.Name == "ὠὨὯὣὧὨὭὦὥὪὠ" &&
+                method.GetParameters().Length == 6);
+        if (getProducts == null)
+        {
+            throw new MissingMethodException("PlatformRuler.GetProductAsync was not found");
+        }
+        harmony.Patch(
+            getProducts,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(GetProductsPrefix)));
+
+        Type platformManager = FindType("gamfs.Platform.PlatformManager");
+        MethodInfo purchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(method => method.Name == "Purchase" && method.GetParameters().Length == 3);
+        MethodInfo finishPurchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(method => method.Name == "FinishPurchase" && method.GetParameters().Length == 2);
+        if (purchase == null || finishPurchase == null)
+            throw new MissingMethodException("PlatformManager purchase methods were not found");
+        harmony.Patch(purchase, prefix: new HarmonyMethod(
+            typeof(Plugin), nameof(LocalPurchasePrefix)));
+        harmony.Patch(finishPurchase, prefix: new HarmonyMethod(
+            typeof(Plugin), nameof(FinishLocalPurchasePrefix)));
+        Log?.LogInfo("Local purchase price lookup disabled");
+        Log?.LogInfo("Infinite reroll confirmation is local/free; all other paid purchases are blocked");
+    }
+
+    private static bool GetProductsPrefix(Action __3)
+    {
+        // A private server has no Neon/GPG commerce identity. Treat price
+        // prefetch as complete so startup can continue without contacting the
+        // production payment API. No purchase result or currency is forged.
+        __3?.Invoke();
+        return false;
+    }
+
+    private static bool LocalPurchasePrefix(string __0, object __1, Action __2)
+    {
+        // Product 9100033 is the 2.34.13 infinite-reroll confirmation. The
+        // local server grants the last preview through CashShopBuy without
+        // contacting Neon/GPG. No other real-money product is authorized.
+        if (__0 == "brd2_limited_pack_660" || __0 == "brd2_limited_pack_660_ios")
+        {
+            Type purchaseData = FindType("ὥὮὯὪὯὫὯὤὩὬὤ");
+            object result = Activator.CreateInstance(purchaseData, new object[]
+            {
+                __0,
+                1L,
+                "bd2-local-free-infinite",
+                "bd2-local-free-receipt"
+            });
+            Log?.LogInfo("Approved local/free infinite-reroll confirmation");
+            (__1 as Delegate)?.DynamicInvoke(result);
+            return false;
+        }
+        Log?.LogWarning("Blocked unsupported paid product: " + (__0 ?? "<null>"));
+        __2?.Invoke();
+        return false;
+    }
+
+    private static bool FinishLocalPurchasePrefix(string __0)
+    {
+        if (__0 == "bd2-local-free-infinite")
+        {
+            Log?.LogInfo("Finished local/free infinite-reroll confirmation");
+            return false;
+        }
+        return true;
+    }
+
+    private static void InstallDatabaseDiagnostics(Harmony harmony)
+    {
+        Type rawDataManager = FindType("RawDataManager");
+        MethodInfo dbLoad = rawDataManager?.GetMethod(
+            "DBLoad",
+            BindingFlags.Instance | BindingFlags.Public);
+        if (dbLoad == null)
+        {
+            throw new MissingMethodException("RawDataManager.DBLoad was not found");
+        }
+
+        harmony.Patch(
+            dbLoad,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(DBLoadPrefix)));
+
+        Type clientLocalInfo = FindType("Proto.Local.ClientLocalInfo");
+        MethodInfo loadDB = clientLocalInfo?.GetMethod(
+            "LoadDB",
+            BindingFlags.Static | BindingFlags.Public);
+        if (loadDB == null)
+        {
+            throw new MissingMethodException("ClientLocalInfo.LoadDB was not found");
+        }
+
+        harmony.Patch(
+            loadDB,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(ClientLocalLoadPrefix)),
+            postfix: new HarmonyMethod(typeof(Plugin), nameof(ClientLocalLoadPostfix)),
+            finalizer: new HarmonyMethod(typeof(Plugin), nameof(ClientLocalLoadFinalizer)));
+
+        Log?.LogInfo("Database diagnostics active");
+    }
+
+    private static void DBLoadPrefix(object __0, ref Action __1)
+    {
+        string dbName = ReadFirstStringField(__0) ?? "<unknown>";
+        Action original = __1;
+        Stopwatch elapsed = Stopwatch.StartNew();
+        Log?.LogInfo("DBLoad start: " + dbName);
+        __1 = delegate
+        {
+            Log?.LogInfo("DBLoad callback enter: " + dbName + " (" + elapsed.ElapsedMilliseconds + " ms)");
+            try
+            {
+                original?.Invoke();
+            }
+            finally
+            {
+                Log?.LogInfo("DBLoad callback exit: " + dbName + " (" + elapsed.ElapsedMilliseconds + " ms)");
+            }
+        };
+    }
+
+    private static void ClientLocalLoadPrefix(out Stopwatch __state)
+    {
+        __state = Stopwatch.StartNew();
+        Log?.LogInfo("ClientLocalInfo.LoadDB enter");
+    }
+
+    private static void ClientLocalLoadPostfix(Stopwatch __state)
+    {
+        Log?.LogInfo("ClientLocalInfo.LoadDB exit (" + __state.ElapsedMilliseconds + " ms)");
+    }
+
+    private static Exception ClientLocalLoadFinalizer(Exception __exception, Stopwatch __state)
+    {
+        if (__exception != null)
+        {
+            Log?.LogError(
+                "ClientLocalInfo.LoadDB threw after " + __state.ElapsedMilliseconds + " ms: " + __exception);
+        }
+        return __exception;
+    }
+
+    private static string ReadFirstStringField(object value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+        FieldInfo field = value.GetType()
+            .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .FirstOrDefault(candidate => candidate.FieldType == typeof(string));
+        return field?.GetValue(value) as string;
+    }
+
+    private static Type FindType(string name)
+    {
+        Assembly assembly = Assembly.Load("Assembly-CSharp");
+        Type type = assembly?.GetType(name);
+        if (type != null)
+        {
+            return type;
+        }
+        foreach (Assembly loaded in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            type = loaded.GetType(name);
+            if (type != null)
+            {
+                return type;
+            }
+        }
+        return null;
+    }
+}

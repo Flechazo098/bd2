@@ -1,0 +1,27 @@
+{
+  "version": "2.34.13",
+  "pack_id": 21,
+  "start_quest_id": 1,
+  "battle_unlock_quest_id": 26,
+  "reward_character": {
+    "inven_index": 535607162,
+    "id": 350,
+    "hp": 122,
+    "level": 1,
+    "use_costume": 609338889,
+    "talent_level": 1,
+    "solidarity_reward": 1,
+    "expiry_time": 18446744073677151616,
+    "connect_potential_costume": 3501
+  },
+  "reward_costume": {
+    "inven_index": 609338889,
+    "id": 3501,
+    "use_char": 535607162
+  },
+  "story_characters": [
+    {"inven_index": 535607159, "id": 10383, "hp": 462, "level": 15, "talent_level": 1, "solidarity_reward": 1, "expiry_time": 18446744073677151616},
+    {"inven_index": 535607160, "id": 10372, "hp": 177, "level": 15, "talent_level": 1, "solidarity_reward": 1, "expiry_time": 18446744073677151616},
+    {"inven_index": 535607161, "id": 10412, "hp": 187, "level": 15, "talent_level": 1, "solidarity_reward": 1, "expiry_time": 18446744073677151616}
+  ]
+}

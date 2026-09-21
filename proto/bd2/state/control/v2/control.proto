@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package bd2.state.control.v2;
+option go_package = "bd2server/gen/state/control/v2;controlv2";
+
+import "bd2/state/control/v1/control.proto";
+import "bd2/state/v1/state.proto";
+import "bd2/state/v2/state.proto";
+
+message MigrateV1ToV2Request {
+  uint32 bridge_api_version = 1;
+  bytes source_sha256 = 2;
+  bd2.state.v1.Snapshot source = 10;
+}
+
+message MigrateV1ToV2Response {
+  uint32 bridge_api_version = 1;
+  bytes source_sha256 = 2;
+  repeated bd2.state.control.v1.Violation violations = 3;
+  bool migrated = 10;
+  bd2.state.v2.Snapshot target = 11;
+}
+
+message GachaGroupFact {
+  uint64 gacha_id = 1;
+  uint64 group_id = 2;
+  uint64 fixed_id = 3;
+  uint64 point_count = 4;
+}
+
+message CostumeFact {
+  uint64 costume_id = 1;
+  uint64 grade = 2;
+  uint64 max_level = 3;
+  uint64 overflow_item_type = 4;
+  uint64 overflow_item_id = 5;
+  uint64 overflow_item_count = 6;
+}
+
+message BaseCostumeFact {
+  uint64 inventory_index = 1;
+  uint64 costume_id = 2;
+  uint64 level = 3;
+}
+
+message StepUpFact {
+  uint64 group_id = 1;
+  repeated uint64 ordered_gacha_ids = 2;
+}
+
+message ValidationContext {
+  string game_data_version = 1;
+  repeated GachaGroupFact gacha_groups = 2;
+  repeated CostumeFact costumes = 3;
+  repeated BaseCostumeFact base_costumes = 4;
+  repeated StepUpFact step_ups = 5;
+}
+
+message RepairRequest {
+  uint32 bridge_api_version = 1;
+  bytes source_sha256 = 2;
+  bd2.state.v1.Snapshot source = 10;
+  ValidationContext context = 11;
+}
+
+message RepairResponse {
+  uint32 bridge_api_version = 1;
+  bytes source_sha256 = 2;
+  repeated bd2.state.control.v1.Violation violations = 3;
+  bool repaired = 10;
+  bool changed = 11;
+  bd2.state.v2.Snapshot target = 12;
+}

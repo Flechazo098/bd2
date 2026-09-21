@@ -1,0 +1,12 @@
+{
+  "version": "2.34.13",
+  "field_deck": [
+    {"slot": 1, "character_inven_index": 535604120, "costume_inven_index": 609336981},
+    {"slot": 2, "character_inven_index": 535604119, "costume_inven_index": 609336980},
+    {"slot": 3, "character_inven_index": 535604118, "costume_inven_index": 609336979},
+    {"slot": 4, "character_inven_index": 535604117, "costume_inven_index": 609336978},
+    {"slot": 5, "character_inven_index": 535604116, "costume_inven_index": 609336977}
+  ],
+  "field_char_control_deck_type": 2,
+  "auto_revive_catalyst": 200
+}
