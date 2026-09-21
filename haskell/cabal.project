@@ -1,0 +1,5 @@
+packages: state-migrator
+
+package state-migrator
+  optimization: 1
+  tests: True
