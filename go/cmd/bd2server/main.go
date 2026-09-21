@@ -14,6 +14,7 @@ import (
 	"bd2server/internal/account"
 	"bd2server/internal/battle"
 	"bd2server/internal/bootstrap"
+	"bd2server/internal/clientplugin"
 	"bd2server/internal/deck"
 	"bd2server/internal/feature"
 	"bd2server/internal/gacha"
@@ -71,12 +72,27 @@ func serve(args []string) error {
 	deckSeed := fs.String("deck-seed", `seed\v2_34_13\decks.json`, "versioned starter deck")
 	deckState := fs.String("deck-state", `..\data\state\deck.json`, "local deck and waypoint save")
 	worldSeed := fs.String("world-seed", `seed\v2_34_13\world.json`, "versioned starter world")
-	stateTool := fs.String("state-tool", "", "optional Haskell state tool override (release builds embed it)")
+	stateTool := fs.String("state-tool", "", "optional Haskell state tool override (release package includes it)")
+	gameDir := fs.String("game-dir", "", "Brown Dust II client directory (required)")
+	identityPlugin := fs.String("identity-plugin", "", "optional BD2LocalIdentity.dll override for development")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cdn == "" || *gameData == "" || *gameDataVersion == "" {
-		return errors.New("serve requires --cdn, --game-data, and --game-data-version")
+	if *cdn == "" || *gameData == "" || *gameDataVersion == "" || *gameDir == "" {
+		return errors.New("serve requires --game-dir, --cdn, --game-data, and --game-data-version")
+	}
+	packagedPlugin, err := clientplugin.ResolvePackaged(*identityPlugin)
+	if err != nil {
+		return err
+	}
+	pluginResult, err := clientplugin.Install(*gameDir, packagedPlugin)
+	if err != nil {
+		return err
+	}
+	if pluginResult.Changed {
+		slog.Info("installed local identity plugin", "path", pluginResult.Destination)
+	} else {
+		slog.Info("local identity plugin is current", "path", pluginResult.Destination)
 	}
 	base := "http://" + *listen + "/game/"
 	cfg := bootstrap.Config{
@@ -337,7 +353,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II 2.34.13 local development server
 
 Usage:
-  bd2server serve --cdn DIR --game-data DIR --game-data-version VERSION [options]
+  bd2server serve --game-dir DIR --cdn DIR --game-data DIR --game-data-version VERSION [options]
   bd2server patch-client --game-dir DIR [options]
   bd2server state check [options]
   bd2server state migrate-v1-v2 [options]

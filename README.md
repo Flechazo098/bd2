@@ -28,13 +28,13 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 python -m unittest discover -s .\tools\python\tests -p 'test_*.py' -v
 ```
 
-## 单文件发布
+## 发布包
 
 ```powershell
-.\build-release.ps1
+.\build-release.ps1 -GameDir "<客户端目录>"
 ```
 
-脚本构建并测试 Haskell CLI，将它嵌入 Go 服务，最终只生成 `.build\bin\bd2server.exe`。运行时 helper 位于临时目录并在进程退出时清理，不需要分发第二个可执行文件。Go 构建缓存只写入 `go\.cache`。运行服务仍需项目的本地配置和资源；“单文件”指两个程序的发布产物合并为一个 exe，不代表把外部资源打进程序。
+脚本生成 `.build\bd2server-windows-x64.zip`。解压后得到一个完整目录，其中包含 Go 服务端、独立 Haskell 状态工具、本地身份插件、运行种子和空存档目录。Haskell 不再嵌入 Go 可执行文件。Go 构建缓存只写入 `go\.cache`。
 
 ## 客户端插件项目
 
@@ -43,48 +43,39 @@ python -m unittest discover -s .\tools\python\tests -p 'test_*.py' -v
 
 ## 首次安装本地客户端
 
-先设置客户端目录，修改客户端入口，并构建、安装 `BD2LocalIdentity.dll`：
+先手动安装 BepInEx：<https://github.com/BepInEx/BepInEx/releases>。然后修改客户端入口：
 
 ```powershell
 $clientDir = "<客户端目录>"
 
-.\.build\bin\bd2server.exe patch-client `
+.\.build\package\bd2server\bd2server.exe patch-client `
   --game-dir $clientDir
 
-dotnet build .\plugins\LocalIdentity\LocalIdentity.csproj `
-  -c Release `
-  -p:GameDir="$clientDir"
-
-$pluginDir = Join-Path $clientDir 'BepInEx\plugins'
-New-Item -ItemType Directory -Force $pluginDir | Out-Null
-Copy-Item `
-  .\plugins\LocalIdentity\bin\Release\netstandard2.1\BD2LocalIdentity.dll `
-  (Join-Path $pluginDir 'BD2LocalIdentity.dll') `
-  -Force
 ```
 
-客户端必须已经安装并加载 `BD2LocalIdentity.dll`，否则不能按本地服流程登录。不要把原版抓包插件 `BD2CaptureEnvironment.dll` 安装进这个客户端。
+启动服务端时会检查 BepInEx，并自动从发布目录安装或更新 `BD2LocalIdentity.dll`。如果未检测到 BepInEx，服务端只提示官方下载链接，不修改客户端，也不会继续启动。不要把原版抓包插件 `BD2CaptureEnvironment.dll` 安装进这个客户端。
 
 ## 启动顺序
 
 顺序必须是：
 
-1. 确认 `BD2LocalIdentity.dll` 已安装在本地客户端的 `BepInEx\plugins`。
-2. 启动服务器。
+1. 确认客户端已经安装 BepInEx。
+2. 启动服务器；服务器自动同步 `BD2LocalIdentity.dll`。
 3. 健康检查返回成功后，再启动游戏客户端。
 
 启动服务器：
 
 ```powershell
-Push-Location .\go
-& ..\.build\bin\bd2server.exe serve `
+Push-Location .\.build\package\bd2server\go
+& ..\bd2server.exe serve `
+  --game-dir "<客户端目录>" `
   --cdn "<ServerData目录>" `
   --game-data "<GameData目录>" `
   --game-data-version "<GameData版本>"
 Pop-Location
 ```
 
-启动时先核验资源，Go 再调用内嵌的 Haskell CLI 检查和修复存档；通过后加载账号与玩法服务，最后监听指定地址（默认 `127.0.0.1:8080`）。本地身份插件目前固定连接该默认地址；要更换地址，需要同步修改插件。
+启动时先检查 BepInEx 并同步插件，再核验资源；Go 随后调用同目录的 Haskell CLI 检查和修复存档，通过后加载账号与玩法服务，最后监听指定地址（默认 `127.0.0.1:8080`）。本地身份插件目前固定连接该默认地址；要更换地址，需要同步修改插件。
 
 健康检查：
 
@@ -99,6 +90,6 @@ Invoke-WebRequest http://127.0.0.1:8080/healthz
 构建服务后运行：
 
 ```powershell
-.\.build\bin\bd2server.exe patch-client --game-dir "<客户端目录>" --verify
-.\.build\bin\bd2server.exe patch-client --game-dir "<客户端目录>"
+.\.build\package\bd2server\bd2server.exe patch-client --game-dir "<客户端目录>" --verify
+.\.build\package\bd2server\bd2server.exe patch-client --game-dir "<客户端目录>"
 ```
