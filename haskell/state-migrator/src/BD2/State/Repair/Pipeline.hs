@@ -11,6 +11,7 @@ import BD2.State.Repair.DuplicateCharacters
 import BD2.State.Repair.GachaProgress
 import BD2.State.Repair.NextIndices
 import BD2.State.Repair.StepUpProgress
+import Control.Monad (when)
 import Data.Foldable (toList)
 import qualified Data.Text as Text
 import Lens.Family2 ((^.))
@@ -24,9 +25,8 @@ repairV1ToCurrent request = do
   let context = request ^. ControlFields.context
       source = request ^. ControlFields.source
       contextVersion = context ^. ControlFields.gameDataVersion
-  if Text.null contextVersion || contextVersion /= source ^. V1Fields.gameDataVersion
-    then Left [Problem "repair.game_data_version" Error ["context", "game_data_version"] "context and source GameData versions differ" []]
-    else pure ()
+  when (Text.null contextVersion || contextVersion /= source ^. V1Fields.gameDataVersion) $
+    Left [Problem "repair.game_data_version" Error ["context", "game_data_version"] "context and source GameData versions differ" []]
   migrated <- migrateV1ToV2ForRepair source
   (deduplicated, _) <- repairDuplicateCharacters migrated
   indexed <- repairNextIndices deduplicated
