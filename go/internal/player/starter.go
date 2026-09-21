@@ -31,7 +31,7 @@ type Costume struct {
 	Level         uint64      `json:"level,omitempty"`
 	UseChar       uint64      `json:"use_char,omitempty"`
 	SortID        uint64      `json:"sort_id,omitempty"`
-	PotentialID   uint64      `json:"potential_id,omitempty"`
+	PotentialIDs  []uint64    `json:"-"`
 	DesignID      uint64      `json:"design_id,omitempty"`
 	BurstLevel    uint64      `json:"burst_level,omitempty"`
 	TimeValue     uint64      `json:"time_value,omitempty"`
@@ -177,7 +177,9 @@ func CostumeWire(entry Costume) []byte {
 		costume = wire.AppendBytes(costume, 5, book)
 	}
 	costume = add(costume, 6, entry.SortID)
-	costume = add(costume, 8, entry.PotentialID)
+	for _, id := range entry.PotentialIDs {
+		costume = wire.AppendVarint(costume, 8, id)
+	}
 	costume = add(costume, 9, entry.DesignID)
 	costume = add(costume, 10, entry.BurstLevel)
 	costume = add(costume, 12, entry.TimeValue)

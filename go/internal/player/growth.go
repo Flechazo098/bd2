@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"bd2server/internal/gamedata"
@@ -29,7 +30,19 @@ type CharacterStore struct {
 	gameDataVersion string
 	grow            func(Character, []gamedata.GrowthMaterial) (uint64, uint64, []gamedata.GrowthMaterial, error)
 	collection      *CollectionStore
+	wallet          *Wallet
 	maxHealth       func(Character) (uint64, error)
+	promoteGrowth   func(Character, []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error)
+}
+
+func (s *CharacterStore) AttachWallet(wallet *Wallet) error {
+	if wallet == nil {
+		return errors.New("player: nil growth wallet")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.wallet = wallet
+	return nil
 }
 
 // AttachMaxHealth makes growth and post-battle revival consume the same
@@ -61,6 +74,9 @@ func OpenCharacterStore(path string, seed []Character, inventory *Inventory, gam
 	s := &CharacterStore{path: filepath.Clean(path), inventory: inventory, characters: append([]Character(nil), seed...), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion}
 	s.grow = func(character Character, materials []gamedata.GrowthMaterial) (uint64, uint64, []gamedata.GrowthMaterial, error) {
 		return gamedata.CharacterGrowth(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, materials)
+	}
+	s.promoteGrowth = func(character Character, submitted []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error) {
+		return gamedata.CharacterGrowthPromotions(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, submitted)
 	}
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -216,7 +232,7 @@ func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool,
 		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 9: &item.SortID, 10: &item.UseCount}); err != nil {
 			return err
 		}
-		if item.InvenIndex == 0 || item.ID == 0 || item.Type == 0 || item.Count == 0 {
+		if item.Type == 0 || item.Count == 0 || (item.Type != 4 && (item.InvenIndex == 0 || item.ID == 0)) {
 			return errors.New("player: incomplete growth material")
 		}
 		materials = append(materials, item)
@@ -247,6 +263,16 @@ func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool,
 	if position < 0 && !fromCollection {
 		return 0, nil, true, fmt.Errorf("player: unknown character inventory index %d", index)
 	}
+	isPromotion := false
+	for _, material := range materials {
+		if material.Type == 4 {
+			isPromotion = true
+			break
+		}
+	}
+	if isPromotion {
+		return s.promoteCharacter(current, position, fromCollection, materials)
+	}
 	growthMaterials := make([]gamedata.GrowthMaterial, len(materials))
 	for i, material := range materials {
 		if material.Type != 8 {
@@ -275,7 +301,7 @@ func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool,
 		return 0, nil, true, fmt.Errorf("player: consume growth material: %w", err)
 	}
 	if fromCollection {
-		if err := s.collection.UpdateCharacter(current); err != nil {
+		if err := s.collection.UpdateCharacter(current.ID, current); err != nil {
 			return 0, nil, true, fmt.Errorf("player: persist collection character growth: %w", err)
 		}
 	} else {
@@ -292,6 +318,100 @@ func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool,
 		bundle = wire.AppendBytes(bundle, 1, ItemWire(item))
 	}
 	response = wire.AppendBytes(response, 2, bundle)
+	return 433, response, true, nil
+}
+
+func (s *CharacterStore) promoteCharacter(current Character, position int, fromCollection bool, materials []Item) (int, []byte, bool, error) {
+	var items []Item
+	requested := make(map[[2]uint64]uint64)
+	var gold uint64
+	for _, material := range materials {
+		if material.Type == 4 {
+			if material.InvenIndex != 0 || material.ID != 0 || gold != 0 {
+				return 0, nil, true, errors.New("player: invalid promotion currency")
+			}
+			gold = material.Count
+		} else if material.Type == 8 {
+			items = append(items, material)
+			key := [2]uint64{8, material.ID}
+			if material.Count > ^uint64(0)-requested[key] {
+				return 0, nil, true, errors.New("player: promotion material overflow")
+			}
+			requested[key] += material.Count
+		} else {
+			return 0, nil, true, fmt.Errorf("player: unsupported promotion item type %d", material.Type)
+		}
+	}
+	if gold == 0 {
+		return 0, nil, true, errors.New("player: promotion has no gold cost")
+	}
+	submitted := make([]gamedata.PromotionCost, 0, len(requested)+1)
+	for key, count := range requested {
+		submitted = append(submitted, gamedata.PromotionCost{Type: key[0], ID: key[1], Count: count})
+	}
+	submitted = append(submitted, gamedata.PromotionCost{Type: 4, Count: gold})
+	result, err := s.promoteGrowth(current, submitted)
+	if err != nil {
+		return 0, nil, true, fmt.Errorf("player: calculate combined character promotion: %w; request=%+v", err, materials)
+	}
+	if gold != 0 && (s.wallet == nil || !s.wallet.CanSpendGold(gold)) {
+		return 0, nil, true, errors.New("player: insufficient gold for promotion")
+	}
+	if len(items) == 0 {
+		return 0, nil, true, errors.New("player: promotion has no item material")
+	}
+	previousID := current.ID
+	current.ID = result.CharacterID
+	current.Level = result.Level
+	current.Exp = result.Exp
+	if fromCollection {
+		if err := s.collection.CanUpdateCharacter(previousID, current); err != nil {
+			return 0, nil, true, fmt.Errorf("player: validate promoted collection character: %w", err)
+		}
+	}
+	if err := s.inventory.CanConsume(items); err != nil {
+		return 0, nil, true, fmt.Errorf("player: validate promotion items: %w", err)
+	}
+	if s.maxHealth != nil {
+		maxHealth := s.maxHealth
+		s.mu.Unlock()
+		hp, healthErr := maxHealth(current)
+		s.mu.Lock()
+		if healthErr != nil {
+			return 0, nil, true, fmt.Errorf("player: calculate promoted character health: %w", healthErr)
+		}
+		current.HP = hp
+	}
+	if gold != 0 {
+		identity := "char-promote:" + strconv.FormatUint(current.InvenIndex, 10) + ":" + strconv.FormatUint(current.ID, 10)
+		if _, err := s.wallet.SpendGoldOnce(identity, gold); err != nil {
+			return 0, nil, true, fmt.Errorf("player: consume promotion gold: %w", err)
+		}
+	}
+	returned, err := s.inventory.ConsumeAndRefund(items, result.Refunds)
+	if err != nil {
+		return 0, nil, true, fmt.Errorf("player: consume promotion items: %w", err)
+	}
+	if fromCollection {
+		if err := s.collection.UpdateCharacter(previousID, current); err != nil {
+			return 0, nil, true, fmt.Errorf("player: persist promoted collection character: %w", err)
+		}
+	} else {
+		next := append([]Character(nil), s.characters...)
+		next[position] = current
+		if err := s.persist(next); err != nil {
+			return 0, nil, true, fmt.Errorf("player: persist promoted character: %w", err)
+		}
+		s.characters = next
+	}
+	response := wire.AppendBytes(nil, 1, CharacterWire(current))
+	var bundle []byte
+	for _, item := range returned {
+		bundle = wire.AppendBytes(bundle, 1, ItemWire(item))
+	}
+	if len(bundle) != 0 {
+		response = wire.AppendBytes(response, 2, bundle)
+	}
 	return 433, response, true, nil
 }
 

@@ -252,6 +252,10 @@ func TestPack22InitializesWithIndependentQuestIdentity(t *testing.T) {
 	if err != nil || !handled || code != 5 {
 		t.Fatalf("pack22 init code=%d handled=%v err=%v", code, handled, err)
 	}
+	currentPack, err := s.CurrentPackID()
+	if err != nil || currentPack != 22 {
+		t.Fatalf("current pack after pack22 init=%d err=%v", currentPack, err)
+	}
 	active, found, err := wire.Bytes(response, 2)
 	if err != nil || !found {
 		t.Fatalf("pack22 active quest missing: %v", err)

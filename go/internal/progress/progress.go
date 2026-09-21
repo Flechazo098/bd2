@@ -149,9 +149,9 @@ func OpenStore(path string) (*Store, error) {
 		s.cleared[questKey(packID, questID)] = struct{}{}
 	}
 	if legacy {
-		// Install the unambiguous pack+quest schema immediately. Pack 21 and 22
-		// both number quests from one, so waiting until the first pack22 update
-		// would risk overwriting valid pack21 progress.
+		// Install the unambiguous pack+quest schema immediately. Adjacent story
+		// packs reuse quest numbers, so delaying migration until a later-pack
+		// update would risk overwriting valid earlier-pack progress.
 		if err := s.commit(s.position, s.tutorials, s.quests, s.cleared); err != nil {
 			return nil, fmt.Errorf("progress: migrate legacy save: %w", err)
 		}

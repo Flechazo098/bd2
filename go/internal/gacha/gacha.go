@@ -47,6 +47,13 @@ func (s *Service) AttachEquipmentGacha(catalog *gamedata.EquipmentGachaCatalog, 
 	s.equipmentCatalog, s.equipmentInventory = catalog, inventory
 }
 
+// FirstGachaCompleted reflects UserDBInfo.IsFirstGacha. The official symbol
+// map names the client-side property IsDoneFirstGachaPick, and the client sets
+// it after a GachaSubType=3 purchase succeeds.
+func (s *Service) FirstGachaCompleted() bool {
+	return s.collection.FirstGachaCompleted()
+}
+
 // BeginSession is called by the transport session after each successful
 // login. Request sequence numbers restart with the client, so the login ID is
 // part of the durable idempotency key: retries in one login remain idempotent,
@@ -408,7 +415,7 @@ func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, desig
 			if err != nil {
 				return 146, nil, true, err
 			}
-			entry := player.Equipment{ID: equipmentID, SortID: uint64(sort)}
+			entry := player.Equipment{ID: equipmentID, SortID: uint64(sort), Rank: []uint64{0, 0, 0}}
 			for _, o := range main {
 				entry.MainOption = append(entry.MainOption, player.EquipmentOption{GroupID: o.GroupID, ID: o.ID})
 			}

@@ -3,6 +3,7 @@ package player
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,6 +182,231 @@ func TestGrowthAndImmortalShareDynamicMaximumHealth(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "characters.json"))
 	if err != nil || !bytes.Contains(data, []byte(`"hp":513`)) {
 		t.Fatalf("growth HP was not persisted: %s err=%v", data, err)
+	}
+}
+
+func TestCharacterPromotionUsesExactGameDataCosts(t *testing.T) {
+	dir := t.TempDir()
+	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := inventory.GrantOnce("promotion-material", []gamedata.BattleReward{{Type: 8, ID: 11, Count: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, Level: 20, HP: 513}}, inventory, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachWallet(wallet); err != nil {
+		t.Fatal(err)
+	}
+	characters.promoteGrowth = func(character Character, submitted []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error) {
+		if character.ID != 350 || character.Level != 20 {
+			return gamedata.PromotionGrowthResult{}, fmt.Errorf("not promotable: %+v", character)
+		}
+		if !promotionCostsEqual(submitted, []gamedata.PromotionCost{{Type: 8, ID: 11, Count: 1}, {Type: 4, Count: 1000}}) {
+			return gamedata.PromotionGrowthResult{}, fmt.Errorf("unexpected submitted costs: %+v", submitted)
+		}
+		return gamedata.PromotionGrowthResult{CharacterID: 351, Level: 20, Costs: submitted}, nil
+	}
+	item := items[0]
+	item.Count = 1
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 77)
+	request = wire.AppendBytes(request, 3, ItemWire(item))
+	request = wire.AppendBytes(request, 3, ItemWire(Item{Type: 4, Count: 1000}))
+	code, response, handled, err := characters.Handle("/CharGrowth", request)
+	if err != nil || !handled || code != 433 {
+		t.Fatalf("promote code=%d handled=%v err=%v", code, handled, err)
+	}
+	encoded, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("missing promoted character %v", err)
+	}
+	if id, _, _ := wire.Varint(encoded, 2); id != 351 {
+		t.Fatalf("promoted id=%d", id)
+	}
+	if snapshot := wallet.Snapshot(); snapshot.Gold != 500 {
+		t.Fatalf("gold after promotion=%d", snapshot.Gold)
+	}
+	loaded, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), nil, inventory, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.All(); len(got) != 1 || got[0].ID != 351 {
+		t.Fatalf("persisted promotion=%+v", got)
+	}
+	if err := inventory.Consume([]Item{item}); err != nil {
+		t.Fatalf("remaining material x1 should exist: %v", err)
+	}
+	if _, _, _, err := characters.Handle("/CharGrowth", request); err == nil {
+		t.Fatal("duplicate class-up accepted")
+	}
+}
+
+func TestCharacterGrowthPromotesAndLevelsInOneRequestAcrossStacks(t *testing.T) {
+	dir := t.TempDir()
+	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := inventory.GrantOnce("slime-a", []gamedata.BattleReward{{Type: 8, ID: 9, Count: 7}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := inventory.GrantOnce("slime-b", []gamedata.BattleReward{{Type: 8, ID: 9, Count: 103}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	classUp, err := inventory.GrantOnce("class-up", []gamedata.BattleReward{{Type: 8, ID: 12, Count: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 3000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 351, Level: 40}}, inventory, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachWallet(wallet); err != nil {
+		t.Fatal(err)
+	}
+	characters.promoteGrowth = func(character Character, submitted []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error) {
+		if character.ID != 351 || character.Level != 40 {
+			return gamedata.PromotionGrowthResult{}, fmt.Errorf("unexpected stage: %+v", character)
+		}
+		if !promotionCostsEqual(submitted, []gamedata.PromotionCost{{Type: 8, ID: 9, Count: 110}, {Type: 8, ID: 12, Count: 2}, {Type: 4, Count: 2000}}) {
+			return gamedata.PromotionGrowthResult{}, fmt.Errorf("unexpected submitted costs: %+v", submitted)
+		}
+		return gamedata.PromotionGrowthResult{CharacterID: 352, Level: 60, Costs: submitted, Refunds: []gamedata.GrowthMaterial{{ID: 7, Count: 1}}}, nil
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 77)
+	for _, material := range []Item{first[0], second[0], {InvenIndex: classUp[0].InvenIndex, ID: 12, Type: 8, Count: 2}, {Type: 4, Count: 2000}} {
+		request = wire.AppendBytes(request, 3, ItemWire(material))
+	}
+	code, response, handled, err := characters.Handle("/CharGrowth", request)
+	if err != nil || !handled || code != 433 {
+		t.Fatalf("combined growth code=%d handled=%v err=%v", code, handled, err)
+	}
+	encoded, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("missing character: %v", err)
+	}
+	if id, _, _ := wire.Varint(encoded, 2); id != 352 {
+		t.Fatalf("promoted character id=%d", id)
+	}
+	if level, _, _ := wire.Varint(encoded, 4); level != 60 {
+		t.Fatalf("grown level=%d", level)
+	}
+	if wallet.Snapshot().Gold != 1000 {
+		t.Fatalf("gold=%d", wallet.Snapshot().Gold)
+	}
+	if err := inventory.Consume([]Item{first[0]}); err == nil {
+		t.Fatal("first experience stack was not consumed")
+	}
+	if err := inventory.Consume([]Item{second[0]}); err == nil {
+		t.Fatal("second experience stack was not consumed")
+	}
+	if err := inventory.Consume([]Item{{InvenIndex: classUp[0].InvenIndex, ID: 12, Type: 8, Count: 1}}); err != nil {
+		t.Fatalf("one unspent class-up material must remain: %v", err)
+	}
+	if bundle, found, err := wire.Bytes(response, 2); err != nil || !found || len(bundle) == 0 {
+		t.Fatalf("missing refunded slime bundle: found=%v err=%v", found, err)
+	}
+}
+
+func promotionCostsEqual(got, want []gamedata.PromotionCost) bool {
+	counts := make(map[[2]uint64]uint64, len(got))
+	for _, cost := range got {
+		counts[[2]uint64{cost.Type, cost.ID}] += cost.Count
+	}
+	if len(counts) != len(want) {
+		return false
+	}
+	for _, cost := range want {
+		if counts[[2]uint64{cost.Type, cost.ID}] != cost.Count {
+			return false
+		}
+	}
+	return true
+}
+
+func TestCollectionCharacterCombinedGrowthChangesIDWithoutChargingTwice(t *testing.T) {
+	dir := t.TempDir()
+	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := inventory.GrantOnce("growth-materials", []gamedata.BattleReward{{Type: 8, ID: 9, Count: 800}, {Type: 8, ID: 11, Count: 1}, {Type: 8, ID: 12, Count: 2}, {Type: 8, ID: 13, Count: 3}, {Type: 8, ID: 14, Count: 4}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 12000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectionPath := filepath.Join(dir, "collection.json")
+	collection, err := OpenCollectionStore(collectionPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collection.data.Characters = []Character{{InvenIndex: 920000054, ID: 6510, Level: 1}}
+	if err := collection.commit(collection.data); err != nil {
+		t.Fatal(err)
+	}
+	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, Level: 1}}, inventory, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachWallet(wallet); err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachCollection(collection); err != nil {
+		t.Fatal(err)
+	}
+	characters.promoteGrowth = func(character Character, submitted []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error) {
+		if character.ID != 6510 || character.Level != 1 || !promotionCostsEqual(submitted, []gamedata.PromotionCost{{Type: 8, ID: 9, Count: 753}, {Type: 8, ID: 11, Count: 1}, {Type: 8, ID: 12, Count: 2}, {Type: 8, ID: 13, Count: 3}, {Type: 8, ID: 14, Count: 4}, {Type: 4, Count: 10000}}) {
+			return gamedata.PromotionGrowthResult{}, fmt.Errorf("unexpected combined growth: %+v %+v", character, submitted)
+		}
+		return gamedata.PromotionGrowthResult{CharacterID: 6514, Level: 100, Refunds: []gamedata.GrowthMaterial{{ID: 7, Count: 3}}}, nil
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 920000054)
+	for i, material := range items {
+		if i == 0 {
+			material.Count = 753
+		}
+		request = wire.AppendBytes(request, 3, ItemWire(material))
+	}
+	request = wire.AppendBytes(request, 3, ItemWire(Item{Type: 4, Count: 10000}))
+	code, _, handled, err := characters.Handle("/CharGrowth", request)
+	if err != nil || !handled || code != 433 {
+		t.Fatalf("collection promotion code=%d handled=%v err=%v", code, handled, err)
+	}
+	if got, found := collection.FindCharacter(920000054); !found || got.ID != 6514 || got.Level != 100 {
+		t.Fatalf("promoted collection character=%+v found=%v", got, found)
+	}
+	if wallet.Snapshot().Gold != 2000 {
+		t.Fatalf("gold=%d", wallet.Snapshot().Gold)
+	}
+	if _, _, _, err := characters.Handle("/CharGrowth", request); err == nil {
+		t.Fatal("replay of the old promotion was accepted")
+	}
+	if wallet.Snapshot().Gold != 2000 {
+		t.Fatal("replay charged gold again")
+	}
+	reloaded, err := OpenCollectionStore(collectionPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, found := reloaded.FindCharacter(920000054); !found || got.ID != 6514 || got.Level != 100 {
+		t.Fatalf("reloaded promoted collection character=%+v found=%v", got, found)
 	}
 }
 

@@ -143,10 +143,6 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	// The current local save has completed the first-gacha tutorial gate.
-	// Deriving this UI flag from authoritative story progress prevents a new
-	// account from seeing ordinary pools before the tutorial unlocks them.
-	login.SetFirstGacha(progressState.QuestCleared(37, 21))
 	deckConfig, err := deck.LoadSeed(filepath.Clean(*deckSeed))
 	if err != nil {
 		return fmt.Errorf("load starter deck: %w", err)
@@ -158,6 +154,13 @@ func serve(args []string) error {
 	ownedItems, err := player.OpenInventory(filepath.Join(filepath.Dir(*stateFile), "items.json"), starter)
 	if err != nil {
 		return fmt.Errorf("load owned inventory: %w", err)
+	}
+	randomBoxes, err := gamedata.LoadRandomBoxDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load deterministic random-box GameData: %w", err)
+	}
+	if err := ownedItems.AttachRandomBoxes(randomBoxes); err != nil {
+		return fmt.Errorf("attach random-box GameData: %w", err)
 	}
 	gold, freeJewelry, jewelry, mileage, err := login.SeedCurrencies()
 	if err != nil {
@@ -180,6 +183,9 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load mail state: %w", err)
 	}
+	if err := mailService.AttachSeedPath(filepath.Clean(*mailSeed)); err != nil {
+		return fmt.Errorf("watch mail seed: %w", err)
+	}
 	missionDesign, err := gamedata.LoadMissionDesign(filepath.Clean(*gameData), *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load mission GameData: %w", err)
@@ -201,6 +207,20 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load owned equipment: %w", err)
 	}
+	equipmentSlots, err := gamedata.LoadEquipmentSlots(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment slot GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachSlots(equipmentSlots); err != nil {
+		return fmt.Errorf("attach equipment slot GameData: %w", err)
+	}
+	equipmentUpgrade, err := gamedata.LoadEquipmentUpgradeDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment upgrade GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachUpgrade(equipmentUpgrade, wallet, ownedItems); err != nil {
+		return fmt.Errorf("attach equipment upgrade GameData: %w", err)
+	}
 	collection, err := player.OpenCollectionStore(filepath.Join(filepath.Dir(*stateFile), "collection.json"), starter.Costumes)
 	if err != nil {
 		return fmt.Errorf("load owned collection: %w", err)
@@ -217,6 +237,9 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The mapped client property is IsDoneFirstGachaPick. Its authoritative
+	// local state is the explicit GachaSubType=3 completion marker.
+	login.SetFirstGacha(gachaService.FirstGachaCompleted())
 	gachaService.AttachInventory(ownedItems)
 	gachaService.AttachEquipmentGacha(equipmentGacha, ownedEquipment)
 	gachaService.AttachPreviewMission(func() error {
@@ -229,6 +252,11 @@ func serve(args []string) error {
 	}
 	if err := collection.BindBaseCharacters(worldService.CharacterService().RawAll()); err != nil {
 		return fmt.Errorf("bind base collection characters: %w", err)
+	}
+	if reward, earned := worldService.EarnedQuestCostume(); earned {
+		if err := collection.AttachRewardCostume(reward); err != nil {
+			return fmt.Errorf("attach earned quest costume: %w", err)
+		}
 	}
 	if err := worldService.AttachCollection(collection); err != nil {
 		return fmt.Errorf("attach gacha collection state: %w", err)
@@ -247,7 +275,18 @@ func serve(args []string) error {
 	if err := worldService.CharacterService().AttachMaxHealth(pictorialService.MaxHealth); err != nil {
 		return fmt.Errorf("attach pictorial character stats: %w", err)
 	}
-	battleService := battle.NewService(filepath.Clean(*gameData), *gameDataVersion, ownedItems)
+	if err := worldService.CharacterService().AttachWallet(wallet); err != nil {
+		return fmt.Errorf("attach character promotion wallet: %w", err)
+	}
+	costumePotentialDesign, err := gamedata.LoadCostumePotentialDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load costume potential GameData: %w", err)
+	}
+	costumePotentialService, err := player.NewCostumePotentialService(costumePotentialDesign, collection, worldService.CharacterService(), ownedItems, wallet)
+	if err != nil {
+		return err
+	}
+	battleService := battle.NewService(filepath.Clean(*gameData), *gameDataVersion, ownedItems, worldService.CurrentPackID)
 	battleService.AttachTutorialWin(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 113})
 	})
@@ -263,6 +302,7 @@ func serve(args []string) error {
 		deckStateStore,
 		ownedItems,
 		ownedEquipment,
+		costumePotentialService,
 		starter,
 		mailService,
 		gachaService,

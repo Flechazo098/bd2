@@ -1,9 +1,11 @@
 package battle
 
 import (
+	"path/filepath"
 	"testing"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/player"
 	"bd2server/internal/wire"
 )
 
@@ -118,5 +120,46 @@ func TestBattleEnterUsesSamePictorialSnapshotAsAllCharRefresh(t *testing.T) {
 		return nil
 	}); err != nil || count != 2 {
 		t.Fatalf("battle buffs count=%d err=%v", count, err)
+	}
+}
+
+func TestBattleVictoryLocksPackAtEnterForRewardsAndIdentity(t *testing.T) {
+	dir := t.TempDir()
+	inventory, err := player.OpenInventory(filepath.Join(dir, "items.json"), &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentPack := 22
+	s := NewService("test-root", "test-version", inventory, func() (int, error) {
+		return currentPack, nil
+	})
+	var loadedPack int
+	var loadedDeck uint64
+	s.loadRewards = func(_, _ string, packID int, deckID uint64) ([]gamedata.BattleReward, error) {
+		loadedPack, loadedDeck = packID, deckID
+		return []gamedata.BattleReward{{Type: 8, ID: 8, Count: 3}}, nil
+	}
+
+	enter := wire.AppendVarint(request(1), 3, 7)
+	enter = wire.AppendVarint(enter, 4, 9)
+	enter = wire.AppendVarint(enter, 5, 1)
+	if _, _, _, err := s.Handle("/BattleEnter", enter); err != nil {
+		t.Fatal(err)
+	}
+	// A later world transition must not change the identity of an in-flight
+	// battle; the pack is captured at BattleEnter.
+	currentPack = 21
+	end := wire.AppendVarint(request(2), 2, 1)
+	if _, _, _, err := s.Handle("/BattleEnd", end); err != nil {
+		t.Fatal(err)
+	}
+	if loadedPack != 22 || loadedDeck != 9 {
+		t.Fatalf("reward lookup pack/deck=%d/%d, want 22/9", loadedPack, loadedDeck)
+	}
+	if got := inventory.GrantedItems("pack22:monster7:deck9"); len(got) != 1 || got[0].ID != 8 || got[0].Count != 3 {
+		t.Fatalf("pack22 reward grant=%+v", got)
+	}
+	if got := inventory.GrantedItems("pack21:monster7:deck9"); len(got) != 0 {
+		t.Fatalf("reward leaked into pack21 identity: %+v", got)
 	}
 }

@@ -21,18 +21,24 @@ type Service struct {
 	round           uint64
 	monster         uint64
 	deck            uint64
+	pack            int
 	initialBlue     [][]byte
 	gameDataRoot    string
 	gameDataVersion string
 	inventory       *player.Inventory
+	currentPack     func() (int, error)
+	loadRewards     func(string, string, int, uint64) ([]gamedata.BattleReward, error)
 	buffs           func() ([]gamedata.PictorialBuffStat, error)
 	onTutorialWin   func() error
 }
 
 func (s *Service) AttachTutorialWin(callback func() error) { s.onTutorialWin = callback }
 
-func NewService(gameDataRoot, gameDataVersion string, inventory *player.Inventory) *Service {
-	return &Service{gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion, inventory: inventory}
+func NewService(gameDataRoot, gameDataVersion string, inventory *player.Inventory, currentPack func() (int, error)) *Service {
+	return &Service{
+		gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion,
+		inventory: inventory, currentPack: currentPack, loadRewards: gamedata.BattleDeckRewards,
+	}
 }
 
 func (s *Service) AttachPictorialBuffs(buffs func() ([]gamedata.PictorialBuffStat, error)) {
@@ -73,10 +79,19 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if err != nil || !modeFound || mode == 0 {
 			return 0, nil, true, errors.New("battle: missing battle mode")
 		}
-		s.entered, s.index, s.round, s.initialBlue = true, 0, 0, nil
-		s.monster, _, _ = wire.Varint(request, 3)
-		s.deck = deck
-		slog.Info("team trace: battle entered", "monster", s.monster, "enemyDeck", deck, "mode", mode)
+		packID := 0
+		if s.currentPack != nil {
+			packID, err = s.currentPack()
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: resolve current pack: %w", err)
+			}
+			if packID <= 0 {
+				return 0, nil, true, errors.New("battle: current pack is invalid")
+			}
+		} else if s.inventory != nil && s.gameDataRoot != "" {
+			return 0, nil, true, errors.New("battle: current pack resolver is unavailable")
+		}
+		monster, _, _ := wire.Varint(request, 3)
 		response := wire.AppendVarint(nil, 2, deck)
 		if s.buffs != nil {
 			buffs, err := s.buffs()
@@ -94,6 +109,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		// The local engine is the normal deterministic engine.
 		response = wire.AppendVarint(response, 6, 1)
+		s.entered, s.index, s.round, s.initialBlue = true, 0, 0, nil
+		s.monster, s.deck, s.pack = monster, deck, packID
+		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
 	case "/BattleRetry":
 		if !s.entered {
@@ -170,11 +188,18 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		rewardBundle := false
 		if result == 1 && s.inventory != nil && s.monster != 0 && s.gameDataRoot != "" {
-			rewards, rewardErr := gamedata.BattleDeckRewards(s.gameDataRoot, s.gameDataVersion, 21, s.deck)
-			if rewardErr != nil {
-				return 0, nil, true, fmt.Errorf("battle: monster %d deck %d rewards: %w", s.monster, s.deck, rewardErr)
+			if s.pack <= 0 {
+				return 0, nil, true, errors.New("battle: victory has no locked pack")
 			}
-			items, grantErr := s.inventory.GrantOnce(fmt.Sprintf("pack21:monster%d:deck%d", s.monster, s.deck), rewards)
+			loader := s.loadRewards
+			if loader == nil {
+				loader = gamedata.BattleDeckRewards
+			}
+			rewards, rewardErr := loader(s.gameDataRoot, s.gameDataVersion, s.pack, s.deck)
+			if rewardErr != nil {
+				return 0, nil, true, fmt.Errorf("battle: pack %d monster %d deck %d rewards: %w", s.pack, s.monster, s.deck, rewardErr)
+			}
+			items, grantErr := s.inventory.GrantOnce(fmt.Sprintf("pack%d:monster%d:deck%d", s.pack, s.monster, s.deck), rewards)
 			if grantErr != nil {
 				return 0, nil, true, grantErr
 			}
@@ -198,10 +223,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 			response = wire.AppendBytes(response, field, nil)
 		}
-		s.entered, s.deck, s.initialBlue = false, 0, nil
+		s.entered, s.deck, s.pack, s.initialBlue = false, 0, 0, nil
 		return 15, response, true, nil
 	case "/BattleExit":
-		s.entered, s.index, s.round, s.deck, s.initialBlue = false, 0, 0, 0, nil
+		s.entered, s.index, s.round, s.deck, s.pack, s.initialBlue = false, 0, 0, 0, 0, nil
 		return 388, nil, true, nil
 	}
 	panic("unreachable")

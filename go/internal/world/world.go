@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"sync"
 
 	"bd2server/internal/deck"
 	"bd2server/internal/gamedata"
@@ -64,7 +65,13 @@ func Load(seedPath, gameDataRoot, gameDataVersion, characterStatePath string, st
 		return nil, fmt.Errorf("world: start quest %d is absent from QuestTable%d", seed.StartQuestID, seed.PackID)
 	}
 	transition := transitions[seed.PackID]
-	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions}
+	activePack := seed.PackID
+	if saved, found := state.Position(); found {
+		if _, known := packs[saved.PackID]; known {
+			activePack = saved.PackID
+		}
+	}
+	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack}
 	if err := service.MigrateClearedRewards(); err != nil {
 		return nil, fmt.Errorf("world: migrate cleared quest rewards: %w", err)
 	}
@@ -73,20 +80,49 @@ func Load(seedPath, gameDataRoot, gameDataVersion, characterStatePath string, st
 
 func (s *Service) CharacterService() *player.CharacterStore { return s.characters }
 
+func (s *Service) EarnedQuestCostume() (player.Costume, bool) {
+	return s.seed.RewardCostume, s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID)
+}
+
+// CurrentPackID returns the story pack selected by the latest successful
+// PackInGameInfo request. BattleEnter does not carry a pack field, so battle
+// sessions lock this value when they begin. On restart, Load seeds it from the
+// persisted position and finally falls back to the versioned starter pack.
+func (s *Service) CurrentPackID() (int, error) {
+	s.activePackMu.RLock()
+	packID := s.activePack
+	s.activePackMu.RUnlock()
+	if packID == 0 {
+		packID = s.seed.PackID
+	}
+	if _, known := s.questsFor(packID); !known || !s.packUnlocked(packID) {
+		return 0, fmt.Errorf("world: current pack %d is unavailable", packID)
+	}
+	return packID, nil
+}
+
+func (s *Service) setCurrentPack(packID int) {
+	s.activePackMu.Lock()
+	s.activePack = packID
+	s.activePackMu.Unlock()
+}
+
 type Service struct {
-	seed        Seed
-	state       *progress.Store
-	starter     *player.Starter
-	equipment   *player.EquipmentInventory
-	inventory   *player.Inventory
-	wallet      *player.Wallet
-	characters  *player.CharacterStore
-	collection  *player.CollectionStore
-	decks       *deck.Store
-	quests      map[int]gamedata.QuestDesign
-	transition  gamedata.PackTransition
-	packs       map[int]map[int]gamedata.QuestDesign
-	transitions map[int]gamedata.PackTransition
+	seed         Seed
+	state        *progress.Store
+	starter      *player.Starter
+	equipment    *player.EquipmentInventory
+	inventory    *player.Inventory
+	wallet       *player.Wallet
+	characters   *player.CharacterStore
+	collection   *player.CollectionStore
+	decks        *deck.Store
+	quests       map[int]gamedata.QuestDesign
+	transition   gamedata.PackTransition
+	packs        map[int]map[int]gamedata.QuestDesign
+	transitions  map[int]gamedata.PackTransition
+	activePackMu sync.RWMutex
+	activePack   int
 }
 
 func (s *Service) AttachCollection(collection *player.CollectionStore) error {
@@ -138,7 +174,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		for _, costume := range costumes {
 			response = wire.AppendBytes(response, 1, encodeCostume(costume))
 		}
-		response = wire.AppendBytes(response, 1, encodeCostume(s.seed.RewardCostume))
+		if s.collection == nil {
+			response = wire.AppendBytes(response, 1, encodeCostume(s.seed.RewardCostume))
+		}
 		return 40, response, true, nil
 	case "/PackInGameInfo":
 		pack, err := requestPack(request)
@@ -148,6 +186,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if !s.packUnlocked(pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
 		}
+		s.setCurrentPack(pack)
 		slog.Info("team trace: deliver pack progress", "pack", pack, "clearedQuests", s.state.ClearedQuests(pack), "storyCharacters", s.storyCharacters(pack))
 		return 5, s.packInfoFor(pack), true, nil
 	case "/QuestClear":
@@ -169,6 +208,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		if err := s.state.ClearQuest(quest, pack); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
+		}
+		if s.collection != nil && quest == s.seed.BattleUnlockQuestID && pack == s.seed.PackID {
+			if err := s.collection.AttachRewardCostume(s.seed.RewardCostume); err != nil {
+				return 0, nil, true, fmt.Errorf("world: attach cleared quest costume: %w", err)
+			}
 		}
 		slog.Info("team trace: quest cleared", "pack", pack, "quest", quest, "changesBattleDeck", pack == s.seed.PackID && quest == s.seed.BattleUnlockQuestID)
 		return 18, s.clearResponse(pack, quest, design.Rewards[0], items, questEquipment), true, nil
@@ -223,8 +267,8 @@ func (s *Service) transitionFor(packID int) gamedata.PackTransition {
 }
 
 // packUnlocked follows the static story chain and requires every preceding
-// pack to be complete. This accepts pack22 after pack21 quest38 without
-// accidentally exposing arbitrary tables from the shared GameData database.
+// pack to be complete. This accepts the configured next story pack only after
+// its predecessor is complete, without exposing arbitrary GameData tables.
 func (s *Service) packUnlocked(packID int) bool {
 	current := s.seed.PackID
 	for steps := 0; steps < 64 && current != 0; steps++ {
@@ -370,7 +414,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 }
 
 // packInfo is the canonical protobuf encoding of the semantic new-account
-// pack21 state.  Its first-call bytes match the 2.34.13 observed response.
+// starter-pack state. Its first-call bytes match the 2.34.13 observed response.
 func (s *Service) packInfo() []byte {
 	return s.packInfoFor(s.seed.PackID)
 }
@@ -410,8 +454,8 @@ func (s *Service) packInfoFor(packID int) []byte {
 	}
 	out = wire.AppendString(out, 4, position)
 	// The remaining starter-only records were observed in the official
-	// pack21 response. They represent reputation, hunting-ground, statue, and
-	// reward state, not generic pack defaults, so a newly entered pack22 must
+	// starter-pack response. They represent reputation, hunting-ground, statue,
+	// and reward state, not generic defaults, so a newly entered later pack must
 	// not inherit them.
 	if packID != s.seed.PackID {
 		visit := wire.AppendVarint(nil, 5, uint64(packID))
@@ -653,7 +697,7 @@ func (s *Service) PictorialCostumes() []player.Costume {
 	if s.collection != nil {
 		result = s.collection.Costumes()
 	}
-	if s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
+	if s.collection == nil && s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
 		result = append(result, s.seed.RewardCostume)
 	}
 	return result

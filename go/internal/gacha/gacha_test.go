@@ -74,6 +74,9 @@ func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
 	if err != nil || !ok || code != 61 {
 		t.Fatalf("confirm code=%d ok=%v err=%v", code, ok, err)
 	}
+	if service.FirstGachaCompleted() {
+		t.Fatal("infinite product incorrectly completed the subtype-3 first pick")
+	}
 	reward, found, err := wire.Bytes(response, 1)
 	if err != nil || !found || countFields(reward, 2) != 1 || countFields(reward, 3) != 1 || countFields(reward, 9) != 9 || countFields(reward, 8) != 4 {
 		t.Fatalf("reward chars=%d costumes=%d upgrades=%d exchanges=%d found=%v err=%v", countFields(reward, 2), countFields(reward, 3), countFields(reward, 9), countFields(reward, 8), found, err)

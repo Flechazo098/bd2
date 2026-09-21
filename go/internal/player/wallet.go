@@ -77,6 +77,36 @@ func (s *Wallet) CanSpendFreeJewelry(amount uint64) bool {
 	return amount > 0 && s.state.FreeJewelry >= amount
 }
 
+func (s *Wallet) CanSpendGold(amount uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return amount > 0 && s.state.Gold >= amount
+}
+
+// SpendGoldOnce covers the currency part of a GameData-defined class-up.
+// Its identity is the old character instance/stage so an interrupted request
+// cannot charge the same promotion a second time.
+func (s *Wallet) SpendGoldOnce(identity string, amount uint64) (Currency, error) {
+	if identity == "" || amount == 0 {
+		return Currency{}, errors.New("player: invalid gold spend")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Spent[identity] {
+		return s.state.Currency, nil
+	}
+	if s.state.Gold < amount {
+		return Currency{}, errors.New("player: insufficient gold")
+	}
+	next := cloneWallet(s.state)
+	next.Gold -= amount
+	next.Spent[identity] = true
+	if err := s.commit(next); err != nil {
+		return Currency{}, err
+	}
+	return next.Currency, nil
+}
+
 func (s *Wallet) WasSpent(identity string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

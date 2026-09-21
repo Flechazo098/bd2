@@ -7,6 +7,74 @@ import (
 	"bd2server/internal/gamedata"
 )
 
+func TestEarnedQuestCostumeSharesPotentialLedgerAndKeepsSingleOwnedInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collection.json")
+	store, err := OpenCollectionStore(path, []Costume{{InvenIndex: 123, ID: 60101, UseChar: 44}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reward := Costume{InvenIndex: 609338889, ID: 3501, UseChar: 535607162}
+	if err := store.AttachRewardCostume(reward); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Costumes(); len(got) != 2 || got[1].InvenIndex != reward.InvenIndex {
+		t.Fatalf("earned costume view=%+v", got)
+	}
+	if err := store.ActivateCostumePotential(reward.InvenIndex, []uint64{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, found := store.CostumeByIndex(reward.InvenIndex)
+	if !found || len(got.PotentialIDs) != 2 || got.PotentialIDs[0] != 1 || got.PotentialIDs[1] != 2 {
+		t.Fatalf("earned costume potential=%+v found=%v", got, found)
+	}
+	restarted, err := OpenCollectionStore(path, []Costume{{InvenIndex: 123, ID: 60101, UseChar: 44}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.AttachRewardCostume(reward); err != nil {
+		t.Fatal(err)
+	}
+	got, found = restarted.CostumeByIndex(reward.InvenIndex)
+	if !found || len(got.PotentialIDs) != 2 {
+		t.Fatalf("restarted earned costume potential=%+v found=%v", got, found)
+	}
+	if err := restarted.AttachRewardCostume(reward); err == nil {
+		t.Fatal("duplicate earned quest costume accepted")
+	}
+}
+
+func TestUpdateCollectionCharacterAcrossPromotionChangesDesignNotInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collection.json")
+	store, err := OpenCollectionStore(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.data.Characters = []Character{{InvenIndex: 920000054, ID: 6510, Level: 1}}
+	if err := store.commit(store.data); err != nil {
+		t.Fatal(err)
+	}
+	promoted := Character{InvenIndex: 920000054, ID: 6514, Level: 100}
+	if err := store.CanUpdateCharacter(6510, promoted); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateCharacter(6510, promoted); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := OpenCollectionStore(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, found := loaded.FindCharacter(920000054); !found || got.ID != 6514 || got.Level != 100 {
+		t.Fatalf("persisted promoted collection character=%+v found=%v", got, found)
+	}
+	if err := loaded.UpdateCharacter(6510, promoted); err == nil {
+		t.Fatal("stale old design accepted")
+	}
+	if err := loaded.CanUpdateCharacter(6514, Character{InvenIndex: 920000055, ID: 6514, Level: 100}); err == nil {
+		t.Fatal("unknown instance accepted")
+	}
+}
+
 func TestRepairCostumeOverflowCapsLegacyLevelAndIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "collection.json")
 	store, err := OpenCollectionStore(path, nil)
@@ -137,6 +205,55 @@ func TestGrantDifferentCostumesForSameCharacterReusesCharacter(t *testing.T) {
 	}
 	if store.Characters()[0].CostumeID != 64901 {
 		t.Fatalf("initial character costume_id=%d", store.Characters()[0].CostumeID)
+	}
+}
+
+func TestFirstGachaCompletionIsExplicitAndAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collection.json")
+	store, err := OpenCollectionStore(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.FirstGachaCompleted() {
+		t.Fatal("new collection reports completed first gacha")
+	}
+	catalog, err := gamedata.NewRegularGachaCatalog(
+		map[uint64]gamedata.RegularGacha{20: {ID: 20, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 64901, Weight: 1}}}},
+		map[uint64]gamedata.CharacterDesign{64901: {ID: 6490, HP: 166, CostumeMaxLevel: 5}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.GrantRegularPurchase("regular-gacha:20:seq:1", []uint64{64901}, catalog, GachaPurchase{
+		Group: gamedata.GachaGroupDesign{ID: 2, GachaSubType: 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.FirstGachaCompleted() {
+		t.Fatal("subtype-3 purchase did not persist first-gacha completion")
+	}
+	restored, err := OpenCollectionStore(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restored.FirstGachaCompleted() {
+		t.Fatal("first-gacha completion did not survive restart")
+	}
+}
+
+func TestFirstGachaCompletionRejectsRewardPayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "collection.json")
+	store, err := OpenCollectionStore(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.data.Grants[FirstGachaCompletedIdentity] = CollectionGrant{ViewCostumeIDs: []uint64{1}}
+	if err := store.commit(store.data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenCollectionStore(path, nil); err == nil {
+		t.Fatal("collection accepted a non-empty first-gacha marker")
 	}
 }
 

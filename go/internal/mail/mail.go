@@ -20,6 +20,24 @@ import (
 const packetCode = 131
 const openPacketCode = 132
 
+// itemDBInfoTypes are ElementType values whose successful mail claim is
+// represented by ItemDBInfo in RewardDBInfoBundle.  They are deliberately
+// separate from character (6), equipment (10), and costume (11): the client
+// requires CharDBInfo, EquipDBInfo, and CostumeDBInfo for those rewards, and
+// this mailbox owns no such domain stores.  The values are from 2.34.13
+// DataManager.GetItemInfo and ItemDBInfo, not inferred from table names.
+var itemDBInfoTypes = map[uint64]bool{
+	5:  true, // food
+	7:  true, // cooking recipe/result
+	8:  true, // resource
+	9:  true, // random box
+	13: true, // quest item
+	14: true, // use item
+	17: true, // collection item
+	27: true, // my-room item
+	29: true, // instant-use item
+}
+
 // MailDBInfo is the persisted shape used by the client.  A mail either has a
 // literal title/body (ordinary system mail), or a TemplateID and Sender (the
 // localized/template-driven mail form).  Reward fields are parallel arrays:
@@ -169,10 +187,17 @@ type stateSnapshot struct {
 type Service struct {
 	mu        sync.Mutex
 	Starter   *Starter
+	seedPath  string
+	seedStamp fileStamp
 	path      string
 	inventory *player.Inventory
 	wallet    *player.Wallet
 	state     stateSnapshot
+}
+
+type fileStamp struct {
+	size    int64
+	modTime int64
 }
 
 func OpenService(path string, starter *Starter, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
@@ -203,6 +228,25 @@ func OpenService(path string, starter *Starter, inventory *player.Inventory, wal
 	return s, nil
 }
 
+// AttachSeedPath enables development-time hot reloading of an atomically
+// replaced mail seed. It is deliberately a mailbox concern, not an HTTP debug
+// endpoint: the client continues to call only the normal /MailInfo API.
+// A changed file is validated before replacing the in-memory starter. A bad
+// replacement leaves the last known-good starter intact and fails that request.
+func (s *Service) AttachSeedPath(path string) error {
+	if s == nil || path == "" {
+		return errors.New("mail: invalid seed watch path")
+	}
+	stamp, err := seedFileStamp(path)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seedPath, s.seedStamp = filepath.Clean(path), stamp
+	return nil
+}
+
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	if path != "/MailInfo" && path != "/MailOpen" {
 		return 0, nil, false, nil
@@ -217,10 +261,44 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if path == "/MailInfo" {
+		if err := s.reloadSeedIfChanged(); err != nil {
+			return 0, nil, true, err
+		}
 		return packetCode, s.info(), true, nil
 	}
 	response, err := s.open(request)
 	return openPacketCode, response, true, err
+}
+
+func seedFileStamp(path string) (fileStamp, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}, fmt.Errorf("mail: stat watched seed: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fileStamp{}, errors.New("mail: watched seed is not a regular file")
+	}
+	return fileStamp{size: info.Size(), modTime: info.ModTime().UnixNano()}, nil
+}
+
+// reloadSeedIfChanged is called with s.mu held.
+func (s *Service) reloadSeedIfChanged() error {
+	if s.seedPath == "" {
+		return nil
+	}
+	stamp, err := seedFileStamp(s.seedPath)
+	if err != nil {
+		return err
+	}
+	if stamp == s.seedStamp {
+		return nil
+	}
+	next, err := Load(s.seedPath)
+	if err != nil {
+		return fmt.Errorf("mail: reject changed seed and retain last known-good mailbox: %w", err)
+	}
+	s.Starter, s.seedStamp = next, stamp
+	return nil
 }
 
 func (s *Service) info() []byte {
@@ -278,13 +356,19 @@ func (s *Service) open(request []byte) ([]byte, error) {
 				currency := wire.AppendVarint(nil, 3, reward.Type)
 				currency = wire.AppendVarint(currency, 4, reward.Count)
 				bundle = wire.AppendBytes(bundle, 1, currency)
-			case 8:
+			case 28:
+				// DataManager recognizes this type, but RewardDBInfoBundle
+				// carries MyRoomTrophyDBInfo in a separate field.  Encoding it as
+				// ItemDBInfo would make the local state and client model disagree.
+				return nil, errors.New("mail: my-room trophy rewards require MyRoomTrophyDBInfo")
+			default:
+				if !itemDBInfoTypes[reward.Type] {
+					return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
+				}
 				if reward.ID == 0 || reward.Count == 0 {
 					return nil, errors.New("mail: invalid item reward")
 				}
 				items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
-			default:
-				return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
 			}
 		}
 		if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {
