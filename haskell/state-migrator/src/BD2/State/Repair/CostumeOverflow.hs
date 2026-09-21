@@ -184,4 +184,4 @@ readIndex text = case reads (Text.unpack text) of
   _ -> Nothing
 
 overflowProblem :: Text -> Text -> [Word64] -> Problem
-overflowProblem code message related = Problem code Error ["collection", "costume_overflow"] message related
+overflowProblem code = Problem code Error ["collection", "costume_overflow"]

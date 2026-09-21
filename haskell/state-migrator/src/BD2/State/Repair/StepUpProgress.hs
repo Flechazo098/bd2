@@ -31,7 +31,7 @@ repairStepUpProgress :: StepUpFact -> V2.Snapshot -> Either [Problem] (V2.Snapsh
 repairStepUpProgress fact snapshot
   | Text.null (stepUpGameDataVersion fact) || stepUpGameDataVersion fact /= snapshot ^. V2Fields.gameDataVersion =
       Left [problem "repair.step_up_game_data_version" "step-up design and snapshot GameData versions differ" []]
-  | stepUpGroupId fact == 0 || null (orderedGachaIds fact) || any (== 0) (orderedGachaIds fact) =
+  | stepUpGroupId fact == 0 || null (orderedGachaIds fact) || 0 `elem` orderedGachaIds fact =
       Left [problem "repair.step_up_invalid_fact" "ordered step-up design must have nonzero IDs" []]
   | Set.size (Set.fromList (orderedGachaIds fact)) /= length (orderedGachaIds fact) =
       Left [problem "repair.step_up_duplicate_gacha" "step-up design contains duplicate gacha IDs" (orderedGachaIds fact)]
@@ -58,7 +58,7 @@ repairStepUpProgress fact snapshot
             else Right (snapshot & V2Fields.collection . V2Fields.stepUpProgress .~ repairedEntries, repairedCount)
   where
     problem :: Text -> Text -> [Word64] -> Problem
-    problem code message related = Problem code Error ["collection", "step_up_progress"] message related
+    problem code = Problem code Error ["collection", "step_up_progress"]
 
 newCount :: Text -> Word64 -> V1.NamedCount
 newCount identity count =

@@ -7,6 +7,7 @@ module BD2.State.Repair.GachaProgress
   ) where
 
 import BD2.State.Domain
+import Control.Monad (when)
 import Data.Foldable (toList)
 import Data.List (find, sortOn)
 import qualified Data.Map.Strict as Map
@@ -129,7 +130,7 @@ sessionOrder session
 parseIdentity :: Map.Map Word64 GachaGroupFact -> Text -> Maybe (Word64, Text, Word64, GachaGroupFact)
 parseIdentity groups identity = do
   let parts = Text.splitOn ":" identity
-  if length parts < 4 || head parts /= "regular-gacha" then Nothing else pure ()
+  when (length parts < 4 || head parts /= "regular-gacha") Nothing
   gachaId <- readWord (parts !! 1)
   fact <- Map.lookup gachaId groups
   sequenceNumber <- readWord (last parts)
