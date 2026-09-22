@@ -91,30 +91,6 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 }
 ```
 
-## 存档检查点
-
-检查点包含九份账号状态和 SHA-256 清单：
-
-```powershell
-python .\tools\python\save_checkpoint.py create --label before-test
-python .\tools\python\save_checkpoint.py verify .\data\state\checkpoints\某检查点
-
-# 第一次只演练；不会写入
-python .\tools\python\save_checkpoint.py restore .\data\state\checkpoints\某检查点
-
-# 确认客户端和服务端均停止后才真正恢复
-python .\tools\python\save_checkpoint.py restore .\data\state\checkpoints\某检查点 --apply
-```
-
-开发期存档格式发生变化时，不在运行时加入旧格式猜测或兼容分支。应编写一次性 Python 编辑器，先演练，再在客户端和服务端停止后创建完整检查点并原子改档。例如首次抽卡完成状态：
-
-```powershell
-python .\tools\python\set_first_gacha_state.py --state .\data\state --completed
-python .\tools\python\set_first_gacha_state.py --state .\data\state --completed --apply
-```
-
-正式运行时代码只接受编辑后的最终语义；开发工具不进入发布包。
-
 ## 临时邮件物品发放
 
 `dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。另提供单一金币货币条目 `type4/id0`，填写的数量在领取后直接叠加至钱包，不再发送“金币随机箱”。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
@@ -137,23 +113,9 @@ python .\tools\python\dev_mail_grant.py serve `
 
 客户端 `MailDBInfo.ItemType`、`ItemId` 和 `ItemCount` 均为 `int32`，所以该工具把单附件数量限制为 `1..2147483647`；每封工具邮件固定只有一个附件。当前官方样本中单封最多观察到 5 个附件，但没有证据证明这是协议上限，因此工具不据此宣称或实施“5 件”上限。客户端邮箱 UI 按一次请求加载最多 100 封普通邮件，现有本地服务目前回传全部未开封邮件，故大量历史未领取邮件的实际 UI 表现尚待验证。现有本地 `/MailOpen` 对同一邮件 ID 的领取由 `data/state/mail.json` 的 `opened` 集合持久化，重试不会重复发奖；工具会在完整种子中分配唯一递增邮件 ID。
 
-曾从开发工具发放的 `ResourceTable 90045`（金币遗失物品）会在客户端邮件详情打开时因缺少 `CostumeTable id405` 崩溃。修复工具 `repair_invalid_dev_mail_resources.py` 默认只演练；确需移除已误领的 `90045/90046` 实例时，先停止客户端与服务端，再用 `--apply` 自动创建、校验九文件备份并只修 `items.json`，保留邮件已领取与发放台账。
-
 这不是“所有 GameData 表都可发放”的虚假承诺：角色（元素类型 6）、装备（10）、服装（11）和我的房间奖杯（28）在客户端 `RewardDBInfoBundle` 中分别必须使用 `CharDBInfo`、`EquipDBInfo`、`CostumeDBInfo`、`MyRoomTrophyDBInfo`，而当前本地邮件服务尚未连接相应领域存档，工具不会提供它们；直接伪装成 `ItemDBInfo` 会造成客户端状态错误。付费/普通货币之外的特殊货币亦不在当前本地钱包实现范围内。客户端 `DataManager.GetItemDTO` 对 `ContentTicket`（19）和 `LobbySettingItem`（25）没有可用于 `ItemDBInfo` 领取的 DTO 分支，故也没有提供；`GetItemInfo` 的显示分支不足以证明可安全存储。若要补齐这些类型，需要先实现对应的服务端存储、去重及正确 reward-bundle 字段，不需要客户端 patch。
 
 热载只接受经过 `mail.Starter.Validate` 校验的完整 JSON 种子：文件未变化时不会重新读取；被检测到的坏替换会保留上一次已验证邮箱，并使该次 `/MailInfo` 请求失败而不会部分加载。工具本身总是完整写临时文件、`fsync` 后原子替换，正常发放不会让服务器看到半文件。
-
-## 任务 38 定向回档
-
-该工具只撤销 pack21 quest38 的进度、四项物品和 1500 金币，保留其他账号资产；兼容旧存档和 v2 `pack:quest` 键：
-
-```powershell
-# 只读预览
-python .\tools\python\rollback_quest38.py .\data\state .\data\state\checkpoints\参考检查点
-
-# 停止客户端和服务端后应用；工具会先备份九份状态并校验哈希
-python .\tools\python\rollback_quest38.py .\data\state .\data\state\checkpoints\参考检查点 --apply
-```
 
 ## 工具测试
 

@@ -15,9 +15,14 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string Guid = "bd2.localidentity";
     public const string Name = "BD2 Local Identity";
-    public const string Version = "0.4.0";
+    public const string Version = "0.5.1";
     private const string LocalServerURL = "http://127.0.0.1:8080/game/";
     private static ManualLogSource Log;
+
+    internal static void LogWarning(string message)
+    {
+        Log?.LogWarning(message);
+    }
 
     private void Awake()
     {
@@ -83,14 +88,29 @@ public sealed class Plugin : BaseUnityPlugin
                 falseTimeoutTelemetry,
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(SkipLocalTimeoutTelemetry)));
 
-            InstallLocalPurchaseBypass(harmony);
-
-            InstallDatabaseDiagnostics(harmony);
+            // Optional patches must not suppress one another on a client
+            // version mismatch. In particular, a missing age-gate method
+            // must not disable the local purchase bypass or DB diagnostics.
+            TryInstall("age-gate persistence", () => InstallAgeGatePersistence(harmony));
+            TryInstall("local purchase bypass", () => InstallLocalPurchaseBypass(harmony));
+            TryInstall("database diagnostics", () => InstallDatabaseDiagnostics(harmony));
             Logger.LogInfo("Local identity active: AppManager.UseSdk => false");
         }
         catch (Exception ex)
         {
             Logger.LogError("Local identity patch failed: " + ex);
+        }
+    }
+
+    private void TryInstall(string name, Action install)
+    {
+        try
+        {
+            install();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Local identity " + name + " patch failed: " + ex);
         }
     }
 
@@ -135,6 +155,73 @@ public sealed class Plugin : BaseUnityPlugin
         // seconds. Network request failures have their own callbacks. In
         // 2.34.13 it can outlive a successful local maintenance response.
         return false;
+    }
+
+    private static void InstallAgeGatePersistence(Harmony harmony)
+    {
+        // LoginUserResponse field 13 is the client's sole gate for opening
+        // AgeGatePopupUI.  Retain the original first-run UI and request; only
+        // change a later LoginUser parse after its successful local state has
+        // been read from disk.
+        Type commonPacket = FindType("ὨὬὣὫὩὯὩὩὣὠὧ");
+        MethodInfo updateAgeGate = commonPacket?.GetMethod(
+            "ὧὮὦὠὬὥὮὢὦὦὥ",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            new[] { typeof(bool), typeof(int), typeof(int), typeof(int), typeof(Action) },
+            null);
+        if (updateAgeGate == null)
+        {
+            throw new MissingMethodException("CommonPacket.SendUpdateAgeGateRequest(bool, int, int, int, Action) was not found");
+        }
+        Type loginUserResponse = FindType("Proto.Net.LoginUserResponse");
+        MethodInfo needsAgeVerificationSetter = loginUserResponse?.GetProperty(
+            "NeedsAgeVerification",
+            BindingFlags.Instance | BindingFlags.Public)?.GetSetMethod();
+        if (needsAgeVerificationSetter == null)
+        {
+            throw new MissingMethodException("LoginUserResponse.NeedsAgeVerification setter was not found");
+        }
+        harmony.Patch(
+            updateAgeGate,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(UpdateAgeGateRequestPrefix)));
+        harmony.Patch(
+            needsAgeVerificationSetter,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(NeedsAgeVerificationSetterPrefix)));
+
+        Log?.LogInfo("Local age-gate confirmation persistence active (confirmed=" + AgeGateState.IsConfirmed() + ")");
+    }
+
+    private static void NeedsAgeVerificationSetterPrefix(ref bool value)
+    {
+        if (value && AgeGateState.IsConfirmed())
+        {
+            value = false;
+            Log?.LogInfo("Used persisted local age-gate confirmation for LoginUser");
+        }
+    }
+
+    private static void UpdateAgeGateRequestPrefix(ref Action __4)
+    {
+        // CommonPacket invokes this callback only after it has parsed the
+        // empty UpdateAgeGateResponse and accepted errorType == 0.  Wrapping
+        // it therefore never records failed/cancelled submissions.
+        Action continuation = __4;
+        __4 = delegate
+        {
+            try
+            {
+                AgeGateState.MarkConfirmed();
+                Log?.LogInfo("Stored successful local age-gate confirmation");
+            }
+            catch (Exception ex)
+            {
+                // Preserve the original continuation: inability to persist
+                // should not break a successfully completed first login.
+                Log?.LogWarning("Could not persist local age-gate confirmation: " + ex.Message);
+            }
+            continuation?.Invoke();
+        };
     }
 
     private static void InstallLocalPurchaseBypass(Harmony harmony)

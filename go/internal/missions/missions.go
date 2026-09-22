@@ -75,6 +75,17 @@ func Open(path string, design *gamedata.MissionDesign, inventory *player.Invento
 	return s, nil
 }
 
+func (s *Service) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.persist(cloneSnapshot(s.state))
+}
+
 // CompleteMission is the only way normal mission eligibility enters this
 // package. It is persistent and idempotent. Gameplay/event handlers should
 // call it only after they have independently verified the table condition.
@@ -655,6 +666,10 @@ func (s *Service) commit(next snapshot) error {
 	if equalStrings(next.Completed, s.state.Completed) && equalStrings(next.Claimed, s.state.Claimed) && equalProgress(next.Progress, s.state.Progress) {
 		return nil
 	}
+	return s.persist(next)
+}
+
+func (s *Service) persist(next snapshot) error {
 	b, err := json.Marshal(next)
 	if err != nil {
 		return err

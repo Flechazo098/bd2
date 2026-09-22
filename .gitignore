@@ -30,6 +30,7 @@ TestResults/
 .ghc.environment.*
 
 # Python caches and temporary files
+tools/python/repair/
 __pycache__/
 **/__pycache__/
 *.py[cod]

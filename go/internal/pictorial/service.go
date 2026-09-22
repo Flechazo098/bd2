@@ -23,9 +23,12 @@ type Owned interface {
 }
 
 type Service struct {
-	Design     *gamedata.PictorialDesign
-	Owned      Owned
-	baseHealth sync.Map // [2]uint64 (design character ID, level) -> design-only base HP
+	Design *gamedata.PictorialDesign
+	Owned  Owned
+	// AwakeContributions is injected by the character-awakening domain so all
+	// server-side maximum-HP consumers use the same derived account state.
+	AwakeContributions func(player.Character) ([]gamedata.StatContribution, error)
+	baseHealth         sync.Map // [2]uint64 (design character ID, level) -> design-only base HP
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
@@ -269,6 +272,13 @@ func (s *Service) MaxHealth(character player.Character) (uint64, error) {
 	contributions, err := s.Contributions()
 	if err != nil {
 		return 0, err
+	}
+	if s.AwakeContributions != nil {
+		awake, err := s.AwakeContributions(character)
+		if err != nil {
+			return 0, err
+		}
+		contributions = append(contributions, awake...)
 	}
 	maxHP := gamedata.AggregateStats(gamedata.BaseStats{Health: value.(float64)}, contributions).Health
 	if maxHP < 1 || maxHP > float64(^uint64(0)) {

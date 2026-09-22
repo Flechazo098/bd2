@@ -8,8 +8,8 @@ import (
 )
 
 func TestHandleAuditedEmptyResponses(t *testing.T) {
-	if got := len(EmptyPacketCodes()); got != 35 {
-		t.Fatalf("audited empty-response registry has %d paths, want 35", got)
+	if got := len(EmptyPacketCodes()); got != 34 {
+		t.Fatalf("audited empty-response registry has %d paths, want 34", got)
 	}
 	for path, wantCode := range EmptyPacketCodes() {
 		t.Run(path, func(t *testing.T) {
@@ -24,6 +24,9 @@ func TestHandleAuditedEmptyResponses(t *testing.T) {
 func TestHandleRejectsUnknownAndInvalidRequests(t *testing.T) {
 	if code, proto, ok, err := Handle("/not-a-real-endpoint", wire.AppendVarint(nil, 1, 1)); code != 0 || proto != nil || ok || err != nil {
 		t.Fatalf("unknown route was not fail-closed: code=%d proto=%x ok=%t err=%v", code, proto, ok, err)
+	}
+	if _, _, ok, err := Handle("/CharAwakeInfo", wire.AppendVarint(nil, 1, 1)); ok || err != nil {
+		t.Fatalf("stateful CharAwakeInfo must not be handled by feature defaults: ok=%v err=%v", ok, err)
 	}
 	for name, request := range map[string][]byte{
 		"empty":         nil,

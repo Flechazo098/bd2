@@ -352,24 +352,33 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 	return 146, response, true, nil
 }
 
-// buyEquipment is intentionally limited to the current three GameData-backed
-// pickup groups.  Equipment lives in its own inventory, but the official
-// GachaUser/GachaFixed records are shared protocol state and are persisted in
-// CollectionStore under the same request identity.
+// Scheduled equipment draws update GachaUser/GachaFixed accounting. Standalone
+// ticket-only draws have no schedule group and persist only their idempotency
+// marker plus the generated equipment instances.
 func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, design gamedata.EquipmentGacha) (int, []byte, bool, error) {
 	if s.equipmentInventory == nil {
 		return 146, nil, true, errors.New("gacha: equipment inventory not attached")
 	}
-	if buyType != 1 || design.PriceType != 3 {
+	if buyType != 1 || (!design.TicketOnly && design.PriceType != 3) {
 		return 146, nil, true, fmt.Errorf("gacha: unsupported equipment buy type %d", buyType)
 	}
+	if design.TicketOnly && len(tickets) == 0 {
+		return 146, nil, true, errors.New("gacha: ticket-only equipment draw requires a ticket")
+	}
 	for _, ticket := range tickets {
-		if len(design.TicketIDs) != 1 || ticket.ID != design.TicketIDs[0] {
+		allowed := false
+		for _, ticketID := range design.TicketIDs {
+			if ticket.ID == ticketID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
 			return 146, nil, true, fmt.Errorf("gacha: ticket %d is not valid for equipment gacha %d", ticket.ID, design.ID)
 		}
 	}
-	group, ok := s.equipmentCatalog.GroupForGacha(design.ID)
-	if !ok {
+	group, hasGroup := s.equipmentCatalog.GroupForGacha(design.ID)
+	if !hasGroup && !design.TicketOnly {
 		return 146, nil, true, fmt.Errorf("gacha: equipment gacha %d has no group", design.ID)
 	}
 	identity := s.requestIdentity(design.ID, seq)
@@ -388,7 +397,7 @@ func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, desig
 		for _, ticket := range tickets {
 			ticketCount += ticket.Count
 		}
-		if ticketCount > uint64(design.Count) {
+		if ticketCount > uint64(design.Count) || (design.TicketOnly && ticketCount != uint64(design.Count)) {
 			return 146, nil, true, errors.New("gacha: invalid equipment ticket count")
 		}
 		if ticketCount != 0 {
@@ -400,16 +409,27 @@ func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, desig
 			}
 		}
 		if remain := uint64(design.Count) - ticketCount; remain != 0 {
+			if design.TicketOnly {
+				return 146, nil, true, errors.New("gacha: ticket-only equipment draw cannot use diamonds")
+			}
 			if _, err := s.wallet.SpendFreeJewelryOnce(identity, design.Price/uint64(design.Count)*remain); err != nil {
 				return 146, nil, true, err
 			}
 		}
 		fixed := s.equipmentCatalog.Fixed()
-		roll, state, err := design.Roll(s.collection.GachaFixedCount(fixed.ID, 2), s.collection.GachaFixedCount(fixed.ID, 3), fixed)
+		var priorSR, priorUR uint64
+		if !design.TicketOnly {
+			priorSR = s.collection.GachaFixedCount(fixed.ID, 2)
+			priorUR = s.collection.GachaFixedCount(fixed.ID, 3)
+		}
+		roll, state, err := design.Roll(priorSR, priorUR, fixed)
 		if err != nil {
 			return 146, nil, true, err
 		}
-		fixedStates := []player.GachaFixedState{{FixedID: fixed.ID, Type: 2, Count: state.SRCount, ApplySort: state.SRSort}, {FixedID: fixed.ID, Type: 3, Count: state.URCount, ApplySort: state.URSort}}
+		var fixedStates []player.GachaFixedState
+		if !design.TicketOnly {
+			fixedStates = []player.GachaFixedState{{FixedID: fixed.ID, Type: 2, Count: state.SRCount, ApplySort: state.SRSort}, {FixedID: fixed.ID, Type: 3, Count: state.URCount, ApplySort: state.URSort}}
+		}
 		for sort, equipmentID := range roll {
 			main, sub, private, err := s.equipmentCatalog.RollOptions(equipmentID)
 			if err != nil {
@@ -431,7 +451,11 @@ func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, desig
 			}
 			entries = append(entries, saved)
 		}
-		grant, err = s.collection.GrantEquipmentPurchase(identity, uint64(len(entries)), player.GachaPurchase{Group: gamedata.GachaGroupDesign{ID: group.ID, PointCount: group.PointCount}, BuyType: buyType, Fixed: fixedStates})
+		if design.TicketOnly {
+			grant, err = s.collection.GrantEquipmentDraw(identity)
+		} else {
+			grant, err = s.collection.GrantEquipmentPurchase(identity, uint64(len(entries)), player.GachaPurchase{Group: gamedata.GachaGroupDesign{ID: group.ID, PointCount: group.PointCount}, BuyType: buyType, Fixed: fixedStates})
+		}
 		if err != nil {
 			return 146, nil, true, err
 		}

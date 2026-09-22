@@ -190,6 +190,29 @@ func TestHaskellMigrationPreservesSourceAndRejectsDuplicateCharacter(t *testing.
 	}
 }
 
+func TestRuntimeEquipmentAndMileageFieldsRoundTripThroughCurrentSchema(t *testing.T) {
+	equipment := equipmentDisk{
+		Version: "2.34.13", NextIndex: 910000002,
+		Equipment: []equipment{{InvenIndex: 910000001, ID: 943035, Rank: []uint64{1, 2, 3}, UpgradeAttempts: 27}},
+		Granted:   map[string]uint64{"test": 910000001},
+	}
+	wallet := walletDisk{
+		Version: "2.34.13", EquipMileage: 19, EquipMileageExchangeGage: 845,
+		Granted: map[string]bool{}, Spent: map[string]bool{},
+	}
+	equipmentProto := equipmentProto(equipment)
+	walletProto := walletProto(wallet)
+	if len(equipmentProto.Equipment) != 1 || equipmentProto.Equipment[0].UpgradeAttempts != 27 || walletProto.EquipMileage != 19 || walletProto.EquipMileageExchangeGage != 845 {
+		t.Fatalf("runtime fields missing from protobuf: equipment=%+v wallet=%+v", equipmentProto, walletProto)
+	}
+	if got := equipmentDiskFromProto(equipmentProto); len(got.Equipment) != 1 || got.Equipment[0].UpgradeAttempts != 27 {
+		t.Fatalf("equipment runtime field lost: %+v", got)
+	}
+	if got := walletDiskFromProto(walletProto); got.EquipMileage != 19 || got.EquipMileageExchangeGage != 845 {
+		t.Fatalf("wallet runtime fields lost: %+v", got)
+	}
+}
+
 func hasViolation(violations []*controlv1.Violation, code string) bool {
 	for _, violation := range violations {
 		if violation.Code == code && violation.Severity == controlv1.Severity_SEVERITY_ERROR {

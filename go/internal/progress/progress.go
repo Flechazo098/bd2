@@ -159,6 +159,17 @@ func OpenStore(path string) (*Store, error) {
 	return s, nil
 }
 
+func (s *Store) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.commit(s.position, s.tutorials, s.quests, s.cleared)
+}
+
 // commit writes a complete snapshot before exposing the new state. Caller
 // holds mu; failure leaves the in-memory player state unchanged.
 func (s *Store) commit(position SavedPosition, tutorials map[int]struct{}, quests map[string]QuestProgress, cleared map[string]struct{}) error {

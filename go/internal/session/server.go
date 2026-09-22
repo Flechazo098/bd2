@@ -15,6 +15,7 @@ import (
 	"bd2server/internal/cryptox"
 	"bd2server/internal/progress"
 	"bd2server/internal/protocol"
+	"bd2server/internal/statetx"
 	"bd2server/internal/transport"
 	"bd2server/internal/wire"
 )
@@ -35,6 +36,11 @@ type SessionAware interface {
 	BeginSession(id string)
 }
 
+type StateCoordinator interface {
+	Check() error
+	BeginOperation() (statetx.RequestOperation, error)
+}
+
 type Server struct {
 	mu       sync.Mutex
 	key      []byte
@@ -43,6 +49,20 @@ type Server struct {
 	login    LoginService
 	handlers []Handler
 	progress *progress.Store
+	stateTx  StateCoordinator
+}
+
+// AttachStateCoordinator wraps each authenticated request (the complete batch
+// for BatchRequest) in the account write-ahead transaction. An uncertain
+// operation fail-stops the dispatcher, including subsequent login attempts.
+func (s *Server) AttachStateCoordinator(coordinator StateCoordinator) error {
+	if coordinator == nil {
+		return errors.New("session state coordinator is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stateTx = coordinator
+	return nil
 }
 
 func NewServer(login LoginService, handlers ...Handler) (*Server, error) {
@@ -75,6 +95,11 @@ func NewServerWithProgress(login LoginService, player *progress.Store, handlers 
 func (s *Server) DispatchRaw(path string, body []byte, cookie string) (transport.RawReply, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stateTx != nil {
+		if err := s.stateTx.Check(); err != nil {
+			return transport.RawReply{}, fmt.Errorf("account state unavailable: %w", err)
+		}
+	}
 	if path == "/LoginUser" {
 		request, err := cryptox.DecryptBase64Payload(string(body), cryptox.Key())
 		if err != nil {
@@ -102,18 +127,60 @@ func (s *Server) DispatchRaw(path string, body []byte, cookie string) (transport
 		return transport.RawReply{}, err
 	}
 	if path == "/BatchRequest" {
-		return s.handleBatch(body)
+		return s.withStateTransaction(func() (transport.RawReply, error) {
+			return s.handleBatch(body)
+		})
 	}
 	request, err := cryptox.DecryptBase64Payload(string(body), s.key)
 	if err != nil {
 		return transport.RawReply{}, fmt.Errorf("%s decrypt: %w", path, err)
 	}
-	code, response, err := s.dispatch(path, request)
+	return s.withStateTransaction(func() (transport.RawReply, error) {
+		code, response, err := s.dispatch(path, request)
+		if err != nil {
+			return transport.RawReply{}, err
+		}
+		encoded, err := protocol.Encode(code, response, s.key, time.Now().UnixMilli())
+		return transport.RawReply{Body: encoded}, err
+	})
+}
+
+func (s *Server) withStateTransaction(run func() (transport.RawReply, error)) (reply transport.RawReply, err error) {
+	if s.stateTx == nil {
+		return run()
+	}
+	operation, err := s.stateTx.BeginOperation()
 	if err != nil {
+		return transport.RawReply{}, fmt.Errorf("begin account transaction: %w", err)
+	}
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		rollbackErr := operation.Rollback()
+		if recovered := recover(); recovered != nil {
+			panic(recovered)
+		}
+		if rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
+	}()
+	reply, err = run()
+	if err != nil {
+		rollbackErr := operation.Rollback()
+		finished = true
+		if rollbackErr != nil {
+			return transport.RawReply{}, errors.Join(err, rollbackErr)
+		}
 		return transport.RawReply{}, err
 	}
-	encoded, err := protocol.Encode(code, response, s.key, time.Now().UnixMilli())
-	return transport.RawReply{Body: encoded}, err
+	if err := operation.Commit(); err != nil {
+		finished = true
+		return transport.RawReply{}, fmt.Errorf("commit account transaction: %w", err)
+	}
+	finished = true
+	return reply, nil
 }
 
 func (s *Server) handleBatch(body []byte) (transport.RawReply, error) {

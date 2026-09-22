@@ -1,9 +1,11 @@
 package player
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,8 +58,16 @@ type EquipmentInventory struct {
 	characters *CharacterStore
 	slots      map[uint64]uint64
 	upgrade    *gamedata.EquipmentUpgradeDesign
+	smelting   *gamedata.EquipmentSmeltingDesign
 	wallet     *Wallet
 	inventory  *Inventory
+	sessionID  string
+	smeltCache map[string]smeltingReply
+}
+
+type smeltingReply struct {
+	code int
+	body []byte
 }
 
 func (s *EquipmentInventory) AttachUpgrade(design *gamedata.EquipmentUpgradeDesign, wallet *Wallet, inventory *Inventory) error {
@@ -68,6 +78,26 @@ func (s *EquipmentInventory) AttachUpgrade(design *gamedata.EquipmentUpgradeDesi
 	defer s.mu.Unlock()
 	s.upgrade, s.wallet, s.inventory = design, wallet, inventory
 	return nil
+}
+
+func (s *EquipmentInventory) AttachSmelting(design *gamedata.EquipmentSmeltingDesign, wallet *Wallet, inventory *Inventory) error {
+	if design == nil || wallet == nil || inventory == nil {
+		return errors.New("player: incomplete equipment smelting configuration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.smelting, s.wallet, s.inventory = design, wallet, inventory
+	return nil
+}
+
+// BeginSession scopes the in-memory request replay cache. A repeated protobuf
+// sequence in one login must return the first refinement result without a
+// second roll or charge.
+func (s *EquipmentInventory) BeginSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionID = id
+	s.smeltCache = make(map[string]smeltingReply)
 }
 
 func (s *EquipmentInventory) AttachSlots(slots map[uint64]uint64) error {
@@ -97,7 +127,7 @@ func (s *EquipmentInventory) AttachCharacters(characters *CharacterStore) error 
 }
 
 func OpenEquipmentInventory(path string) (*EquipmentInventory, error) {
-	s := &EquipmentInventory{path: filepath.Clean(path), owned: equipmentSnapshot{
+	s := &EquipmentInventory{path: filepath.Clean(path), smeltCache: make(map[string]smeltingReply), owned: equipmentSnapshot{
 		Version: "2.34.13", NextIndex: 910000001, Granted: map[string]uint64{},
 	}}
 	data, err := os.ReadFile(s.path)
@@ -130,6 +160,17 @@ func OpenEquipmentInventory(path string) (*EquipmentInventory, error) {
 		}
 	}
 	return s, nil
+}
+
+func (s *EquipmentInventory) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.commitLocked(cloneEquipmentSnapshot(s.owned), "initial account generation")
 }
 
 // GrantOnce returns the same instance on a retry, allowing QuestClear response
@@ -260,7 +301,7 @@ func equipmentOptionWire(option EquipmentOption) []byte {
 }
 
 func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" {
+	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" {
 		return 0, nil, false, nil
 	}
 	if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
@@ -277,6 +318,12 @@ func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, b
 	}
 	if path == "/EquipSequenceUpgrade" {
 		return s.upgradeSequence(request)
+	}
+	if path == "/EquipSmelting" {
+		return s.smeltOnce(request)
+	}
+	if path == "/EquipSequenceSmelting" {
+		return s.smeltSequence(request)
 	}
 	if path == "/EquipChange" {
 		return s.change(request)
@@ -455,7 +502,496 @@ func (s *EquipmentInventory) upgradeSequence(request []byte) (int, []byte, bool,
 	if usedGold != 0 {
 		response = wire.AppendVarint(response, 7, usedGold)
 	}
-	return 170, response, true, nil
+	return 176, response, true, nil
+}
+
+func (s *EquipmentInventory) smeltOnce(request []byte) (int, []byte, bool, error) {
+	seq, _, _ := wire.Varint(request, 1)
+	index, found, err := wire.Varint(request, 2)
+	if err != nil || !found || index == 0 {
+		return 0, nil, true, errors.New("player: EquipSmelting missing equipment")
+	}
+	materials, err := equipmentRequestItems(request, 3, "EquipSmelting")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	s.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+	cacheKey := s.smeltingCacheKey("single", seq)
+	if reply, ok := s.smeltCache[cacheKey]; ok {
+		return reply.code, append([]byte(nil), reply.body...), true, nil
+	}
+	position, current, err := s.smeltingEquipmentLocked(index)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	costs, err := s.smelting.Cost(current.ID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	gold, _, err := validateSmeltingMaterials(costs, materials)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	if gold != 0 && !s.wallet.CanSpendGold(gold) {
+		return 0, nil, true, errors.New("player: insufficient gold for equipment smelting")
+	}
+	var itemMaterials []Item
+	var consumedMileageMaterial uint64
+	for _, item := range materials {
+		if item.Type != 4 {
+			itemMaterials = append(itemMaterials, item)
+		}
+		if item.Type == s.smelting.Mileage.UseType && item.ID == s.smelting.Mileage.UseID {
+			consumedMileageMaterial += item.Count
+		}
+	}
+	if len(itemMaterials) != 0 {
+		if err := s.inventory.CanConsume(itemMaterials); err != nil {
+			return 0, nil, true, err
+		}
+	}
+	candidate, err := s.smelting.RollCandidate(current.ID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	currentScore, err := s.smelting.Score(current.ID, current.Rank)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	candidateScore, err := s.smelting.Score(current.ID, candidate)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	success := candidateScore > currentScore
+	next := cloneEquipmentSnapshot(s.owned)
+	if success {
+		next.Equipment[position].Rank = append([]uint64(nil), candidate...)
+	}
+	currency, earned, err := s.commitSmeltingLocked(
+		next, itemMaterials, gold, consumedMileageMaterial,
+		"equip-smelting:"+cacheKey, "smelting")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	current = next.Equipment[position]
+	response := wire.AppendBytes(nil, 1, EquipmentWire(current))
+	s.mu.Unlock()
+	locked = false
+	if character, ok := s.equippedCharacter(current); ok {
+		response = wire.AppendBytes(response, 2, CharacterWire(character))
+	}
+	if !success {
+		response = wire.AppendVarint(response, 3, equipUpgradeFail)
+		for _, rank := range candidate {
+			response = wire.AppendVarint(response, 4, rank)
+		}
+	}
+	response = appendSmeltingMileage(response, 5, 6, currency.EquipMileageExchangeGage, s.smelting.Mileage, earned)
+	s.mu.Lock()
+	s.smeltCache[cacheKey] = smeltingReply{code: 105, body: append([]byte(nil), response...)}
+	s.mu.Unlock()
+	return 105, response, true, nil
+}
+
+func (s *EquipmentInventory) smeltSequence(request []byte) (int, []byte, bool, error) {
+	seq, _, _ := wire.Varint(request, 1)
+	index, found, err := wire.Varint(request, 2)
+	if err != nil || !found || index == 0 {
+		return 0, nil, true, errors.New("player: EquipSequenceSmelting missing equipment")
+	}
+	count, found, err := wire.Varint(request, 3)
+	if err != nil || !found || count == 0 {
+		return 0, nil, true, errors.New("player: EquipSequenceSmelting invalid attempt count")
+	}
+	target, _, err := wire.Varint(request, 4)
+	if err != nil {
+		return 0, nil, true, errors.New("player: EquipSequenceSmelting invalid target score")
+	}
+	s.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
+	cacheKey := s.smeltingCacheKey("sequence", seq)
+	if reply, ok := s.smeltCache[cacheKey]; ok {
+		return reply.code, append([]byte(nil), reply.body...), true, nil
+	}
+	position, current, err := s.smeltingEquipmentLocked(index)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	if count > s.smelting.MaxStreak {
+		return 0, nil, true, fmt.Errorf("player: EquipSequenceSmelting attempt count %d exceeds %d", count, s.smelting.MaxStreak)
+	}
+	maximumRanks, err := s.smelting.MaximumRanks(current.ID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	maximumScore, err := s.smelting.Score(current.ID, maximumRanks)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	if target > maximumScore {
+		return 0, nil, true, fmt.Errorf("player: EquipSequenceSmelting target %d exceeds %d", target, maximumScore)
+	}
+	costs, err := s.smelting.Cost(current.ID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	currentScore, err := s.smelting.Score(current.ID, current.Rank)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	result := uint64(equipUpgradeStopMaxTryCount)
+	var attempts, successes uint64
+	if currentScore >= maximumScore {
+		result = equipUpgradeStopMaxLevel
+	} else if target != 0 && currentScore >= target {
+		result = equipUpgradeStopTargetLevel
+	}
+	for attempts < count && result == equipUpgradeStopMaxTryCount {
+		if _, _, selectErr := s.selectSmeltingCosts(costs, attempts+1); selectErr != nil {
+			result = equipUpgradeStopNotEnough
+			break
+		}
+		candidate, rollErr := s.smelting.RollCandidate(current.ID)
+		if rollErr != nil {
+			return 0, nil, true, rollErr
+		}
+		candidateScore, scoreErr := s.smelting.Score(current.ID, candidate)
+		if scoreErr != nil {
+			return 0, nil, true, scoreErr
+		}
+		attempts++
+		if candidateScore > currentScore {
+			current.Rank = append([]uint64(nil), candidate...)
+			currentScore = candidateScore
+			successes++
+		}
+		if currentScore >= maximumScore {
+			result = equipUpgradeStopMaxLevel
+		} else if target != 0 && currentScore >= target {
+			result = equipUpgradeStopTargetLevel
+		}
+	}
+	var consumed, lack []Item
+	var gold, mileageMaterial, earned uint64
+	currency := s.wallet.Snapshot()
+	if attempts != 0 {
+		consumed, gold, err = s.selectSmeltingCosts(costs, attempts)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		for _, item := range consumed {
+			if item.Type == s.smelting.Mileage.UseType && item.ID == s.smelting.Mileage.UseID {
+				mileageMaterial += item.Count
+			}
+		}
+		var itemMaterials []Item
+		for _, item := range consumed {
+			if item.Type != 4 {
+				itemMaterials = append(itemMaterials, item)
+			}
+		}
+		next := cloneEquipmentSnapshot(s.owned)
+		next.Equipment[position].Rank = append([]uint64(nil), current.Rank...)
+		currency, earned, err = s.commitSmeltingLocked(
+			next, itemMaterials, gold, mileageMaterial,
+			"equip-sequence-smelting:"+cacheKey, "sequence smelting")
+		if err != nil {
+			return 0, nil, true, err
+		}
+		current = next.Equipment[position]
+	}
+	// When exactly count affordable attempts were made without another stop
+	// condition, MaxTryCount is the normal terminal reason. NotEnough is used
+	// only when the next requested attempt could not be funded.
+	if result == equipUpgradeStopNotEnough {
+		lack = upgradeLackItems(costs)
+	}
+	response := wire.AppendBytes(nil, 1, EquipmentWire(current))
+	s.mu.Unlock()
+	locked = false
+	if character, ok := s.equippedCharacter(current); ok {
+		response = wire.AppendBytes(response, 2, CharacterWire(character))
+	}
+	response = wire.AppendVarint(response, 3, result)
+	response = wire.AppendVarint(response, 4, attempts)
+	for _, item := range consumed {
+		response = wire.AppendBytes(response, 5, ItemWire(item))
+	}
+	for _, item := range lack {
+		response = wire.AppendBytes(response, 6, ItemWire(item))
+	}
+	response = appendSmeltingMileage(response, 7, 8, currency.EquipMileageExchangeGage, s.smelting.Mileage, earned)
+	if successes != 0 {
+		response = wire.AppendVarint(response, 9, successes)
+	}
+	s.mu.Lock()
+	s.smeltCache[cacheKey] = smeltingReply{code: 177, body: append([]byte(nil), response...)}
+	s.mu.Unlock()
+	return 177, response, true, nil
+}
+
+func (s *EquipmentInventory) smeltingCacheKey(kind string, seq uint64) string {
+	return kind + ":" + s.sessionID + ":seq:" + strconv.FormatUint(seq, 10)
+}
+
+func (s *EquipmentInventory) smeltingEquipmentLocked(index uint64) (int, Equipment, error) {
+	if s.smelting == nil || s.wallet == nil || s.inventory == nil {
+		return -1, Equipment{}, errors.New("player: equipment smelting unavailable")
+	}
+	position := s.equipmentPositionLocked(index)
+	if position < 0 {
+		return -1, Equipment{}, fmt.Errorf("player: unknown equipment %d", index)
+	}
+	entry := s.owned.Equipment[position]
+	design, ok := s.smelting.Equipment[entry.ID]
+	if !ok || entry.Level != design.MaxLevel || len(entry.Rank) != 3 {
+		return -1, Equipment{}, fmt.Errorf("player: equipment %d is not ready for smelting", index)
+	}
+	if _, err := s.smelting.Score(entry.ID, entry.Rank); err != nil {
+		return -1, Equipment{}, fmt.Errorf("player: equipment %d has invalid smelting rank: %w", index, err)
+	}
+	return position, entry, nil
+}
+
+func equipmentRequestItems(request []byte, number int, operation string) ([]Item, error) {
+	var result []Item
+	err := wire.Walk(request, func(field wire.Field) error {
+		if field.Number != number {
+			return nil
+		}
+		if field.Type != 2 {
+			return fmt.Errorf("player: %s invalid material", operation)
+		}
+		var item Item
+		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 9: &item.SortID, 10: &item.UseCount}); err != nil {
+			return err
+		}
+		if item.Type == 0 || item.Count == 0 || (item.Type == 4 && (item.ID != 0 || item.InvenIndex != 0)) || (item.Type != 4 && (item.ID == 0 || item.InvenIndex == 0)) {
+			return fmt.Errorf("player: %s invalid material", operation)
+		}
+		result = append(result, item)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("player: %s has no material", operation)
+	}
+	return result, nil
+}
+
+func validateSmeltingMaterials(costs []gamedata.PromotionCost, materials []Item) (gold, mileageMaterial uint64, err error) {
+	want := make(map[[2]uint64]uint64, len(costs))
+	for _, cost := range costs {
+		want[[2]uint64{cost.Type, cost.ID}] += cost.Count
+	}
+	got := make(map[[2]uint64]uint64, len(materials))
+	for _, item := range materials {
+		got[[2]uint64{item.Type, item.ID}] += item.Count
+		if item.Type == 4 {
+			gold += item.Count
+		} else {
+			mileageMaterial += item.Count
+		}
+	}
+	if len(got) != len(want) {
+		return 0, 0, errors.New("player: equipment smelting material kinds mismatch")
+	}
+	for key, count := range want {
+		if got[key] != count {
+			return 0, 0, fmt.Errorf("player: equipment smelting material %d/%d=%d want=%d", key[0], key[1], got[key], count)
+		}
+	}
+	return gold, mileageMaterial, nil
+}
+
+func (s *EquipmentInventory) selectSmeltingCosts(costs []gamedata.PromotionCost, attempts uint64) ([]Item, uint64, error) {
+	var result []Item
+	var gold uint64
+	for _, cost := range costs {
+		if attempts != 0 && cost.Count > ^uint64(0)/attempts {
+			return nil, 0, errors.New("player: equipment smelting cost overflow")
+		}
+		count := cost.Count * attempts
+		switch cost.Type {
+		case 4:
+			if cost.ID != 0 || gold != 0 || !s.wallet.CanSpendGold(count) {
+				return nil, 0, errors.New("player: insufficient equipment smelting gold")
+			}
+			gold = count
+			result = append(result, Item{Type: 4, Count: count})
+		case 8:
+			items, err := s.inventory.SelectMutable(cost.Type, cost.ID, count)
+			if err != nil {
+				return nil, 0, err
+			}
+			result = append(result, items...)
+		default:
+			return nil, 0, fmt.Errorf("player: unsupported equipment smelting cost type %d", cost.Type)
+		}
+	}
+	return result, gold, nil
+}
+
+func appendSmeltingMileage(response []byte, gaugeField, rewardField int, gauge uint64, mileage gamedata.EquipmentSmeltingMileage, earned uint64) []byte {
+	if gauge != 0 {
+		response = wire.AppendVarint(response, gaugeField, gauge)
+	}
+	if earned != 0 {
+		reward := ItemWire(Item{ID: mileage.RewardID, Type: mileage.RewardType, Count: earned})
+		bundle := wire.AppendBytes(nil, 1, reward)
+		response = wire.AppendBytes(response, rewardField, bundle)
+	}
+	return response
+}
+
+// commitSmeltingLocked keeps refinement's three typed snapshots synchronized
+// in memory. Caller holds equipment.mu; this method takes the remaining locks
+// in wallet -> inventory order, calculates every candidate before writing,
+// then publishes all three only after their files succeed. The surrounding
+// request transaction supplies durable all-or-none recovery across the writes.
+func (s *EquipmentInventory) commitSmeltingLocked(
+	nextEquipment equipmentSnapshot,
+	consumed []Item,
+	gold, mileageMaterial uint64,
+	identity, operation string,
+) (Currency, uint64, error) {
+	if identity == "" || mileageMaterial == 0 || s.wallet == nil || s.inventory == nil {
+		return Currency{}, 0, errors.New("player: invalid transactional equipment smelting")
+	}
+	s.wallet.mu.Lock()
+	defer s.wallet.mu.Unlock()
+	s.inventory.mu.Lock()
+	defer s.inventory.mu.Unlock()
+
+	nextWallet := cloneWallet(s.wallet.state)
+	if nextWallet.Spent[identity] {
+		return Currency{}, 0, errors.New("player: equipment smelting request was already committed")
+	}
+	if nextWallet.Gold < gold {
+		return Currency{}, 0, errors.New("player: insufficient gold for equipment smelting")
+	}
+	nextWallet.Gold -= gold
+	nextWallet.Spent[identity] = true
+	threshold, rewardCount := s.smelting.Mileage.UseCount, s.smelting.Mileage.RewardCount
+	if threshold == 0 || rewardCount == 0 || nextWallet.EquipMileageExchangeGage >= threshold ||
+		math.MaxUint64-nextWallet.EquipMileageExchangeGage < mileageMaterial {
+		return Currency{}, 0, errors.New("player: invalid equipment smelting gauge")
+	}
+	total := nextWallet.EquipMileageExchangeGage + mileageMaterial
+	exchanges := total / threshold
+	earned := exchanges * rewardCount
+	if exchanges != 0 && earned/exchanges != rewardCount || math.MaxUint64-nextWallet.EquipMileage < earned {
+		return Currency{}, 0, errors.New("player: equipment mileage overflow")
+	}
+	nextWallet.EquipMileageExchangeGage = total % threshold
+	nextWallet.EquipMileage += earned
+
+	nextItems := cloneOwnedSnapshot(s.inventory.owned)
+	for _, want := range consumed {
+		if err := consumeOwnedItem(&nextItems, want); err != nil {
+			return Currency{}, 0, err
+		}
+	}
+
+	after := make(map[string][]byte, 3)
+	for _, entry := range []struct {
+		path          string
+		current, next any
+		decoded       any
+	}{
+		{s.path, s.owned, nextEquipment, &equipmentSnapshot{}},
+		{s.wallet.path, s.wallet.state, nextWallet, &walletSnapshot{}},
+		{s.inventory.path, s.inventory.owned, nextItems, &ownedSnapshot{}},
+	} {
+		name := filepath.Base(entry.path)
+		current, err := os.ReadFile(entry.path)
+		missing := errors.Is(err, os.ErrNotExist)
+		if err != nil && !missing {
+			return Currency{}, 0, fmt.Errorf("player: read %s transaction source: %w", name, err)
+		}
+		memoryBytes, err := json.Marshal(entry.current)
+		if err != nil {
+			return Currency{}, 0, fmt.Errorf("player: encode %s memory snapshot: %w", name, err)
+		}
+		if !missing {
+			if err := json.Unmarshal(current, entry.decoded); err != nil {
+				return Currency{}, 0, fmt.Errorf("player: decode %s transaction source: %w", name, err)
+			}
+			diskBytes, err := json.Marshal(entry.decoded)
+			if err != nil || !bytes.Equal(memoryBytes, diskBytes) {
+				return Currency{}, 0, fmt.Errorf("player: %s changed outside the account transaction", name)
+			}
+		}
+		encoded, err := json.Marshal(entry.next)
+		if err != nil {
+			return Currency{}, 0, fmt.Errorf("player: encode %s transaction target: %w", name, err)
+		}
+		after[name] = encoded
+	}
+	for _, name := range []string{filepath.Base(s.wallet.path), filepath.Base(s.inventory.path), filepath.Base(s.path)} {
+		path := filepath.Join(filepath.Dir(s.path), name)
+		if err := writePlayerSnapshot(path, after[name]); err != nil {
+			return Currency{}, 0, fmt.Errorf("player: persist equipment %s %s: %w", operation, name, err)
+		}
+	}
+	s.owned = nextEquipment
+	s.wallet.state = nextWallet
+	s.inventory.owned = nextItems
+	return nextWallet.Currency, earned, nil
+}
+
+func writePlayerSnapshot(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, ".player-state-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(data); err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
+}
+
+func consumeOwnedItem(next *ownedSnapshot, want Item) error {
+	if next == nil || want.InvenIndex == 0 || want.ID == 0 || want.Type == 0 || want.Count == 0 {
+		return errors.New("player: invalid item consumption")
+	}
+	for i, current := range next.Items {
+		if current.InvenIndex != want.InvenIndex {
+			continue
+		}
+		if current.ID != want.ID || current.Type != want.Type || current.Count < want.Count {
+			return fmt.Errorf("player: item %d consumption mismatch", want.InvenIndex)
+		}
+		current.Count -= want.Count
+		if current.Count == 0 {
+			next.Items = append(next.Items[:i], next.Items[i+1:]...)
+		} else {
+			next.Items[i] = current
+		}
+		return nil
+	}
+	return fmt.Errorf("player: item %d is not mutable-owned", want.InvenIndex)
 }
 
 func upgradeLackItems(costs []gamedata.PromotionCost) []Item {

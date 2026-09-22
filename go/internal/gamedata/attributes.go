@@ -13,6 +13,10 @@ const (
 	StatMagic
 	StatDefencePercent
 	StatMagicResistancePercent
+	StatCriticalChance
+	StatCriticalDamage
+	StatElementDamage
+	StatElementResistance
 )
 
 // StatContribution is one already-resolved contribution from an equipment
@@ -22,6 +26,9 @@ type StatContribution struct {
 	Stat    Stat
 	Flat    float64
 	Percent float64
+	// Option preserves the exact Define_CharStatOption for systems such as
+	// awakening whose element-specific distinctions exceed BaseStats.
+	Option uint64
 }
 
 // BaseStats contains the design value after the character level curve has

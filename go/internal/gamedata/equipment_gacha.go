@@ -11,10 +11,9 @@ import (
 	"path/filepath"
 )
 
-// EquipmentGachaCatalog is the server-owned portion of the active exclusive
-// equipment draws. It deliberately models the three groups which the
-// 2026-09-20 GameData actually attaches to current pickup banners; it does
-// not infer a schedule or an equipment 12PICK banner from historical tables.
+// EquipmentGachaCatalog is the server-owned portion of exclusive-equipment
+// draws. Scheduled groups and standalone ticket-only draws are both derived
+// from GameData; the server does not enumerate product IDs in request logic.
 type EquipmentGachaCatalog struct {
 	Gachas    map[uint64]EquipmentGacha
 	groups    map[uint64]EquipmentGachaGroup
@@ -28,6 +27,7 @@ type EquipmentGacha struct {
 	PriceType, Price uint64
 	TicketIDs        []uint64
 	Pool             []WeightedEquipment
+	TicketOnly       bool
 }
 type EquipmentGachaGroup struct{ ID, FixedID, PointCount, OneTimeGachaID, TenTimeGachaID uint64 }
 type EquipmentFixedDesign struct {
@@ -40,6 +40,7 @@ type WeightedEquipment struct {
 }
 type EquipmentDesign struct {
 	ID          uint64
+	Grade       uint64
 	Main, Sub   []OptionGroup
 	Private     []OptionGroup
 	RankGroupID uint64
@@ -109,6 +110,56 @@ func LoadEquipmentGacha(root, version string) (*EquipmentGachaCatalog, error) {
 			}
 		}
 	}
+	// Guaranteed equipment tickets are standalone GachaTable rows: they have
+	// no diamond price, at least one resource-ticket id, and an equipment-only
+	// RewardGroup tree. Discover every such row instead of special-casing a
+	// product number from a log.
+	rows, err := db.Query("SELECT id,ProtoBuf FROM GachaTable ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id uint64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if _, exists := c.Gachas[id]; exists {
+			continue
+		}
+		count, _ := packedInts(raw, 5)
+		reward, _ := packedInts(raw, 7)
+		price, _ := packedInts(raw, 10)
+		kind, _ := packedInts(raw, 12)
+		tickets, _ := packedInts(raw, 8)
+		if len(count) != 1 || count[0] == 0 || len(reward) != 1 || len(tickets) == 0 || len(price) != 0 || len(kind) != 0 {
+			continue
+		}
+		pool, equipmentOnly, err := classifyEquipmentRewardPool(db, reward[0])
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: ticket gacha %d: %w", id, err)
+		}
+		if !equipmentOnly {
+			continue
+		}
+		g := EquipmentGacha{ID: id, Count: int(count[0]), TicketIDs: append([]uint64(nil), tickets...), Pool: pool, TicketOnly: true}
+		c.Gachas[id] = g
+		for _, item := range pool {
+			if err := c.loadEquipmentTree(db, item); err != nil {
+				rows.Close()
+				return nil, err
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	var fixed []byte
 	if err := db.QueryRow("SELECT ProtoBuf FROM GachaFixedTable WHERE id=1").Scan(&fixed); err != nil {
 		return nil, err
@@ -121,6 +172,43 @@ func LoadEquipmentGacha(root, version string) (*EquipmentGachaCatalog, error) {
 	}
 	c.fixed = EquipmentFixedDesign{ID: 1, SRCount: sr[0], URCount: ur[0], Reset: true}
 	return c, nil
+}
+
+func classifyEquipmentRewardPool(db *sql.DB, groupID uint64) ([]WeightedEquipment, bool, error) {
+	var raw []byte
+	if err := db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", groupID).Scan(&raw); err != nil {
+		return nil, false, err
+	}
+	ids, _ := packedInts(raw, 5)
+	types, _ := packedInts(raw, 6)
+	weights, _ := packedInts(raw, 8)
+	if len(ids) == 0 || len(ids) != len(types) || len(ids) != len(weights) {
+		return nil, false, errors.New("malformed reward group")
+	}
+	out := make([]WeightedEquipment, 0, len(ids))
+	for i, id := range ids {
+		entry := WeightedEquipment{Weight: weights[i]}
+		if entry.Weight == 0 {
+			return nil, false, errors.New("reward group has zero weight")
+		}
+		switch types[i] {
+		case 10:
+			entry.ID = id
+		case 9:
+			children, equipmentOnly, err := classifyEquipmentRewardPool(db, id)
+			if err != nil {
+				return nil, false, err
+			}
+			if !equipmentOnly {
+				return nil, false, nil
+			}
+			entry.Children = children
+		default:
+			return nil, false, nil
+		}
+		out = append(out, entry)
+	}
+	return out, true, nil
 }
 
 func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
@@ -214,7 +302,11 @@ func loadEquipmentDesign(db *sql.DB, id uint64) (EquipmentDesign, error) {
 	private, _ := packedInts(raw, 17)
 	sub, _ := packedInts(raw, 21)
 	rank, _ := packedInts(raw, 19)
-	d := EquipmentDesign{ID: id}
+	grade, _ := packedInts(raw, 3)
+	if len(grade) != 1 || grade[0] == 0 {
+		return EquipmentDesign{}, fmt.Errorf("gamedata: equipment %d malformed grade", id)
+	}
+	d := EquipmentDesign{ID: id, Grade: grade[0]}
 	var err error
 	if d.Main, err = loadOptionGroups(db, main); err != nil {
 		return d, err
@@ -312,6 +404,21 @@ func (c *EquipmentGachaCatalog) RollOptions(id uint64) (main, sub []EquipmentOpt
 	return
 }
 func (g EquipmentGacha) Roll(previousSR, previousUR uint64, fixed EquipmentFixedDesign) ([]uint64, EquipmentRoll, error) {
+	if g.TicketOnly {
+		state := EquipmentRoll{SRCount: previousSR, URCount: previousUR, SRSort: -1, URSort: -1}
+		if g.Count <= 0 || len(g.Pool) == 0 {
+			return nil, state, errors.New("gamedata: invalid ticket equipment gacha")
+		}
+		out := make([]uint64, g.Count)
+		for i := range out {
+			id, err := rollEquipmentChoiceWith(g.Pool, cryptoDraw)
+			if err != nil {
+				return nil, state, err
+			}
+			out[i] = id
+		}
+		return out, state, nil
+	}
 	return g.rollWith(previousSR, previousUR, fixed, cryptoDraw)
 }
 

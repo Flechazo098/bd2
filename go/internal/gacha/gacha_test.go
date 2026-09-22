@@ -1,6 +1,7 @@
 package gacha
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -8,6 +9,90 @@ import (
 	"bd2server/internal/player"
 	"bd2server/internal/wire"
 )
+
+func TestTicketOnlyEquipmentDrawUsesGameDataAndNoScheduleAccounting(t *testing.T) {
+	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
+	if root == "" {
+		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
+	}
+	const version = "20260910162539"
+	infinite, err := gamedata.LoadInfiniteGacha(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := gamedata.LoadRegularCostumeGacha(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipmentCatalog, err := gamedata.LoadEquipmentGacha(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	collection, err := player.OpenCollectionStore(filepath.Join(dir, "collection.json"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := player.OpenInventory(filepath.Join(dir, "items.json"), &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted, err := inventory.GrantOnce("ticket", []gamedata.BattleReward{{Type: 8, ID: 1104, Count: 20}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipment, err := player.OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(infinite, regular, collection, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.AttachInventory(inventory)
+	service.AttachEquipmentGacha(equipmentCatalog, equipment)
+	service.BeginSession("ticket-only")
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 7), 2, 71200001)
+	request = wire.AppendVarint(request, 3, 1)
+	ticket := granted[0]
+	ticket.Count = 10
+	request = wire.AppendBytes(request, 4, player.ItemWire(ticket))
+	code, response, handled, err := service.Handle("/GachaBuy", request)
+	if err != nil || !handled || code != 146 {
+		t.Fatalf("ticket-only draw code=%d handled=%v err=%v", code, handled, err)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found || countFields(bundle, 4) != 10 {
+		t.Fatalf("ticket-only reward equipment=%d found=%v err=%v", countFields(bundle, 4), found, err)
+	}
+	if len(equipment.All()) != 10 {
+		t.Fatalf("ticket-only persisted equipment=%d", len(equipment.All()))
+	}
+	if user := collection.GachaUser(71200001); user != (player.GachaUserState{}) {
+		t.Fatalf("standalone draw invented schedule accounting: %+v", user)
+	}
+	remaining := inventory.All()
+	foundTicket := false
+	for _, item := range remaining {
+		if item.InvenIndex == ticket.InvenIndex {
+			foundTicket = true
+			if item.Count != 10 {
+				t.Fatalf("ticket count=%d want=10", item.Count)
+			}
+		}
+	}
+	if !foundTicket {
+		t.Fatal("remaining ticket stack missing")
+	}
+	_, replay, _, err := service.Handle("/GachaBuy", request)
+	if err != nil || string(replay) != string(response) || len(equipment.All()) != 10 {
+		t.Fatalf("ticket-only replay changed result: equipment=%d err=%v", len(equipment.All()), err)
+	}
+}
 
 func fixtureCharacter(id, hp uint64) gamedata.CharacterDesign {
 	return gamedata.CharacterDesign{

@@ -55,6 +55,17 @@ func OpenInventory(path string, starter *Starter) (*Inventory, error) {
 	return s, nil
 }
 
+func (s *Inventory) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.commitOwned(cloneOwnedSnapshot(s.owned))
+}
+
 func (s *Inventory) Handle(path string, request []byte) (int, []byte, bool, error) {
 	if path != "/ItemInfo" && path != "/UseRandomBox" {
 		return 0, nil, false, nil

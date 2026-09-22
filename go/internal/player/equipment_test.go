@@ -57,7 +57,7 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	sequence = wire.AppendVarint(sequence, 3, 9)
 	sequence = wire.AppendVarint(sequence, 6, 3)
 	code, response, handled, err = store.Handle("/EquipSequenceUpgrade", sequence)
-	if err != nil || !handled || code != 170 {
+	if err != nil || !handled || code != 176 {
 		t.Fatalf("sequence upgrade code=%d handled=%v err=%v", code, handled, err)
 	}
 	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeStopMaxLevel {
@@ -82,6 +82,177 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	if rank := restored.All()[0].Rank; len(rank) != 3 || rank[0] != 1 || rank[1] != 0 || rank[2] != 0 {
 		t.Fatalf("+3 should roll only the first rank: %v", rank)
 	}
+}
+
+func TestEquipmentSmeltingImprovesByTotalScoreAndReplaysWithoutSecondCharge(t *testing.T) {
+	dir := t.TempDir()
+	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000, EquipMileageExchangeGage: 990})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	materials, err := inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	design := smeltingTestDesign([][]float64{{1, 0, 0, 0}, {0, 0, 0, 1}, {0, 0, 0, 1}})
+	if err := store.AttachSmelting(design, wallet, inventory); err != nil {
+		t.Fatal(err)
+	}
+	store.BeginSession("smelting-test")
+	entry, err := store.GrantOnce("refinable", 943035)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.owned.Equipment[0].Level = 9
+	store.owned.Equipment[0].Rank = []uint64{4, 1, 1} // 6 -> candidate 1+4+4=9.
+	if err := store.commitLocked(cloneEquipmentSnapshot(store.owned), "test setup"); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 77), 2, entry.InvenIndex)
+	request = wire.AppendBytes(request, 3, ItemWire(Item{Type: 4, Count: 80}))
+	material := materials[0]
+	material.Count = 30
+	request = wire.AppendBytes(request, 3, ItemWire(material))
+	code, response, handled, err := store.Handle("/EquipSmelting", request)
+	if err != nil || !handled || code != 105 {
+		t.Fatalf("smelting code=%d handled=%v err=%v", code, handled, err)
+	}
+	if result, found, _ := wire.Varint(response, 3); found || result != 0 {
+		t.Fatalf("successful smelting result=%d found=%v", result, found)
+	}
+	if got := store.All()[0].Rank; len(got) != 3 || got[0] != 1 || got[1] != 4 || got[2] != 4 {
+		t.Fatalf("smelting rank=%v", got)
+	}
+	if gauge, _, _ := wire.Varint(response, 5); gauge != 20 {
+		t.Fatalf("smelting gauge=%d", gauge)
+	}
+	bundle, found, err := wire.Bytes(response, 6)
+	if err != nil || !found {
+		t.Fatalf("smelting mileage bundle: %v", err)
+	}
+	reward, found, err := wire.Bytes(bundle, 1)
+	if err != nil || !found {
+		t.Fatalf("smelting mileage item: %v", err)
+	}
+	if typ, _, _ := wire.Varint(reward, 3); typ != 68 {
+		t.Fatalf("smelting mileage type=%d", typ)
+	}
+	if count, _, _ := wire.Varint(reward, 4); count != 1 {
+		t.Fatalf("smelting mileage count=%d", count)
+	}
+	if currency := wallet.Snapshot(); currency.Gold != 920 || currency.EquipMileage != 1 || currency.EquipMileageExchangeGage != 20 {
+		t.Fatalf("smelting wallet=%+v", currency)
+	}
+	if _, replay, _, err := store.Handle("/EquipSmelting", request); err != nil || string(replay) != string(response) {
+		t.Fatalf("smelting replay differs err=%v", err)
+	}
+	if currency := wallet.Snapshot(); currency.Gold != 920 || currency.EquipMileage != 1 || currency.EquipMileageExchangeGage != 20 {
+		t.Fatalf("smelting replay charged again: %+v", currency)
+	}
+}
+
+func TestEquipmentSmeltingFailureConsumesAndReturnsCandidateGrades(t *testing.T) {
+	dir := t.TempDir()
+	wallet, _ := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
+	inventory, _ := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	materials, _ := inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 30}})
+	store, _ := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	if err := store.AttachSmelting(smeltingTestDesign([][]float64{{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}}), wallet, inventory); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := store.GrantOnce("refinable", 943035)
+	store.owned.Equipment[0].Level = 9
+	store.owned.Equipment[0].Rank = []uint64{4, 4, 4}
+	if err := store.commitLocked(cloneEquipmentSnapshot(store.owned), "test setup"); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, entry.InvenIndex)
+	request = wire.AppendBytes(request, 3, ItemWire(Item{Type: 4, Count: 80}))
+	request = wire.AppendBytes(request, 3, ItemWire(materials[0]))
+	_, response, _, err := store.Handle("/EquipSmelting", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeFail {
+		t.Fatalf("smelting failure result=%d", result)
+	}
+	var grades []uint64
+	if err := wire.Walk(response, func(field wire.Field) error {
+		if field.Number == 4 {
+			value, _ := binary.Uvarint(field.Value)
+			grades = append(grades, value)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(grades) != 3 || grades[0] != 1 || grades[1] != 1 || grades[2] != 1 {
+		t.Fatalf("failure candidate grades=%v", grades)
+	}
+	if got := store.All()[0].Rank; got[0] != 4 || got[1] != 4 || got[2] != 4 {
+		t.Fatalf("failure overwrote ranks=%v", got)
+	}
+	if currency := wallet.Snapshot(); currency.Gold != 920 || currency.EquipMileageExchangeGage != 30 {
+		t.Fatalf("failure did not consume: %+v", currency)
+	}
+}
+
+func TestEquipmentSequenceSmeltingRepeatsAndStopsAtTargetScore(t *testing.T) {
+	dir := t.TempDir()
+	wallet, _ := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
+	inventory, _ := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	_, _ = inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 300}})
+	store, _ := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	if err := store.AttachSmelting(smeltingTestDesign([][]float64{{1, 0, 0, 0}, {0, 0, 0, 1}, {0, 0, 0, 1}}), wallet, inventory); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := store.GrantOnce("refinable", 943035)
+	store.owned.Equipment[0].Level = 9
+	store.owned.Equipment[0].Rank = []uint64{4, 1, 1}
+	if err := store.commitLocked(cloneEquipmentSnapshot(store.owned), "test setup"); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, entry.InvenIndex)
+	request = wire.AppendVarint(request, 3, 100)
+	request = wire.AppendVarint(request, 4, 9)
+	code, response, handled, err := store.Handle("/EquipSequenceSmelting", request)
+	if err != nil || !handled || code != 177 {
+		t.Fatalf("sequence smelting code=%d handled=%v err=%v", code, handled, err)
+	}
+	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeStopTargetLevel {
+		t.Fatalf("sequence smelting result=%d", result)
+	}
+	if attempts, _, _ := wire.Varint(response, 4); attempts != 1 {
+		t.Fatalf("sequence smelting attempts=%d", attempts)
+	}
+	if successes, _, _ := wire.Varint(response, 9); successes != 1 {
+		t.Fatalf("sequence smelting successes=%d", successes)
+	}
+	if currency := wallet.Snapshot(); currency.Gold != 920 || currency.EquipMileageExchangeGage != 30 {
+		t.Fatalf("sequence smelting wallet=%+v", currency)
+	}
+}
+
+func smeltingTestDesign(ratios [][]float64) *gamedata.EquipmentSmeltingDesign {
+	design := &gamedata.EquipmentSmeltingDesign{
+		Equipment: map[uint64]gamedata.EquipmentSmeltingItem{943035: {Grade: 4, RankGroup: 904, MaxLevel: 9}},
+		Ranks:     map[[2]uint64]gamedata.EquipmentSmeltingRank{},
+		Grades:    map[uint64][]gamedata.PromotionCost{4: {{Type: 4, Count: 80}, {Type: 8, ID: 10, Count: 30}}},
+		Mileage:   gamedata.EquipmentSmeltingMileage{UseType: 8, UseID: 10, UseCount: 1000, RewardType: 68, RewardCount: 1},
+		MaxStreak: 5000,
+	}
+	for i := 0; i < 3; i++ {
+		design.Ranks[[2]uint64{904, uint64(i + 1)}] = gamedata.EquipmentSmeltingRank{Values: []uint64{1, 2, 3, 4}, GrowthPoint: []uint64{1, 2, 3, 4}, Ratio: ratios[i]}
+	}
+	return design
 }
 
 func TestEquipmentUpgradeFailureConsumesGoldWithoutLevel(t *testing.T) {
