@@ -46,6 +46,10 @@ type HopePowderProvider interface {
 	HopePowderBalance() uint64
 }
 
+type EquipmentMileageProvider interface {
+	EquipmentMileageBalances() (mileage, exchangeGage uint64)
+}
+
 func (s *LoginSeed) AttachCurrencies(provider CurrencyProvider) error {
 	if provider == nil {
 		return errors.New("account: nil currency provider")
@@ -94,6 +98,19 @@ func (s *LoginSeed) SeedHopePowder() (uint64, error) {
 		return value, err
 	}
 	return value, nil
+}
+
+func (s *LoginSeed) SeedEquipmentMileage() (mileage, exchangeGage uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, err
+	}
+	if mileage, _, err = wire.Varint(s.UserInfo, 67); err != nil {
+		return 0, 0, err
+	}
+	if exchangeGage, _, err = wire.Varint(s.UserInfo, 68); err != nil {
+		return 0, 0, err
+	}
+	return mileage, exchangeGage, nil
 }
 
 type diskSeed struct {
@@ -237,6 +254,15 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		if provider, ok := s.currencies.(HopePowderProvider); ok {
 			if user, _, err = wire.ReplaceVarint(user, 24, provider.HopePowderBalance()); err != nil {
 				return nil, fmt.Errorf("account: replace hope powder: %w", err)
+			}
+		}
+		if provider, ok := s.currencies.(EquipmentMileageProvider); ok {
+			equipMileage, exchangeGage := provider.EquipmentMileageBalances()
+			if user, _, err = wire.ReplaceVarint(user, 67, equipMileage); err != nil {
+				return nil, fmt.Errorf("account: replace equipment mileage: %w", err)
+			}
+			if user, _, err = wire.ReplaceVarint(user, 68, exchangeGage); err != nil {
+				return nil, fmt.Errorf("account: replace equipment mileage exchange gauge: %w", err)
 			}
 		}
 	}

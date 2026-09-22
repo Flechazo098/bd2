@@ -22,7 +22,6 @@ var emptyResponses = map[string]int{
 	"/AvatarShopWishListInfo":          470,
 	"/CafeteriaInfo":                   351,
 	"/CashBonusInfo":                   588,
-	"/CharAwakeInfo":                   0,
 	"/CharPartnerInfo":                 65,
 	"/CommunityRewardInfo":             289,
 	"/DailyStoryInfo":                  538,

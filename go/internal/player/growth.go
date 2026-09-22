@@ -116,6 +116,17 @@ func OpenCharacterStore(path string, seed []Character, inventory *Inventory, gam
 	return s, nil
 }
 
+func (s *CharacterStore) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.persist(append([]Character(nil), s.characters...))
+}
+
 func validateCharacters(characters []Character) error {
 	seen := make(map[uint64]bool, len(characters))
 	for _, character := range characters {

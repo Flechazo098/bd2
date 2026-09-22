@@ -228,6 +228,17 @@ func OpenService(path string, starter *Starter, inventory *player.Inventory, wal
 	return s, nil
 }
 
+func (s *Service) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.persist(s.state)
+}
+
 // AttachSeedPath enables development-time hot reloading of an atomically
 // replaced mail seed. It is deliberately a mailbox concern, not an HTTP debug
 // endpoint: the client continues to call only the normal /MailInfo API.
@@ -436,6 +447,10 @@ func (s *Service) commit(next stateSnapshot) error {
 			return nil
 		}
 	}
+	return s.persist(next)
+}
+
+func (s *Service) persist(next stateSnapshot) error {
 	b, err := json.Marshal(next)
 	if err != nil {
 		return err

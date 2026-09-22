@@ -87,3 +87,31 @@ func TestCheckedInSeedBuildsLoginWithoutCapture(t *testing.T) {
 		t.Fatalf("unexpected generated key: %q found=%v err=%v", key, found, err)
 	}
 }
+
+type loginCurrencyFixture struct{}
+
+func (loginCurrencyFixture) Currencies() (uint64, uint64, uint64, uint64) {
+	return 1, 2, 3, 4
+}
+func (loginCurrencyFixture) EquipmentMileageBalances() (uint64, uint64) { return 17, 845 }
+
+func TestLoginRestoresEquipmentMileageFromCurrencyProvider(t *testing.T) {
+	seed := &LoginSeed{Version: Version23413, PacketCode: 3, UserInfo: wire.AppendVarint(nil, 1, 1)}
+	if err := seed.AttachCurrencies(loginCurrencyFixture{}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := seed.Login(wire.AppendVarint(nil, 1, 1), []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("missing login user: %v", err)
+	}
+	if mileage, found, err := wire.Varint(user, 67); err != nil || !found || mileage != 17 {
+		t.Fatalf("equipment mileage=%d found=%v err=%v", mileage, found, err)
+	}
+	if gauge, found, err := wire.Varint(user, 68); err != nil || !found || gauge != 845 {
+		t.Fatalf("equipment mileage gauge=%d found=%v err=%v", gauge, found, err)
+	}
+}

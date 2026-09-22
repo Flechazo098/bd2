@@ -28,6 +28,8 @@ import (
 	"bd2server/internal/readonly"
 	"bd2server/internal/schedule"
 	"bd2server/internal/session"
+	"bd2server/internal/statebridge"
+	"bd2server/internal/statetx"
 	"bd2server/internal/transport"
 	"bd2server/internal/world"
 )
@@ -57,7 +59,7 @@ func main() {
 	}
 }
 
-func serve(args []string) error {
+func serve(args []string) (serveErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
 	cdn := fs.String("cdn", "", "ServerData root (required)")
@@ -128,9 +130,30 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load regular gacha GameData: %w", err)
 	}
-	if err := repairStateBeforeServe(filepath.Dir(filepath.Clean(*stateFile)), *stateTool, *gameDataVersion, regularGacha, starter); err != nil {
+	stateDir := filepath.Dir(filepath.Clean(*stateFile))
+	if err := validateAccountStatePaths(stateDir, *stateFile, *deckState); err != nil {
+		return err
+	}
+	stateTransaction, err := statetx.Open(stateDir, statebridge.StateFiles())
+	if err != nil {
+		return fmt.Errorf("recover account state transaction: %w", err)
+	}
+	if err := repairStateBeforeServe(stateDir, *stateTool, *gameDataVersion, regularGacha, starter); err != nil {
 		return fmt.Errorf("state migration/repair: %w", err)
 	}
+	startupTransaction, err := stateTransaction.Begin()
+	if err != nil {
+		return fmt.Errorf("begin startup state transaction: %w", err)
+	}
+	startupCommitted := false
+	defer func() {
+		if startupCommitted {
+			return
+		}
+		if rollbackErr := startupTransaction.Rollback(); rollbackErr != nil {
+			serveErr = errors.Join(serveErr, rollbackErr)
+		}
+	}()
 	serverConfig, err := readonly.Load(filepath.Clean(*readonlySeed))
 	if err != nil {
 		return fmt.Errorf("load readonly server configuration: %w", err)
@@ -170,8 +193,13 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read account seed hope powder: %w", err)
 	}
+	equipMileage, equipMileageExchangeGage, err := login.SeedEquipmentMileage()
+	if err != nil {
+		return fmt.Errorf("read account seed equipment mileage: %w", err)
+	}
 	wallet, err := player.OpenWallet(filepath.Join(filepath.Dir(*stateFile), "wallet.json"), player.Currency{
 		Gold: gold, FreeJewelry: freeJewelry, Jewelry: jewelry, Mileage: mileage, HopePowder: hopePowder,
+		EquipMileage: equipMileage, EquipMileageExchangeGage: equipMileageExchangeGage,
 	})
 	if err != nil {
 		return fmt.Errorf("load wallet state: %w", err)
@@ -220,6 +248,13 @@ func serve(args []string) error {
 	}
 	if err := ownedEquipment.AttachUpgrade(equipmentUpgrade, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment upgrade GameData: %w", err)
+	}
+	equipmentSmelting, err := gamedata.LoadEquipmentSmeltingDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment smelting GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachSmelting(equipmentSmelting, wallet, ownedItems); err != nil {
+		return fmt.Errorf("attach equipment smelting GameData: %w", err)
 	}
 	collection, err := player.OpenCollectionStore(filepath.Join(filepath.Dir(*stateFile), "collection.json"), starter.Costumes)
 	if err != nil {
@@ -272,6 +307,15 @@ func serve(args []string) error {
 		return fmt.Errorf("load pictorial GameData: %w", err)
 	}
 	pictorialService := &pictorial.Service{Design: pictorialDesign, Owned: worldService}
+	charAwakeDesign, err := gamedata.LoadCharAwakeDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load character awakening GameData: %w", err)
+	}
+	charAwakeService, err := player.NewCharAwakeService(charAwakeDesign, collection, worldService.CharacterService(), ownedItems, wallet)
+	if err != nil {
+		return err
+	}
+	pictorialService.AwakeContributions = charAwakeService.Contributions
 	if err := worldService.CharacterService().AttachMaxHealth(pictorialService.MaxHealth); err != nil {
 		return fmt.Errorf("attach pictorial character stats: %w", err)
 	}
@@ -302,6 +346,7 @@ func serve(args []string) error {
 		deckStateStore,
 		ownedItems,
 		ownedEquipment,
+		charAwakeService,
 		costumePotentialService,
 		starter,
 		mailService,
@@ -313,6 +358,22 @@ func serve(args []string) error {
 		feature.Service{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := ensureAccountStateInitialized(
+		progressState, deckStateStore, ownedItems, ownedEquipment,
+		worldService.CharacterService(), collection, wallet, mailService, missionService,
+	); err != nil {
+		return fmt.Errorf("initialize complete account state generation: %w", err)
+	}
+	if err := startupTransaction.Commit(); err != nil {
+		return fmt.Errorf("commit startup state transaction: %w", err)
+	}
+	startupCommitted = true
+	if err := stateTransaction.Check(); err != nil {
+		return fmt.Errorf("startup state transaction requires recovery restart: %w", err)
+	}
+	if err := game.AttachStateCoordinator(stateTransaction); err != nil {
 		return err
 	}
 	dispatcher := transport.Bootstrap{Config: cfg}
@@ -327,6 +388,38 @@ func serve(args []string) error {
 	}
 	slog.Info("BD2 local server listening", "address", *listen, "client", cfg.Version, "bundle", cfg.BundleVer, "cdn", *cdn, "gameData", verifiedGameData.ArchivePath, "gameDataEntries", verifiedGameData.EntryCount, "accountSeed", *accountSeed)
 	return server.ListenAndServe()
+}
+
+type accountStateInitializer interface {
+	EnsurePersisted() error
+}
+
+func ensureAccountStateInitialized(stores ...accountStateInitializer) error {
+	if len(stores) != len(statebridge.StateFiles()) {
+		return fmt.Errorf("account state initializer count %d does not match transaction file count %d", len(stores), len(statebridge.StateFiles()))
+	}
+	for _, store := range stores {
+		if store == nil {
+			return errors.New("nil account state initializer")
+		}
+		if err := store.EnsurePersisted(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAccountStatePaths(stateDir, progressPath, deckPath string) error {
+	stateDir = filepath.Clean(stateDir)
+	wantProgress := filepath.Join(stateDir, "progress.json")
+	wantDeck := filepath.Join(stateDir, "deck.json")
+	if filepath.Clean(progressPath) != wantProgress {
+		return fmt.Errorf("account state must use %q; got progress path %q", wantProgress, progressPath)
+	}
+	if filepath.Clean(deckPath) != wantDeck {
+		return fmt.Errorf("all account files must share one transaction directory; use --deck-state %q, got %q", wantDeck, deckPath)
+	}
+	return nil
 }
 
 func patchClient(args []string) error {

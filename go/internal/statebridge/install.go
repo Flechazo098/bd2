@@ -325,7 +325,7 @@ func equipmentDiskFromProto(in *statev1.EquipmentInventory) equipmentDisk {
 }
 
 func equipmentFromProto(in *statev1.Equipment) equipment {
-	out := equipment{InvenIndex: in.InventoryIndex, ID: in.Id, Level: in.Level, UseChar: in.UseChar, KeepFlag: in.KeepFlag, LockFlag: in.LockFlag, SortID: in.SortId, Rank: append([]uint64(nil), in.Ranks...)}
+	out := equipment{InvenIndex: in.InventoryIndex, ID: in.Id, Level: in.Level, UseChar: in.UseChar, KeepFlag: in.KeepFlag, LockFlag: in.LockFlag, SortID: in.SortId, Rank: append([]uint64(nil), in.Ranks...), UpgradeAttempts: in.UpgradeAttempts}
 	for _, option := range in.MainOptions {
 		out.MainOption = append(out.MainOption, equipmentOption{GroupID: option.GroupId, ID: option.Id})
 	}
@@ -424,7 +424,7 @@ func collectionGrantFromProto(in *statev1.CollectionGrant) collectionGrant {
 }
 
 func walletDiskFromProto(in *statev1.Wallet) walletDisk {
-	out := walletDisk{Version: in.ClientVersion, Gold: in.Gold, FreeJewelry: in.FreeJewelry, Jewelry: in.Jewelry, Mileage: in.Mileage, HopePowder: in.HopePowder, Granted: map[string]bool{}, Spent: map[string]bool{}}
+	out := walletDisk{Version: in.ClientVersion, Gold: in.Gold, FreeJewelry: in.FreeJewelry, Jewelry: in.Jewelry, Mileage: in.Mileage, HopePowder: in.HopePowder, EquipMileage: in.EquipMileage, EquipMileageExchangeGage: in.EquipMileageExchangeGage, Granted: map[string]bool{}, Spent: map[string]bool{}}
 	for _, value := range in.GrantedIdentities {
 		out.Granted[value] = true
 	}

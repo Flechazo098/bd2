@@ -125,6 +125,7 @@ message Equipment {
   repeated EquipmentOption sub_options = 9;
   EquipmentOption private_option = 10;
   repeated uint64 ranks = 11;
+  uint64 upgrade_attempts = 12;
 }
 
 message NamedIndex {
@@ -289,6 +290,8 @@ message Wallet {
   uint64 hope_powder = 6;
   repeated string granted_identities = 7;
   repeated string spent_identities = 8;
+  uint64 equip_mileage = 9;
+  uint64 equip_mileage_exchange_gage = 10;
 }
 
 message MailState {

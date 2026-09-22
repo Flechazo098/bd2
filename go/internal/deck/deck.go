@@ -131,6 +131,16 @@ func OpenStore(path string, seed Seed) (*Store, error) {
 	}
 	return s, nil
 }
+func (s *Store) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, e := os.Stat(s.path); e == nil {
+		return nil
+	} else if !errors.Is(e, os.ErrNotExist) {
+		return e
+	}
+	return s.commit(clone(s.state))
+}
 func (s *Store) commit(next state) error {
 	if s.path != "" {
 		b, e := json.MarshalIndent(next, "", "  ")

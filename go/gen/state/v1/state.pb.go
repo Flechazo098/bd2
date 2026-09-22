@@ -1041,20 +1041,21 @@ func (x *EquipmentOption) GetId() uint64 {
 }
 
 type Equipment struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	InventoryIndex uint64                 `protobuf:"varint,1,opt,name=inventory_index,json=inventoryIndex,proto3" json:"inventory_index,omitempty"`
-	Id             uint64                 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
-	Level          uint64                 `protobuf:"varint,3,opt,name=level,proto3" json:"level,omitempty"`
-	UseChar        uint64                 `protobuf:"varint,4,opt,name=use_char,json=useChar,proto3" json:"use_char,omitempty"`
-	KeepFlag       uint64                 `protobuf:"varint,5,opt,name=keep_flag,json=keepFlag,proto3" json:"keep_flag,omitempty"`
-	LockFlag       uint64                 `protobuf:"varint,6,opt,name=lock_flag,json=lockFlag,proto3" json:"lock_flag,omitempty"`
-	SortId         uint64                 `protobuf:"varint,7,opt,name=sort_id,json=sortId,proto3" json:"sort_id,omitempty"`
-	MainOptions    []*EquipmentOption     `protobuf:"bytes,8,rep,name=main_options,json=mainOptions,proto3" json:"main_options,omitempty"`
-	SubOptions     []*EquipmentOption     `protobuf:"bytes,9,rep,name=sub_options,json=subOptions,proto3" json:"sub_options,omitempty"`
-	PrivateOption  *EquipmentOption       `protobuf:"bytes,10,opt,name=private_option,json=privateOption,proto3" json:"private_option,omitempty"`
-	Ranks          []uint64               `protobuf:"varint,11,rep,packed,name=ranks,proto3" json:"ranks,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	InventoryIndex  uint64                 `protobuf:"varint,1,opt,name=inventory_index,json=inventoryIndex,proto3" json:"inventory_index,omitempty"`
+	Id              uint64                 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
+	Level           uint64                 `protobuf:"varint,3,opt,name=level,proto3" json:"level,omitempty"`
+	UseChar         uint64                 `protobuf:"varint,4,opt,name=use_char,json=useChar,proto3" json:"use_char,omitempty"`
+	KeepFlag        uint64                 `protobuf:"varint,5,opt,name=keep_flag,json=keepFlag,proto3" json:"keep_flag,omitempty"`
+	LockFlag        uint64                 `protobuf:"varint,6,opt,name=lock_flag,json=lockFlag,proto3" json:"lock_flag,omitempty"`
+	SortId          uint64                 `protobuf:"varint,7,opt,name=sort_id,json=sortId,proto3" json:"sort_id,omitempty"`
+	MainOptions     []*EquipmentOption     `protobuf:"bytes,8,rep,name=main_options,json=mainOptions,proto3" json:"main_options,omitempty"`
+	SubOptions      []*EquipmentOption     `protobuf:"bytes,9,rep,name=sub_options,json=subOptions,proto3" json:"sub_options,omitempty"`
+	PrivateOption   *EquipmentOption       `protobuf:"bytes,10,opt,name=private_option,json=privateOption,proto3" json:"private_option,omitempty"`
+	Ranks           []uint64               `protobuf:"varint,11,rep,packed,name=ranks,proto3" json:"ranks,omitempty"`
+	UpgradeAttempts uint64                 `protobuf:"varint,12,opt,name=upgrade_attempts,json=upgradeAttempts,proto3" json:"upgrade_attempts,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Equipment) Reset() {
@@ -1162,6 +1163,13 @@ func (x *Equipment) GetRanks() []uint64 {
 		return x.Ranks
 	}
 	return nil
+}
+
+func (x *Equipment) GetUpgradeAttempts() uint64 {
+	if x != nil {
+		return x.UpgradeAttempts
+	}
+	return 0
 }
 
 type NamedIndex struct {
@@ -2605,17 +2613,19 @@ func (x *Collection) GetGrants() []*CollectionGrant {
 }
 
 type Wallet struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	ClientVersion     string                 `protobuf:"bytes,1,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
-	Gold              uint64                 `protobuf:"varint,2,opt,name=gold,proto3" json:"gold,omitempty"`
-	FreeJewelry       uint64                 `protobuf:"varint,3,opt,name=free_jewelry,json=freeJewelry,proto3" json:"free_jewelry,omitempty"`
-	Jewelry           uint64                 `protobuf:"varint,4,opt,name=jewelry,proto3" json:"jewelry,omitempty"`
-	Mileage           uint64                 `protobuf:"varint,5,opt,name=mileage,proto3" json:"mileage,omitempty"`
-	HopePowder        uint64                 `protobuf:"varint,6,opt,name=hope_powder,json=hopePowder,proto3" json:"hope_powder,omitempty"`
-	GrantedIdentities []string               `protobuf:"bytes,7,rep,name=granted_identities,json=grantedIdentities,proto3" json:"granted_identities,omitempty"`
-	SpentIdentities   []string               `protobuf:"bytes,8,rep,name=spent_identities,json=spentIdentities,proto3" json:"spent_identities,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	ClientVersion            string                 `protobuf:"bytes,1,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
+	Gold                     uint64                 `protobuf:"varint,2,opt,name=gold,proto3" json:"gold,omitempty"`
+	FreeJewelry              uint64                 `protobuf:"varint,3,opt,name=free_jewelry,json=freeJewelry,proto3" json:"free_jewelry,omitempty"`
+	Jewelry                  uint64                 `protobuf:"varint,4,opt,name=jewelry,proto3" json:"jewelry,omitempty"`
+	Mileage                  uint64                 `protobuf:"varint,5,opt,name=mileage,proto3" json:"mileage,omitempty"`
+	HopePowder               uint64                 `protobuf:"varint,6,opt,name=hope_powder,json=hopePowder,proto3" json:"hope_powder,omitempty"`
+	GrantedIdentities        []string               `protobuf:"bytes,7,rep,name=granted_identities,json=grantedIdentities,proto3" json:"granted_identities,omitempty"`
+	SpentIdentities          []string               `protobuf:"bytes,8,rep,name=spent_identities,json=spentIdentities,proto3" json:"spent_identities,omitempty"`
+	EquipMileage             uint64                 `protobuf:"varint,9,opt,name=equip_mileage,json=equipMileage,proto3" json:"equip_mileage,omitempty"`
+	EquipMileageExchangeGage uint64                 `protobuf:"varint,10,opt,name=equip_mileage_exchange_gage,json=equipMileageExchangeGage,proto3" json:"equip_mileage_exchange_gage,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *Wallet) Reset() {
@@ -2702,6 +2712,20 @@ func (x *Wallet) GetSpentIdentities() []string {
 		return x.SpentIdentities
 	}
 	return nil
+}
+
+func (x *Wallet) GetEquipMileage() uint64 {
+	if x != nil {
+		return x.EquipMileage
+	}
+	return 0
+}
+
+func (x *Wallet) GetEquipMileageExchangeGage() uint64 {
+	if x != nil {
+		return x.EquipMileageExchangeGage
+	}
+	return 0
 }
 
 type MailState struct {
@@ -2916,7 +2940,7 @@ const file_bd2_state_v1_state_proto_rawDesc = "" +
 	"grantItems\"<\n" +
 	"\x0fEquipmentOption\x12\x19\n" +
 	"\bgroup_id\x18\x01 \x01(\x04R\agroupId\x12\x0e\n" +
-	"\x02id\x18\x02 \x01(\x04R\x02id\"\xa6\x03\n" +
+	"\x02id\x18\x02 \x01(\x04R\x02id\"\xd1\x03\n" +
 	"\tEquipment\x12'\n" +
 	"\x0finventory_index\x18\x01 \x01(\x04R\x0einventoryIndex\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\x04R\x02id\x12\x14\n" +
@@ -2930,7 +2954,8 @@ const file_bd2_state_v1_state_proto_rawDesc = "" +
 	"subOptions\x12D\n" +
 	"\x0eprivate_option\x18\n" +
 	" \x01(\v2\x1d.bd2.state.v1.EquipmentOptionR\rprivateOption\x12\x14\n" +
-	"\x05ranks\x18\v \x03(\x04R\x05ranks\"Q\n" +
+	"\x05ranks\x18\v \x03(\x04R\x05ranks\x12)\n" +
+	"\x10upgrade_attempts\x18\f \x01(\x04R\x0fupgradeAttempts\"Q\n" +
 	"\n" +
 	"NamedIndex\x12\x1a\n" +
 	"\bidentity\x18\x01 \x01(\tR\bidentity\x12'\n" +
@@ -3073,7 +3098,7 @@ const file_bd2_state_v1_state_proto_rawDesc = "" +
 	"\rgacha_applied\x18\x0e \x03(\tR\fgachaApplied\x12Y\n" +
 	"\x15gacha_point_exchanges\x18\x0f \x03(\v2%.bd2.state.v1.NamedGachaPointExchangeR\x13gachaPointExchanges\x122\n" +
 	"\x15gacha_count_corrected\x18\x10 \x01(\bR\x13gachaCountCorrected\x125\n" +
-	"\x06grants\x18\x11 \x03(\v2\x1d.bd2.state.v1.CollectionGrantR\x06grants\"\x95\x02\n" +
+	"\x06grants\x18\x11 \x03(\v2\x1d.bd2.state.v1.CollectionGrantR\x06grants\"\xf9\x02\n" +
 	"\x06Wallet\x12%\n" +
 	"\x0eclient_version\x18\x01 \x01(\tR\rclientVersion\x12\x12\n" +
 	"\x04gold\x18\x02 \x01(\x04R\x04gold\x12!\n" +
@@ -3083,7 +3108,10 @@ const file_bd2_state_v1_state_proto_rawDesc = "" +
 	"\vhope_powder\x18\x06 \x01(\x04R\n" +
 	"hopePowder\x12-\n" +
 	"\x12granted_identities\x18\a \x03(\tR\x11grantedIdentities\x12)\n" +
-	"\x10spent_identities\x18\b \x03(\tR\x0fspentIdentities\"Z\n" +
+	"\x10spent_identities\x18\b \x03(\tR\x0fspentIdentities\x12#\n" +
+	"\requip_mileage\x18\t \x01(\x04R\fequipMileage\x12=\n" +
+	"\x1bequip_mileage_exchange_gage\x18\n" +
+	" \x01(\x04R\x18equipMileageExchangeGage\"Z\n" +
 	"\tMailState\x12%\n" +
 	"\x0eclient_version\x18\x01 \x01(\tR\rclientVersion\x12&\n" +
 	"\x0fopened_mail_ids\x18\x02 \x03(\x04R\ropenedMailIds\"\xa3\x01\n" +

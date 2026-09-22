@@ -16,11 +16,13 @@ import (
 // type 4 is gold. Paid jewelry is persisted as well, although quest rewards
 // in the audited tutorial range do not grant it.
 type Currency struct {
-	Gold        uint64 `json:"gold"`
-	FreeJewelry uint64 `json:"free_jewelry"`
-	Jewelry     uint64 `json:"jewelry"`
-	Mileage     uint64 `json:"mileage,omitempty"`
-	HopePowder  uint64 `json:"hope_powder,omitempty"`
+	Gold                     uint64 `json:"gold"`
+	FreeJewelry              uint64 `json:"free_jewelry"`
+	Jewelry                  uint64 `json:"jewelry"`
+	Mileage                  uint64 `json:"mileage,omitempty"`
+	HopePowder               uint64 `json:"hope_powder,omitempty"`
+	EquipMileage             uint64 `json:"equip_mileage"`
+	EquipMileageExchangeGage uint64 `json:"equip_mileage_exchange_gage"`
 }
 
 type walletSnapshot struct {
@@ -50,6 +52,16 @@ func OpenWallet(path string, initial Currency) (*Wallet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("player: read wallet: %w", err)
 	}
+	var shape map[string]json.RawMessage
+	if err := json.Unmarshal(b, &shape); err != nil {
+		return nil, errors.New("player: malformed wallet state")
+	}
+	if _, ok := shape["equip_mileage"]; !ok {
+		return nil, errors.New("player: wallet save requires equip_mileage; migrate the development save")
+	}
+	if _, ok := shape["equip_mileage_exchange_gage"]; !ok {
+		return nil, errors.New("player: wallet save requires equip_mileage_exchange_gage; migrate the development save")
+	}
 	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != "2.34.13" || s.state.Granted == nil {
 		return nil, errors.New("player: malformed wallet state")
 	}
@@ -57,6 +69,17 @@ func OpenWallet(path string, initial Currency) (*Wallet, error) {
 		s.state.Spent = map[string]bool{}
 	}
 	return s, nil
+}
+
+func (s *Wallet) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.commit(cloneWallet(s.state))
 }
 
 func (s *Wallet) Snapshot() Currency {
@@ -156,6 +179,37 @@ func (s *Wallet) Currencies() (gold, freeJewelry, jewelry, mileage uint64) {
 }
 
 func (s *Wallet) HopePowderBalance() uint64 { return s.Snapshot().HopePowder }
+
+func (s *Wallet) EquipmentMileageBalances() (mileage, exchangeGage uint64) {
+	c := s.Snapshot()
+	return c.EquipMileage, c.EquipMileageExchangeGage
+}
+
+// RecordEquipmentSmelting converts the actually consumed refinement material
+// into the official residual gauge and type-68 mileage currency.
+func (s *Wallet) RecordEquipmentSmelting(materialCount, threshold, rewardCount uint64) (Currency, uint64, error) {
+	if materialCount == 0 || threshold == 0 || rewardCount == 0 {
+		return Currency{}, 0, errors.New("player: invalid equipment smelting mileage")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.EquipMileageExchangeGage >= threshold || math.MaxUint64-s.state.EquipMileageExchangeGage < materialCount {
+		return Currency{}, 0, errors.New("player: invalid equipment smelting gauge")
+	}
+	next := cloneWallet(s.state)
+	total := next.EquipMileageExchangeGage + materialCount
+	exchanges := total / threshold
+	earned := exchanges * rewardCount
+	if exchanges != 0 && earned/exchanges != rewardCount || math.MaxUint64-next.EquipMileage < earned {
+		return Currency{}, 0, errors.New("player: equipment mileage overflow")
+	}
+	next.EquipMileageExchangeGage = total % threshold
+	next.EquipMileage += earned
+	if err := s.commit(next); err != nil {
+		return Currency{}, 0, err
+	}
+	return next.Currency, earned, nil
+}
 
 // GrantMileageOnce persists the type-20 currency produced when a duplicate
 // costume is drawn after +5. The gacha grant identity makes recovery after a

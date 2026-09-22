@@ -83,6 +83,13 @@ type GachaSelection struct {
 	ItemID  uint64 `json:"item_id"`
 }
 
+// CharAwakeProgress is account-wide character state keyed by CharTable's
+// UniqueCharId. Promotion changes CharTable.Id, but never this identity.
+type CharAwakeProgress struct {
+	ImprintLevels [3]uint64 `json:"imprint_levels"`
+	IsAwake       bool      `json:"is_awake"`
+}
+
 // FirstGachaCompletedIdentity is the persisted account flag represented in
 // the existing collection grant ledger. It is written atomically with the
 // official GachaSubType=3 first-pick transaction.
@@ -99,6 +106,7 @@ type collectionSnapshot struct {
 	Costumes            []Costume                     `json:"costumes,omitempty"`
 	BaseCostumeLevels   map[string]uint64             `json:"base_costume_levels,omitempty"`
 	CostumePotential    map[string][]uint64           `json:"costume_potential"`
+	CharAwake           map[string]CharAwakeProgress  `json:"char_awake"`
 	GachaSelections     map[string][]GachaSelection   `json:"gacha_selections,omitempty"`
 	StepUpProgress      map[string]uint64             `json:"step_up_progress,omitempty"`
 	GachaUsers          map[string]GachaUserState     `json:"gacha_users,omitempty"`
@@ -125,6 +133,7 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 		Version: "2.34.13", NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
 		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{},
 		CostumePotential: map[string][]uint64{},
+		CharAwake:        map[string]CharAwakeProgress{},
 		StepUpProgress:   map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
 	}}
@@ -146,6 +155,15 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	}
 	if s.data.CostumePotential == nil {
 		return nil, errors.New("player: collection save requires costume_potential; migrate the development save")
+	}
+	if s.data.CharAwake == nil {
+		return nil, errors.New("player: collection save requires char_awake; migrate the development save")
+	}
+	for key, progress := range s.data.CharAwake {
+		uniqueID, parseErr := strconv.ParseUint(key, 10, 64)
+		if parseErr != nil || uniqueID == 0 || (progress.ImprintLevels == [3]uint64{} && !progress.IsAwake) {
+			return nil, errors.New("player: invalid char_awake ledger")
+		}
 	}
 	if s.data.GachaSelections == nil {
 		s.data.GachaSelections = map[string][]GachaSelection{}
@@ -172,6 +190,17 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *CollectionStore) EnsurePersisted() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := os.Stat(s.path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return s.commit(cloneCollection(s.data))
 }
 
 func emptyCollectionGrant(grant CollectionGrant) bool {
@@ -468,6 +497,26 @@ func (s *CollectionStore) GrantEquipmentPurchase(identity string, count uint64, 
 	grant := CollectionGrant{}
 	applyGachaPurchase(&next, identity, make([]uint64, count), purchase, &grant)
 	next.Grants[identity] = cloneGrant(grant)
+	if err := s.commit(next); err != nil {
+		return CollectionGrant{}, err
+	}
+	return grant, nil
+}
+
+// GrantEquipmentDraw records a standalone ticket draw without inventing a
+// schedule group, points, purchase counts, or fixed-pity state.
+func (s *CollectionStore) GrantEquipmentDraw(identity string) (CollectionGrant, error) {
+	if identity == "" {
+		return CollectionGrant{}, errors.New("player: invalid equipment draw identity")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if grant, ok := s.data.Grants[identity]; ok {
+		return cloneGrant(grant), nil
+	}
+	next := cloneCollection(s.data)
+	grant := CollectionGrant{}
+	next.Grants[identity] = grant
 	if err := s.commit(next); err != nil {
 		return CollectionGrant{}, err
 	}
@@ -804,6 +853,55 @@ func (s *CollectionStore) ActivateCostumePotential(costumeIndex uint64, nodes []
 	return s.commit(next)
 }
 
+func (s *CollectionStore) CharAwakeState(uniqueCharID uint64) (CharAwakeProgress, bool) {
+	if uniqueCharID == 0 {
+		return CharAwakeProgress{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	progress, ok := s.data.CharAwake[strconv.FormatUint(uniqueCharID, 10)]
+	return progress, ok
+}
+
+func (s *CollectionStore) CharAwakeStates() map[uint64]CharAwakeProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make(map[uint64]CharAwakeProgress, len(s.data.CharAwake))
+	for key, progress := range s.data.CharAwake {
+		uniqueID, err := strconv.ParseUint(key, 10, 64)
+		if err == nil && uniqueID != 0 {
+			result[uniqueID] = progress
+		}
+	}
+	return result
+}
+
+// UpdateCharAwake atomically advances one UniqueCharId ledger entry. expected
+// rejects stale concurrent requests before one response can overwrite another.
+func (s *CollectionStore) UpdateCharAwake(uniqueCharID uint64, expected, nextProgress CharAwakeProgress) error {
+	if uniqueCharID == 0 || nextProgress == (CharAwakeProgress{}) {
+		return errors.New("player: invalid character awakening progress")
+	}
+	for i := range nextProgress.ImprintLevels {
+		if nextProgress.ImprintLevels[i] < expected.ImprintLevels[i] {
+			return errors.New("player: character imprint level cannot decrease")
+		}
+	}
+	if expected.IsAwake && !nextProgress.IsAwake {
+		return errors.New("player: character awakening cannot be removed")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strconv.FormatUint(uniqueCharID, 10)
+	current := s.data.CharAwake[key]
+	if current != expected {
+		return errors.New("player: stale character awakening progress")
+	}
+	next := cloneCollection(s.data)
+	next.CharAwake[key] = nextProgress
+	return s.commit(next)
+}
+
 func (s *CollectionStore) Grant(identity string) (CollectionGrant, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -882,6 +980,10 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	out.CostumePotential = make(map[string][]uint64, len(in.CostumePotential))
 	for k, v := range in.CostumePotential {
 		out.CostumePotential[k] = append([]uint64(nil), v...)
+	}
+	out.CharAwake = make(map[string]CharAwakeProgress, len(in.CharAwake))
+	for k, v := range in.CharAwake {
+		out.CharAwake[k] = v
 	}
 	out.GachaSelections = make(map[string][]GachaSelection, len(in.GachaSelections))
 	for k, v := range in.GachaSelections {

@@ -30,6 +30,13 @@ var stateFiles = []string{
 	"items.json", "mail.json", "missions.json", "progress.json", "wallet.json",
 }
 
+// StateFiles returns the complete account-state filename set. The runtime
+// transaction coordinator uses the same allow-list as validation/repair, so
+// a newly added domain file cannot silently sit outside crash recovery.
+func StateFiles() []string {
+	return append([]string(nil), stateFiles...)
+}
+
 func CompleteStateAvailable(dir string) (bool, error) {
 	dir = filepath.Clean(dir)
 	found := 0
@@ -154,17 +161,18 @@ type equipmentOption struct {
 	ID      uint64 `json:"id"`
 }
 type equipment struct {
-	InvenIndex    uint64            `json:"inven_index"`
-	ID            uint64            `json:"id"`
-	Level         uint64            `json:"level"`
-	UseChar       uint64            `json:"use_char"`
-	KeepFlag      uint64            `json:"keep_flag"`
-	LockFlag      uint64            `json:"lock_flag"`
-	SortID        uint64            `json:"sort_id"`
-	MainOption    []equipmentOption `json:"main_option"`
-	SubOption     []equipmentOption `json:"sub_option"`
-	PrivateOption *equipmentOption  `json:"private_option"`
-	Rank          []uint64          `json:"rank"`
+	InvenIndex      uint64            `json:"inven_index"`
+	ID              uint64            `json:"id"`
+	Level           uint64            `json:"level"`
+	UseChar         uint64            `json:"use_char"`
+	KeepFlag        uint64            `json:"keep_flag"`
+	LockFlag        uint64            `json:"lock_flag"`
+	SortID          uint64            `json:"sort_id"`
+	MainOption      []equipmentOption `json:"main_option"`
+	SubOption       []equipmentOption `json:"sub_option"`
+	PrivateOption   *equipmentOption  `json:"private_option"`
+	Rank            []uint64          `json:"rank"`
+	UpgradeAttempts uint64            `json:"upgrade_attempts"`
 }
 type equipmentDisk struct {
 	Version   string            `json:"version"`
@@ -252,14 +260,16 @@ type collectionDisk struct {
 }
 
 type walletDisk struct {
-	Version     string          `json:"version"`
-	Gold        uint64          `json:"gold"`
-	FreeJewelry uint64          `json:"free_jewelry"`
-	Jewelry     uint64          `json:"jewelry"`
-	Mileage     uint64          `json:"mileage"`
-	HopePowder  uint64          `json:"hope_powder"`
-	Granted     map[string]bool `json:"granted"`
-	Spent       map[string]bool `json:"spent"`
+	Version                  string          `json:"version"`
+	Gold                     uint64          `json:"gold"`
+	FreeJewelry              uint64          `json:"free_jewelry"`
+	Jewelry                  uint64          `json:"jewelry"`
+	Mileage                  uint64          `json:"mileage"`
+	HopePowder               uint64          `json:"hope_powder"`
+	EquipMileage             uint64          `json:"equip_mileage"`
+	EquipMileageExchangeGage uint64          `json:"equip_mileage_exchange_gage"`
+	Granted                  map[string]bool `json:"granted"`
+	Spent                    map[string]bool `json:"spent"`
 }
 type mailDisk struct {
 	Version string   `json:"version"`
@@ -441,7 +451,7 @@ func equipmentProto(in equipmentDisk) *statev1.EquipmentInventory {
 	return out
 }
 func equipmentItemProto(v equipment) *statev1.Equipment {
-	out := &statev1.Equipment{InventoryIndex: v.InvenIndex, Id: v.ID, Level: v.Level, UseChar: v.UseChar, KeepFlag: v.KeepFlag, LockFlag: v.LockFlag, SortId: v.SortID, Ranks: append([]uint64(nil), v.Rank...)}
+	out := &statev1.Equipment{InventoryIndex: v.InvenIndex, Id: v.ID, Level: v.Level, UseChar: v.UseChar, KeepFlag: v.KeepFlag, LockFlag: v.LockFlag, SortId: v.SortID, Ranks: append([]uint64(nil), v.Rank...), UpgradeAttempts: v.UpgradeAttempts}
 	for _, o := range v.MainOption {
 		out.MainOptions = append(out.MainOptions, &statev1.EquipmentOption{GroupId: o.GroupID, Id: o.ID})
 	}
@@ -517,7 +527,7 @@ func fixedProto(v gachaFixed) *statev1.GachaFixed {
 	return &statev1.GachaFixed{FixedId: v.FixedID, Type: v.Type, Count: v.Count, ApplySortId: v.ApplySort}
 }
 func walletProto(in walletDisk) *statev1.Wallet {
-	return &statev1.Wallet{ClientVersion: in.Version, Gold: in.Gold, FreeJewelry: in.FreeJewelry, Jewelry: in.Jewelry, Mileage: in.Mileage, HopePowder: in.HopePowder, GrantedIdentities: sortedTrueKeys(in.Granted), SpentIdentities: sortedTrueKeys(in.Spent)}
+	return &statev1.Wallet{ClientVersion: in.Version, Gold: in.Gold, FreeJewelry: in.FreeJewelry, Jewelry: in.Jewelry, Mileage: in.Mileage, HopePowder: in.HopePowder, GrantedIdentities: sortedTrueKeys(in.Granted), SpentIdentities: sortedTrueKeys(in.Spent), EquipMileage: in.EquipMileage, EquipMileageExchangeGage: in.EquipMileageExchangeGage}
 }
 func namedCounts(in map[string]uint64) []*statev1.NamedCount {
 	out := make([]*statev1.NamedCount, 0, len(in))
