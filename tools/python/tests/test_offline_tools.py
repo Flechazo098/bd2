@@ -21,6 +21,7 @@ import import_seed
 import deobfuscate_client_source
 import extract_client_proto
 import dev_mail_grant
+import inherited_stage
 
 
 class Arguments:
@@ -120,7 +121,35 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
         material = next(item for item in mapped if item["element_type"] == 8 and item["id"] == 127)
         self.assertEqual(material["name"], "女神之泪")
         self.assertIn("无需开箱", material["details"])
+        self.assertIn("装备制作所需材料", material["details"])
         self.assertIn("400131", material["details"])
+
+    def test_single_consistent_box_name_becomes_the_material_display_name(self):
+        items = [
+            {"id": 400045, "element_type": 9, "name": "精炼粉末", "category": "随机箱"},
+            {"id": 10, "element_type": 8, "name": "强化袋", "category": "资源"},
+        ]
+        mapped = dev_mail_grant.map_fixed_boxes_to_direct_items(
+            items,
+            {400045: (8, 10, 5)},
+            {},
+        )
+        material = next(item for item in mapped if item["element_type"] == 8 and item["id"] == 10)
+        self.assertEqual(material["name"], "精炼粉末")
+        self.assertIn("原始资源名：强化袋", material["details"])
+
+    def test_localized_names_reads_the_requested_text_namespace(self):
+        import sqlite3
+
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE RandomBoxTextTable (id INTEGER, ProtoBuf BLOB)")
+        name = "精炼粉末".encode("utf-8")
+        connection.execute(
+            "INSERT INTO RandomBoxTextTable VALUES (?, ?)",
+            (7, b"\x10\x07\x22" + bytes([len(name)]) + name),
+        )
+        self.assertEqual(dev_mail_grant._localized_names(connection, "RandomBoxTextTable"), {7: "精炼粉末"})
+        connection.close()
 
     def test_internal_lost_resource_is_not_mail_safe(self):
         self.assertFalse(dev_mail_grant._safe_direct_mail_item({
@@ -194,6 +223,26 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
 
 
 class ClientSourceToolTests(unittest.TestCase):
+    def test_generated_tree_staging_uses_parent_inheriting_directory_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "dev" / "client-source-readable"
+            real_mkdir = inherited_stage.os.mkdir
+            calls = []
+
+            def recording_mkdir(path, *args, **kwargs):
+                calls.append((Path(path), args, kwargs))
+                return real_mkdir(path, *args, **kwargs)
+
+            with mock.patch.object(inherited_stage.os, "mkdir", side_effect=recording_mkdir):
+                stage = inherited_stage.create_inherited_stage(output)
+            try:
+                self.assertEqual(stage.parent, output.parent)
+                stage_call = next(call for call in calls if call[0] == stage)
+                self.assertEqual(stage_call[1], ())
+                self.assertEqual(stage_call[2], {})
+            finally:
+                stage.rmdir()
+
     def test_deobfuscates_code_not_comments_or_literals_and_records_collisions(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -93,7 +93,7 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 
 ## 临时邮件物品发放
 
-`dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。另提供单一金币货币条目 `type4/id0`，填写的数量在领取后直接叠加至钱包，不再发送“金币随机箱”。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
+`dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。物品名按来源表引用的文本命名空间解析；确定性随机箱使用 `RandomBoxTextTable` 的真实名称作为内容物搜索别名，因此不依赖固定物品 ID。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。另提供单一金币货币条目 `type4/id0`，填写的数量在领取后直接叠加至钱包，不再发送“金币随机箱”。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
 
 启动工具时，`--mail-seed` 是只读的当前基础邮件种子；`--output` 是新生成的完整临时种子。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
 

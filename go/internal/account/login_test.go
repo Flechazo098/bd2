@@ -15,7 +15,7 @@ func TestEncodeUsesFreshLocalKey(t *testing.T) {
 	user := wire.AppendVarint(nil, 1, 42)
 	user = wire.AppendString(user, 2, "Guest_42")
 	user = wire.AppendVarint(user, 5, 100)
-	seed := &LoginSeed{Version: Version23413, PacketCode: 11, UserInfo: user}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 11, UserInfo: user}
 	const local = "0123456789abcdef0123456789abcdef"
 	body, err := seed.Encode(local, time.UnixMilli(1234))
 	if err != nil {
@@ -48,7 +48,7 @@ func TestEncodeUsesFreshLocalKey(t *testing.T) {
 }
 
 func TestLoginValidatesEncryptedRequest(t *testing.T) {
-	seed := &LoginSeed{Version: Version23413, PacketCode: 3, UserInfo: wire.AppendVarint(nil, 1, 1)}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: wire.AppendVarint(nil, 1, 1)}
 	if _, err := seed.Login([]byte("not protobuf"), []byte("0123456789abcdef0123456789abcdef")); err == nil {
 		t.Fatal("Login accepted invalid protobuf request")
 	}
@@ -57,7 +57,7 @@ func TestLoginValidatesEncryptedRequest(t *testing.T) {
 func TestLoadRejectsSeedWithUserKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
-	seed := &LoginSeed{Version: Version23413, PacketCode: 11, UserInfo: wire.AppendString(nil, 3, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 11, UserInfo: wire.AppendString(nil, 3, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")}
 	if err := seed.Write(path); err == nil {
 		t.Fatal("Write accepted user_key")
 	}
@@ -96,7 +96,7 @@ func (loginCurrencyFixture) Currencies() (uint64, uint64, uint64, uint64) {
 func (loginCurrencyFixture) EquipmentMileageBalances() (uint64, uint64) { return 17, 845 }
 
 func TestLoginRestoresEquipmentMileageFromCurrencyProvider(t *testing.T) {
-	seed := &LoginSeed{Version: Version23413, PacketCode: 3, UserInfo: wire.AppendVarint(nil, 1, 1)}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: wire.AppendVarint(nil, 1, 1)}
 	if err := seed.AttachCurrencies(loginCurrencyFixture{}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,4 +114,108 @@ func TestLoginRestoresEquipmentMileageFromCurrencyProvider(t *testing.T) {
 	if gauge, found, err := wire.Varint(user, 68); err != nil || !found || gauge != 845 {
 		t.Fatalf("equipment mileage gauge=%d found=%v err=%v", gauge, found, err)
 	}
+}
+
+type loginPurchaseCountFixture struct {
+	infos [][]byte
+}
+
+func (f *loginPurchaseCountFixture) PurchaseCountDBInfos() [][]byte { return f.infos }
+
+func TestLoginReplacesSeedPurchaseCountsFromProvider(t *testing.T) {
+	stale := wire.AppendVarint(nil, 1, 999)
+	userTemplate := wire.AppendVarint(nil, 1, 1)
+	userTemplate = wire.AppendBytes(userTemplate, 26, stale)
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: userTemplate}
+
+	current := wire.AppendVarint(nil, 1, 1100001)
+	current = wire.AppendVarint(current, 2, 9100033)
+	current = wire.AppendVarint(current, 4, 1)
+	provider := &loginPurchaseCountFixture{infos: [][]byte{current}}
+	if err := seed.AttachPurchaseCounts(provider); err != nil {
+		t.Fatal(err)
+	}
+
+	login := func() []byte {
+		response, err := seed.Login(wire.AppendVarint(nil, 1, 1), []byte("0123456789abcdef0123456789abcdef"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		user, found, err := wire.Bytes(response, 1)
+		if err != nil || !found {
+			t.Fatalf("missing login user: found=%v err=%v", found, err)
+		}
+		return user
+	}
+
+	counts := byteFields(login(), 26)
+	if len(counts) != 1 || string(counts[0]) != string(current) {
+		t.Fatalf("purchase counts=%x want=%x", counts, current)
+	}
+
+	// The provider is consulted on every LoginUser response. An empty current
+	// state must also remove any stale count captured in the seed template.
+	provider.infos = nil
+	if counts = byteFields(login(), 26); len(counts) != 0 {
+		t.Fatalf("empty current state retained purchase counts: %x", counts)
+	}
+}
+
+func TestAttachPurchaseCountsRejectsNil(t *testing.T) {
+	seed := &LoginSeed{}
+	if err := seed.AttachPurchaseCounts(nil); err == nil {
+		t.Fatal("AttachPurchaseCounts accepted nil provider")
+	}
+}
+
+type loginPresetSlotFixture struct{ count uint64 }
+
+func (f *loginPresetSlotFixture) PresetSlotCount() uint64 { return f.count }
+
+func TestLoginReplacesSeedPresetSlotFromProvider(t *testing.T) {
+	userTemplate := wire.AppendVarint(nil, 1, 1)
+	userTemplate = wire.AppendVarint(userTemplate, 28, 6)
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: userTemplate}
+	provider := &loginPresetSlotFixture{count: 9}
+	if err := seed.AttachPresetSlots(provider); err != nil {
+		t.Fatal(err)
+	}
+
+	login := func() []byte {
+		response, err := seed.Login(wire.AppendVarint(nil, 1, 1), []byte("0123456789abcdef0123456789abcdef"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		user, found, err := wire.Bytes(response, 1)
+		if err != nil || !found {
+			t.Fatalf("missing login user: found=%v err=%v", found, err)
+		}
+		return user
+	}
+
+	if count, found, err := wire.Varint(login(), 28); err != nil || !found || count != 9 {
+		t.Fatalf("preset slots=%d found=%v err=%v", count, found, err)
+	}
+	provider.count = 12
+	if count, found, err := wire.Varint(login(), 28); err != nil || !found || count != 12 {
+		t.Fatalf("updated preset slots=%d found=%v err=%v", count, found, err)
+	}
+}
+
+func TestAttachPresetSlotsRejectsNil(t *testing.T) {
+	seed := &LoginSeed{}
+	if err := seed.AttachPresetSlots(nil); err == nil {
+		t.Fatal("AttachPresetSlots accepted nil provider")
+	}
+}
+
+func byteFields(data []byte, number int) [][]byte {
+	var result [][]byte
+	_ = wire.Walk(data, func(field wire.Field) error {
+		if field.Number == number && field.Type == 2 {
+			result = append(result, append([]byte(nil), field.Value...))
+		}
+		return nil
+	})
+	return result
 }

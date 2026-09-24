@@ -12,7 +12,7 @@ import (
 func TestBattleRewardPersistsWithoutDuplicate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owned.json")
 	starter := &Starter{Version: "2.34.13"}
-	inv, err := OpenInventory(path, starter)
+	inv, err := OpenInventory(testStore(path), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestBattleRewardPersistsWithoutDuplicate(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Count != 3 {
 		t.Fatalf("items=%+v err=%v", items, err)
 	}
-	inv, err = OpenInventory(path, starter)
+	inv, err = OpenInventory(testStore(path), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestUseRandomBoxPersistsExactStackAndRewardFromInstalledGameData(t *testing
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "items.json")
-	inv, err := OpenInventory(path, &Starter{Version: "2.34.13"})
+	inv, err := OpenInventory(testStore(path), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestUseRandomBoxPersistsExactStackAndRewardFromInstalledGameData(t *testing
 	if len(all) != 1 || all[0].ID != 704 || all[0].Type != 8 || all[0].Count != 100000 {
 		t.Fatalf("UseRandomBox persisted inventory=%+v", all)
 	}
-	restored, err := OpenInventory(path, &Starter{Version: "2.34.13"})
+	restored, err := OpenInventory(testStore(path), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}

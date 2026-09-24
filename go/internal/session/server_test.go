@@ -4,13 +4,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
+	"bd2server/internal/accountstate"
 	"bd2server/internal/cryptox"
 	"bd2server/internal/protocol"
-	"bd2server/internal/statetx"
+	"bd2server/internal/stateio"
 	"bd2server/internal/transport"
 	"bd2server/internal/wire"
 )
@@ -29,8 +29,11 @@ type fakeDomain struct{}
 
 type fakeStateGate struct{ err error }
 
-func (g *fakeStateGate) Check() error { return g.err }
-func (g *fakeStateGate) BeginOperation() (statetx.RequestOperation, error) {
+func (g *fakeStateGate) Check() error                { return g.err }
+func (g *fakeStateGate) Load(string) ([]byte, error) { return nil, nil }
+func (g *fakeStateGate) Save(string, []byte) error   { return nil }
+func (g *fakeStateGate) Close() error                { return nil }
+func (g *fakeStateGate) BeginOperation() (stateio.RequestOperation, error) {
 	if g.err != nil {
 		return nil, g.err
 	}
@@ -42,9 +45,22 @@ type fakeOperation struct{}
 func (fakeOperation) Commit() error   { return nil }
 func (fakeOperation) Rollback() error { return nil }
 
+func TestFormationTimingPath(t *testing.T) {
+	for _, path := range []string{"/PresetInfo", "/PresetSave", "/DeckSave", "/DeckCostumeSettingSave", "/FieldDeckInfo", "/EquipBatchUse"} {
+		if !formationTimingPath(path) {
+			t.Fatalf("formation path %s is not timed", path)
+		}
+	}
+	for _, path := range []string{"/LoginUser", "/GachaInfo", "/EquipInfo"} {
+		if formationTimingPath(path) {
+			t.Fatalf("unrelated path %s is marked as formation timing", path)
+		}
+	}
+}
+
 type mutatingDomain struct {
-	root string
-	fail bool
+	store stateio.Store
+	fail  bool
 }
 
 func (d *mutatingDomain) Handle(path string, request []byte) (int, []byte, bool, error) {
@@ -54,10 +70,10 @@ func (d *mutatingDomain) Handle(path string, request []byte) (int, []byte, bool,
 	if path != "/MutateTwoFiles" {
 		return 0, nil, false, nil
 	}
-	if err := atomicSessionTestReplace(filepath.Join(d.root, "wallet.json"), []byte("new-wallet")); err != nil {
+	if err := d.store.Save("wallet", []byte("new-wallet")); err != nil {
 		return 0, nil, true, err
 	}
-	if err := atomicSessionTestReplace(filepath.Join(d.root, "items.json"), []byte("new-items")); err != nil {
+	if err := d.store.Save("items", []byte("new-items")); err != nil {
 		return 0, nil, true, err
 	}
 	if d.fail {
@@ -66,41 +82,21 @@ func (d *mutatingDomain) Handle(path string, request []byte) (int, []byte, bool,
 	return 77, nil, true, nil
 }
 
-func atomicSessionTestReplace(path string, data []byte) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".session-test-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := temp.Name()
-	defer os.Remove(name)
-	if _, err = temp.Write(data); err == nil {
-		err = temp.Sync()
-	}
-	if closeErr := temp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
-}
-
 func TestBatchUsesOneAccountTransaction(t *testing.T) {
 	root := t.TempDir()
-	for name, content := range map[string]string{"wallet.json": "old-wallet", "items.json": "old-items"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	coordinator, err := statetx.Open(root, []string{"wallet.json", "items.json"})
+	statePath := filepath.Join(root, "state.db")
+	repository, err := accountstate.Open(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, _ := NewServer(fakeLogin{}, &mutatingDomain{root: root})
-	if err := server.AttachStateCoordinator(coordinator); err != nil {
+	defer repository.Close()
+	for name, content := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
+		if err := repository.Save(name, []byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server, _ := NewServer(fakeLogin{}, &mutatingDomain{store: repository})
+	if err := server.AttachStateStore(repository); err != nil {
 		t.Fatal(err)
 	}
 	reply := login(t, server)
@@ -113,8 +109,13 @@ func TestBatchUsesOneAccountTransaction(t *testing.T) {
 	if _, err := server.DispatchRaw("/BatchRequest", []byte(body), "s="+reply.Cookie); err == nil {
 		t.Fatal("partially failing batch was accepted")
 	}
-	for name, want := range map[string]string{"wallet.json": "old-wallet", "items.json": "old-items"} {
-		got, err := os.ReadFile(filepath.Join(root, name))
+	verified, err := accountstate.Open(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verified.Close()
+	for name, want := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
+		got, err := verified.Load(name)
 		if err != nil || string(got) != want {
 			t.Fatalf("batch rollback %s=%q err=%v", name, got, err)
 		}
@@ -185,7 +186,7 @@ func TestSessionRejectsMissingCookieAndUnknownPath(t *testing.T) {
 func TestStateGateStopsEveryRequestAfterPersistenceFailure(t *testing.T) {
 	server, _ := NewServer(fakeLogin{}, fakeDomain{})
 	gate := &fakeStateGate{}
-	if err := server.AttachStateCoordinator(gate); err != nil {
+	if err := server.AttachStateStore(gate); err != nil {
 		t.Fatal(err)
 	}
 	reply := login(t, server)
@@ -211,17 +212,19 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			for name, content := range map[string]string{"wallet.json": "old-wallet", "items.json": "old-items"} {
-				if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			coordinator, err := statetx.Open(root, []string{"wallet.json", "items.json"})
+			statePath := filepath.Join(root, "state.db")
+			repository, err := accountstate.Open(statePath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			server, _ := NewServer(fakeLogin{}, &mutatingDomain{root: root, fail: test.fail})
-			if err := server.AttachStateCoordinator(coordinator); err != nil {
+			defer repository.Close()
+			for name, content := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
+				if err := repository.Save(name, []byte(content)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server, _ := NewServer(fakeLogin{}, &mutatingDomain{store: repository, fail: test.fail})
+			if err := server.AttachStateStore(repository); err != nil {
 				t.Fatal(err)
 			}
 			reply := login(t, server)
@@ -231,8 +234,16 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 			if test.fail && requestErr == nil || !test.fail && requestErr != nil {
 				t.Fatalf("request err=%v", requestErr)
 			}
+			reader := repository
+			if test.fail {
+				reader, err = accountstate.Open(statePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer reader.Close()
+			}
 			for _, name := range []string{"wallet", "items"} {
-				got, err := os.ReadFile(filepath.Join(root, name+".json"))
+				got, err := reader.Load(name)
 				if err != nil || string(got) != test.want+name {
 					t.Fatalf("%s=%q err=%v", name, got, err)
 				}

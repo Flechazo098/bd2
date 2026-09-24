@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and inspect Brown Dust II 2.34.13 GameData without building Go.
+"""Read and inspect a Brown Dust II GameData version without building Go.
 
 The tool opens common-dbdata.bin as a ZIP, extracts one encrypted SQLite
 member, decrypts each 4096-byte AES-CBC page independently, and exposes only

@@ -12,7 +12,7 @@ func newCharAwakeHarness(t *testing.T) (*CharAwakeService, *CollectionStore, *In
 	t.Helper()
 	dir := t.TempDir()
 	starter := &Starter{Version: "2.34.13"}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), starter)
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,11 +22,11 @@ func newCharAwakeHarness(t *testing.T) (*CharAwakeService, *CollectionStore, *In
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	collection, err := OpenCollectionStore(filepath.Join(dir, "collection.json"), nil)
+	collection, err := OpenCollectionStore(testStore(filepath.Join(dir, "collection.json")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestCharImprintAndAwakePersistConsumeAndRestoreInfo(t *testing.T) {
 	if !progress.IsAwake || wallet.Snapshot().Gold != 200 || len(inventory.All()) != 0 {
 		t.Fatalf("post-awake progress=%+v wallet=%+v items=%+v", progress, wallet.Snapshot(), inventory.All())
 	}
-	restarted, err := OpenCollectionStore(collection.path, nil)
+	restarted, err := OpenCollectionStore(collection.store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

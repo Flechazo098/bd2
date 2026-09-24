@@ -11,7 +11,7 @@ import (
 
 func TestCostumeNodeActivationSupportsSingleAndOneClickSets(t *testing.T) {
 	dir := t.TempDir()
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,20 +19,21 @@ func TestCostumeNodeActivationSupportsSingleAndOneClickSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 300})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 300})
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 6514, Level: 100}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 6514, Level: 100}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	collection, err := OpenCollectionStore(filepath.Join(dir, "collection.json"), nil)
+	collection, err := OpenCollectionStore(testStore(filepath.Join(dir, "collection.json")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collection.data.Costumes = []Costume{{InvenIndex: 88, ID: 65103, UseChar: 77}}
-	if err := collection.commit(collection.data); err != nil {
+	nextCollection := cloneCollection(collection.data)
+	nextCollection.Costumes = []Costume{{InvenIndex: 88, ID: 65103, UseChar: 77}}
+	if err := collection.commit(nextCollection); err != nil {
 		t.Fatal(err)
 	}
 	design := &gamedata.CostumePotentialDesign{

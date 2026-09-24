@@ -13,9 +13,13 @@ import json
 from pathlib import Path
 import re
 import shutil
-import tempfile
 from typing import Iterable
 import unicodedata
+
+try:
+    from .inherited_stage import create_inherited_stage
+except ImportError:  # Direct script execution.
+    from inherited_stage import create_inherited_stage
 
 
 TOOL = "bd2.deobfuscate_client_source"
@@ -67,8 +71,7 @@ def prepare_stage(output: Path) -> Path:
         raise FileExistsError(
             f"refusing to overwrite non-managed output directory: {output}"
         )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    return create_inherited_stage(output)
 
 
 def publish_stage(stage: Path, output: Path) -> None:

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bd2server/internal/account"
+	"bd2server/internal/accountstate"
 	"bd2server/internal/battle"
 	"bd2server/internal/bootstrap"
 	"bd2server/internal/clientplugin"
@@ -28,9 +29,8 @@ import (
 	"bd2server/internal/readonly"
 	"bd2server/internal/schedule"
 	"bd2server/internal/session"
-	"bd2server/internal/statebridge"
-	"bd2server/internal/statetx"
 	"bd2server/internal/transport"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/world"
 )
 
@@ -61,27 +61,57 @@ func main() {
 
 func serve(args []string) (serveErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
 	cdn := fs.String("cdn", "", "ServerData root (required)")
 	gameData := fs.String("game-data", "", "versioned GameData root (required)")
-	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (required)")
+	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (defaults to versions.json)")
 	gameDataOrigin := fs.String("game-data-origin", "https://dl.bd2.pmang.cloud/GameData", "official repair source used only when local validation fails")
-	accountSeed := fs.String("account-seed", `seed\v2_34_13\login_user.json`, "versioned local account seed")
-	playerSeed := fs.String("player-seed", `seed\v2_34_13\starter_player.json`, "versioned starter inventory and characters")
-	readonlySeed := fs.String("readonly-seed", `seed\v2_34_13\readonly.json`, "versioned server schedules and optional feature defaults")
-	mailSeed := fs.String("mail-seed", `seed\v2_34_13\mail.json`, "versioned starter mailbox")
-	stateFile := fs.String("state", `..\data\state\progress.json`, "local player progress save")
-	deckSeed := fs.String("deck-seed", `seed\v2_34_13\decks.json`, "versioned starter deck")
-	deckState := fs.String("deck-state", `..\data\state\deck.json`, "local deck and waypoint save")
-	worldSeed := fs.String("world-seed", `seed\v2_34_13\world.json`, "versioned starter world")
-	stateTool := fs.String("state-tool", "", "optional Haskell state tool override (release package includes it)")
+	accountSeed := fs.String("account-seed", "", "versioned local account seed")
+	playerSeed := fs.String("player-seed", "", "versioned starter inventory and characters")
+	readonlySeed := fs.String("readonly-seed", "", "versioned server schedules and optional feature defaults")
+	mailSeed := fs.String("mail-seed", "", "versioned starter mailbox")
+	stateFile := fs.String("state", `..\data\state\state.db`, "local account SQLite database")
+	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
+	worldSeed := fs.String("world-seed", "", "versioned starter world")
+	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
 	gameDir := fs.String("game-dir", "", "Brown Dust II client directory (required)")
 	identityPlugin := fs.String("identity-plugin", "", "optional BD2LocalIdentity.dll override for development")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cdn == "" || *gameData == "" || *gameDataVersion == "" || *gameDir == "" {
-		return errors.New("serve requires --game-dir, --cdn, --game-data, and --game-data-version")
+	var versions versionconfig.Config
+	var err error
+	if *versionConfigPath == "" {
+		versions, err = versionconfig.Find()
+	} else {
+		versions, err = versionconfig.Load(*versionConfigPath)
+	}
+	if err != nil {
+		return err
+	}
+	if *gameDataVersion == "" {
+		*gameDataVersion = versions.GameDataVersion
+	} else {
+		// Preserve the development override as part of the effective process
+		// configuration so state snapshots describe the GameData actually used.
+		versions.GameDataVersion = *gameDataVersion
+		if err := versions.Validate(); err != nil {
+			return fmt.Errorf("effective version config: %w", err)
+		}
+	}
+	versionconfig.Use(versions)
+	seedRoot := versions.Resolve(versions.SeedDirectory)
+	for target, name := range map[*string]string{
+		accountSeed: "login_user.json", playerSeed: "starter_player.json", readonlySeed: "readonly.json",
+		mailSeed: "mail.json", deckSeed: "decks.json", worldSeed: "world.json", gachaScheduleSeed: "gacha_schedule.json",
+	} {
+		if *target == "" {
+			*target = filepath.Join(seedRoot, name)
+		}
+	}
+	if *cdn == "" || *gameData == "" || *gameDir == "" {
+		return errors.New("serve requires --game-dir, --cdn, and --game-data")
 	}
 	packagedPlugin, err := clientplugin.ResolvePackaged(*identityPlugin)
 	if err != nil {
@@ -100,8 +130,8 @@ func serve(args []string) (serveErr error) {
 	cfg := bootstrap.Config{
 		BaseURL:     base,
 		CDNURL:      "http://" + *listen + "/assets/ServerData",
-		Version:     bootstrap.ClientVersion,
-		BundleVer:   bootstrap.BundleVersion,
+		Version:     versions.ClientVersion,
+		BundleVer:   versions.BundleVersion,
 		GameDataURL: "http://" + *listen + "/assets/GameData",
 		GameDataVer: *gameDataVersion,
 	}
@@ -126,22 +156,36 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter player: %w", err)
 	}
-	regularGacha, err := gamedata.LoadRegularCostumeGacha(filepath.Clean(*gameData), *gameDataVersion)
+	if login.Version != versions.ProtocolVersion || starter.Version != versions.ProtocolVersion {
+		return fmt.Errorf("protocol version %s requires matching account and player seeds (got %s and %s)", versions.ProtocolVersion, login.Version, starter.Version)
+	}
+	gachaSchedule, err := gacha.LoadScheduleSeed(filepath.Clean(*gachaScheduleSeed), versions.ClientVersion)
 	if err != nil {
-		return fmt.Errorf("load regular gacha GameData: %w", err)
+		return fmt.Errorf("load gacha schedule: %w", err)
 	}
-	stateDir := filepath.Dir(filepath.Clean(*stateFile))
-	if err := validateAccountStatePaths(stateDir, *stateFile, *deckState); err != nil {
-		return err
+	var scheduleGroupIDs, stepUpGroupIDs []uint64
+	for _, window := range gachaSchedule.Schedules {
+		scheduleGroupIDs = append(scheduleGroupIDs, window.GroupID)
 	}
-	stateTransaction, err := statetx.Open(stateDir, statebridge.StateFiles())
+	for _, window := range gachaSchedule.StepUps {
+		stepUpGroupIDs = append(stepUpGroupIDs, window.GroupID)
+	}
+	regularGacha, equipmentGacha, err := gamedata.LoadActiveGachaForSchedules(filepath.Clean(*gameData), *gameDataVersion, scheduleGroupIDs, stepUpGroupIDs)
 	if err != nil {
-		return fmt.Errorf("recover account state transaction: %w", err)
+		return fmt.Errorf("load active gacha GameData: %w", err)
 	}
-	if err := repairStateBeforeServe(stateDir, *stateTool, *gameDataVersion, regularGacha, starter); err != nil {
-		return fmt.Errorf("state migration/repair: %w", err)
+	stateRepository, err := accountstate.Open(filepath.Clean(*stateFile))
+	if err != nil {
+		return fmt.Errorf("open account state database: %w", err)
 	}
-	startupTransaction, err := stateTransaction.Begin()
+	defer stateRepository.Close()
+	accountDomains := []string{"characters", "collection", "deck", "equipment", "items", "mail", "missions", "progress", "wallet"}
+	if !stateRepository.IsNew() {
+		if err := stateRepository.RequireDomains(accountDomains...); err != nil {
+			return fmt.Errorf("reject incomplete account database: %w", err)
+		}
+	}
+	startupTransaction, err := stateRepository.BeginOperation()
 	if err != nil {
 		return fmt.Errorf("begin startup state transaction: %w", err)
 	}
@@ -162,7 +206,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter mailbox: %w", err)
 	}
-	progressState, err := progress.OpenStore(*stateFile)
+	progressState, err := progress.OpenStore(stateRepository)
 	if err != nil {
 		return err
 	}
@@ -170,11 +214,14 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter deck: %w", err)
 	}
-	deckStateStore, err := deck.OpenStore(filepath.Clean(*deckState), deckConfig)
+	deckStateStore, err := deck.OpenStore(stateRepository, deckConfig)
 	if err != nil {
 		return fmt.Errorf("load deck state: %w", err)
 	}
-	ownedItems, err := player.OpenInventory(filepath.Join(filepath.Dir(*stateFile), "items.json"), starter)
+	if err := login.AttachPresetSlots(deckStateStore); err != nil {
+		return fmt.Errorf("attach preset slots to login: %w", err)
+	}
+	ownedItems, err := player.OpenInventory(stateRepository, starter)
 	if err != nil {
 		return fmt.Errorf("load owned inventory: %w", err)
 	}
@@ -197,7 +244,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("read account seed equipment mileage: %w", err)
 	}
-	wallet, err := player.OpenWallet(filepath.Join(filepath.Dir(*stateFile), "wallet.json"), player.Currency{
+	wallet, err := player.OpenWallet(stateRepository, player.Currency{
 		Gold: gold, FreeJewelry: freeJewelry, Jewelry: jewelry, Mileage: mileage, HopePowder: hopePowder,
 		EquipMileage: equipMileage, EquipMileageExchangeGage: equipMileageExchangeGage,
 	})
@@ -207,7 +254,7 @@ func serve(args []string) (serveErr error) {
 	if err := login.AttachCurrencies(wallet); err != nil {
 		return fmt.Errorf("attach wallet to login: %w", err)
 	}
-	mailService, err := mail.OpenService(filepath.Join(filepath.Dir(*stateFile), "mail.json"), mailbox, ownedItems, wallet)
+	mailService, err := mail.OpenService(stateRepository, mailbox, ownedItems, wallet)
 	if err != nil {
 		return fmt.Errorf("load mail state: %w", err)
 	}
@@ -218,12 +265,15 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load mission GameData: %w", err)
 	}
-	missionService, err := missions.Open(filepath.Join(filepath.Dir(*stateFile), "missions.json"), missionDesign, ownedItems)
+	missionService, err := missions.Open(stateRepository, missionDesign, ownedItems)
 	if err != nil {
 		return fmt.Errorf("load mission state: %w", err)
 	}
 	if err := missionService.AttachWallet(wallet); err != nil {
 		return fmt.Errorf("attach mission wallet: %w", err)
+	}
+	if err := missionService.AttachMail(mailService); err != nil {
+		return fmt.Errorf("attach mission compensation mailbox: %w", err)
 	}
 	if err := missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 101}); err != nil {
 		return fmt.Errorf("record daily login mission: %w", err)
@@ -231,7 +281,7 @@ func serve(args []string) (serveErr error) {
 	if err := missionService.SetProgress(gamedata.MissionKey{GroupType: 1, GroupID: 2, ID: 201}, 1); err != nil {
 		return fmt.Errorf("record weekly login mission: %w", err)
 	}
-	ownedEquipment, err := player.OpenEquipmentInventory(filepath.Join(filepath.Dir(*stateFile), "equipment.json"))
+	ownedEquipment, err := player.OpenEquipmentInventory(stateRepository)
 	if err != nil {
 		return fmt.Errorf("load owned equipment: %w", err)
 	}
@@ -256,7 +306,14 @@ func serve(args []string) (serveErr error) {
 	if err := ownedEquipment.AttachSmelting(equipmentSmelting, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment smelting GameData: %w", err)
 	}
-	collection, err := player.OpenCollectionStore(filepath.Join(filepath.Dir(*stateFile), "collection.json"), starter.Costumes)
+	equipmentOptionReroll, err := gamedata.LoadEquipmentOptionRerollDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment option reroll GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachOptionReroll(equipmentOptionReroll, wallet, ownedItems); err != nil {
+		return fmt.Errorf("attach equipment option reroll GameData: %w", err)
+	}
+	collection, err := player.OpenCollectionStore(stateRepository, starter.Costumes)
 	if err != nil {
 		return fmt.Errorf("load owned collection: %w", err)
 	}
@@ -264,13 +321,22 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load infinite gacha GameData: %w", err)
 	}
-	equipmentGacha, err := gamedata.LoadEquipmentGacha(filepath.Clean(*gameData), *gameDataVersion)
-	if err != nil {
-		return fmt.Errorf("load equipment gacha GameData: %w", err)
-	}
 	gachaService, err := gacha.NewService(infiniteGacha, regularGacha, collection, wallet)
 	if err != nil {
 		return err
+	}
+	if err := login.AttachPurchaseCounts(gachaService); err != nil {
+		return fmt.Errorf("attach cash purchase counts to login: %w", err)
+	}
+	if err := gachaService.AttachSchedule(gachaSchedule); err != nil {
+		return fmt.Errorf("attach gacha schedule: %w", err)
+	}
+	previewEventIndex, err := serverConfig.CashProductEventIndex(gamedata.InfiniteProductGroupID, gamedata.InfiniteProductID)
+	if err != nil {
+		return fmt.Errorf("load infinite preview event: %w", err)
+	}
+	if err := gachaService.AttachPreviewEventIndex(previewEventIndex); err != nil {
+		return fmt.Errorf("attach infinite preview event: %w", err)
 	}
 	// The mapped client property is IsDoneFirstGachaPick. Its authoritative
 	// local state is the explicit GachaSubType=3 completion marker.
@@ -281,7 +347,7 @@ func serve(args []string) (serveErr error) {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 111})
 	})
 	worldService, err := world.Load(filepath.Clean(*worldSeed), filepath.Clean(*gameData), *gameDataVersion,
-		filepath.Join(filepath.Dir(*stateFile), "characters.json"), progressState, starter, ownedEquipment, ownedItems, wallet)
+		stateRepository, progressState, starter, ownedEquipment, ownedItems, wallet)
 	if err != nil {
 		return fmt.Errorf("load world state: %w", err)
 	}
@@ -301,6 +367,9 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := ownedEquipment.AttachCharacters(worldService.CharacterService()); err != nil {
 		return fmt.Errorf("attach equipment character state: %w", err)
+	}
+	if err := deckStateStore.AttachPresetRuntime(wallet, worldService.CharacterService(), ownedEquipment, collection); err != nil {
+		return fmt.Errorf("attach ordinary preset runtime: %w", err)
 	}
 	pictorialDesign, err := gamedata.LoadPictorialDesign(filepath.Clean(*gameData), *gameDataVersion)
 	if err != nil {
@@ -353,27 +422,36 @@ func serve(args []string) (serveErr error) {
 		gachaService,
 		missionService,
 		pictorialService,
-		schedule.Version23413(),
+		schedule.Current(),
 		readonly.Service{Seed: serverConfig},
 		feature.Service{},
 	)
 	if err != nil {
 		return err
 	}
-	if err := ensureAccountStateInitialized(
-		progressState, deckStateStore, ownedItems, ownedEquipment,
-		worldService.CharacterService(), collection, wallet, mailService, missionService,
-	); err != nil {
-		return fmt.Errorf("initialize complete account state generation: %w", err)
+	if stateRepository.IsNew() {
+		if err := ensureAccountStateInitialized(
+			progressState, deckStateStore, ownedItems, ownedEquipment,
+			worldService.CharacterService(), collection, wallet, mailService, missionService,
+		); err != nil {
+			return fmt.Errorf("initialize complete account state generation: %w", err)
+		}
+	}
+	problems, err := stateRepository.Validate()
+	if err != nil {
+		return fmt.Errorf("validate account state database: %w", err)
+	}
+	if len(problems) != 0 {
+		return stateProblemsError("account state database rejected", problems)
 	}
 	if err := startupTransaction.Commit(); err != nil {
 		return fmt.Errorf("commit startup state transaction: %w", err)
 	}
 	startupCommitted = true
-	if err := stateTransaction.Check(); err != nil {
+	if err := stateRepository.Check(); err != nil {
 		return fmt.Errorf("startup state transaction requires recovery restart: %w", err)
 	}
-	if err := game.AttachStateCoordinator(stateTransaction); err != nil {
+	if err := game.AttachStateStore(stateRepository); err != nil {
 		return err
 	}
 	dispatcher := transport.Bootstrap{Config: cfg}
@@ -395,9 +473,6 @@ type accountStateInitializer interface {
 }
 
 func ensureAccountStateInitialized(stores ...accountStateInitializer) error {
-	if len(stores) != len(statebridge.StateFiles()) {
-		return fmt.Errorf("account state initializer count %d does not match transaction file count %d", len(stores), len(statebridge.StateFiles()))
-	}
 	for _, store := range stores {
 		if store == nil {
 			return errors.New("nil account state initializer")
@@ -405,19 +480,6 @@ func ensureAccountStateInitialized(stores ...accountStateInitializer) error {
 		if err := store.EnsurePersisted(); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func validateAccountStatePaths(stateDir, progressPath, deckPath string) error {
-	stateDir = filepath.Clean(stateDir)
-	wantProgress := filepath.Join(stateDir, "progress.json")
-	wantDeck := filepath.Join(stateDir, "deck.json")
-	if filepath.Clean(progressPath) != wantProgress {
-		return fmt.Errorf("account state must use %q; got progress path %q", wantProgress, progressPath)
-	}
-	if filepath.Clean(deckPath) != wantDeck {
-		return fmt.Errorf("all account files must share one transaction directory; use --deck-state %q, got %q", wantDeck, deckPath)
 	}
 	return nil
 }
@@ -483,14 +545,12 @@ func disableLegacyPlugin(gameDir string) (string, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II 2.34.13 local development server
+	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II local development server
 
 Usage:
-  bd2server serve --game-dir DIR --cdn DIR --game-data DIR --game-data-version VERSION [options]
+  bd2server serve --game-dir DIR --cdn DIR --game-data DIR [--version-config FILE] [options]
   bd2server patch-client --game-dir DIR [options]
   bd2server state check [options]
-  bd2server state migrate-v1-v2 [options]
-  bd2server state repair [options]
 
 The server binds to loopback by default and is intended for local research.`)
 }

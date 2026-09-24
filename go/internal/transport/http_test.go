@@ -15,7 +15,7 @@ import (
 )
 
 func TestBootstrapRoundTrip(t *testing.T) {
-	cfg := bootstrap.Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: bootstrap.ClientVersion, BundleVer: bootstrap.BundleVersion}
+	cfg := bootstrap.Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: "test-client", BundleVer: "test-bundle"}
 	now := func() time.Time { return time.UnixMilli(12345) }
 	h := HTTP{Dispatcher: Bootstrap{Config: cfg, Now: now}, Now: now}.Handler()
 	for _, path := range []string{"/MaintenanceInfo", "/ServerInfo", "/NoticeInfo", "/ServerNowTime"} {

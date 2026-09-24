@@ -7,32 +7,73 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"bd2server/internal/gamedata"
 )
+
+func applyStepUpProgress(next *collectionSnapshot, groupID, step uint64) error {
+	if groupID == 0 && step == 0 {
+		return nil
+	}
+	if groupID == 0 || step == 0 {
+		return errors.New("player: incomplete step-up purchase")
+	}
+	key := strconv.FormatUint(groupID, 10)
+	completed := next.StepUpProgress[key]
+	if completed >= step {
+		return nil
+	}
+	if completed+1 != step {
+		return fmt.Errorf("player: step-up group %d expects step %d, got %d", groupID, completed+1, step)
+	}
+	next.StepUpProgress[key] = step
+	return nil
+}
 
 func gachaFixedKey(fixedID, fixedType uint64) string {
 	return fmt.Sprintf("%d:%d", fixedID, fixedType)
 }
 
-func applyGachaPurchase(next *collectionSnapshot, identity string, costumeIDs []uint64, purchase GachaPurchase, grant *CollectionGrant) {
+func dailyGachaPrefix(day string, groupID, buyType uint64) string {
+	return fmt.Sprintf("daily-gacha:%s:%d:%d:", day, groupID, buyType)
+}
+
+func applyGachaPurchase(next *collectionSnapshot, identity string, costumeIDs []uint64, purchase GachaPurchase, grant *CollectionGrant) error {
 	if next.GachaApplied[identity] {
-		return
+		return nil
 	}
 	groupKey := strconv.FormatUint(purchase.Group.ID, 10)
 	user := next.GachaUsers[groupKey]
 	user.GroupID = purchase.Group.ID
+	if purchase.DailyLimit != 0 {
+		if purchase.DailyKey == "" || (purchase.BuyType != 0 && purchase.BuyType != 2) {
+			return errors.New("player: invalid daily gacha purchase")
+		}
+		prefix := dailyGachaPrefix(purchase.DailyKey, purchase.Group.ID, purchase.BuyType)
+		var used uint64
+		for key, applied := range next.GachaApplied {
+			if applied && strings.HasPrefix(key, prefix) {
+				used++
+			}
+		}
+		if used >= purchase.DailyLimit {
+			return fmt.Errorf("player: daily gacha group %d buy type %d exhausted", purchase.Group.ID, purchase.BuyType)
+		}
+		next.GachaApplied[prefix+identity] = true
+	}
 	point := purchase.Group.PointCount * uint64(len(costumeIDs))
 	user.Point += point
 	switch purchase.BuyType {
 	case 1: // GB_NORMAL
 		user.TotalBuyCount += uint64(len(costumeIDs))
-	case 2: // GB_CASH
-		if len(costumeIDs) == 1 {
-			user.OneCashPickCount++
-		} else {
-			user.TenCashPickCount++
+	case 2: // GB_CASH outside the date-scoped daily discount
+		if purchase.DailyLimit == 0 {
+			if len(costumeIDs) == 1 {
+				user.OneCashPickCount++
+			} else {
+				user.TenCashPickCount++
+			}
 		}
+	case 3: // GB_CASH_CONTENT_TICKET
+		user.TotalBuyCount += uint64(len(costumeIDs))
 	}
 	next.GachaUsers[groupKey] = user
 	grant.GachaGroupID = purchase.Group.ID
@@ -45,6 +86,7 @@ func applyGachaPurchase(next *collectionSnapshot, identity string, costumeIDs []
 		next.GachaFixed[gachaFixedKey(fixed.FixedID, fixed.Type)] = stored
 	}
 	next.GachaApplied[identity] = true
+	return nil
 }
 
 func (s *CollectionStore) GachaUsers() []GachaUserState {
@@ -56,6 +98,65 @@ func (s *CollectionStore) GachaUsers() []GachaUserState {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].GroupID < result[j].GroupID })
 	return result
+}
+
+// GachaUsersForDay returns cumulative gacha state with daily free/paid counts
+// rebuilt from durable, date-scoped purchase markers. Historical counts never
+// leak into a new reset day and no storage migration is required.
+func (s *CollectionStore) GachaUsersForDay(day string) []GachaUserState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byGroup := make(map[uint64]GachaUserState, len(s.data.GachaUsers))
+	for _, value := range s.data.GachaUsers {
+		value.OneFreePickCount = 0
+		value.OneCashPickCount = 0
+		value.TenFreePickCount = 0
+		value.TenCashPickCount = 0
+		byGroup[value.GroupID] = value
+	}
+	prefix := "daily-gacha:" + day + ":"
+	for key, applied := range s.data.GachaApplied {
+		if !applied || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		parts := strings.SplitN(strings.TrimPrefix(key, prefix), ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		groupID, groupErr := strconv.ParseUint(parts[0], 10, 64)
+		buyType, typeErr := strconv.ParseUint(parts[1], 10, 64)
+		if groupErr != nil || typeErr != nil || groupID == 0 {
+			continue
+		}
+		user := byGroup[groupID]
+		user.GroupID = groupID
+		switch buyType {
+		case 0:
+			user.OneFreePickCount++
+		case 2:
+			user.OneCashPickCount++
+		}
+		byGroup[groupID] = user
+	}
+	result := make([]GachaUserState, 0, len(byGroup))
+	for _, value := range byGroup {
+		result = append(result, value)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].GroupID < result[j].GroupID })
+	return result
+}
+
+func (s *CollectionStore) GachaDailyCount(day string, groupID, buyType uint64) uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := dailyGachaPrefix(day, groupID, buyType)
+	var count uint64
+	for key, applied := range s.data.GachaApplied {
+		if applied && strings.HasPrefix(key, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *CollectionStore) GachaUser(groupID uint64) GachaUserState {
@@ -120,129 +221,4 @@ func (s *CollectionStore) ExchangeGachaPoint(identity string, groupID, count uin
 		return GachaPointExchange{}, err
 	}
 	return exchange, nil
-}
-
-type legacyGachaDraw struct {
-	identity string
-	session  string
-	seq      uint64
-	gachaID  uint64
-	grant    CollectionGrant
-}
-
-// RepairGachaProgress is a one-time migration for grants written before the
-// server persisted GachaUserDBInfo and GachaFixedDBInfo. Existing results are
-// replayed in request order to recover points and resettable rarity counters.
-func (s *CollectionStore) RepairGachaProgress(catalog *gamedata.RegularGachaCatalog) error {
-	if catalog == nil {
-		return errors.New("player: nil gacha catalog")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.data.GachaApplied) != 0 || len(s.data.GachaUsers) != 0 || len(s.data.GachaFixed) != 0 {
-		if s.data.GachaCountCorrected {
-			return nil
-		}
-		next := cloneCollection(s.data)
-		counts := map[uint64]uint64{}
-		for identity, grant := range next.Grants {
-			parts := strings.Split(identity, ":")
-			if len(parts) < 4 || parts[0] != "regular-gacha" {
-				continue
-			}
-			gachaID, err := strconv.ParseUint(parts[1], 10, 64)
-			if err != nil {
-				continue
-			}
-			group, ok := catalog.GroupForGacha(gachaID)
-			if ok && next.GachaApplied[identity] {
-				counts[group.ID] += uint64(len(grant.ViewCostumeIDs))
-			}
-		}
-		for groupID, count := range counts {
-			key := strconv.FormatUint(groupID, 10)
-			user := next.GachaUsers[key]
-			user.TotalBuyCount = count
-			next.GachaUsers[key] = user
-		}
-		next.GachaCountCorrected = true
-		return s.commit(next)
-	}
-	var draws []legacyGachaDraw
-	for identity, grant := range s.data.Grants {
-		parts := strings.Split(identity, ":")
-		if len(parts) < 4 || parts[0] != "regular-gacha" {
-			continue
-		}
-		gachaID, err := strconv.ParseUint(parts[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		if _, ok := catalog.GroupForGacha(gachaID); !ok {
-			continue
-		}
-		seq, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
-		if err != nil {
-			continue
-		}
-		session := ""
-		if len(parts) >= 6 && parts[2] == "session" && parts[4] == "seq" {
-			session = parts[3]
-		}
-		draws = append(draws, legacyGachaDraw{identity: identity, session: session, seq: seq, gachaID: gachaID, grant: grant})
-	}
-	if len(draws) == 0 {
-		return nil
-	}
-	sort.SliceStable(draws, func(i, j int) bool {
-		if draws[i].session != draws[j].session {
-			if draws[i].session == "" {
-				return true
-			}
-			if draws[j].session == "" {
-				return false
-			}
-			return draws[i].session < draws[j].session
-		}
-		return draws[i].seq < draws[j].seq
-	})
-	next := cloneCollection(s.data)
-	for _, draw := range draws {
-		group, _ := catalog.GroupForGacha(draw.gachaID)
-		key := strconv.FormatUint(group.ID, 10)
-		user := next.GachaUsers[key]
-		user.GroupID = group.ID
-		user.TotalBuyCount += uint64(len(draw.grant.ViewCostumeIDs))
-		user.Point += group.PointCount * uint64(len(draw.grant.ViewCostumeIDs))
-		next.GachaUsers[key] = user
-		if group.FixedID != 0 {
-			fourKey := gachaFixedKey(group.FixedID, 0)
-			fiveKey := gachaFixedKey(group.FixedID, 1)
-			four := next.GachaFixed[fourKey]
-			five := next.GachaFixed[fiveKey]
-			four.FixedID, four.Type, four.ApplySort = group.FixedID, 0, -1
-			five.FixedID, five.Type, five.ApplySort = group.FixedID, 1, -1
-			for _, costumeID := range draw.grant.ViewCostumeIDs {
-				grade, ok := catalog.CostumeGrade(costumeID)
-				if !ok {
-					return fmt.Errorf("player: gacha costume %d has no grade", costumeID)
-				}
-				switch grade {
-				case 5:
-					four.Count, five.Count = 0, 0
-				case 4:
-					four.Count = 0
-					five.Count++
-				default:
-					four.Count++
-					five.Count++
-				}
-			}
-			next.GachaFixed[fourKey] = four
-			next.GachaFixed[fiveKey] = five
-		}
-		next.GachaApplied[draw.identity] = true
-	}
-	next.GachaCountCorrected = true
-	return s.commit(next)
 }

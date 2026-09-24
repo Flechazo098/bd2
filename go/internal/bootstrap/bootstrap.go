@@ -1,5 +1,5 @@
-// Package bootstrap implements only the server discovery phase of BD2 2.34.13.
-// Fields are taken from the current Proto/Net definitions, not the older checklist.
+// Package bootstrap implements the server discovery phase for the configured client.
+// Fields are taken from the current Proto/Net definitions.
 package bootstrap
 
 import (
@@ -9,11 +9,6 @@ import (
 	"time"
 
 	"bd2server/internal/wire"
-)
-
-const (
-	ClientVersion = "2.34.13"
-	BundleVersion = "20260904222602"
 )
 
 type Config struct {
@@ -51,8 +46,8 @@ func Maintenance(version, bundle string, request []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The current official 2.34.13 trace requests market_type=8 but returns
-	// MaintenanceInfo.market_type=4. These are different enums; do not mirror.
+	// The request's platform market type and the response's market type are
+	// different enums, so the latter is not copied from the request.
 	market := wire.AppendVarint(nil, 1, 4)
 	market = wire.AppendString(market, 2, version)
 	market = wire.AppendString(market, 3, bundle)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -84,7 +85,7 @@ func Load(path string) (*Starter, error) {
 }
 
 func (s *Starter) Validate() error {
-	if s == nil || s.Version != "2.34.13" {
+	if s == nil || s.Version != versionconfig.Protocol() {
 		return errors.New("player: wrong starter version")
 	}
 	for _, item := range s.Items {

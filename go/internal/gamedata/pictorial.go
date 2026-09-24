@@ -85,6 +85,7 @@ type PictorialDesign struct {
 	Items      []ItemPictorial
 	Buffs      map[uint64]PictorialBuff
 	CharMeta   map[uint64]CharacterPictorialMeta
+	CharStats  *CharacterStatDesign
 }
 
 func LoadPictorialDesign(root, version string) (*PictorialDesign, error) {
@@ -252,6 +253,10 @@ func LoadPictorialDesign(root, version string) (*PictorialDesign, error) {
 		d.CharMeta[id] = CharacterPictorialMeta{UniqueID: uniqueID, TalentID: talentID, UsePackTemporary: temporary != 0}
 		return nil
 	}); err != nil {
+		return nil, err
+	}
+	d.CharStats, err = loadCharacterStatDesign(db)
+	if err != nil {
 		return nil, err
 	}
 	sort.Slice(d.Characters, func(i, j int) bool { return d.Characters[i].ID < d.Characters[j].ID })

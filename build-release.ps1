@@ -9,7 +9,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $goRoot = Join-Path $root 'go'
-$haskellRoot = Join-Path $root 'haskell'
 $localIdentityProject = Join-Path $root 'plugins\LocalIdentity\LocalIdentity.csproj'
 $buildRoot = Join-Path $root '.build'
 $packageParent = Join-Path $buildRoot 'package'
@@ -18,6 +17,7 @@ $packagePluginDir = Join-Path $packageDir 'plugins'
 $packageGoDir = Join-Path $packageDir 'go'
 $packageStateDir = Join-Path $packageDir 'data\state'
 $archive = Join-Path $buildRoot 'bd2server-windows-x64.zip'
+$versionConfig = Join-Path $root 'versions.json'
 
 $GameDir = [IO.Path]::GetFullPath($GameDir)
 if (-not (Test-Path -LiteralPath (Join-Path $GameDir 'BrownDust II.exe') -PathType Leaf)) {
@@ -38,31 +38,6 @@ foreach ($target in @($packageParent, $archive)) {
     }
 }
 New-Item -ItemType Directory -Force -Path $packageDir, $packagePluginDir, $packageGoDir, $packageStateDir | Out-Null
-
-Push-Location $root
-try {
-    protoc --proto_path=proto --go_out=go --go_opt=module=bd2server `
-        proto/bd2/state/v1/state.proto `
-        proto/bd2/state/control/v1/control.proto `
-        proto/bd2/state/v2/state.proto `
-        proto/bd2/state/control/v2/control.proto
-    if ($LASTEXITCODE -ne 0) { throw "protoc failed with exit code $LASTEXITCODE" }
-} finally { Pop-Location }
-
-Push-Location $haskellRoot
-try {
-    cabal build all --enable-tests
-    if ($LASTEXITCODE -ne 0) { throw "cabal build failed with exit code $LASTEXITCODE" }
-    if (-not $SkipTests) {
-        cabal test all --test-show-details=direct
-        if ($LASTEXITCODE -ne 0) { throw "cabal test failed with exit code $LASTEXITCODE" }
-    }
-    $haskellTool = (cabal list-bin exe:bd2-state).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $haskellTool)) {
-        throw 'Cannot locate the Cabal-built bd2-state executable.'
-    }
-    Copy-Item -LiteralPath $haskellTool -Destination (Join-Path $packageDir 'bd2-state.exe') -Force
-} finally { Pop-Location }
 
 dotnet build $localIdentityProject -c Release "-p:GameDir=$GameDir" --nologo
 if ($LASTEXITCODE -ne 0) { throw "LocalIdentity build failed with exit code $LASTEXITCODE" }
@@ -85,6 +60,7 @@ try {
 } finally { Pop-Location }
 
 Copy-Item -LiteralPath (Join-Path $goRoot 'seed') -Destination (Join-Path $packageGoDir 'seed') -Recurse -Force
+Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $packageDir 'versions.json') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RELEASE.md') -Destination (Join-Path $packageDir 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $packageDir 'LICENSE') -Force
 

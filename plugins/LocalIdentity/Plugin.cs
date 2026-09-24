@@ -15,7 +15,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string Guid = "bd2.localidentity";
     public const string Name = "BD2 Local Identity";
-    public const string Version = "0.5.1";
+    public const string Version = Bd2Build.Versions.Plugin;
     private const string LocalServerURL = "http://127.0.0.1:8080/game/";
     private static ManualLogSource Log;
 
@@ -36,10 +36,10 @@ public sealed class Plugin : BaseUnityPlugin
 
             Type appManager = FindType("AppManager");
             PropertyInfo useSdk = appManager?.GetProperty(
-                "ὬὡὬὢὩὬὬὧὨὩὦ",
+                "ὬὦὠὫὡὥὥὦὠὠὠ",
                 BindingFlags.Instance | BindingFlags.Public);
             MethodInfo getter = useSdk?.GetGetMethod();
-            if (getter == null)
+            if (getter == null || getter.ReturnType != typeof(bool) || getter.GetParameters().Length != 0)
             {
                 throw new MissingMethodException("AppManager.UseSdk getter was not found (client version mismatch)");
             }
@@ -66,31 +66,7 @@ public sealed class Plugin : BaseUnityPlugin
             }
             harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(maintenancePrefix));
 
-            MethodInfo finishMaintenance = introUI?.GetMethod(
-                "OnFinishMaintenanceRequest",
-                BindingFlags.Instance | BindingFlags.Public);
-            if (finishMaintenance == null)
-            {
-                throw new MissingMethodException("IntroUI.OnFinishMaintenanceRequest was not found");
-            }
-            harmony.Patch(
-                finishMaintenance,
-                postfix: new HarmonyMethod(typeof(Plugin), nameof(OnFinishMaintenancePostfix)));
-
-            MethodInfo falseTimeoutTelemetry = introUI?.GetMethod(
-                "ὭὭὦὫὤὡὪὪὡὨὧ",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            if (falseTimeoutTelemetry == null)
-            {
-                throw new MissingMethodException("IntroUI maintenance timeout telemetry method was not found");
-            }
-            harmony.Patch(
-                falseTimeoutTelemetry,
-                prefix: new HarmonyMethod(typeof(Plugin), nameof(SkipLocalTimeoutTelemetry)));
-
-            // Optional patches must not suppress one another on a client
-            // version mismatch. In particular, a missing age-gate method
-            // must not disable the local purchase bypass or DB diagnostics.
+            TryInstall("maintenance timeout guard", () => InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => InstallAgeGatePersistence(harmony));
             TryInstall("local purchase bypass", () => InstallLocalPurchaseBypass(harmony));
             TryInstall("database diagnostics", () => InstallDatabaseDiagnostics(harmony));
@@ -122,27 +98,53 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void SendMaintenancePrefix()
     {
-        Type serverURLInfo = FindType("ὫὢὮὢὣὥὯὪὡὦὯ");
+        Type serverURLInfo = FindType("ὫὡὩὤὣὨὯὭὥὠὩ");
         FieldInfo maintenanceUri = serverURLInfo?.GetField(
-            "ὢὭὪὨὣὮὧὦὠὮὦ",
+            "ὫὯὯὦὢὤὫὫὧὢὨ",
             BindingFlags.Static | BindingFlags.Public);
-        if (maintenanceUri == null)
+        if (maintenanceUri == null || maintenanceUri.FieldType != typeof(Uri))
         {
-            throw new MissingFieldException("BDNetwork.ServerURLInfo.MaintenanceUri was not found");
+            throw new MissingFieldException("Client maintenance URI field was not found");
         }
         maintenanceUri.SetValue(null, new Uri(LocalServerURL));
         Log?.LogInfo("MaintenanceUri => " + LocalServerURL);
     }
 
+    private static void InstallMaintenanceTimeoutGuard(Harmony harmony, Type introUI)
+    {
+        MethodInfo finishMaintenance = introUI?.GetMethod(
+            "OnFinishMaintenanceRequest",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            Type.EmptyTypes,
+            null);
+        MethodInfo falseTimeoutTelemetry = introUI?.GetMethod(
+            "ὡὡὤὧὫὥὬὯὣὠὬ",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            Type.EmptyTypes,
+            null);
+        if (finishMaintenance == null || falseTimeoutTelemetry == null)
+        {
+            throw new MissingMethodException("IntroUI maintenance timeout methods were not found");
+        }
+        harmony.Patch(
+            finishMaintenance,
+            postfix: new HarmonyMethod(typeof(Plugin), nameof(OnFinishMaintenancePostfix)));
+        harmony.Patch(
+            falseTimeoutTelemetry,
+            prefix: new HarmonyMethod(typeof(Plugin), nameof(SkipLocalTimeoutTelemetry)));
+    }
+
     private static void OnFinishMaintenancePostfix(object __instance)
     {
-        // 2.34.13's CancelMaintenanceTimeout cancels the active CTS and then
+        // CancelMaintenanceTimeout cancels the active CTS and then
         // immediately stores a fresh CTS. Depending on async scheduling, the
         // timeout task can capture that fresh token after the successful
         // response and emit a false 10-second timeout. Cancel the replacement
         // token only after OnFinishMaintenanceRequest has completed.
         FieldInfo timeout = __instance.GetType().GetField(
-            "ὬὭὥὪὢὭὫὩὭὭὬ",
+            "ὫὥὨὨὠὯὥὭὨὨὪ",
             BindingFlags.Instance | BindingFlags.NonPublic);
         CancellationTokenSource source = timeout?.GetValue(__instance) as CancellationTokenSource;
         source?.Cancel();
@@ -153,7 +155,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         // This method only emits intro_server_info_timeout telemetry after ten
         // seconds. Network request failures have their own callbacks. In
-        // 2.34.13 it can outlive a successful local maintenance response.
+        // In the configured client it can outlive a successful local maintenance response.
         return false;
     }
 
@@ -163,9 +165,9 @@ public sealed class Plugin : BaseUnityPlugin
         // AgeGatePopupUI.  Retain the original first-run UI and request; only
         // change a later LoginUser parse after its successful local state has
         // been read from disk.
-        Type commonPacket = FindType("ὨὬὣὫὩὯὩὩὣὠὧ");
+        Type commonPacket = FindType("ὣὡὧὡὦὣὣὬὨὪὫ");
         MethodInfo updateAgeGate = commonPacket?.GetMethod(
-            "ὧὮὦὠὬὥὮὢὦὦὥ",
+            "ὪὯὭὣὨὡὬὪὭὨὡ",
             BindingFlags.Static | BindingFlags.Public,
             null,
             new[] { typeof(bool), typeof(int), typeof(int), typeof(int), typeof(Action) },
@@ -226,12 +228,16 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void InstallLocalPurchaseBypass(Harmony harmony)
     {
-        Type platformRuler = FindType("ὮὮὫὭὢὩὭὢὦὪὠ");
+        Type platformRuler = FindType("ὧὩὬὦὤὥὦὢὤὠὡ");
         MethodInfo getProducts = platformRuler?
             .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
             .FirstOrDefault(method =>
-                method.Name == "ὠὨὯὣὧὨὭὦὥὪὠ" &&
-                method.GetParameters().Length == 6);
+                method.Name == "ὮὨὡὩὠὭὧὦὭὥὮ" &&
+                method.GetParameters().Length == 6 &&
+                method.GetParameters()[0].ParameterType == typeof(string[]) &&
+                method.GetParameters()[3].ParameterType == typeof(Action) &&
+                method.GetParameters()[4].ParameterType == typeof(Action<int, int, string>) &&
+                method.GetParameters()[5].ParameterType == typeof(bool));
         if (getProducts == null)
         {
             throw new MissingMethodException("PlatformRuler.GetProductAsync was not found");
@@ -242,9 +248,15 @@ public sealed class Plugin : BaseUnityPlugin
 
         Type platformManager = FindType("gamfs.Platform.PlatformManager");
         MethodInfo purchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-            .FirstOrDefault(method => method.Name == "Purchase" && method.GetParameters().Length == 3);
+            .FirstOrDefault(method => method.Name == "Purchase" &&
+                method.GetParameters().Length == 3 &&
+                method.GetParameters()[0].ParameterType == typeof(string) &&
+                method.GetParameters()[2].ParameterType == typeof(Action));
         MethodInfo finishPurchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-            .FirstOrDefault(method => method.Name == "FinishPurchase" && method.GetParameters().Length == 2);
+            .FirstOrDefault(method => method.Name == "FinishPurchase" &&
+                method.GetParameters().Length == 2 &&
+                method.GetParameters()[0].ParameterType == typeof(string) &&
+                method.GetParameters()[1].ParameterType == typeof(long));
         if (purchase == null || finishPurchase == null)
             throw new MissingMethodException("PlatformManager purchase methods were not found");
         harmony.Patch(purchase, prefix: new HarmonyMethod(
@@ -266,12 +278,12 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static bool LocalPurchasePrefix(string __0, object __1, Action __2)
     {
-        // Product 9100033 is the 2.34.13 infinite-reroll confirmation. The
+        // Product 9100033 is the infinite-reroll confirmation. The
         // local server grants the last preview through CashShopBuy without
         // contacting Neon/GPG. No other real-money product is authorized.
         if (__0 == "brd2_limited_pack_660" || __0 == "brd2_limited_pack_660_ios")
         {
-            Type purchaseData = FindType("ὥὮὯὪὯὫὯὤὩὬὤ");
+            Type purchaseData = FindType("ὦὯὢὡὥὨὦὯὤὯὩ");
             object result = Activator.CreateInstance(purchaseData, new object[]
             {
                 __0,

@@ -36,7 +36,7 @@ type Service struct {
 	Regular               []RegularSeason
 }
 
-func Version23413() *Service {
+func Current() *Service {
 	return &Service{
 		CalculateMilliseconds: 32400000,
 		Contents: []Content{

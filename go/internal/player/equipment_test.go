@@ -11,11 +11,11 @@ import (
 
 func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	dir := t.TempDir()
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 			{954, 2}: {Level: 2, Costs: []gamedata.PromotionCost{{Type: 4, Count: 300}}, SuccessRatio: 1},
 		},
 	}
-	items, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	items, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	if wallet.Snapshot().Gold != 400 {
 		t.Fatalf("wallet gold=%d", wallet.Snapshot().Gold)
 	}
-	restored, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	restored, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 
 func TestEquipmentSmeltingImprovesByTotalScoreAndReplaysWithoutSecondCharge(t *testing.T) {
 	dir := t.TempDir()
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000, EquipMileageExchangeGage: 990})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000, EquipMileageExchangeGage: 990})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestEquipmentSmeltingImprovesByTotalScoreAndReplaysWithoutSecondCharge(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,10 +161,10 @@ func TestEquipmentSmeltingImprovesByTotalScoreAndReplaysWithoutSecondCharge(t *t
 
 func TestEquipmentSmeltingFailureConsumesAndReturnsCandidateGrades(t *testing.T) {
 	dir := t.TempDir()
-	wallet, _ := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
-	inventory, _ := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	wallet, _ := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000})
+	inventory, _ := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	materials, _ := inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 30}})
-	store, _ := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, _ := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err := store.AttachSmelting(smeltingTestDesign([][]float64{{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}}), wallet, inventory); err != nil {
 		t.Fatal(err)
 	}
@@ -207,10 +207,10 @@ func TestEquipmentSmeltingFailureConsumesAndReturnsCandidateGrades(t *testing.T)
 
 func TestEquipmentSequenceSmeltingRepeatsAndStopsAtTargetScore(t *testing.T) {
 	dir := t.TempDir()
-	wallet, _ := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1000})
-	inventory, _ := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	wallet, _ := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000})
+	inventory, _ := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	_, _ = inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 300}})
-	store, _ := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, _ := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err := store.AttachSmelting(smeltingTestDesign([][]float64{{1, 0, 0, 0}, {0, 0, 0, 1}, {0, 0, 0, 1}}), wallet, inventory); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +241,36 @@ func TestEquipmentSequenceSmeltingRepeatsAndStopsAtTargetScore(t *testing.T) {
 	}
 }
 
+func TestEquipmentSequenceSmeltingPacketLimitIsNotTerminal(t *testing.T) {
+	dir := t.TempDir()
+	wallet, _ := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1000})
+	inventory, _ := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
+	_, _ = inventory.GrantOnce("refine-material", []gamedata.BattleReward{{Type: 8, ID: 10, Count: 300}})
+	store, _ := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
+	if err := store.AttachSmelting(smeltingTestDesign([][]float64{{1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}}), wallet, inventory); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := store.GrantOnce("refinable", 943035)
+	store.owned.Equipment[0].Level = 9
+	store.owned.Equipment[0].Rank = []uint64{1, 1, 1}
+	if err := store.commitLocked(cloneEquipmentSnapshot(store.owned), "test setup"); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 3), 2, entry.InvenIndex)
+	request = wire.AppendVarint(request, 3, 2)
+	request = wire.AppendVarint(request, 4, 12)
+	_, response, _, err := store.Handle("/EquipSequenceSmelting", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeSuccess {
+		t.Fatalf("packet exhaustion result=%d want non-terminal success", result)
+	}
+	if attempts, _, _ := wire.Varint(response, 4); attempts != 2 {
+		t.Fatalf("sequence smelting attempts=%d", attempts)
+	}
+}
+
 func smeltingTestDesign(ratios [][]float64) *gamedata.EquipmentSmeltingDesign {
 	design := &gamedata.EquipmentSmeltingDesign{
 		Equipment: map[uint64]gamedata.EquipmentSmeltingItem{943035: {Grade: 4, RankGroup: 904, MaxLevel: 9}},
@@ -257,16 +287,16 @@ func smeltingTestDesign(ratios [][]float64) *gamedata.EquipmentSmeltingDesign {
 
 func TestEquipmentUpgradeFailureConsumesGoldWithoutLevel(t *testing.T) {
 	dir := t.TempDir()
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 200})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 200})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	design := &gamedata.EquipmentUpgradeDesign{MaxLevel: map[uint64]uint64{1: 1}, Group: map[uint64]uint64{1: 2}, Levels: map[[2]uint64]gamedata.EquipmentUpgradeLevel{{2, 0}: {Costs: []gamedata.PromotionCost{{Type: 4, Count: 50}}, SuccessRatio: 0}}}
-	items, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	items, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,11 +326,11 @@ func TestEquipmentUpgradeFailureConsumesGoldWithoutLevel(t *testing.T) {
 
 func TestEquipmentUpgradeConsumesResourceStacksAndSequenceStopsWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +338,7 @@ func TestEquipmentUpgradeConsumesResourceStacksAndSequenceStopsWhenEmpty(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	store, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +400,7 @@ func TestEquipmentUpgradeConsumesResourceStacksAndSequenceStopsWhenEmpty(t *test
 
 func TestEquipmentCustomMarkSetDeletePersistsAndReturnsInInfo(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "equipment.json")
-	store, err := OpenEquipmentInventory(path)
+	store, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +414,7 @@ func TestEquipmentCustomMarkSetDeletePersistsAndReturnsInInfo(t *testing.T) {
 	if err != nil || !handled || code != 396 || len(response) != 0 {
 		t.Fatalf("mark set code=%d handled=%v response=%x err=%v", code, handled, response, err)
 	}
-	restored, err := OpenEquipmentInventory(path)
+	restored, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +436,7 @@ func TestEquipmentCustomMarkSetDeletePersistsAndReturnsInInfo(t *testing.T) {
 	if err != nil || !handled || code != 397 || len(response) != 0 {
 		t.Fatalf("mark delete code=%d handled=%v response=%x err=%v", code, handled, response, err)
 	}
-	cleared, err := OpenEquipmentInventory(path)
+	cleared, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +456,7 @@ func TestEquipmentCustomMarkSetDeletePersistsAndReturnsInInfo(t *testing.T) {
 
 func TestEquipmentLockAndProtoDefaultUnlockPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "equipment.json")
-	store, err := OpenEquipmentInventory(path)
+	store, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +469,7 @@ func TestEquipmentLockAndProtoDefaultUnlockPersist(t *testing.T) {
 	if err != nil || !handled || code != 38 || len(response) != 0 {
 		t.Fatalf("lock code=%d handled=%v response=%x err=%v", code, handled, response, err)
 	}
-	locked, err := OpenEquipmentInventory(path)
+	locked, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +481,7 @@ func TestEquipmentLockAndProtoDefaultUnlockPersist(t *testing.T) {
 	if err != nil || !handled || code != 38 || len(response) != 0 {
 		t.Fatalf("unlock code=%d handled=%v response=%x err=%v", code, handled, response, err)
 	}
-	unlocked, err := OpenEquipmentInventory(path)
+	unlocked, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +496,7 @@ func TestEquipmentLockAndProtoDefaultUnlockPersist(t *testing.T) {
 
 func TestEquipmentGrantPersistsAndIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "equipment.json")
-	store, err := OpenEquipmentInventory(path)
+	store, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +511,7 @@ func TestEquipmentGrantPersistsAndIsIdempotent(t *testing.T) {
 	if first.InvenIndex != again.InvenIndex || first.ID != again.ID || first.InvenIndex == 0 || first.ID != 10010 {
 		t.Fatalf("grants: %+v %+v", first, again)
 	}
-	restored, err := OpenEquipmentInventory(path)
+	restored, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,16 +548,16 @@ func TestEquipmentGrantPersistsAndIsIdempotent(t *testing.T) {
 func TestEquipmentUsePersistsCharacterBinding(t *testing.T) {
 	dir := t.TempDir()
 	starter := &Starter{Version: "2.34.13"}
-	items, err := OpenInventory(filepath.Join(dir, "items.json"), starter)
+	items, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"),
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")),
 		[]Character{{InvenIndex: 535607162, ID: 350, Level: 20}}, items, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	equipment, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	equipment, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +583,7 @@ func TestEquipmentUsePersistsCharacterBinding(t *testing.T) {
 	if index != 535607162 {
 		t.Fatalf("character index=%d", index)
 	}
-	restored, err := OpenEquipmentInventory(filepath.Join(dir, "equipment.json"))
+	restored, err := OpenEquipmentInventory(testStore(filepath.Join(dir, "equipment.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,17 +604,17 @@ func TestEquipmentUsePersistsCharacterBinding(t *testing.T) {
 
 func TestEquipmentClearPersistsUnboundEquipmentAndReturnsCharacter(t *testing.T) {
 	dir := t.TempDir()
-	items, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	items, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"),
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")),
 		[]Character{{InvenIndex: 535607162, ID: 350, Level: 20}}, items, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "equipment.json")
-	equipment, err := OpenEquipmentInventory(path)
+	equipment, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +643,7 @@ func TestEquipmentClearPersistsUnboundEquipmentAndReturnsCharacter(t *testing.T)
 	if index, _, _ := wire.Varint(character, 1); index != 535607162 {
 		t.Fatalf("clear character index=%d", index)
 	}
-	restored, err := OpenEquipmentInventory(path)
+	restored, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -632,17 +662,17 @@ func TestEquipmentClearPersistsUnboundEquipmentAndReturnsCharacter(t *testing.T)
 
 func TestEquipmentChangeReplacesOnlyMatchingGameDataSlot(t *testing.T) {
 	dir := t.TempDir()
-	items, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	items, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"),
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")),
 		[]Character{{InvenIndex: 535607162, ID: 350, Level: 20}}, items, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "equipment.json")
-	equipment, err := OpenEquipmentInventory(path)
+	equipment, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +714,7 @@ func TestEquipmentChangeReplacesOnlyMatchingGameDataSlot(t *testing.T) {
 	if index, _, _ := wire.Varint(character, 1); index != 535607162 {
 		t.Fatalf("response character=%d", index)
 	}
-	restored, err := OpenEquipmentInventory(path)
+	restored, err := OpenEquipmentInventory(testStore(path))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,159 @@ type EquipmentOption struct {
 	Rank    [3]int
 }
 
+type characterStatBase struct {
+	GrowthID uint64
+	Base     BaseStats
+}
+
+// CharacterStatDesign is the immutable, in-memory subset of GameData needed
+// to resolve character level stats. Keeping the complete curve beside the
+// other loaded design data prevents request handlers from decrypting and
+// materializing the roughly 180 MiB common database once per character.
+type CharacterStatDesign struct {
+	characters   map[uint64]characterStatBase
+	growthGroups map[uint64]uint64
+	levelRatios  map[[2]uint64]BaseStats
+}
+
+// BaseStats resolves one character and level without filesystem or database
+// access. CharacterStatDesign is immutable after loading and is therefore
+// safe for concurrent request handlers.
+func (d *CharacterStatDesign) BaseStats(charID, level uint64) (BaseStats, error) {
+	if d == nil || charID == 0 || level == 0 {
+		return BaseStats{}, fmt.Errorf("gamedata: invalid character stat input")
+	}
+	character, found := d.characters[charID]
+	if !found {
+		return BaseStats{}, fmt.Errorf("gamedata: character stats %d: %w", charID, sql.ErrNoRows)
+	}
+	group, found := d.growthGroups[character.GrowthID]
+	if !found {
+		return BaseStats{}, fmt.Errorf("gamedata: character %d growth id %d: %w", charID, character.GrowthID, sql.ErrNoRows)
+	}
+	ratio, found := d.levelRatios[[2]uint64{group, level}]
+	if !found {
+		return BaseStats{}, fmt.Errorf("gamedata: character level group=%d level=%d: %w", group, level, sql.ErrNoRows)
+	}
+	return applyCharacterLevel(character.Base, ratio), nil
+}
+
+func applyCharacterLevel(base, ratio BaseStats) BaseStats {
+	return BaseStats{
+		Health: math.Trunc(base.Health * (1 + ratio.Health)),
+		Attack: math.Trunc(base.Attack * (1 + ratio.Attack)),
+		Magic:  math.Trunc(base.Magic * (1 + ratio.Magic)),
+	}
+}
+
+func loadCharacterStatDesign(db *sql.DB) (*CharacterStatDesign, error) {
+	design := &CharacterStatDesign{
+		characters:   make(map[uint64]characterStatBase),
+		growthGroups: make(map[uint64]uint64),
+		levelRatios:  make(map[[2]uint64]BaseStats),
+	}
+	rows, err := db.Query("SELECT id, ProtoBuf FROM CharTable")
+	if err != nil {
+		return nil, fmt.Errorf("gamedata: query character stats: %w", err)
+	}
+	for rows.Next() {
+		var id uint64
+		var proto []byte
+		if err := rows.Scan(&id, &proto); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		growthIDs, err := packedInts(proto, 1)
+		if err != nil || len(growthIDs) != 1 {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character %d growth id %v: %w", id, growthIDs, err)
+		}
+		health, found, err := fixed64Double(proto, 11)
+		if err != nil || !found {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character %d health: %w", id, err)
+		}
+		attack, _, err := fixed64Double(proto, 17)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character %d attack: %w", id, err)
+		}
+		magic, _, err := fixed64Double(proto, 14)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character %d magic: %w", id, err)
+		}
+		design.characters[id] = characterStatBase{GrowthID: growthIDs[0], Base: BaseStats{Health: health, Attack: attack, Magic: magic}}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err = db.Query("SELECT id, ProtoBuf FROM CharGrowthTable")
+	if err != nil {
+		return nil, fmt.Errorf("gamedata: query character growths: %w", err)
+	}
+	for rows.Next() {
+		var id uint64
+		var proto []byte
+		if err := rows.Scan(&id, &proto); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		groups, err := packedInts(proto, 1)
+		if err != nil || len(groups) != 1 {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character growth %d group %v: %w", id, groups, err)
+		}
+		design.growthGroups[id] = groups[0]
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err = db.Query("SELECT GroupId, id, ProtoBuf FROM CharLevelTable")
+	if err != nil {
+		return nil, fmt.Errorf("gamedata: query character levels: %w", err)
+	}
+	for rows.Next() {
+		var group, level uint64
+		var proto []byte
+		if err := rows.Scan(&group, &level, &proto); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		health, _, err := fixed64Double(proto, 6)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character level %d/%d health: %w", group, level, err)
+		}
+		attack, _, err := fixed64Double(proto, 12)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character level %d/%d attack: %w", group, level, err)
+		}
+		magic, _, err := fixed64Double(proto, 10)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: character level %d/%d magic: %w", group, level, err)
+		}
+		design.levelRatios[[2]uint64{group, level}] = BaseStats{Health: health, Attack: attack, Magic: magic}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return design, nil
+}
+
 // CharacterBaseStats reads CharTable -> CharGrowthTable -> CharLevelTable and
 // applies the client's level formula. It returns design stats only; account
 // systems such as equipment and costumes are aggregated separately.
@@ -77,7 +230,10 @@ func CharacterBaseStats(root, version string, charID, level int) (BaseStats, err
 	if err != nil {
 		return BaseStats{}, err
 	}
-	return BaseStats{Health: math.Trunc(baseHP * (1 + hpRatio)), Attack: math.Trunc(baseAttack * (1 + attackRatio)), Magic: math.Trunc(baseMagic * (1 + magicRatio))}, nil
+	return applyCharacterLevel(
+		BaseStats{Health: baseHP, Attack: baseAttack, Magic: baseMagic},
+		BaseStats{Health: hpRatio, Attack: attackRatio, Magic: magicRatio},
+	), nil
 }
 
 // EquipmentOptionContribution resolves an EquipOptionInfo through the real

@@ -36,6 +36,34 @@ func TestRealTutorialStatsDoNotMisclassifyAttackAsHealth(t *testing.T) {
 	}
 }
 
+func TestLoadedCharacterStatDesignMatchesDirectLookup(t *testing.T) {
+	root := os.Getenv("BD2_REAL_GAMEDATA")
+	if root == "" {
+		t.Skip("BD2_REAL_GAMEDATA not configured")
+	}
+	design, err := LoadPictorialDesign(root, "20260910162539")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := design.CharStats.BaseStats(350, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := CharacterBaseStats(root, "20260910162539", 350, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != direct {
+		t.Fatalf("loaded stats=%+v, direct database lookup=%+v", loaded, direct)
+	}
+	if _, err := design.CharStats.BaseStats(0, 20); err == nil {
+		t.Fatal("zero character id unexpectedly resolved")
+	}
+	if _, err := design.CharStats.BaseStats(350, 0); err == nil {
+		t.Fatal("zero character level unexpectedly resolved")
+	}
+}
+
 func TestAggregateStatsAppliesPercentAfterFlat(t *testing.T) {
 	got := AggregateStats(BaseStats{Health: 100}, []StatContribution{{Stat: StatHealth, Flat: 7, Percent: 0.1}})
 	if got.Health != 117 {

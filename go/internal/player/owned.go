@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"reflect"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -17,51 +20,97 @@ import (
 // seed. GrantOnce uses a battle identity to prevent double-credit on retries.
 type Inventory struct {
 	mu          sync.Mutex
-	path        string
+	store       stateio.AtomicEntryStore
 	starter     *Starter
 	randomBoxes *gamedata.RandomBoxDesign
 	owned       ownedSnapshot
+	persisted   ownedSnapshot
+	corePresent bool
 }
 
 type ownedSnapshot struct {
 	Version    string              `json:"version"`
 	NextIndex  uint64              `json:"next_index"`
-	Items      []Item              `json:"items"`
-	Granted    map[string]bool     `json:"granted"`
-	GrantItems map[string][]uint64 `json:"grant_items,omitempty"`
+	Items      []Item              `json:"-"`
+	Granted    map[string]bool     `json:"-"`
+	GrantItems map[string][]uint64 `json:"-"`
 }
 
-func OpenInventory(path string, starter *Starter) (*Inventory, error) {
-	if starter == nil || starter.Validate() != nil || path == "" {
+func OpenInventory(store stateio.Store, starter *Starter) (*Inventory, error) {
+	entries, ok := store.(stateio.AtomicEntryStore)
+	if starter == nil || starter.Validate() != nil || !ok {
 		return nil, errors.New("player: invalid inventory configuration")
 	}
-	s := &Inventory{path: filepath.Clean(path), starter: starter, owned: ownedSnapshot{Version: "2.34.13", NextIndex: 900000001, Granted: map[string]bool{}, GrantItems: map[string][]uint64{}}}
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
+	s := &Inventory{store: entries, starter: starter, owned: ownedSnapshot{Version: versionconfig.Protocol(), NextIndex: 900000001, Granted: map[string]bool{}, GrantItems: map[string][]uint64{}}}
+	data, err := store.Load("items")
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(data, &s.owned); err != nil {
-		return nil, fmt.Errorf("player: decode inventory: %w", err)
+	if data != nil {
+		s.corePresent = true
+		if err := stateio.RequireExactJSONObject(data, "version", "next_index"); err != nil {
+			return nil, fmt.Errorf("player: incompatible inventory layout: %w", err)
+		}
+		var shape map[string]json.RawMessage
+		if err := json.Unmarshal(data, &shape); err != nil {
+			return nil, fmt.Errorf("player: decode inventory shape: %w", err)
+		}
+		for _, name := range []string{"items", "granted", "grant_items"} {
+			if _, exists := shape[name]; exists {
+				return nil, fmt.Errorf("player: inventory %s must use entries", name)
+			}
+		}
+		if err := json.Unmarshal(data, &s.owned); err != nil {
+			return nil, fmt.Errorf("player: decode inventory: %w", err)
+		}
+	} else if err := stateio.RequireNoEntries(entries, "items", "items", "granted", "grant_items"); err != nil {
+		return nil, fmt.Errorf("player: invalid inventory storage: %w", err)
 	}
-	if s.owned.Version != "2.34.13" || s.owned.NextIndex < 900000001 || s.owned.Granted == nil {
+	if s.owned.Version != versionconfig.Protocol() || s.owned.NextIndex < 900000001 {
 		return nil, errors.New("player: invalid saved inventory")
 	}
-	if s.owned.GrantItems == nil {
-		s.owned.GrantItems = map[string][]uint64{}
+	s.owned.Granted, err = loadBoolEntries(entries, "items", "granted")
+	if err != nil {
+		return nil, err
 	}
+	rawGrantItems, err := entries.ListEntries("items", "grant_items")
+	if err != nil {
+		return nil, err
+	}
+	s.owned.GrantItems = make(map[string][]uint64, len(rawGrantItems))
+	for key, value := range rawGrantItems {
+		var indices []uint64
+		if key == "" || json.Unmarshal(value, &indices) != nil {
+			return nil, fmt.Errorf("player: invalid items grant_items entry %q", key)
+		}
+		s.owned.GrantItems[key] = indices
+	}
+	rawItems, err := entries.ListEntries("items", "items")
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range rawItems {
+		var item Item
+		index, parseErr := strconv.ParseUint(key, 10, 64)
+		if parseErr != nil || json.Unmarshal(value, &item) != nil || item.InvenIndex != index {
+			return nil, fmt.Errorf("player: invalid items entry %q", key)
+		}
+		s.owned.Items = append(s.owned.Items, item)
+	}
+	sort.Slice(s.owned.Items, func(i, j int) bool { return s.owned.Items[i].InvenIndex < s.owned.Items[j].InvenIndex })
+	s.persisted = cloneOwnedSnapshot(s.owned)
 	return s, nil
 }
 
 func (s *Inventory) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	data, err := s.store.Load("items")
+	if err != nil {
 		return err
+	}
+	if data != nil {
+		return nil
 	}
 	return s.commitOwned(cloneOwnedSnapshot(s.owned))
 }
@@ -78,7 +127,7 @@ func (s *Inventory) Handle(path string, request []byte) (int, []byte, bool, erro
 	items := make([]Item, 0, len(s.starter.Items)+len(s.owned.Items))
 	items = append(items, s.starter.Items...)
 	items = append(items, s.owned.Items...)
-	return (&Starter{Version: "2.34.13", Items: items}).Handle(path, request)
+	return (&Starter{Version: versionconfig.Protocol(), Items: items}).Handle(path, request)
 }
 
 // AttachRandomBoxes installs the version-validated deterministic RandomBox
@@ -235,33 +284,69 @@ func cloneOwnedSnapshot(current ownedSnapshot) ownedSnapshot {
 	return next
 }
 
-// commitOwned atomically persists a fully validated next snapshot. Caller
-// holds s.mu, so a box decrement and its resulting reward cannot split.
+// commitOwned persists a fully validated next snapshot. Caller holds s.mu.
 func (s *Inventory) commitOwned(next ownedSnapshot) error {
 	data, err := json.Marshal(next)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	changes := make([]stateio.EntryMutation, 0)
+	for key, value := range next.Granted {
+		if value && !s.persisted.Granted[key] {
+			changes = append(changes, stateio.EntryMutation{Bucket: "granted", Key: key, Payload: []byte("true")})
+		}
+	}
+	for key, value := range next.GrantItems {
+		if !equalIndices(value, s.persisted.GrantItems[key]) {
+			payload, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, stateio.EntryMutation{Bucket: "grant_items", Key: key, Payload: payload})
+		}
+	}
+	before := make(map[uint64]Item, len(s.persisted.Items))
+	for _, item := range s.persisted.Items {
+		before[item.InvenIndex] = item
+	}
+	for _, item := range next.Items {
+		old, exists := before[item.InvenIndex]
+		if !exists || !equalItem(old, item) {
+			payload, err := json.Marshal(item)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, stateio.EntryMutation{Bucket: "items", Key: strconv.FormatUint(item.InvenIndex, 10), Payload: payload})
+		}
+		delete(before, item.InvenIndex)
+	}
+	for index := range before {
+		changes = append(changes, stateio.EntryMutation{Bucket: "items", Key: strconv.FormatUint(index, 10), Delete: true})
+	}
+	if s.corePresent && next.Version == s.persisted.Version && next.NextIndex == s.persisted.NextIndex {
+		data = nil
+	}
+	if err := s.store.SaveWithEntries("items", data, changes); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".inventory-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	return err
+	s.corePresent = true
+	s.persisted = cloneOwnedSnapshot(next)
+	return nil
 }
+
+func equalIndices(a, b []uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func equalItem(a, b Item) bool { return reflect.DeepEqual(a, b) }
 
 // GrantedItems returns the stable instances created by a previous GrantOnce.
 // Legacy grants made before instance tracking return an empty slice.
@@ -279,6 +364,15 @@ func (s *Inventory) GrantedItems(identity string) []Item {
 		}
 	}
 	return result
+}
+
+// WasGranted reports whether GrantOnce committed the identity even when all
+// granted item stacks were later consumed. Cash-product purchase counts use
+// this durable marker rather than the current inventory contents.
+func (s *Inventory) WasGranted(identity string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owned.Granted[identity]
 }
 
 // Consume atomically removes the requested counts from mutable owned items.
@@ -363,29 +457,7 @@ func (s *Inventory) ConsumeAndRefund(requested []Item, refunds []gamedata.Growth
 		next.Items = append(next.Items, item)
 		granted = append(granted, item)
 	}
-	data, err := json.Marshal(next)
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.CreateTemp(dir, ".inventory-*.tmp")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
+	if err := s.commitOwned(next); err != nil {
 		return nil, err
 	}
 	s.owned = next

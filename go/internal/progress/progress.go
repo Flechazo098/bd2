@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
@@ -49,7 +48,7 @@ type QuestProgress struct {
 
 type Store struct {
 	mu        sync.RWMutex
-	path      string
+	storage   stateio.Store
 	position  SavedPosition
 	tutorials map[int]struct{}
 	quests    map[string]QuestProgress
@@ -61,7 +60,7 @@ func NewStore() *Store {
 }
 
 type snapshot struct {
-	Version   int                        `json:"version,omitempty"`
+	Version   int                        `json:"version"`
 	Position  SavedPosition              `json:"position"`
 	Tutorials []int                      `json:"tutorials"`
 	Quests    map[string]QuestProgress   `json:"quests"`
@@ -84,29 +83,30 @@ func parseQuestKey(key string) (int, int, bool) {
 	return packID, questID, packErr == nil && questErr == nil && packID > 0 && questID > 0
 }
 
-// OpenStore recovers player progress from one local JSON save. Nothing is
-// created on disk until a validated state change is committed.
-func OpenStore(path string) (*Store, error) {
+// OpenStore recovers player progress from its domain snapshot.
+func OpenStore(storage stateio.Store) (*Store, error) {
 	s := NewStore()
-	if path == "" {
-		return nil, errors.New("progress: empty save path")
+	if storage == nil {
+		return nil, errors.New("progress: nil storage")
 	}
-	s.path = filepath.Clean(path)
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	s.storage = storage
+	data, err := storage.Load("progress")
+	if err != nil {
+		return nil, fmt.Errorf("progress: load state: %w", err)
+	}
+	if data == nil {
 		return s, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("progress: read save: %w", err)
+	if err := stateio.RequireExactJSONObject(data, "version", "position", "tutorials", "quests", "cleared_quests"); err != nil {
+		return nil, fmt.Errorf("progress: incompatible save layout: %w", err)
 	}
 	var state snapshot
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("progress: malformed save: %w", err)
 	}
-	if state.Version != 0 && state.Version != snapshotVersion {
+	if state.Version != snapshotVersion {
 		return nil, fmt.Errorf("progress: unsupported save version %d", state.Version)
 	}
-	legacy := state.Version == 0
 	s.position = state.Position
 	for _, id := range state.Tutorials {
 		if id <= 0 {
@@ -118,29 +118,13 @@ func OpenStore(path string) (*Store, error) {
 		if quest.QuestID <= 0 || quest.PackID <= 0 {
 			return nil, errors.New("progress: invalid saved quest")
 		}
-		if legacy {
-			id, err := strconv.Atoi(key)
-			if err != nil || id != quest.QuestID {
-				return nil, errors.New("progress: invalid saved quest")
-			}
-		} else {
-			packID, questID, ok := parseQuestKey(key)
-			if !ok || packID != quest.PackID || questID != quest.QuestID {
-				return nil, errors.New("progress: invalid saved quest key")
-			}
+		packID, questID, ok := parseQuestKey(key)
+		if !ok || packID != quest.PackID || questID != quest.QuestID {
+			return nil, errors.New("progress: invalid saved quest key")
 		}
 		s.quests[questKey(quest.PackID, quest.QuestID)] = quest
 	}
 	for key, raw := range state.Cleared {
-		if legacy {
-			questID, err := strconv.Atoi(key)
-			var packID int
-			if err != nil || json.Unmarshal(raw, &packID) != nil || questID <= 0 || packID <= 0 {
-				return nil, errors.New("progress: invalid cleared quest")
-			}
-			s.cleared[questKey(packID, questID)] = struct{}{}
-			continue
-		}
 		packID, questID, ok := parseQuestKey(key)
 		var cleared bool
 		if !ok || json.Unmarshal(raw, &cleared) != nil || !cleared {
@@ -148,24 +132,18 @@ func OpenStore(path string) (*Store, error) {
 		}
 		s.cleared[questKey(packID, questID)] = struct{}{}
 	}
-	if legacy {
-		// Install the unambiguous pack+quest schema immediately. Adjacent story
-		// packs reuse quest numbers, so delaying migration until a later-pack
-		// update would risk overwriting valid earlier-pack progress.
-		if err := s.commit(s.position, s.tutorials, s.quests, s.cleared); err != nil {
-			return nil, fmt.Errorf("progress: migrate legacy save: %w", err)
-		}
-	}
 	return s, nil
 }
 
 func (s *Store) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	data, err := s.storage.Load("progress")
+	if err != nil {
 		return err
+	}
+	if data != nil {
+		return nil
 	}
 	return s.commit(s.position, s.tutorials, s.quests, s.cleared)
 }
@@ -173,7 +151,7 @@ func (s *Store) EnsurePersisted() error {
 // commit writes a complete snapshot before exposing the new state. Caller
 // holds mu; failure leaves the in-memory player state unchanged.
 func (s *Store) commit(position SavedPosition, tutorials map[int]struct{}, quests map[string]QuestProgress, cleared map[string]struct{}) error {
-	if s.path != "" {
+	if s.storage != nil {
 		state := snapshot{Version: snapshotVersion, Position: position, Quests: quests, Cleared: make(map[string]json.RawMessage, len(cleared))}
 		for id := range tutorials {
 			state.Tutorials = append(state.Tutorials, id)
@@ -186,26 +164,8 @@ func (s *Store) commit(position SavedPosition, tutorials map[int]struct{}, quest
 		if err != nil {
 			return err
 		}
-		dir := filepath.Dir(s.path)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("progress: create save dir: %w", err)
-		}
-		file, err := os.CreateTemp(dir, ".progress-*.tmp")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(file.Name())
-		if _, err = file.Write(data); err == nil {
-			err = file.Sync()
-		}
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			return fmt.Errorf("progress: write save: %w", err)
-		}
-		if err := os.Rename(file.Name(), s.path); err != nil {
-			return fmt.Errorf("progress: install save: %w", err)
+		if err := s.storage.Save("progress", data); err != nil {
+			return fmt.Errorf("progress: save state: %w", err)
 		}
 	}
 	s.position, s.tutorials, s.quests, s.cleared = position, tutorials, quests, cleared

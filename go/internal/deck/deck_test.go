@@ -1,6 +1,9 @@
 package deck
 
 import (
+	"bd2server/internal/player"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 	"path/filepath"
 	"testing"
@@ -30,6 +33,41 @@ func triple(a, b, c uint64) []byte {
 	v = wire.AppendVarint(v, 2, b)
 	v = wire.AppendVarint(v, 3, c)
 	return wire.AppendBytes(nil, 2, v)
+}
+
+func attachFormationOwnership(t *testing.T, store *Store) {
+	t.Helper()
+	starter := &player.Starter{
+		Version: versionconfig.Protocol(),
+		Characters: []player.Character{
+			{InvenIndex: 101, ID: 350, Level: 1},
+			{InvenIndex: 102, ID: 351, Level: 1},
+			{InvenIndex: 103, ID: 352, Level: 1},
+			{InvenIndex: 104, ID: 353, Level: 1},
+			{InvenIndex: 105, ID: 354, Level: 1},
+		},
+		Costumes: []player.Costume{
+			{InvenIndex: 201, ID: 60101, UseChar: 101},
+			{InvenIndex: 202, ID: 60201, UseChar: 102},
+			{InvenIndex: 203, ID: 60301, UseChar: 103},
+			{InvenIndex: 204, ID: 60401, UseChar: 104},
+			{InvenIndex: 205, ID: 60501, UseChar: 105},
+		},
+	}
+	inventory, err := player.OpenInventory(stateio.NewMemory(), starter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	characters, err := player.OpenCharacterStore(stateio.NewMemory(), starter.Characters, inventory, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	collection, err := player.OpenCollectionStore(stateio.NewMemory(), starter.Costumes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.characters = characters
+	store.collection = collection
 }
 func TestFieldDeckSeedAndSave(t *testing.T) {
 	s := seeded(t)
@@ -69,12 +107,12 @@ func TestDeckPersistenceAndCommands(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	path := filepath.Join(t.TempDir(), "deck.json")
-	s, e := OpenStore(path, seed)
+	storage := stateio.NewMemory()
+	s, e := OpenStore(storage, seed)
 	if e != nil {
 		t.Fatal(e)
 	}
-	code, _, _, e := s.Handle("/DeckSave", req(1, triple(100, 200, 1)))
+	code, _, _, e := s.Handle("/DeckSave", req(1, triple(100, 2, 1)))
 	if e != nil || code != 10 {
 		t.Fatalf("deck save: %d %v", code, e)
 	}
@@ -98,7 +136,7 @@ func TestDeckPersistenceAndCommands(t *testing.T) {
 	if id != 21 {
 		t.Fatalf("pack response=%d", id)
 	}
-	reopened, e := OpenStore(path, seed)
+	reopened, e := OpenStore(storage, seed)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -119,6 +157,102 @@ func TestRejectsInvalidMutations(t *testing.T) {
 	}
 	if _, _, _, e := s.Handle("/WaypointSave", req(1, wire.AppendVarint(nil, 2, 21))); e == nil {
 		t.Fatal("waypoint missing id accepted")
+	}
+}
+
+func TestDeckSaveValidatesFormationShapeAndOwnership(t *testing.T) {
+	valid := [][]byte{
+		triple(101, 0, 1), triple(102, 1, 2), triple(103, 2, 3),
+		triple(104, 3, 4), triple(105, 4, 5),
+	}
+	tests := []struct {
+		name    string
+		entries [][]byte
+	}{
+		{name: "six characters", entries: append(append([][]byte{}, valid...), triple(101, 5, 1))},
+		{name: "duplicate character", entries: [][]byte{triple(101, 0, 1), triple(101, 1, 2)}},
+		{name: "duplicate position", entries: [][]byte{triple(101, 0, 1), triple(102, 0, 2)}},
+		{name: "duplicate sequence", entries: [][]byte{triple(101, 0, 1), triple(102, 1, 1)}},
+		{name: "position outside twelve cells", entries: [][]byte{triple(101, 12, 1)}},
+		{name: "sequence outside formation", entries: [][]byte{triple(101, 0, 6)}},
+		{name: "unknown character", entries: [][]byte{triple(999, 0, 1)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := seeded(t)
+			attachFormationOwnership(t, s)
+			if _, _, handled, err := s.Handle("/DeckSave", req(1, test.entries...)); err == nil || !handled {
+				t.Fatalf("invalid deck accepted handled=%v err=%v", handled, err)
+			}
+			if len(s.state.Deck) != 0 {
+				t.Fatalf("invalid deck mutated state: %+v", s.state.Deck)
+			}
+		})
+	}
+	s := seeded(t)
+	attachFormationOwnership(t, s)
+	if code, _, handled, err := s.Handle("/DeckSave", req(2, valid...)); err != nil || !handled || code != 10 || len(s.state.Deck) != 5 {
+		t.Fatalf("valid deck rejected code=%d handled=%v deck=%+v err=%v", code, handled, s.state.Deck, err)
+	}
+	unassigned := [][]byte{
+		triple(101, ^uint64(0), 1), triple(102, ^uint64(0), 2), triple(103, ^uint64(0), 3),
+		triple(104, ^uint64(0), 4), triple(105, ^uint64(0), 5),
+	}
+	if code, _, handled, err := s.Handle("/DeckSave", req(3, unassigned...)); err != nil || !handled || code != 10 {
+		t.Fatalf("official unassigned positions rejected code=%d handled=%v err=%v", code, handled, err)
+	}
+}
+
+func TestFieldDeckSaveValidatesFormationShapeAndOwnership(t *testing.T) {
+	valid := [][]byte{
+		triple(1, 101, 201), triple(2, 102, 202), triple(3, 103, 203),
+		triple(4, 104, 204), triple(5, 105, 205),
+	}
+	tests := []struct {
+		name    string
+		entries [][]byte
+	}{
+		{name: "six characters", entries: append(append([][]byte{}, valid...), triple(1, 101, 201))},
+		{name: "duplicate character", entries: [][]byte{triple(1, 101, 201), triple(2, 101, 202)}},
+		{name: "duplicate costume", entries: [][]byte{triple(1, 101, 201), triple(2, 102, 201)}},
+		{name: "duplicate sequence", entries: [][]byte{triple(1, 101, 201), triple(1, 102, 202)}},
+		{name: "sequence outside formation", entries: [][]byte{triple(6, 101, 201)}},
+		{name: "unknown character", entries: [][]byte{triple(1, 999, 201)}},
+		{name: "unknown costume", entries: [][]byte{triple(1, 101, 999)}},
+		{name: "costume owned by another character", entries: [][]byte{triple(1, 101, 202)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := seeded(t)
+			attachFormationOwnership(t, s)
+			before := append([]FieldEntry(nil), s.state.FieldDeck...)
+			if _, _, handled, err := s.Handle("/FieldDeckSave", req(1, test.entries...)); err == nil || !handled {
+				t.Fatalf("invalid field deck accepted handled=%v err=%v", handled, err)
+			}
+			if len(s.state.FieldDeck) != len(before) || s.state.FieldDeck[0] != before[0] {
+				t.Fatalf("invalid field deck mutated state: %+v", s.state.FieldDeck)
+			}
+		})
+	}
+	s := seeded(t)
+	attachFormationOwnership(t, s)
+	if code, _, handled, err := s.Handle("/FieldDeckSave", req(2, valid...)); err != nil || !handled || code != 274 || len(s.state.FieldDeck) != 5 {
+		t.Fatalf("valid field deck rejected code=%d handled=%v deck=%+v err=%v", code, handled, s.state.FieldDeck, err)
+	}
+	// A zero costume index means to use the character's current costume; the
+	// client explicitly supports this fallback when resolving its field leader.
+	if code, _, handled, err := s.Handle("/FieldDeckSave", req(3, triple(1, 101, 0))); err != nil || !handled || code != 274 {
+		t.Fatalf("current-costume fallback rejected code=%d handled=%v err=%v", code, handled, err)
+	}
+}
+
+func TestDeckSavesRequireRequestSequence(t *testing.T) {
+	s := seeded(t)
+	if _, _, handled, err := s.Handle("/DeckSave", triple(101, 0, 1)); err == nil || !handled {
+		t.Fatalf("DeckSave without seq accepted handled=%v err=%v", handled, err)
+	}
+	if _, _, handled, err := s.Handle("/FieldDeckSave", triple(1, 101, 201)); err == nil || !handled {
+		t.Fatalf("FieldDeckSave without seq accepted handled=%v err=%v", handled, err)
 	}
 }
 
@@ -211,27 +345,25 @@ func TestDeckCharAutoReviveUsesCurrentFormationWithoutInventingRevives(t *testin
 	}
 }
 
-func TestDeckCharAutoReviveMigratesExistingSaveCatalyst(t *testing.T) {
+func TestDeckCharAutoRevivePreservesExplicitZeroCatalyst(t *testing.T) {
 	seed, err := LoadSeed(filepath.Join("..", "..", "seed", "v2_34_13", "decks.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "deck.json")
-	s, err := OpenStore(path, seed)
+	storage := stateio.NewMemory()
+	s, err := OpenStore(storage, seed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := s.Handle("/DeckSave", req(1, triple(88, 12, 1))); err != nil {
+	if _, _, _, err := s.Handle("/DeckSave", req(1, triple(88, 11, 1))); err != nil {
 		t.Fatal(err)
 	}
-	// Old snapshots stored no catalyst; opening must restore it from the
-	// account seed while leaving all deck and field entries untouched.
 	s.state.AutoReviveCatalyst = 0
 	if err := s.commit(s.state); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenStore(path, seed)
-	if err != nil || reopened.state.AutoReviveCatalyst != 200 || reopened.state.Deck[0].CharacterInvenIndex != 88 {
-		t.Fatalf("migrated state=%+v err=%v", reopened.state, err)
+	reopened, err := OpenStore(storage, seed)
+	if err != nil || reopened.state.AutoReviveCatalyst != 0 || reopened.state.Deck[0].CharacterInvenIndex != 88 {
+		t.Fatalf("reloaded state=%+v err=%v", reopened.state, err)
 	}
 }

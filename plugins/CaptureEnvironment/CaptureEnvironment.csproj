@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BD2CaptureEnvironment</AssemblyName>
     <RootNamespace>Bd2CaptureEnvironment</RootNamespace>
+    <BD2PluginVersionKey>capture_environment</BD2PluginVersionKey>
   </PropertyGroup>
   <Target Name="RequireGameDir" BeforeTargets="ResolveReferences" Condition="'$(GameDir)' == ''">
     <Error Text="GameDir is required. Build with -p:GameDir=&lt;official-client-directory&gt;." />
@@ -35,4 +36,5 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <Import Project="..\VersionSource.targets" />
 </Project>

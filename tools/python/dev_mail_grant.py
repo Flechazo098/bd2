@@ -132,6 +132,18 @@ def _usable_display_name(value: str) -> bool:
     return bool(value) and not value.startswith("<未找到本地化文本 #") and value not in {"（不使用）", "(不使用)"}
 
 
+def _localized_names(connection: sqlite3.Connection, table: str) -> dict[int, str]:
+    """Read the common localized-text protobuf shape from its owning table."""
+    result: dict[int, str] = {}
+    for row_id, proto in connection.execute(f'SELECT id, ProtoBuf FROM "{table}"'):
+        decoded = fields(proto)
+        text_id = first_varint(decoded, 2) or int(row_id)
+        name = first_text(decoded, 4) or first_text(decoded, 5) or first_text(decoded, 3)
+        if name:
+            result[text_id] = name
+    return result
+
+
 def _safe_direct_mail_item(item: dict[str, Any]) -> bool:
     # RandomBox requires a second protocol and its entered count is not the
     # final reward count, so this direct-mail form never exposes type 9.
@@ -157,6 +169,7 @@ def map_fixed_boxes_to_direct_items(
     """
     by_key = {(item["element_type"], item["id"]): item for item in items}
     target_aliases: dict[tuple[int, int], dict[str, int]] = {}
+    box_aliases: dict[tuple[int, int], dict[str, int]] = {}
     source_boxes: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for box_id, (reward_type, reward_id, reward_count) in fixed_boxes.items():
         target_key = (reward_type, reward_id)
@@ -165,28 +178,49 @@ def map_fixed_boxes_to_direct_items(
         if target is None or box is None:
             continue
         source_boxes.setdefault(target_key, []).append((box_id, reward_count))
+        if _usable_display_name(box["name"]):
+            aliases = box_aliases.setdefault(target_key, {})
+            aliases[box["name"]] = aliases.get(box["name"], 0) + 1
         aliases = target_aliases.setdefault(target_key, {})
         for alias, frequency in product_aliases.get(box_id, {}).items():
             if _usable_display_name(alias):
                 aliases[alias] = aliases.get(alias, 0) + frequency
 
-    for target_key, aliases in target_aliases.items():
+    for target_key, boxes in source_boxes.items():
         target = by_key[target_key]
+        original_name = target["name"]
+        aliases = target_aliases.get(target_key, {})
         canonical = max(aliases, key=lambda value: (aliases[value], -len(value), value)) if aliases else ""
-        if not _usable_display_name(target["name"]):
+        box_names = box_aliases.get(target_key, {})
+        # When every named deterministic wrapper agrees on one material name,
+        # that name is the most specific GameData label for an otherwise valid
+        # generic resource row. Keep the generic table name searchable as an
+        # alias. If the resource itself has no usable name, retain the product
+        # fallback below because a lone wrapper can still have a generic label.
+        box_name = next(iter(box_names)) if len(box_names) == 1 else ""
+        if _usable_display_name(original_name) and box_name and box_name != original_name:
+            target["name"] = box_name
+        elif not _usable_display_name(original_name):
             if canonical:
                 target["name"] = canonical
-        # Keep only the dominant authoritative product label. Minority product
-        # names can describe expiry/conversion products (for example a ticket
-        # which converts to 女神之泪) and must not pollute direct-item search.
-        target["aliases"] = [canonical] if canonical and canonical != target["name"] else []
-        boxes = source_boxes[target_key]
+        # Deterministic RandomBox names come from RandomBoxTextTable and describe
+        # the actual contained material.  Product labels remain a secondary
+        # fallback because some products describe expiry/conversion behavior.
+        target["aliases"] = []
+        for value in (original_name, box_name, canonical):
+            if _usable_display_name(value) and value != target["name"] and value not in target["aliases"]:
+                target["aliases"].append(value)
         preview = "、".join(str(box_id) for box_id, _ in boxes[:4])
         if len(boxes) > 4:
             preview += f" 等 {len(boxes)} 个"
         details = ["开发邮件直接发放此物品（无需开箱）"]
+        if original_name != target["name"] and _usable_display_name(original_name):
+            details.append("原始资源名：" + original_name)
+        if box_name and box_name != target["name"]:
+            details.append("确定性箱名称：" + box_name)
         if target["aliases"]:
-            details.append("商品名：" + canonical)
+            if canonical and canonical != target["name"]:
+                details.append("商品名：" + canonical)
         details.append("固定箱映射：" + preview)
         target["details"] = "；".join(details)
 
@@ -197,17 +231,16 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
     """Return every safe ItemDBInfo-backed static item, with Chinese names."""
     connection, temporary = open_readonly_database(root, version)
     try:
-        names: dict[int, str] = {}
-        for row_id, proto in connection.execute("SELECT id, ProtoBuf FROM LocalTextTable"):
-            decoded = fields(proto)
-            # LocalTextTable: id=2, text_cn=4, text_en=5 (client descriptor).
-            text_id = first_varint(decoded, 2) or int(row_id)
-            name = first_text(decoded, 4) or first_text(decoded, 5) or first_text(decoded, 3)
-            if name:
-                names[text_id] = name
+        # Most inventory tables refer to LocalTextTable. RandomBoxTable owns a
+        # separate RandomBoxTextTable namespace with the same localized-text
+        # protobuf shape; resolving it through LocalTextTable silently loses
+        # material names when numeric text IDs do not overlap.
+        names = _localized_names(connection, "LocalTextTable")
+        random_box_names = _localized_names(connection, "RandomBoxTextTable")
 
         items: list[dict[str, Any]] = []
         for table, element_type, id_field, name_field, category in ITEM_SOURCES:
+            text_names = random_box_names if table == "RandomBoxTable" else names
             for row_id, proto in connection.execute(f"SELECT id, ProtoBuf FROM {table} ORDER BY id"):
                 decoded = fields(proto)
                 item_id = first_varint(decoded, id_field) or int(row_id)
@@ -215,7 +248,7 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
                 items.append({
                     "id": item_id,
                     "element_type": element_type,
-                    "name": names.get(name_text_id, f"<未找到本地化文本 #{name_text_id}>"),
+                    "name": text_names.get(name_text_id, f"<未找到本地化文本 #{name_text_id}>"),
                     "category": category,
                     "source_table": table,
                     "name_text_id": name_text_id,

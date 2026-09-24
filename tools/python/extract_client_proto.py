@@ -15,9 +15,13 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-import tempfile
 
 from google.protobuf import descriptor_pb2
+
+try:
+    from .inherited_stage import create_inherited_stage
+except ImportError:  # Direct script execution.
+    from inherited_stage import create_inherited_stage
 
 
 TOOL = "bd2.extract_client_proto"
@@ -83,8 +87,7 @@ def is_managed(output: Path) -> bool:
 def stage_for(output: Path) -> Path:
     if output.exists() and not is_managed(output):
         raise FileExistsError(f"refusing to overwrite non-managed output directory: {output}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    return create_inherited_stage(output)
 
 
 def extract_descriptor(path: Path) -> descriptor_pb2.FileDescriptorProto | None:

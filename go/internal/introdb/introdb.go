@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	oldURL   = "https://mt.bd2.pmang.cloud/"
+	oldURL = "https://mt.bd2.pmang.cloud/"
 )
 
 var salt = dbcrypt.Header

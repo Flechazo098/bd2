@@ -55,3 +55,37 @@ func TestSeedByteCompatibility(t *testing.T) {
 		}
 	}
 }
+
+func TestCashProductEventIndexIsUniqueSemanticSeedFact(t *testing.T) {
+	seed, err := Load(filepath.Join("..", "..", "seed", "v2_34_13", "readonly.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := seed.CashProductEventIndex(1100001, 9100033)
+	if err != nil || event != 1171 {
+		t.Fatalf("event=%d err=%v", event, err)
+	}
+	if _, err := seed.CashProductEventIndex(1100001, 999); err == nil {
+		t.Fatal("missing cash product event was accepted")
+	}
+	duplicate := seed.Responses["/CashShopInfo"]
+	for _, field := range duplicate.Fields {
+		var group, product uint64
+		for _, nested := range field.Fields {
+			if nested.Number == 1 {
+				group = nested.Varint
+			}
+			if nested.Number == 2 {
+				product = nested.Varint
+			}
+		}
+		if group == 1100001 && product == 9100033 {
+			duplicate.Fields = append(duplicate.Fields, field)
+			break
+		}
+	}
+	seed.Responses["/CashShopInfo"] = duplicate
+	if _, err := seed.CashProductEventIndex(1100001, 9100033); err == nil {
+		t.Fatal("duplicate cash product event was accepted")
+	}
+}

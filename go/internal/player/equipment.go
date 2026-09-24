@@ -1,19 +1,21 @@
 package player
 
 import (
-	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -45,29 +47,38 @@ type EquipmentOption struct {
 type equipmentSnapshot struct {
 	Version   string            `json:"version"`
 	NextIndex uint64            `json:"next_index"`
-	Equipment []Equipment       `json:"equipment"`
-	Granted   map[string]uint64 `json:"granted"`
+	Equipment []Equipment       `json:"-"`
+	Granted   map[string]uint64 `json:"-"`
 }
 
 // EquipmentInventory persists non-stackable equipment independently from
 // ItemDBInfo inventory because the wire protocols are different types.
 type EquipmentInventory struct {
-	mu         sync.Mutex
-	path       string
-	owned      equipmentSnapshot
-	characters *CharacterStore
-	slots      map[uint64]uint64
-	upgrade    *gamedata.EquipmentUpgradeDesign
-	smelting   *gamedata.EquipmentSmeltingDesign
-	wallet     *Wallet
-	inventory  *Inventory
-	sessionID  string
-	smeltCache map[string]smeltingReply
+	mu            sync.Mutex
+	store         stateio.AtomicEntryStore
+	owned         equipmentSnapshot
+	persisted     equipmentSnapshot
+	corePresent   bool
+	characters    *CharacterStore
+	slots         map[uint64]uint64
+	upgrade       *gamedata.EquipmentUpgradeDesign
+	smelting      *gamedata.EquipmentSmeltingDesign
+	optionReroll  *gamedata.EquipmentOptionRerollDesign
+	wallet        *Wallet
+	inventory     *Inventory
+	sessionID     string
+	smeltCache    map[string]smeltingReply
+	pendingReroll *equipmentOptionRerollPending
+	presets       map[equipmentPresetKey]equipmentPreset
 }
 
 type smeltingReply struct {
 	code int
 	body []byte
+}
+
+type equipmentOptionRerollPending struct {
+	Equipment Equipment `json:"equipment"`
 }
 
 func (s *EquipmentInventory) AttachUpgrade(design *gamedata.EquipmentUpgradeDesign, wallet *Wallet, inventory *Inventory) error {
@@ -87,6 +98,21 @@ func (s *EquipmentInventory) AttachSmelting(design *gamedata.EquipmentSmeltingDe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.smelting, s.wallet, s.inventory = design, wallet, inventory
+	return nil
+}
+
+func (s *EquipmentInventory) AttachOptionReroll(design *gamedata.EquipmentOptionRerollDesign, wallet *Wallet, inventory *Inventory) error {
+	if design == nil || wallet == nil || inventory == nil {
+		return errors.New("player: incomplete equipment option reroll configuration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.optionReroll, s.wallet, s.inventory = design, wallet, inventory
+	if s.pendingReroll != nil {
+		if err := s.validatePendingRerollLocked(s.pendingReroll); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -120,55 +146,120 @@ func (s *EquipmentInventory) AttachCharacters(characters *CharacterStore) error 
 	if characters == nil {
 		return errors.New("player: nil character store")
 	}
+	known := make(map[uint64]bool)
+	for _, character := range characters.RawAll() {
+		known[character.InvenIndex] = true
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for key := range s.presets {
+		if !known[key.CharacterIndex] {
+			return fmt.Errorf("player: equipment preset references unknown character %d", key.CharacterIndex)
+		}
+	}
 	s.characters = characters
 	return nil
 }
 
-func OpenEquipmentInventory(path string) (*EquipmentInventory, error) {
-	s := &EquipmentInventory{path: filepath.Clean(path), smeltCache: make(map[string]smeltingReply), owned: equipmentSnapshot{
-		Version: "2.34.13", NextIndex: 910000001, Granted: map[string]uint64{},
-	}}
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
+func OpenEquipmentInventory(store stateio.Store) (*EquipmentInventory, error) {
+	entries, ok := store.(stateio.AtomicEntryStore)
+	if !ok {
+		return nil, errors.New("player: nil equipment store")
 	}
+	s := &EquipmentInventory{store: entries, smeltCache: make(map[string]smeltingReply), presets: make(map[equipmentPresetKey]equipmentPreset), owned: equipmentSnapshot{
+		Version: versionconfig.Protocol(), NextIndex: 910000001, Granted: map[string]uint64{},
+	}}
+	data, err := store.Load("equipment")
 	if err != nil {
 		return nil, err
 	}
-	var shape struct {
-		Equipment []map[string]json.RawMessage `json:"equipment"`
-	}
-	if err := json.Unmarshal(data, &shape); err != nil {
-		return nil, fmt.Errorf("player: decode equipment shape: %w", err)
-	}
-	for _, entry := range shape.Equipment {
-		if _, present := entry["upgrade_attempts"]; !present {
-			return nil, errors.New("player: equipment save requires upgrade_attempts; migrate the development save")
+	if data != nil {
+		s.corePresent = true
+		if err := stateio.RequireExactJSONObject(data, "version", "next_index"); err != nil {
+			return nil, fmt.Errorf("player: incompatible equipment layout: %w", err)
 		}
+		var shape map[string]json.RawMessage
+		if err := json.Unmarshal(data, &shape); err != nil {
+			return nil, fmt.Errorf("player: decode equipment shape: %w", err)
+		}
+		for _, name := range []string{"equipment", "granted"} {
+			if _, exists := shape[name]; exists {
+				return nil, fmt.Errorf("player: equipment %s must use entries", name)
+			}
+		}
+		if err := json.Unmarshal(data, &s.owned); err != nil {
+			return nil, fmt.Errorf("player: decode equipment: %w", err)
+		}
+	} else if err := stateio.RequireNoEntries(entries, "equipment", "equipment", "granted", "reroll_pending", "presets"); err != nil {
+		return nil, fmt.Errorf("player: invalid equipment storage: %w", err)
 	}
-	if err := json.Unmarshal(data, &s.owned); err != nil {
-		return nil, fmt.Errorf("player: decode equipment: %w", err)
-	}
-	if s.owned.Version != "2.34.13" || s.owned.NextIndex < 910000001 || s.owned.Granted == nil {
+	if s.owned.Version != versionconfig.Protocol() || s.owned.NextIndex < 910000001 {
 		return nil, errors.New("player: invalid saved equipment")
 	}
+	s.owned.Granted, err = loadUintEntries(entries, "equipment", "granted")
+	if err != nil {
+		return nil, err
+	}
+	rawEquipment, err := entries.ListEntries("equipment", "equipment")
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range rawEquipment {
+		var entry Equipment
+		index, parseErr := strconv.ParseUint(key, 10, 64)
+		var shape map[string]json.RawMessage
+		if parseErr != nil || json.Unmarshal(value, &shape) != nil || json.Unmarshal(value, &entry) != nil || entry.InvenIndex != index {
+			return nil, fmt.Errorf("player: invalid equipment entry %q", key)
+		}
+		if _, present := shape["upgrade_attempts"]; !present {
+			return nil, errors.New("player: equipment save requires upgrade_attempts; migrate the development save")
+		}
+		s.owned.Equipment = append(s.owned.Equipment, entry)
+	}
+	sort.Slice(s.owned.Equipment, func(i, j int) bool { return s.owned.Equipment[i].InvenIndex < s.owned.Equipment[j].InvenIndex })
 	for _, entry := range s.owned.Equipment {
 		if len(entry.Rank) != 3 {
 			return nil, fmt.Errorf("player: equipment %d requires exactly three rank slots, found %d; repair the development save before starting", entry.InvenIndex, len(entry.Rank))
 		}
 	}
+	pendingEntries, err := entries.ListEntries("equipment", "reroll_pending")
+	if err != nil {
+		return nil, err
+	}
+	if len(pendingEntries) > 1 {
+		return nil, errors.New("player: multiple equipment option reroll candidates")
+	}
+	if raw, ok := pendingEntries["current"]; ok {
+		if err := stateio.RequireExactJSONObject(raw, "equipment"); err != nil {
+			return nil, fmt.Errorf("player: incompatible equipment option reroll candidate: %w", err)
+		}
+		var pending equipmentOptionRerollPending
+		if err := json.Unmarshal(raw, &pending); err != nil {
+			return nil, fmt.Errorf("player: decode equipment option reroll candidate: %w", err)
+		}
+		s.pendingReroll = &pending
+		if err := s.validatePendingRerollLocked(s.pendingReroll); err != nil {
+			return nil, err
+		}
+	} else if len(pendingEntries) != 0 {
+		return nil, errors.New("player: invalid equipment option reroll candidate key")
+	}
+	if err := s.loadEquipmentPresets(entries); err != nil {
+		return nil, err
+	}
+	s.persisted = cloneEquipmentSnapshot(s.owned)
 	return s, nil
 }
 
 func (s *EquipmentInventory) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	data, err := s.store.Load("equipment")
+	if err != nil {
 		return err
+	}
+	if data != nil {
+		return nil
 	}
 	return s.commitLocked(cloneEquipmentSnapshot(s.owned), "initial account generation")
 }
@@ -228,32 +319,9 @@ func (s *EquipmentInventory) grantLocked(identity string, entry Equipment) (Equi
 		next.Granted[k] = v
 	}
 	next.Granted[identity] = entry.InvenIndex
-	data, err := json.Marshal(next)
-	if err != nil {
+	if err := s.commitLocked(next, "grant"); err != nil {
 		return Equipment{}, err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Equipment{}, err
-	}
-	f, err := os.CreateTemp(dir, ".equipment-*.tmp")
-	if err != nil {
-		return Equipment{}, err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
-		return Equipment{}, fmt.Errorf("player: persist equipment: %w", err)
-	}
-	s.owned = next
 	return entry, nil
 }
 
@@ -301,7 +369,7 @@ func equipmentOptionWire(option EquipmentOption) []byte {
 }
 
 func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" {
+	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipBatchUse" && path != "/EquipPresetInfo" && path != "/EquipPresetSave" && path != "/EquipPresetNameChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipOptionReRoll" && path != "/EquipOptionReRollConfirm" && path != "/EquipMainOptChange" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" {
 		return 0, nil, false, nil
 	}
 	if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
@@ -312,6 +380,18 @@ func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, b
 	}
 	if path == "/EquipClear" {
 		return s.clear(request)
+	}
+	if path == "/EquipBatchUse" {
+		return s.batchUse(request)
+	}
+	if path == "/EquipPresetInfo" {
+		return s.presetInfo()
+	}
+	if path == "/EquipPresetSave" {
+		return s.presetSave(request)
+	}
+	if path == "/EquipPresetNameChange" {
+		return s.presetNameChange(request)
 	}
 	if path == "/EquipUpgrade" {
 		return s.upgradeOnce(request)
@@ -324,6 +404,15 @@ func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, b
 	}
 	if path == "/EquipSequenceSmelting" {
 		return s.smeltSequence(request)
+	}
+	if path == "/EquipOptionReRoll" {
+		return s.optionRerollRequest(request)
+	}
+	if path == "/EquipOptionReRollConfirm" {
+		return s.optionRerollConfirm(request)
+	}
+	if path == "/EquipMainOptChange" {
+		return s.mainOptionChange(request)
 	}
 	if path == "/EquipChange" {
 		return s.change(request)
@@ -340,7 +429,316 @@ func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, b
 	for _, entry := range s.owned.Equipment {
 		response = wire.AppendBytes(response, 1, EquipmentWire(entry))
 	}
+	if s.pendingReroll != nil {
+		response = wire.AppendBytes(response, 2, EquipmentWire(s.pendingReroll.Equipment))
+	}
 	return 34, response, true, nil
+}
+
+func (s *EquipmentInventory) optionRerollRequest(request []byte) (int, []byte, bool, error) {
+	seq, _, _ := wire.Varint(request, 1)
+	index, found, err := wire.Varint(request, 2)
+	if err != nil || !found || index == 0 {
+		return 0, nil, true, errors.New("player: EquipOptionReRoll missing equipment")
+	}
+	mainLocks, err := repeatedBoolField(request, 3, "EquipOptionReRoll main lock")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	subLocks, err := repeatedBoolField(request, 4, "EquipOptionReRoll sub lock")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	materials, err := equipmentRequestItems(request, 5, "EquipOptionReRoll")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	rerollType, _, err := wire.Varint(request, 6)
+	if err != nil || rerollType > 1 {
+		return 0, nil, true, errors.New("player: EquipOptionReRoll unsupported reroll type")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cacheKey := s.smeltingCacheKey("option-reroll", seq)
+	if reply, ok := s.smeltCache[cacheKey]; ok {
+		return reply.code, append([]byte(nil), reply.body...), true, nil
+	}
+	if s.optionReroll == nil || s.wallet == nil || s.inventory == nil {
+		return 0, nil, true, errors.New("player: equipment option reroll unavailable")
+	}
+	position := s.equipmentPositionLocked(index)
+	if position < 0 {
+		return 0, nil, true, fmt.Errorf("player: EquipOptionReRoll unknown equipment %d", index)
+	}
+	current := s.owned.Equipment[position]
+	base := current
+	if s.pendingReroll != nil {
+		if s.pendingReroll.Equipment.InvenIndex != index {
+			return 0, nil, true, errors.New("player: another equipment option reroll is awaiting confirmation")
+		}
+		// A retry from the result screen carries only lock masks. The values
+		// being locked are therefore the last candidate, not the still-official
+		// equipment options. Keep chaining candidates until confirm/keep clears
+		// the pending result.
+		base = s.pendingReroll.Equipment
+	}
+	definition, ok := s.optionReroll.Lookup(current.ID)
+	if !ok {
+		return 0, nil, true, fmt.Errorf("player: equipment %d has no option reroll design", current.ID)
+	}
+	if len(mainLocks) != len(base.MainOption) || len(mainLocks) != len(definition.MainGroups) ||
+		len(subLocks) != len(base.SubOption) || len(subLocks) != len(definition.SubGroups) {
+		return 0, nil, true, errors.New("player: EquipOptionReRoll lock arrays do not match equipment options")
+	}
+	effectiveMainLocks := append([]bool(nil), mainLocks...)
+	if rerollType == 1 && len(effectiveMainLocks) != 0 {
+		// The client's has-another-option mode asks the server to leave the
+		// first main option alone. It is not a paid lock and remains false in
+		// the request mask.
+		effectiveMainLocks[0] = true
+	}
+	lockedCount, unlockedRerollable := uint64(0), uint64(0)
+	for i, locked := range mainLocks {
+		if base.MainOption[i].GroupID != definition.MainGroups[i] || base.MainOption[i].ID == 0 {
+			return 0, nil, true, fmt.Errorf("player: equipment %d main option %d does not match GameData", index, i)
+		}
+		canReroll := len(s.optionReroll.Groups[definition.MainGroups[i]].Choices) >= 2
+		if locked && (i == 0 || !canReroll) {
+			return 0, nil, true, fmt.Errorf("player: EquipOptionReRoll main option %d cannot be locked", i)
+		}
+		if locked {
+			lockedCount++
+		} else if canReroll && !(rerollType == 1 && i == 0) {
+			unlockedRerollable++
+		}
+	}
+	for i, locked := range subLocks {
+		if base.SubOption[i].GroupID != definition.SubGroups[i] || base.SubOption[i].ID == 0 {
+			return 0, nil, true, fmt.Errorf("player: equipment %d sub option %d does not match GameData", index, i)
+		}
+		canReroll := len(s.optionReroll.Groups[definition.SubGroups[i]].Choices) >= 2
+		if locked && !canReroll {
+			return 0, nil, true, fmt.Errorf("player: EquipOptionReRoll sub option %d cannot be locked", i)
+		}
+		if locked {
+			lockedCount++
+		} else if canReroll {
+			unlockedRerollable++
+		}
+	}
+	if unlockedRerollable == 0 {
+		return 0, nil, true, errors.New("player: EquipOptionReRoll must leave a rerollable option unlocked")
+	}
+	costs, err := s.optionReroll.Cost(current.ID, lockedCount)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	gold, consumed, err := validateOptionRerollMaterials(costs, materials, s.optionReroll.Conversion)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	if gold != 0 && !s.wallet.CanSpendGold(gold) {
+		return 0, nil, true, errors.New("player: insufficient gold for equipment option reroll")
+	}
+	if len(consumed) != 0 {
+		if err := s.inventory.CanConsume(consumed); err != nil {
+			return 0, nil, true, err
+		}
+	}
+	privateLocks := make([]bool, len(definition.PrivateGroups))
+	for i := range privateLocks {
+		privateLocks[i] = true
+	}
+	rolled, err := s.optionReroll.RollUnlocked(current.ID, gamedata.EquipmentOptionRerollLocks{Main: effectiveMainLocks, Sub: subLocks, Private: privateLocks})
+	if err != nil {
+		return 0, nil, true, err
+	}
+	candidate := cloneEquipment(base)
+	for i := range candidate.MainOption {
+		if !effectiveMainLocks[i] {
+			candidate.MainOption[i] = EquipmentOption{GroupID: rolled.Main[i].GroupID, ID: rolled.Main[i].ID}
+		}
+	}
+	for i := range candidate.SubOption {
+		if !subLocks[i] {
+			candidate.SubOption[i] = EquipmentOption{GroupID: rolled.Sub[i].GroupID, ID: rolled.Sub[i].ID}
+		}
+	}
+	pending := &equipmentOptionRerollPending{Equipment: candidate}
+	if err := s.commitOptionRerollLocked(pending, consumed, gold, "equip-option-reroll:"+cacheKey); err != nil {
+		return 0, nil, true, err
+	}
+	var response []byte
+	for _, option := range candidate.MainOption {
+		response = wire.AppendBytes(response, 1, equipmentOptionWire(option))
+	}
+	for _, option := range candidate.SubOption {
+		response = wire.AppendBytes(response, 2, equipmentOptionWire(option))
+	}
+	s.smeltCache[cacheKey] = smeltingReply{code: 192, body: append([]byte(nil), response...)}
+	return 192, response, true, nil
+}
+
+func (s *EquipmentInventory) optionRerollConfirm(request []byte) (int, []byte, bool, error) {
+	seq, _, _ := wire.Varint(request, 1)
+	index, found, err := wire.Varint(request, 2)
+	if err != nil || !found || index == 0 {
+		return 0, nil, true, errors.New("player: EquipOptionReRollConfirm missing equipment")
+	}
+	confirm, err := optionalBoolField(request, 3, "EquipOptionReRollConfirm confirm")
+	if err != nil {
+		return 0, nil, true, err
+	}
+	s.mu.Lock()
+	cacheKey := s.smeltingCacheKey("option-reroll-confirm", seq)
+	if reply, ok := s.smeltCache[cacheKey]; ok {
+		s.mu.Unlock()
+		return reply.code, append([]byte(nil), reply.body...), true, nil
+	}
+	if s.pendingReroll == nil || s.pendingReroll.Equipment.InvenIndex != index {
+		s.mu.Unlock()
+		return 0, nil, true, fmt.Errorf("player: equipment %d has no option reroll awaiting confirmation", index)
+	}
+	position := s.equipmentPositionLocked(index)
+	if position < 0 {
+		s.mu.Unlock()
+		return 0, nil, true, fmt.Errorf("player: EquipOptionReRollConfirm unknown equipment %d", index)
+	}
+	next := cloneEquipmentSnapshot(s.owned)
+	if confirm {
+		next.Equipment[position].MainOption = append([]EquipmentOption(nil), s.pendingReroll.Equipment.MainOption...)
+		next.Equipment[position].SubOption = append([]EquipmentOption(nil), s.pendingReroll.Equipment.SubOption...)
+	}
+	if err := s.persistEquipmentState(next, nil, true, "option reroll confirm"); err != nil {
+		s.mu.Unlock()
+		return 0, nil, true, err
+	}
+	s.owned = next
+	s.persisted = cloneEquipmentSnapshot(next)
+	s.pendingReroll = nil
+	entry := cloneEquipment(next.Equipment[position])
+	s.mu.Unlock()
+	response := wire.AppendBytes(nil, 1, EquipmentWire(entry))
+	if character, ok := s.equippedCharacter(entry); ok {
+		response = wire.AppendBytes(response, 2, CharacterWire(character))
+	}
+	s.mu.Lock()
+	s.smeltCache[cacheKey] = smeltingReply{code: 193, body: append([]byte(nil), response...)}
+	s.mu.Unlock()
+	return 193, response, true, nil
+}
+
+func (s *EquipmentInventory) mainOptionChange(request []byte) (int, []byte, bool, error) {
+	index, found, err := wire.Varint(request, 2)
+	if err != nil || !found || index == 0 {
+		return 0, nil, true, errors.New("player: EquipMainOptChange missing equipment")
+	}
+	groupID, groupFound, err := wire.Varint(request, 3)
+	if err != nil || !groupFound || groupID == 0 {
+		return 0, nil, true, errors.New("player: EquipMainOptChange missing option group")
+	}
+	optionID, optionFound, err := wire.Varint(request, 4)
+	if err != nil || !optionFound || optionID == 0 {
+		return 0, nil, true, errors.New("player: EquipMainOptChange missing option")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.optionReroll == nil {
+		return 0, nil, true, errors.New("player: equipment option design unavailable")
+	}
+	position := s.equipmentPositionLocked(index)
+	if position < 0 {
+		return 0, nil, true, fmt.Errorf("player: EquipMainOptChange unknown equipment %d", index)
+	}
+	current := s.owned.Equipment[position]
+	definition, ok := s.optionReroll.Lookup(current.ID)
+	if !ok || definition.PrivateUniqueCharID == 0 || len(definition.MainGroups) == 0 || len(current.MainOption) == 0 {
+		return 0, nil, true, fmt.Errorf("player: equipment %d has no changeable main option", current.ID)
+	}
+	group, ok := s.optionReroll.Groups[groupID]
+	if !ok || groupID != definition.MainGroups[0] || current.MainOption[0].GroupID != groupID || len(group.Choices) < 2 || !optionChoiceExists(group, optionID) {
+		return 0, nil, true, fmt.Errorf("player: equipment %d main option %d/%d is not allowed", current.ID, groupID, optionID)
+	}
+
+	next := cloneEquipmentSnapshot(s.owned)
+	next.Equipment[position].MainOption[0] = EquipmentOption{GroupID: groupID, ID: optionID}
+	pending := s.pendingReroll
+	pendingDirty := false
+	if pending != nil && pending.Equipment.InvenIndex == index {
+		copy := &equipmentOptionRerollPending{Equipment: cloneEquipment(pending.Equipment)}
+		if len(copy.Equipment.MainOption) == 0 || copy.Equipment.MainOption[0].GroupID != groupID {
+			return 0, nil, true, errors.New("player: option reroll candidate has no matching main option")
+		}
+		copy.Equipment.MainOption[0] = EquipmentOption{GroupID: groupID, ID: optionID}
+		pending = copy
+		pendingDirty = true
+	}
+	if err := s.persistEquipmentState(next, pending, pendingDirty, "main option change"); err != nil {
+		return 0, nil, true, err
+	}
+	s.owned = next
+	s.persisted = cloneEquipmentSnapshot(next)
+	if pendingDirty {
+		s.pendingReroll = pending
+	}
+	var response []byte
+	if character, ok := s.equippedCharacter(current); ok {
+		response = wire.AppendBytes(response, 1, CharacterWire(character))
+	}
+	return 537, response, true, nil
+}
+
+func repeatedBoolField(data []byte, number int, name string) ([]bool, error) {
+	var result []bool
+	err := wire.Walk(data, func(field wire.Field) error {
+		if field.Number != number {
+			return nil
+		}
+		switch field.Type {
+		case 0:
+			value, count := binary.Uvarint(field.Value)
+			if count <= 0 || value > 1 {
+				return fmt.Errorf("player: %s is invalid", name)
+			}
+			result = append(result, value == 1)
+		case 2:
+			for offset := 0; offset < len(field.Value); {
+				value, count := binary.Uvarint(field.Value[offset:])
+				if count <= 0 || value > 1 {
+					return fmt.Errorf("player: %s is invalid", name)
+				}
+				result = append(result, value == 1)
+				offset += count
+			}
+		default:
+			return fmt.Errorf("player: %s is invalid", name)
+		}
+		return nil
+	})
+	return result, err
+}
+
+func optionalBoolField(data []byte, number int, name string) (bool, error) {
+	value := false
+	seen := false
+	err := wire.Walk(data, func(field wire.Field) error {
+		if field.Number != number {
+			return nil
+		}
+		if seen || field.Type != 0 {
+			return fmt.Errorf("player: %s is invalid", name)
+		}
+		raw, count := binary.Uvarint(field.Value)
+		if count <= 0 || raw > 1 {
+			return fmt.Errorf("player: %s is invalid", name)
+		}
+		seen = true
+		value = raw == 1
+		return nil
+	})
+	return value, err
 }
 
 const (
@@ -650,14 +1048,18 @@ func (s *EquipmentInventory) smeltSequence(request []byte) (int, []byte, bool, e
 	if err != nil {
 		return 0, nil, true, err
 	}
-	result := uint64(equipUpgradeStopMaxTryCount)
+	// The 2.35.10 client splits a requested sequence into packets of at most
+	// 1000 attempts. Exhausting this packet is not the user's global max-try
+	// stop: UPGRADE_SUCCESS tells the client to send the next chunk. Terminal
+	// stop values are reserved for target/max score and insufficient resources.
+	result := uint64(equipUpgradeSuccess)
 	var attempts, successes uint64
 	if currentScore >= maximumScore {
 		result = equipUpgradeStopMaxLevel
 	} else if target != 0 && currentScore >= target {
 		result = equipUpgradeStopTargetLevel
 	}
-	for attempts < count && result == equipUpgradeStopMaxTryCount {
+	for attempts < count && result == equipUpgradeSuccess {
 		if _, _, selectErr := s.selectSmeltingCosts(costs, attempts+1); selectErr != nil {
 			result = equipUpgradeStopNotEnough
 			break
@@ -711,9 +1113,9 @@ func (s *EquipmentInventory) smeltSequence(request []byte) (int, []byte, bool, e
 		}
 		current = next.Equipment[position]
 	}
-	// When exactly count affordable attempts were made without another stop
-	// condition, MaxTryCount is the normal terminal reason. NotEnough is used
-	// only when the next requested attempt could not be funded.
+	// NotEnough is used only when the next requested attempt could not be
+	// funded. Exhausting this packet retains Success so the client can continue
+	// a sequence whose total requested count exceeds the 1000-attempt chunk.
 	if result == equipUpgradeStopNotEnough {
 		lack = upgradeLackItems(costs)
 	}
@@ -860,7 +1262,7 @@ func appendSmeltingMileage(response []byte, gaugeField, rewardField int, gauge u
 // commitSmeltingLocked keeps refinement's three typed snapshots synchronized
 // in memory. Caller holds equipment.mu; this method takes the remaining locks
 // in wallet -> inventory order, calculates every candidate before writing,
-// then publishes all three only after their files succeed. The surrounding
+// then publishes all three only after their saves succeed. The surrounding
 // request transaction supplies durable all-or-none recovery across the writes.
 func (s *EquipmentInventory) commitSmeltingLocked(
 	nextEquipment equipmentSnapshot,
@@ -906,70 +1308,24 @@ func (s *EquipmentInventory) commitSmeltingLocked(
 		}
 	}
 
-	after := make(map[string][]byte, 3)
-	for _, entry := range []struct {
-		path          string
-		current, next any
-		decoded       any
-	}{
-		{s.path, s.owned, nextEquipment, &equipmentSnapshot{}},
-		{s.wallet.path, s.wallet.state, nextWallet, &walletSnapshot{}},
-		{s.inventory.path, s.inventory.owned, nextItems, &ownedSnapshot{}},
-	} {
-		name := filepath.Base(entry.path)
-		current, err := os.ReadFile(entry.path)
-		missing := errors.Is(err, os.ErrNotExist)
-		if err != nil && !missing {
-			return Currency{}, 0, fmt.Errorf("player: read %s transaction source: %w", name, err)
-		}
-		memoryBytes, err := json.Marshal(entry.current)
-		if err != nil {
-			return Currency{}, 0, fmt.Errorf("player: encode %s memory snapshot: %w", name, err)
-		}
-		if !missing {
-			if err := json.Unmarshal(current, entry.decoded); err != nil {
-				return Currency{}, 0, fmt.Errorf("player: decode %s transaction source: %w", name, err)
-			}
-			diskBytes, err := json.Marshal(entry.decoded)
-			if err != nil || !bytes.Equal(memoryBytes, diskBytes) {
-				return Currency{}, 0, fmt.Errorf("player: %s changed outside the account transaction", name)
-			}
-		}
-		encoded, err := json.Marshal(entry.next)
-		if err != nil {
-			return Currency{}, 0, fmt.Errorf("player: encode %s transaction target: %w", name, err)
-		}
-		after[name] = encoded
+	walletData, err := json.Marshal(nextWallet)
+	if err != nil {
+		return Currency{}, 0, err
 	}
-	for _, name := range []string{filepath.Base(s.wallet.path), filepath.Base(s.inventory.path), filepath.Base(s.path)} {
-		path := filepath.Join(filepath.Dir(s.path), name)
-		if err := writePlayerSnapshot(path, after[name]); err != nil {
-			return Currency{}, 0, fmt.Errorf("player: persist equipment %s %s: %w", operation, name, err)
-		}
+	if err := s.store.SaveWithEntries("wallet", walletData, entry("spent", identity, []byte("true"))); err != nil {
+		return Currency{}, 0, fmt.Errorf("player: persist equipment %s wallet: %w", operation, err)
+	}
+	if err := s.inventory.commitOwned(nextItems); err != nil {
+		return Currency{}, 0, fmt.Errorf("player: persist equipment %s items: %w", operation, err)
+	}
+	if err := s.persistEquipment(nextEquipment, operation); err != nil {
+		return Currency{}, 0, err
 	}
 	s.owned = nextEquipment
+	s.persisted = cloneEquipmentSnapshot(nextEquipment)
 	s.wallet.state = nextWallet
 	s.inventory.owned = nextItems
 	return nextWallet.Currency, earned, nil
-}
-
-func writePlayerSnapshot(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, ".player-state-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(data); err == nil {
-		err = file.Sync()
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
 }
 
 func consumeOwnedItem(next *ownedSnapshot, want Item) error {
@@ -992,6 +1348,97 @@ func consumeOwnedItem(next *ownedSnapshot, want Item) error {
 		return nil
 	}
 	return fmt.Errorf("player: item %d is not mutable-owned", want.InvenIndex)
+}
+
+func validateOptionRerollMaterials(costs []gamedata.PromotionCost, materials []Item, conversion *gamedata.EquipmentOptionRerollConversion) (uint64, []Item, error) {
+	if len(costs) == 0 || len(materials) == 0 {
+		return 0, nil, errors.New("player: EquipOptionReRoll has no material")
+	}
+	expected := make(map[[2]uint64]uint64, len(costs))
+	for _, cost := range costs {
+		key := [2]uint64{cost.Type, cost.ID}
+		if cost.Type == 0 || cost.Count == 0 || (cost.Type == 4 && cost.ID != 0) || math.MaxUint64-expected[key] < cost.Count {
+			return 0, nil, errors.New("player: invalid equipment option reroll cost")
+		}
+		expected[key] += cost.Count
+	}
+	actual := make(map[[2]uint64]uint64, len(materials))
+	consumed := make([]Item, 0, len(materials))
+	for _, material := range materials {
+		key := [2]uint64{material.Type, material.ID}
+		if math.MaxUint64-actual[key] < material.Count {
+			return 0, nil, errors.New("player: EquipOptionReRoll material count overflows")
+		}
+		actual[key] += material.Count
+		if material.Type != 4 {
+			consumed = append(consumed, material)
+		}
+	}
+	for key, want := range expected {
+		if conversion != nil && key == ([2]uint64{conversion.TargetType, conversion.TargetID}) &&
+			expected[[2]uint64{conversion.SourceType, conversion.SourceID}] == 0 {
+			targetKey := key
+			sourceKey := [2]uint64{conversion.SourceType, conversion.SourceID}
+			targetCount := actual[targetKey]
+			if targetCount > want || conversion.Ratio == 0 || want-targetCount > math.MaxUint64/conversion.Ratio || actual[sourceKey] != (want-targetCount)*conversion.Ratio {
+				return 0, nil, fmt.Errorf("player: EquipOptionReRoll converted material %d/%d does not match cost", key[0], key[1])
+			}
+			delete(actual, targetKey)
+			delete(actual, sourceKey)
+			continue
+		}
+		if actual[key] != want {
+			return 0, nil, fmt.Errorf("player: EquipOptionReRoll material %d/%d=%d want=%d", key[0], key[1], actual[key], want)
+		}
+		delete(actual, key)
+	}
+	if len(actual) != 0 {
+		return 0, nil, errors.New("player: EquipOptionReRoll material kinds mismatch")
+	}
+	return expected[[2]uint64{4, 0}], consumed, nil
+}
+
+func (s *EquipmentInventory) commitOptionRerollLocked(pending *equipmentOptionRerollPending, consumed []Item, gold uint64, identity string) error {
+	if pending == nil || identity == "" || s.wallet == nil || s.inventory == nil {
+		return errors.New("player: invalid transactional equipment option reroll")
+	}
+	s.wallet.mu.Lock()
+	defer s.wallet.mu.Unlock()
+	s.inventory.mu.Lock()
+	defer s.inventory.mu.Unlock()
+
+	nextWallet := cloneWallet(s.wallet.state)
+	if nextWallet.Spent[identity] {
+		return errors.New("player: equipment option reroll request was already committed")
+	}
+	if nextWallet.Gold < gold {
+		return errors.New("player: insufficient gold for equipment option reroll")
+	}
+	nextWallet.Gold -= gold
+	nextWallet.Spent[identity] = true
+	nextItems := cloneOwnedSnapshot(s.inventory.owned)
+	for _, want := range consumed {
+		if err := consumeOwnedItem(&nextItems, want); err != nil {
+			return err
+		}
+	}
+	walletData, err := json.Marshal(nextWallet)
+	if err != nil {
+		return err
+	}
+	if err := s.store.SaveWithEntries("wallet", walletData, entry("spent", identity, []byte("true"))); err != nil {
+		return fmt.Errorf("player: persist equipment option reroll wallet: %w", err)
+	}
+	if err := s.inventory.commitOwned(nextItems); err != nil {
+		return fmt.Errorf("player: persist equipment option reroll items: %w", err)
+	}
+	if err := s.persistEquipmentState(s.owned, pending, true, "option reroll"); err != nil {
+		return err
+	}
+	s.wallet.state = nextWallet
+	s.inventory.owned = nextItems
+	s.pendingReroll = &equipmentOptionRerollPending{Equipment: cloneEquipment(pending.Equipment)}
+	return nil
 }
 
 func upgradeLackItems(costs []gamedata.PromotionCost) []Item {
@@ -1373,36 +1820,142 @@ func (s *EquipmentInventory) change(request []byte) (int, []byte, bool, error) {
 func cloneEquipmentSnapshot(current equipmentSnapshot) equipmentSnapshot {
 	next := equipmentSnapshot{Version: current.Version, NextIndex: current.NextIndex,
 		Equipment: append([]Equipment(nil), current.Equipment...), Granted: make(map[string]uint64, len(current.Granted))}
+	for i := range next.Equipment {
+		next.Equipment[i] = cloneEquipment(next.Equipment[i])
+	}
 	for key, value := range current.Granted {
 		next.Granted[key] = value
 	}
 	return next
 }
 
+func cloneEquipment(current Equipment) Equipment {
+	next := current
+	next.MainOption = append([]EquipmentOption(nil), current.MainOption...)
+	next.SubOption = append([]EquipmentOption(nil), current.SubOption...)
+	next.Rank = append([]uint64(nil), current.Rank...)
+	if current.PrivateOption != nil {
+		option := *current.PrivateOption
+		next.PrivateOption = &option
+	}
+	return next
+}
+
+func (s *EquipmentInventory) validatePendingRerollLocked(pending *equipmentOptionRerollPending) error {
+	if pending == nil || pending.Equipment.InvenIndex == 0 || pending.Equipment.ID == 0 {
+		return errors.New("player: invalid equipment option reroll candidate")
+	}
+	position := s.equipmentPositionLocked(pending.Equipment.InvenIndex)
+	if position < 0 {
+		return fmt.Errorf("player: option reroll candidate references unknown equipment %d", pending.Equipment.InvenIndex)
+	}
+	current := s.owned.Equipment[position]
+	if len(pending.Equipment.MainOption) != len(current.MainOption) || len(pending.Equipment.SubOption) != len(current.SubOption) {
+		return errors.New("player: option reroll candidate option counts do not match equipment")
+	}
+	for i, option := range pending.Equipment.MainOption {
+		if option.GroupID != current.MainOption[i].GroupID || option.ID == 0 {
+			return fmt.Errorf("player: option reroll candidate main option %d is invalid", i)
+		}
+	}
+	for i, option := range pending.Equipment.SubOption {
+		if option.GroupID != current.SubOption[i].GroupID || option.ID == 0 {
+			return fmt.Errorf("player: option reroll candidate sub option %d is invalid", i)
+		}
+	}
+	if s.optionReroll != nil {
+		definition, ok := s.optionReroll.Lookup(current.ID)
+		if !ok || len(definition.MainGroups) != len(pending.Equipment.MainOption) || len(definition.SubGroups) != len(pending.Equipment.SubOption) {
+			return errors.New("player: option reroll candidate has no matching GameData design")
+		}
+		for i, option := range pending.Equipment.MainOption {
+			if option.GroupID != definition.MainGroups[i] || !optionChoiceExists(s.optionReroll.Groups[option.GroupID], option.ID) {
+				return fmt.Errorf("player: option reroll candidate main option %d is not in GameData", i)
+			}
+		}
+		for i, option := range pending.Equipment.SubOption {
+			if option.GroupID != definition.SubGroups[i] || !optionChoiceExists(s.optionReroll.Groups[option.GroupID], option.ID) {
+				return fmt.Errorf("player: option reroll candidate sub option %d is not in GameData", i)
+			}
+		}
+	}
+	invariant := cloneEquipment(pending.Equipment)
+	invariant.MainOption = append([]EquipmentOption(nil), current.MainOption...)
+	invariant.SubOption = append([]EquipmentOption(nil), current.SubOption...)
+	if !reflect.DeepEqual(invariant, current) {
+		return errors.New("player: option reroll candidate modifies immutable equipment state")
+	}
+	return nil
+}
+
+func optionChoiceExists(group gamedata.OptionGroup, id uint64) bool {
+	for _, choice := range group.Choices {
+		if choice.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *EquipmentInventory) commitLocked(next equipmentSnapshot, operation string) error {
+	if err := s.persistEquipment(next, operation); err != nil {
+		return err
+	}
+	s.owned = next
+	s.persisted = cloneEquipmentSnapshot(next)
+	return nil
+}
+
+func (s *EquipmentInventory) persistEquipment(next equipmentSnapshot, operation string) error {
+	return s.persistEquipmentState(next, nil, false, operation)
+}
+
+func (s *EquipmentInventory) persistEquipmentState(next equipmentSnapshot, pending *equipmentOptionRerollPending, pendingDirty bool, operation string) error {
 	data, err := json.Marshal(next)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	f, err := os.CreateTemp(dir, ".equipment-*.tmp")
-	if err != nil {
-		return err
+	changes := make([]stateio.EntryMutation, 0)
+	for key, value := range next.Granted {
+		if value != 0 && s.persisted.Granted[key] != value {
+			changes = append(changes, stateio.EntryMutation{Bucket: "granted", Key: key, Payload: []byte(strconv.FormatUint(value, 10))})
+		}
 	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
+	before := make(map[uint64]Equipment, len(s.persisted.Equipment))
+	for _, item := range s.persisted.Equipment {
+		before[item.InvenIndex] = item
 	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
+	for _, item := range next.Equipment {
+		old, exists := before[item.InvenIndex]
+		if !exists || !reflect.DeepEqual(old, item) {
+			payload, err := json.Marshal(item)
+			if err != nil {
+				return err
+			}
+			changes = append(changes, stateio.EntryMutation{Bucket: "equipment", Key: strconv.FormatUint(item.InvenIndex, 10), Payload: payload})
+		}
+		delete(before, item.InvenIndex)
 	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
+	for index := range before {
+		changes = append(changes, stateio.EntryMutation{Bucket: "equipment", Key: strconv.FormatUint(index, 10), Delete: true})
 	}
-	if err != nil {
+	if pendingDirty {
+		change := stateio.EntryMutation{Bucket: "reroll_pending", Key: "current", Delete: pending == nil}
+		if pending != nil {
+			change.Payload, err = json.Marshal(pending)
+			if err != nil {
+				return err
+			}
+		}
+		changes = append(changes, change)
+	}
+	if s.corePresent && next.Version == s.persisted.Version && next.NextIndex == s.persisted.NextIndex {
+		data = nil
+	}
+	if err := s.store.SaveWithEntries("equipment", data, changes); err != nil {
 		return fmt.Errorf("player: persist equipment %s: %w", operation, err)
 	}
-	s.owned = next
+	s.corePresent = true
 	return nil
 }
 
@@ -1464,28 +2017,8 @@ func (s *EquipmentInventory) use(request []byte) (int, []byte, bool, error) {
 		return 0, nil, true, fmt.Errorf("player: EquipUse unknown equipment %d", equipmentIndex)
 	}
 	next.Equipment[position].UseChar = characterIndex
-	data, err := json.Marshal(next)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	dir := filepath.Dir(s.path)
-	f, err := os.CreateTemp(dir, ".equipment-*.tmp")
-	if err != nil {
-		return 0, nil, true, err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
+	if err := s.commitLocked(next, "use"); err != nil {
 		return 0, nil, true, fmt.Errorf("player: persist equipment use: %w", err)
 	}
-	s.owned = next
 	return 35, wire.AppendBytes(nil, 1, CharacterWire(character)), true, nil
 }

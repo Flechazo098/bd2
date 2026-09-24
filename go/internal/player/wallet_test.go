@@ -9,7 +9,7 @@ import (
 
 func TestWalletGrantPersistsAndIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wallet.json")
-	wallet, err := OpenWallet(path, Currency{Gold: 100})
+	wallet, err := OpenWallet(testStore(path), Currency{Gold: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -17,7 +17,7 @@ func TestWalletGrantPersistsAndIsIdempotent(t *testing.T) {
 	if _, err := wallet.GrantQuestOnce("quest:1", rewards); err != nil {
 		t.Fatal(err)
 	}
-	wallet, err = OpenWallet(path, Currency{})
+	wallet, err = OpenWallet(testStore(path), Currency{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BD2LocalIdentity</AssemblyName>
     <RootNamespace>Bd2LocalIdentity</RootNamespace>
+    <BD2PluginVersionKey>local_identity</BD2PluginVersionKey>
   </PropertyGroup>
   <Target Name="RequireGameDir" BeforeTargets="ResolveReferences" Condition="'$(GameDir)' == ''">
     <Error Text="GameDir is required. Build with -p:GameDir=&lt;local-client-directory&gt;." />
@@ -27,4 +28,5 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <Import Project="..\VersionSource.targets" />
 </Project>
