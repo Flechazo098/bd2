@@ -75,15 +75,15 @@ func validateSnapshot(snapshot validationSnapshot) []Problem {
 	problems = append(problems, nextIndexProblems("collection.next_character_index", []string{"collection", "next_character_index"}, snapshot.characterNextIndex, snapshot.characterIndices)...)
 	problems = append(problems, nextIndexProblems("collection.next_costume_index", []string{"collection", "next_costume_index"}, snapshot.costumeNextIndex, snapshot.costumeIndices)...)
 
-	ownedEquipment := make(map[uint64]bool, len(snapshot.equipmentIndices))
-	for _, index := range snapshot.equipmentIndices {
-		ownedEquipment[index] = true
-	}
 	for _, grant := range snapshot.equipmentGrants {
-		if grant.index == 0 || !ownedEquipment[grant.index] {
+		// Equipment can be dismantled after it was granted. The grant entry is
+		// an issuance/idempotency ledger, just like items.grant_items, so the
+		// historical index need only be nonzero and below the monotonic next
+		// index; it does not have to remain in the current ownership set.
+		if grant.index == 0 || grant.index >= snapshot.equipmentNextIndex {
 			problems = append(problems, Problem{
 				Code: "equipment.grant_missing_equipment", Path: []string{"equipment", "grants", grant.identity},
-				Message: "equipment grant must point to an owned equipment instance", RelatedIDs: []uint64{grant.index},
+				Message: "equipment grant index must be nonzero and below next_index", RelatedIDs: []uint64{grant.index},
 			})
 		}
 	}

@@ -1338,6 +1338,93 @@ func TestOrdinaryTwelvePickGacha101UsesSavedSelectionGroupAndPersists(t *testing
 	}
 }
 
+func TestInstalledNewbieSelectionGuaranteeStopsAfterThirtyWithoutPoints(t *testing.T) {
+	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
+	if root == "" {
+		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
+	}
+	infinite, err := gamedata.LoadInfiniteGacha(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, _, err := gamedata.LoadActiveGachaForSchedules(root, "20260923193640", []uint64{1009}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	choices := regular.FiveStarIDs(31)
+	if len(choices) < 3 {
+		t.Fatalf("newbie selectable five-stars=%v", choices)
+	}
+	storage := stateio.NewMemory()
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{Jewelry: 6000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(infinite, regular, collection, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.BeginSession("newbie-30")
+	selection := wire.AppendVarint(nil, 1, 1)
+	selected := map[uint64]bool{}
+	for slot, costumeID := range choices[:3] {
+		selected[costumeID] = true
+		entry := wire.AppendVarint(nil, 1, 1009)
+		if slot != 0 {
+			entry = wire.AppendVarint(entry, 2, uint64(slot))
+		}
+		entry = wire.AppendVarint(entry, 3, costumeID)
+		selection = wire.AppendBytes(selection, 2, entry)
+	}
+	if _, _, _, err := service.Handle("/GachaSelectionSave", selection); err != nil {
+		t.Fatal(err)
+	}
+	for draw := uint64(0); draw < 3; draw++ {
+		request := wire.AppendVarint(nil, 1, draw+2)
+		request = wire.AppendVarint(request, 2, 31)
+		request = wire.AppendVarint(request, 3, 1)
+		code, response, handled, err := service.Handle("/GachaBuy", request)
+		if err != nil || !handled || code != 146 {
+			t.Fatalf("draw %d code=%d handled=%v err=%v", draw+1, code, handled, err)
+		}
+		point, _, err := wire.Varint(response, 2)
+		if err != nil || point != 0 {
+			t.Fatalf("draw %d point=%d err=%v", draw+1, point, err)
+		}
+		applySort, found, err := wire.Varint(response, 4)
+		if err != nil || !found || applySort != 9 {
+			t.Fatalf("draw %d selected guarantee sort=%d found=%v err=%v response=%x", draw+1, applySort, found, err, response)
+		}
+		grant, ok := collection.Grant(service.requestIdentity(31, draw+2))
+		if !ok || len(grant.ViewCostumeIDs) != 10 || !selected[grant.ViewCostumeIDs[9]] {
+			t.Fatalf("draw %d grant=%+v", draw+1, grant)
+		}
+	}
+	user := collection.GachaUser(1009)
+	if user.TotalBuyCount != 30 || user.Point != 0 || wallet.Snapshot().Jewelry != 0 {
+		t.Fatalf("newbie state user=%+v wallet=%+v", user, wallet.Snapshot())
+	}
+	for _, fixed := range collection.GachaFixedStates() {
+		if fixed.FixedID == 3 && fixed.Type == 1 && fixed.Count != 0 {
+			t.Fatalf("newbie five-star fixed count accumulated: %+v", fixed)
+		}
+	}
+	before := wallet.Snapshot()
+	fourth := wire.AppendVarint(nil, 1, 5)
+	fourth = wire.AppendVarint(fourth, 2, 31)
+	fourth = wire.AppendVarint(fourth, 3, 1)
+	if _, _, _, err := service.Handle("/GachaBuy", fourth); err == nil {
+		t.Fatal("newbie draw accepted after 30 pulls")
+	}
+	if wallet.Snapshot() != before || collection.GachaUser(1009).TotalBuyCount != 30 {
+		t.Fatalf("rejected fourth draw mutated state wallet=%+v user=%+v", wallet.Snapshot(), collection.GachaUser(1009))
+	}
+}
+
 func countFields(data []byte, number int) int {
 	count := 0
 	_ = wire.Walk(data, func(field wire.Field) error {

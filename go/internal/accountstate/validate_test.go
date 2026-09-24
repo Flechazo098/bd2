@@ -35,6 +35,16 @@ func TestValidateSnapshotAcceptsConsumedGrantedItem(t *testing.T) {
 	}
 }
 
+func TestValidateSnapshotAcceptsDismantledGrantedEquipment(t *testing.T) {
+	snapshot := validValidationSnapshot()
+	snapshot.equipmentIndices = nil
+	// Index 20 was issued below next_index and its grant marker must survive
+	// dismantling so a retried grant cannot create a duplicate instance.
+	if problems := validateSnapshot(snapshot); len(problems) != 0 {
+		t.Fatalf("unexpected problems: %#v", problems)
+	}
+}
+
 func TestValidateSnapshotPortsEveryExternalValidatorRule(t *testing.T) {
 	snapshot := validValidationSnapshot()
 	snapshot.formatVersion = 2

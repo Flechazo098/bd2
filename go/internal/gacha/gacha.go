@@ -207,6 +207,8 @@ func (s *Service) saveSelection(request []byte) (int, []byte, bool, error) {
 	if group, ok := s.regular.Group(groupID); ok && group.GachaSubType == 1 && group.TenTimeGachaID != 0 {
 		if special := s.regular.SpecialSelectionIDs(group.TenTimeGachaID); len(special) != 0 {
 			eligible = special
+		} else if fiveStars := s.regular.FiveStarIDs(group.TenTimeGachaID); group.UseSelectionOnlyFixedApply && len(fiveStars) != 0 {
+			eligible = fiveStars
 		}
 	}
 	validItems := make(map[uint64]bool, len(eligible))
@@ -348,6 +350,9 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 		}
 	}
 	if !already {
+		if group.BuyLimitCount != 0 && s.collection.GachaUser(group.ID).TotalBuyCount+uint64(design.Count) > group.BuyLimitCount {
+			return 146, nil, true, fmt.Errorf("gacha: group %d buy limit %d exhausted", group.ID, group.BuyLimitCount)
+		}
 		day := dailyResetKey(s.now())
 		var dailyLimit uint64
 		if isDailyFree {
@@ -384,7 +389,7 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 			if !group.UseSelectionOnlyFixedApply {
 				normalSelected = selected
 			}
-			if group.IsSelectedFromPity {
+			if group.IsSelectedFromPity || group.UseSelectionOnlyFixedApply {
 				pitySelected = selected
 			}
 			roll, fixedResult, err = design.RollWithCostumeFixedSelection(s.collection.GachaFixedCount(group.FixedID, 0), s.collection.GachaFixedCount(group.FixedID, 1), fixed, normalSelected, pitySelected)

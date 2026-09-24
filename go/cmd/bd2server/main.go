@@ -77,6 +77,7 @@ func serve(args []string) (serveErr error) {
 	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
 	gameDir := fs.String("game-dir", "", "Brown Dust II client directory (required)")
 	identityPlugin := fs.String("identity-plugin", "", "optional BD2LocalIdentity.dll override for development")
+	devToolsConfig := fs.String("dev-tools-config", "", "optional local development-tool settings JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -240,12 +241,16 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("read account seed hope powder: %w", err)
 	}
+	catalyst, err := login.SeedCatalyst()
+	if err != nil {
+		return fmt.Errorf("read account seed catalyst: %w", err)
+	}
 	equipMileage, equipMileageExchangeGage, err := login.SeedEquipmentMileage()
 	if err != nil {
 		return fmt.Errorf("read account seed equipment mileage: %w", err)
 	}
 	wallet, err := player.OpenWallet(stateRepository, player.Currency{
-		Gold: gold, FreeJewelry: freeJewelry, Jewelry: jewelry, Mileage: mileage, HopePowder: hopePowder,
+		Gold: gold, FreeJewelry: freeJewelry, Jewelry: jewelry, Catalyst: catalyst, Mileage: mileage, HopePowder: hopePowder,
 		EquipMileage: equipMileage, EquipMileageExchangeGage: equipMileageExchangeGage,
 	})
 	if err != nil {
@@ -253,6 +258,26 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := login.AttachCurrencies(wallet); err != nil {
 		return fmt.Errorf("attach wallet to login: %w", err)
+	}
+	slotDesign, err := gamedata.LoadInventorySlotDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load inventory slot GameData: %w", err)
+	}
+	itemSlots, storageSlots, equipmentInventorySlots, equipmentStorageSlots, err := login.SeedInventorySlots()
+	if err != nil {
+		return fmt.Errorf("read account seed inventory slots: %w", err)
+	}
+	inventorySlots, err := player.OpenInventorySlots(stateRepository, slotDesign, player.InventorySlotCounts{
+		Items: itemSlots, Storage: storageSlots, Equipment: equipmentInventorySlots, EquipmentStorage: equipmentStorageSlots,
+	}, wallet)
+	if err != nil {
+		return fmt.Errorf("load inventory slot state: %w", err)
+	}
+	if *devToolsConfig != "" {
+		inventorySlots.AttachDevelopmentSettings(filepath.Clean(*devToolsConfig))
+	}
+	if err := login.AttachInventorySlots(inventorySlots); err != nil {
+		return fmt.Errorf("attach inventory slots to login: %w", err)
 	}
 	mailService, err := mail.OpenService(stateRepository, mailbox, ownedItems, wallet)
 	if err != nil {
@@ -298,6 +323,17 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := ownedEquipment.AttachUpgrade(equipmentUpgrade, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment upgrade GameData: %w", err)
+	}
+	equipmentCraft, err := gamedata.LoadEquipmentCraftDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment crafting GameData: %w", err)
+	}
+	talentGrowth, err := gamedata.LoadTalentGrowthDesign(filepath.Clean(*gameData), *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load talent growth GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachCraft(equipmentCraft); err != nil {
+		return fmt.Errorf("attach equipment crafting GameData: %w", err)
 	}
 	equipmentSmelting, err := gamedata.LoadEquipmentSmeltingDesign(filepath.Clean(*gameData), *gameDataVersion)
 	if err != nil {
@@ -391,6 +427,9 @@ func serve(args []string) (serveErr error) {
 	if err := worldService.CharacterService().AttachWallet(wallet); err != nil {
 		return fmt.Errorf("attach character promotion wallet: %w", err)
 	}
+	if err := worldService.CharacterService().AttachTalentGrowth(talentGrowth); err != nil {
+		return fmt.Errorf("attach character talent growth: %w", err)
+	}
 	costumePotentialDesign, err := gamedata.LoadCostumePotentialDesign(filepath.Clean(*gameData), *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load costume potential GameData: %w", err)
@@ -415,6 +454,7 @@ func serve(args []string) (serveErr error) {
 		deckStateStore,
 		ownedItems,
 		ownedEquipment,
+		inventorySlots,
 		charAwakeService,
 		costumePotentialService,
 		starter,
@@ -432,7 +472,7 @@ func serve(args []string) (serveErr error) {
 	if stateRepository.IsNew() {
 		if err := ensureAccountStateInitialized(
 			progressState, deckStateStore, ownedItems, ownedEquipment,
-			worldService.CharacterService(), collection, wallet, mailService, missionService,
+			worldService.CharacterService(), collection, wallet, inventorySlots, mailService, missionService,
 		); err != nil {
 			return fmt.Errorf("initialize complete account state generation: %w", err)
 		}

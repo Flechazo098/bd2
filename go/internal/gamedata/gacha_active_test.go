@@ -117,7 +117,7 @@ func TestActiveGachaAgainstInstalledVersion23510(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []uint64{10100113, 11000113, 10100145, 11000145, 10100040, 11000040, 10100146, 11000146, 31, 9100037, 8100118, 8100119, 8100120, 8100121, 8100122, 8100123, 8100124, 8100125} {
+	for _, id := range []uint64{101, 10100113, 11000113, 10100145, 11000145, 10100040, 11000040, 10100146, 11000146, 31, 9100037, 8100118, 8100119, 8100120, 8100121, 8100122, 8100123, 8100124, 8100125} {
 		if _, ok := regular.Gacha(id); !ok {
 			t.Errorf("costume gacha %d missing", id)
 		}
@@ -136,6 +136,14 @@ func TestActiveGachaAgainstInstalledVersion23510(t *testing.T) {
 	moonriseGroup, ok := regular.Group(30011)
 	if !ok || moonriseGroup.BuyLimitCount != 10 || moonriseGroup.CashProductGroupID != 1500001 || moonriseGroup.CashProductID != 9100037 || moonriseGroup.SelectCount != 12 || moonriseGroup.SelectionChoiceRate != 100 {
 		t.Fatalf("moonrise group=%+v ok=%v", moonriseGroup, ok)
+	}
+	permanentSelection, ok := regular.Group(10001)
+	if !ok || permanentSelection.TenTimeGachaID != 101 || permanentSelection.SelectCount != 12 || permanentSelection.GachaSubType != 1 {
+		t.Fatalf("permanent selection group=%+v ok=%v", permanentSelection, ok)
+	}
+	newbie, ok := regular.Group(1009)
+	if !ok || newbie.TenTimeGachaID != 31 || newbie.BuyLimitCount != 30 || newbie.SelectCount != 3 || newbie.PointCount != 0 || newbie.FixedID != 3 || !newbie.UseSelectionOnlyFixedApply {
+		t.Fatalf("newbie group=%+v ok=%v", newbie, ok)
 	}
 	for _, id := range []uint64{8100121, 8100125} {
 		gacha, ok := regular.Gacha(id)

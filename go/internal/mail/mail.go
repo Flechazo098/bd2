@@ -42,6 +42,12 @@ var itemDBInfoTypes = map[uint64]bool{
 	29: true, // instant-use item
 }
 
+var currencyRewardTypes = map[uint64]bool{
+	3:  true, // free jewelry
+	4:  true, // gold
+	12: true, // catalyst / talent elixir
+}
+
 // MailDBInfo is the persisted shape used by the client.  A mail either has a
 // literal title/body (ordinary system mail), or a TemplateID and Sender (the
 // localized/template-driven mail form).  Reward fields are parallel arrays:
@@ -460,12 +466,12 @@ func (s *Service) open(request []byte) ([]byte, error) {
 		for i := range entry.RewardTypes {
 			reward := gamedata.Reward{Type: entry.RewardTypes[i], ID: entry.RewardIDs[i], Count: entry.RewardCounts[i]}
 			rewards[i] = reward
-			switch reward.Type {
-			case 3, 4:
+			switch {
+			case currencyRewardTypes[reward.Type]:
 				currency := wire.AppendVarint(nil, 3, reward.Type)
 				currency = wire.AppendVarint(currency, 4, reward.Count)
 				bundle = wire.AppendBytes(bundle, 1, currency)
-			case 28:
+			case reward.Type == 28:
 				// DataManager recognizes this type, but RewardDBInfoBundle
 				// carries MyRoomTrophyDBInfo in a separate field.  Encoding it as
 				// ItemDBInfo would make the local state and client model disagree.
@@ -580,7 +586,7 @@ func (s *Service) EnqueueCompensation(identity, title, body string, rewards []ga
 		SentAt: uint64(sentAt.UTC().UnixMilli()), ExpiresAt: uint64(sentAt.UTC().Add(30 * 24 * time.Hour).UnixMilli()),
 	}
 	for _, reward := range rewards {
-		if reward.Type == 0 || reward.Count == 0 || (reward.Type != 3 && reward.Type != 4 && (!itemDBInfoTypes[reward.Type] || reward.ID == 0)) {
+		if reward.Type == 0 || reward.Count == 0 || (!currencyRewardTypes[reward.Type] && (!itemDBInfoTypes[reward.Type] || reward.ID == 0)) {
 			return fmt.Errorf("mail: compensation %q has unsupported reward type=%d id=%d count=%d", identity, reward.Type, reward.ID, reward.Count)
 		}
 		entry.RewardTypes = append(entry.RewardTypes, reward.Type)

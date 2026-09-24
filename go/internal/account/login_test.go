@@ -209,6 +209,52 @@ func TestAttachPresetSlotsRejectsNil(t *testing.T) {
 	}
 }
 
+type loginInventorySlotFixture struct {
+	items, storage, equipment, equipmentStorage uint64
+	err                                         error
+}
+
+func (f *loginInventorySlotFixture) UserInventorySlots() (uint64, uint64, uint64, uint64, error) {
+	return f.items, f.storage, f.equipment, f.equipmentStorage, f.err
+}
+
+func TestLoginReplacesAllInventorySlotFieldsFromProvider(t *testing.T) {
+	user := wire.AppendVarint(nil, 1, 1)
+	for field, value := range map[int]uint64{5: 100, 6: 100, 10: 500, 15: 100} {
+		user = wire.AppendVarint(user, field, value)
+	}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: user}
+	provider := &loginInventorySlotFixture{items: 500, storage: 100, equipment: 2000, equipmentStorage: 100}
+	if err := seed.AttachInventorySlots(provider); err != nil {
+		t.Fatal(err)
+	}
+	response, err := seed.Login(wire.AppendVarint(nil, 1, 1), []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("missing UserInfo: %v", err)
+	}
+	for field, want := range map[int]uint64{5: 500, 6: 100, 10: 2000, 15: 100} {
+		if got, found, err := wire.Varint(result, field); err != nil || !found || got != want {
+			t.Fatalf("field %d=%d found=%t err=%v want=%d", field, got, found, err, want)
+		}
+	}
+}
+
+func TestSeedInventorySlotsReadsUserInfoFields(t *testing.T) {
+	user := wire.AppendVarint(nil, 1, 1)
+	for field, value := range map[int]uint64{5: 100, 6: 101, 10: 500, 15: 102} {
+		user = wire.AppendVarint(user, field, value)
+	}
+	seed := &LoginSeed{Version: ProtocolVersion(), PacketCode: 3, UserInfo: user}
+	items, storage, equipment, equipmentStorage, err := seed.SeedInventorySlots()
+	if err != nil || items != 100 || storage != 101 || equipment != 500 || equipmentStorage != 102 {
+		t.Fatalf("slots=%d/%d/%d/%d err=%v", items, storage, equipment, equipmentStorage, err)
+	}
+}
+
 func byteFields(data []byte, number int) [][]byte {
 	var result [][]byte
 	_ = wire.Walk(data, func(field wire.Field) error {
