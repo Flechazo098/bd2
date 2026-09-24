@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <BD2VersionConfig>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\versions.json'))</BD2VersionConfig>
+    <BD2GeneratedVersionSource>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Bd2Versions.g.cs'))</BD2GeneratedVersionSource>
+  </PropertyGroup>
+  <Target Name="GenerateBD2VersionSource" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(BD2VersionConfig)')" Text="Missing repository version config: $(BD2VersionConfig)" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Generate-VersionSource.ps1&quot; -Config &quot;$(BD2VersionConfig)&quot; -Output &quot;$(BD2GeneratedVersionSource)&quot; -Plugin &quot;$(BD2PluginVersionKey)&quot;" />
+    <ItemGroup>
+      <Compile Include="$(BD2GeneratedVersionSource)" />
+    </ItemGroup>
+  </Target>
+</Project>

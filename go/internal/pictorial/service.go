@@ -263,7 +263,7 @@ func (s *Service) MaxHealth(character player.Character) (uint64, error) {
 	cacheKey := [2]uint64{character.ID, character.Level}
 	value, found := s.baseHealth.Load(cacheKey)
 	if !found {
-		base, err := gamedata.CharacterBaseStats(s.Design.Root, s.Design.Version, int(character.ID), int(character.Level))
+		base, err := s.Design.CharStats.BaseStats(character.ID, character.Level)
 		if err != nil {
 			return 0, err
 		}

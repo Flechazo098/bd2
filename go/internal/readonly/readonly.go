@@ -12,10 +12,11 @@ import (
 	"fmt"
 	"os"
 
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
-const Version23413 = "2.34.13"
+func ProtocolVersion() string { return versionconfig.Protocol() }
 
 var ErrInvalidSeed = errors.New("readonly: invalid seed")
 
@@ -40,6 +41,49 @@ type Response struct {
 type Seed struct {
 	Version   string              `json:"version"`
 	Responses map[string]Response `json:"responses"`
+}
+
+// CashProductEventIndex returns the dynamic product event identity already
+// present in the versioned CashShopInfo seed. Gacha preview state must use this
+// identity because the client sends it back when locking a reroll result.
+func (s *Seed) CashProductEventIndex(groupID, productID uint64) (uint64, error) {
+	if s == nil || groupID == 0 || productID == 0 {
+		return 0, errors.New("readonly: invalid cash product identity")
+	}
+	response, ok := s.Responses["/CashShopInfo"]
+	if !ok {
+		return 0, errors.New("readonly: CashShopInfo response is missing")
+	}
+	var found uint64
+	for _, product := range response.Fields {
+		if product.Number != 1 || product.Type != 2 {
+			continue
+		}
+		var group, id, event uint64
+		for _, field := range product.Fields {
+			switch field.Number {
+			case 1:
+				group = field.Varint
+			case 2:
+				id = field.Varint
+			case 8:
+				event = field.Varint
+			}
+		}
+		if group == groupID && id == productID {
+			if event == 0 {
+				return 0, fmt.Errorf("readonly: cash product %d/%d has no event index", groupID, productID)
+			}
+			if found != 0 {
+				return 0, fmt.Errorf("readonly: cash product %d/%d is duplicated", groupID, productID)
+			}
+			found = event
+		}
+	}
+	if found == 0 {
+		return 0, fmt.Errorf("readonly: cash product %d/%d is missing", groupID, productID)
+	}
+	return found, nil
 }
 
 func Load(path string) (*Seed, error) {
@@ -69,7 +113,7 @@ func (s *Seed) Write(path string) error {
 }
 
 func (s *Seed) Validate() error {
-	if s == nil || s.Version != Version23413 || len(s.Responses) == 0 {
+	if s == nil || s.Version != ProtocolVersion() || len(s.Responses) == 0 {
 		return ErrInvalidSeed
 	}
 	for path, r := range s.Responses {

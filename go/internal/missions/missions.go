@@ -7,14 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/mail"
 	"bd2server/internal/player"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -32,11 +35,13 @@ var ErrInvalidRequest = errors.New("missions: invalid request")
 // client-calculated completed achievement ids, as in the official protocol.
 type Service struct {
 	mu        sync.Mutex
-	path      string
+	storage   stateio.Store
 	design    *gamedata.MissionDesign
 	inventory *player.Inventory
 	wallet    *player.Wallet
+	mail      *mail.Service
 	state     snapshot
+	now       func() time.Time
 }
 
 func (s *Service) AttachWallet(wallet *player.Wallet) error {
@@ -48,40 +53,60 @@ func (s *Service) AttachWallet(wallet *player.Wallet) error {
 }
 
 type snapshot struct {
-	Version   string            `json:"version"`
-	Completed []string          `json:"completed"`
-	Claimed   []string          `json:"claimed"`
-	Progress  map[string]uint64 `json:"progress,omitempty"`
+	Version      string            `json:"version"`
+	DailyPeriod  string            `json:"daily_period"`
+	WeeklyPeriod string            `json:"weekly_period"`
+	Completed    []string          `json:"completed"`
+	Claimed      []string          `json:"claimed"`
+	Progress     map[string]uint64 `json:"progress"`
 }
 
-func Open(path string, design *gamedata.MissionDesign, inventory *player.Inventory) (*Service, error) {
-	if path == "" || design == nil || inventory == nil {
+func Open(storage stateio.Store, design *gamedata.MissionDesign, inventory *player.Inventory) (*Service, error) {
+	if storage == nil || design == nil || inventory == nil {
 		return nil, errors.New("missions: invalid service configuration")
 	}
-	s := &Service{path: filepath.Clean(path), design: design, inventory: inventory, state: snapshot{Version: "2.34.13", Progress: map[string]uint64{}}}
-	b, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	now := time.Now().UTC()
+	s := &Service{storage: storage, design: design, inventory: inventory, now: time.Now, state: snapshot{
+		Version: versionconfig.Protocol(), DailyPeriod: dailyPeriod(now), WeeklyPeriod: weeklyPeriod(now), Progress: map[string]uint64{},
+	}}
+	b, err := storage.Load("missions")
+	if err != nil {
+		return nil, fmt.Errorf("missions: load state: %w", err)
+	}
+	if b == nil {
 		return s, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("missions: read state: %w", err)
+	if err := stateio.RequireExactJSONObject(b, "version", "daily_period", "weekly_period", "completed", "claimed", "progress"); err != nil {
+		return nil, fmt.Errorf("missions: incompatible state layout: %w", err)
 	}
-	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != "2.34.13" {
+	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != versionconfig.Protocol() || s.state.DailyPeriod == "" || s.state.WeeklyPeriod == "" {
 		return nil, errors.New("missions: malformed state")
 	}
 	if s.state.Progress == nil {
-		s.state.Progress = map[string]uint64{}
+		return nil, errors.New("missions: progress must be an object")
 	}
 	return s, nil
+}
+
+func (s *Service) AttachMail(mailbox *mail.Service) error {
+	if mailbox == nil {
+		return errors.New("missions: nil compensation mailbox")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mail = mailbox
+	return nil
 }
 
 func (s *Service) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	b, err := s.storage.Load("missions")
+	if err != nil {
 		return err
+	}
+	if b != nil {
+		return nil
 	}
 	return s.persist(cloneSnapshot(s.state))
 }
@@ -92,6 +117,9 @@ func (s *Service) EnsurePersisted() error {
 func (s *Service) CompleteMission(key gamedata.MissionKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.rolloverLocked(); err != nil {
+		return err
+	}
 	if _, ok := s.design.Missions[key]; !ok {
 		return fmt.Errorf("missions: unknown mission %+v", key)
 	}
@@ -106,6 +134,9 @@ func (s *Service) CompleteMission(key gamedata.MissionKey) error {
 func (s *Service) SetProgress(key gamedata.MissionKey, value uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.rolloverLocked(); err != nil {
+		return err
+	}
 	return s.setProgressLocked(key, value)
 }
 
@@ -173,6 +204,9 @@ func (s *Service) applyCompletionDependencies(next *snapshot, completed gamedata
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.rolloverLocked(); err != nil {
+		return 0, nil, true, err
+	}
 	switch path {
 	case "/MissionInfo":
 		if err := requireSeq(request); err != nil {
@@ -203,6 +237,152 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	}
 }
 
+func dailyPeriod(now time.Time) string { return now.UTC().Format("2006-01-02") }
+
+func weeklyPeriod(now time.Time) string {
+	now = now.UTC()
+	daysSinceMonday := (int(now.Weekday()) + 6) % 7
+	return now.AddDate(0, 0, -daysSinceMonday).Format("2006-01-02")
+}
+
+func (s *Service) rolloverLocked() error {
+	if s.now == nil {
+		return errors.New("missions: missing clock")
+	}
+	now := s.now().UTC()
+	daily, weekly := dailyPeriod(now), weeklyPeriod(now)
+	if daily == s.state.DailyPeriod && weekly == s.state.WeeklyPeriod {
+		return nil
+	}
+	if s.mail == nil {
+		return errors.New("missions: compensation mailbox is not attached")
+	}
+	next := cloneSnapshot(s.state)
+	if daily != next.DailyPeriod {
+		if err := s.compensatePeriodLocked(0, next.DailyPeriod, now); err != nil {
+			return err
+		}
+		clearMissionPeriod(&next, 0)
+		next.DailyPeriod = daily
+	}
+	if weekly != next.WeeklyPeriod {
+		if err := s.compensatePeriodLocked(1, next.WeeklyPeriod, now); err != nil {
+			return err
+		}
+		clearMissionPeriod(&next, 1)
+		next.WeeklyPeriod = weekly
+	}
+	return s.commit(next)
+}
+
+func (s *Service) compensatePeriodLocked(groupType uint64, period string, now time.Time) error {
+	label := "日常"
+	if groupType == 1 {
+		label = "周常"
+	}
+	for _, key := range s.completedUnclaimedForType(groupType) {
+		rewards := s.design.Missions[key]
+		if len(rewards) == 0 {
+			continue
+		}
+		identity := fmt.Sprintf("expired-mission:%d:%s:%s", groupType, period, missionName(key))
+		title := label + "任务到期补发"
+		body := fmt.Sprintf("%s周期 %s 已结束。任务 %d/%d 已完成但未领取，奖励由系统自动补发。", label, period, key.GroupID, key.ID)
+		if err := s.mail.EnqueueCompensation(identity, title, body, rewards, now); err != nil {
+			return fmt.Errorf("missions: enqueue expired mission %+v: %w", key, err)
+		}
+	}
+	for _, key := range s.eligibleUnclaimedSectionsForType(groupType) {
+		rewards := s.design.Sections[key].Rewards
+		if len(rewards) == 0 {
+			continue
+		}
+		identity := fmt.Sprintf("expired-section:%d:%s:%d", groupType, period, key.ID)
+		title := label + "阶段奖励到期补发"
+		body := fmt.Sprintf("%s周期 %s 已结束。阶段奖励 %d 已达成但未领取，奖励由系统自动补发。", label, period, key.ID)
+		if err := s.mail.EnqueueCompensation(identity, title, body, rewards, now); err != nil {
+			return fmt.Errorf("missions: enqueue expired section %+v: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) completedUnclaimedForType(groupType uint64) []gamedata.MissionKey {
+	var result []gamedata.MissionKey
+	for key, condition := range s.design.Conditions {
+		if key.GroupType != groupType {
+			continue
+		}
+		target := condition.TargetValue
+		if target == 0 {
+			target = 1
+		}
+		if s.state.Progress[missionName(key)] >= target && !contains(s.state.Claimed, "mission:"+missionName(key)) {
+			result = append(result, key)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].GroupID != result[j].GroupID {
+			return result[i].GroupID < result[j].GroupID
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result
+}
+
+func (s *Service) eligibleUnclaimedSectionsForType(groupType uint64) []gamedata.SectionRewardKey {
+	completed := uint64(len(s.completedForType(groupType)))
+	var result []gamedata.SectionRewardKey
+	for key, section := range s.design.Sections {
+		identity := fmt.Sprintf("section:%d/%d", key.GroupType, key.ID)
+		if key.GroupType == groupType && section.SectionValue != 0 && completed >= section.SectionValue && !contains(s.state.Claimed, identity) {
+			result = append(result, key)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
+}
+
+func (s *Service) completedForType(groupType uint64) []gamedata.MissionKey {
+	var result []gamedata.MissionKey
+	for key, condition := range s.design.Conditions {
+		if key.GroupType != groupType {
+			continue
+		}
+		target := condition.TargetValue
+		if target == 0 {
+			target = 1
+		}
+		if s.state.Progress[missionName(key)] >= target {
+			result = append(result, key)
+		}
+	}
+	return result
+}
+
+func clearMissionPeriod(state *snapshot, groupType uint64) {
+	prefix := strconv.FormatUint(groupType, 10) + "/"
+	for name := range state.Progress {
+		if strings.HasPrefix(name, prefix) {
+			delete(state.Progress, name)
+		}
+	}
+	state.Completed = filterPeriodIdentities(state.Completed, groupType)
+	state.Claimed = filterPeriodIdentities(state.Claimed, groupType)
+}
+
+func filterPeriodIdentities(values []string, groupType uint64) []string {
+	missionPrefix := "mission:" + strconv.FormatUint(groupType, 10) + "/"
+	sectionPrefix := "section:" + strconv.FormatUint(groupType, 10) + "/"
+	result := values[:0]
+	for _, value := range values {
+		if !strings.HasPrefix(value, missionPrefix) && !strings.HasPrefix(value, sectionPrefix) {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 func (s *Service) missionInfo() []byte {
 	var response []byte
 	for _, key := range s.progressMissionKeys() {
@@ -226,7 +406,7 @@ func (s *Service) missionInfo() []byte {
 		entry = wire.AppendVarint(entry, 2, id)
 		response = wire.AppendBytes(response, 2, entry)
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	daily := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 	daysUntilMonday := (8 - int(now.Weekday())) % 7
 	if daysUntilMonday == 0 {
@@ -663,7 +843,7 @@ func battleRewards(rewards []gamedata.Reward) []gamedata.BattleReward {
 func (s *Service) commit(next snapshot) error {
 	sort.Strings(next.Completed)
 	sort.Strings(next.Claimed)
-	if equalStrings(next.Completed, s.state.Completed) && equalStrings(next.Claimed, s.state.Claimed) && equalProgress(next.Progress, s.state.Progress) {
+	if next.DailyPeriod == s.state.DailyPeriod && next.WeeklyPeriod == s.state.WeeklyPeriod && equalStrings(next.Completed, s.state.Completed) && equalStrings(next.Claimed, s.state.Claimed) && equalProgress(next.Progress, s.state.Progress) {
 		return nil
 	}
 	return s.persist(next)
@@ -674,24 +854,7 @@ func (s *Service) persist(next snapshot) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".missions-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
+	if err := s.storage.Save("missions", b); err != nil {
 		return err
 	}
 	s.state = next
@@ -714,7 +877,7 @@ func cloneSnapshot(in snapshot) snapshot {
 	for key, value := range in.Progress {
 		progress[key] = value
 	}
-	return snapshot{Version: in.Version, Completed: append([]string(nil), in.Completed...), Claimed: append([]string(nil), in.Claimed...), Progress: progress}
+	return snapshot{Version: in.Version, DailyPeriod: in.DailyPeriod, WeeklyPeriod: in.WeeklyPeriod, Completed: append([]string(nil), in.Completed...), Claimed: append([]string(nil), in.Claimed...), Progress: progress}
 }
 func contains(values []string, want string) bool {
 	for _, value := range values {

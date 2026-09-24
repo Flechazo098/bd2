@@ -160,3 +160,32 @@ func TestGrowthResourceIDCannotMasqueradeAsCollectionItem(t *testing.T) {
 		t.Fatalf("resource incorrectly unlocked pictorial entries=%v buffs=%v err=%v", entries, buffs, err)
 	}
 }
+
+func BenchmarkCharInfoMaxHealthLoadedDesign(b *testing.B) {
+	root := os.Getenv("BD2_REAL_GAMEDATA")
+	if root == "" {
+		b.Skip("BD2_REAL_GAMEDATA not configured")
+	}
+	design, err := gamedata.LoadPictorialDesign(root, "20260923193640")
+	if err != nil {
+		b.Fatal(err)
+	}
+	// A large account resolves every character through the same immutable
+	// design. Repeating a known valid character isolates the /CharInfo scaling
+	// cost from account-specific inventory fixtures while preserving its call
+	// shape (one maximum-health calculation per returned character).
+	characters := make([]player.Character, 100)
+	for i := range characters {
+		characters[i] = player.Character{InvenIndex: uint64(i + 1), ID: 350, Level: 20}
+	}
+	service := &Service{Design: design, Owned: &ownedState{characters: characters}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, character := range characters {
+			if _, err := service.MaxHealth(character); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}

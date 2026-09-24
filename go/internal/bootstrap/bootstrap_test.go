@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
 func TestMaintenance(t *testing.T) {
 	req := wire.AppendVarint(nil, 1, 2)
 	req = wire.AppendVarint(req, 2, 8)
-	response, err := Maintenance(ClientVersion, BundleVersion, req)
+	response, err := Maintenance(versionconfig.Client(), versionconfig.Bundle(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +21,7 @@ func TestMaintenance(t *testing.T) {
 	}
 	typ, _, _ := wire.Varint(market, 1)
 	if typ != 4 {
-		t.Fatalf("market type does not match 2.34.13 response: %d", typ)
+		t.Fatalf("market type does not match response contract: %d", typ)
 	}
 	connect, _, _ := wire.Varint(response, 3)
 	user, _, _ := wire.Varint(response, 4)
@@ -30,7 +31,7 @@ func TestMaintenance(t *testing.T) {
 }
 
 func TestServerInfoNoOfficialEndpoints(t *testing.T) {
-	c := Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: ClientVersion, BundleVer: BundleVersion}
+	c := Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: versionconfig.Client(), BundleVer: versionconfig.Bundle()}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -52,9 +53,9 @@ func TestServerInfoIncludesLocalGameData(t *testing.T) {
 	c := Config{
 		BaseURL: "http://127.0.0.1:8080/game/",
 		CDNURL:  "http://127.0.0.1:8080/assets/ServerData",
-		Version: ClientVersion, BundleVer: BundleVersion,
+		Version: versionconfig.Client(), BundleVer: versionconfig.Bundle(),
 		GameDataURL: "http://127.0.0.1:8080/assets/GameData",
-		GameDataVer: "20260910162539",
+		GameDataVer: "20260921140855",
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)

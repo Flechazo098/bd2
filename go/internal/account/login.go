@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"bd2server/internal/cryptox"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
-const Version23413 = "2.34.13"
+func ProtocolVersion() string { return versionconfig.Protocol() }
 
 var (
 	ErrInvalidSeed = errors.New("account: invalid LoginUser seed")
@@ -32,6 +33,8 @@ type LoginSeed struct {
 	UserInfo       []byte
 	ResponseFields []byte
 	currencies     CurrencyProvider
+	purchaseCounts PurchaseCountProvider
+	presetSlots    PresetSlotProvider
 	firstGacha     *bool
 }
 
@@ -50,11 +53,41 @@ type EquipmentMileageProvider interface {
 	EquipmentMileageBalances() (mileage, exchangeGage uint64)
 }
 
+// PurchaseCountProvider supplies the current PurchaseCountDBInfo messages for
+// UserDBInfo field 26. Implementations must derive them from authoritative
+// account state rather than the immutable login seed.
+type PurchaseCountProvider interface {
+	PurchaseCountDBInfos() [][]byte
+}
+
+// PresetSlotProvider supplies the authoritative number of ordinary party
+// preset slots for UserDBInfo field 28. The deck domain owns both purchased
+// slot state and the preset records stored in those slots.
+type PresetSlotProvider interface {
+	PresetSlotCount() uint64
+}
+
 func (s *LoginSeed) AttachCurrencies(provider CurrencyProvider) error {
 	if provider == nil {
 		return errors.New("account: nil currency provider")
 	}
 	s.currencies = provider
+	return nil
+}
+
+func (s *LoginSeed) AttachPurchaseCounts(provider PurchaseCountProvider) error {
+	if provider == nil {
+		return errors.New("account: nil purchase count provider")
+	}
+	s.purchaseCounts = provider
+	return nil
+}
+
+func (s *LoginSeed) AttachPresetSlots(provider PresetSlotProvider) error {
+	if provider == nil {
+		return errors.New("account: nil preset slot provider")
+	}
+	s.presetSlots = provider
 	return nil
 }
 
@@ -276,6 +309,34 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 			return nil, fmt.Errorf("account: replace first gacha: %w", err)
 		}
 	}
+	if s.purchaseCounts != nil {
+		var err error
+		if user, err = replaceRepeatedBytes(user, 26, s.purchaseCounts.PurchaseCountDBInfos()); err != nil {
+			return nil, fmt.Errorf("account: replace purchase counts: %w", err)
+		}
+	}
+	if s.presetSlots != nil {
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 28, s.presetSlots.PresetSlotCount()); err != nil {
+			return nil, fmt.Errorf("account: replace preset slots: %w", err)
+		}
+	}
 	user = wire.AppendBytes(user, 3, sessionKey)
 	return append(wire.AppendBytes(nil, 1, user), s.ResponseFields...), nil
+}
+
+func replaceRepeatedBytes(data []byte, number int, values [][]byte) ([]byte, error) {
+	result := make([]byte, 0, len(data))
+	if err := wire.Walk(data, func(field wire.Field) error {
+		if field.Number != number {
+			result = append(result, data[field.Start:field.End]...)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	for _, value := range values {
+		result = wire.AppendBytes(result, number, value)
+	}
+	return result, nil
 }

@@ -1,0 +1,11 @@
+{
+  "client_version": "2.35.10",
+  "protocol_version": "2.34.13",
+  "game_data_version": "20260923193640",
+  "bundle_version": "20260921135230",
+  "seed_directory": "go/seed/v2_34_13",
+  "plugins": {
+    "local_identity": "0.6.0",
+    "capture_environment": "0.2.0"
+  }
+}

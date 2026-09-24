@@ -15,9 +15,10 @@ import (
 // ErrInvalidRequest means a known endpoint was sent a malformed request.
 var ErrInvalidRequest = errors.New("feature: invalid protobuf request")
 
-// emptyResponses is the 2.34.13 capture audit's 35 endpoint new-player batch
-// set whose successful response protobuf has zero bytes. Packet codes are
-// protocol values, not ordinals derived from the request or response order.
+// emptyResponses is the stateless subset of the 2.34.13 new-player batch whose
+// successful response protobuf has zero bytes. Stateful routes leave this map
+// as soon as their owning domain persists them. Packet codes are protocol
+// values, not ordinals derived from the request or response order.
 var emptyResponses = map[string]int{
 	"/AvatarShopWishListInfo":          470,
 	"/CafeteriaInfo":                   351,
@@ -26,7 +27,6 @@ var emptyResponses = map[string]int{
 	"/CommunityRewardInfo":             289,
 	"/DailyStoryInfo":                  538,
 	"/DatingInfo":                      361,
-	"/DeckCostumeSettingInfo":          397,
 	"/DispatchInfo":                    0,
 	"/EquipPresetInfo":                 253,
 	"/EvilCastleDailyRewardState":      441,
@@ -48,7 +48,6 @@ var emptyResponses = map[string]int{
 	"/MyRoomItemInfo":                  232,
 	"/PersonalInfo":                    199,
 	"/PrestigeSkinInfo":                425,
-	"/PresetInfo":                      178,
 	"/QuestMaxClearInfo":               137,
 	"/SpineInteractionAchievementInfo": 532,
 	"/TotalWarRewardState":             252,

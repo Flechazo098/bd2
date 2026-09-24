@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // EquipmentGachaCatalog is the server-owned portion of exclusive-equipment
@@ -53,6 +54,12 @@ type WeightedOption struct{ ID, Weight uint64 }
 type EquipmentOptionChoice struct{ GroupID, ID uint64 }
 
 func LoadEquipmentGacha(root, version string) (*EquipmentGachaCatalog, error) {
+	return LoadEquipmentGachaGroups(root, version, []uint64{10002, 9, 133, 206})
+}
+
+// LoadEquipmentGachaGroups loads only groups selected by a captured dynamic
+// schedule. Presence in GameData alone does not mean a banner is open.
+func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*EquipmentGachaCatalog, error) {
 	plain, err := ReadQuestDatabase(root, version)
 	if err != nil {
 		return nil, err
@@ -72,10 +79,7 @@ func LoadEquipmentGacha(root, version string) (*EquipmentGachaCatalog, error) {
 	}
 	defer db.Close()
 	c := &EquipmentGachaCatalog{Gachas: map[uint64]EquipmentGacha{}, groups: map[uint64]EquipmentGachaGroup{}, byGacha: map[uint64]uint64{}, equipment: map[uint64]EquipmentDesign{}}
-	// Group 10002 is the permanent equipment draw actually submitted by the
-	// 2.34.13 client as GachaTable 200/201. Groups 9/133/206 are current
-	// pickup definitions retained for their own IDs.
-	for _, groupID := range []uint64{10002, 9, 133, 206} {
+	for _, groupID := range groupIDs {
 		var raw []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM GachaGroupTable WHERE id=?", groupID).Scan(&raw); err != nil {
 			return nil, err
@@ -363,6 +367,24 @@ func (c *EquipmentGachaCatalog) Gacha(id uint64) (EquipmentGacha, bool) {
 func (c *EquipmentGachaCatalog) GroupForGacha(id uint64) (EquipmentGachaGroup, bool) {
 	group, ok := c.groups[c.byGacha[id]]
 	return group, ok
+}
+func (c *EquipmentGachaCatalog) Group(id uint64) (EquipmentGachaGroup, bool) {
+	if c == nil {
+		return EquipmentGachaGroup{}, false
+	}
+	group, ok := c.groups[id]
+	return group, ok
+}
+func (c *EquipmentGachaCatalog) Groups() []EquipmentGachaGroup {
+	if c == nil {
+		return nil
+	}
+	out := make([]EquipmentGachaGroup, 0, len(c.groups))
+	for _, group := range c.groups {
+		out = append(out, group)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 func (c *EquipmentGachaCatalog) Fixed() EquipmentFixedDesign { return c.fixed }
 func (c *EquipmentGachaCatalog) RollOptions(id uint64) (main, sub []EquipmentOptionChoice, private *EquipmentOptionChoice, err error) {

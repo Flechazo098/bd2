@@ -1,5 +1,5 @@
 // Package gacha implements the local, non-payment version of the official
-// 2.34.13 infinite reroll product. Static pools come from verified GameData;
+// infinite reroll product. Static pools come from verified GameData;
 // only the latest preview and confirmed ownership are persisted locally.
 package gacha
 
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
@@ -16,17 +17,20 @@ import (
 const infiniteGrant = "cash-product:1100001:9100033"
 
 const (
-	twelvePickGroupID     = 10001
-	paidTwelvePickGroupID = 30011
+	moonriseProductGroupID = 1500001
+	moonriseProductID      = 9100037
+	moonriseTicketType     = 19
+	moonriseTicketID       = 450030
+	moonriseProductGrant   = "cash-product:1500001:9100037"
+	moonriseTicketGrant    = "cash-product-reward:1500001:9100037:0"
+	moonriseDrawGrant      = "special-gacha:30011:9100037"
 )
 
-const stepUpGroupID = 29
-
-var stepUpGachaIDs = [...]uint64{8100118, 8100119, 8100120, 8100121}
-
-func StepUpMigrationFact() (uint64, []uint64) {
-	return stepUpGroupID, append([]uint64(nil), stepUpGachaIDs[:]...)
-}
+const (
+	infiniteScheduleGroupID = 30010
+	twelvePickGroupID       = 10001
+	paidTwelvePickGroupID   = 30011
+)
 
 type Service struct {
 	design             *gamedata.InfiniteGachaDesign
@@ -37,12 +41,32 @@ type Service struct {
 	equipmentCatalog   *gamedata.EquipmentGachaCatalog
 	equipmentInventory *player.EquipmentInventory
 	onPreview          func() error
+	schedule           *ScheduleSeed
+	previewEventIndex  uint64
 	sessionMu          sync.RWMutex
 	sessionID          string
+	now                func() time.Time
 }
 
 func (s *Service) AttachPreviewMission(callback func() error)  { s.onPreview = callback }
 func (s *Service) AttachInventory(inventory *player.Inventory) { s.inventory = inventory }
+func (s *Service) AttachPreviewEventIndex(eventIndex uint64) error {
+	if eventIndex == 0 {
+		return errors.New("gacha: invalid preview event index")
+	}
+	s.previewEventIndex = eventIndex
+	return nil
+}
+func (s *Service) AttachSchedule(seed *ScheduleSeed) error {
+	if err := seed.Validate(seedVersion(seed)); err != nil {
+		return err
+	}
+	copy := *seed
+	copy.Schedules = append([]ScheduleWindow(nil), seed.Schedules...)
+	copy.StepUps = append([]ScheduleWindow(nil), seed.StepUps...)
+	s.schedule = &copy
+	return nil
+}
 func (s *Service) AttachEquipmentGacha(catalog *gamedata.EquipmentGachaCatalog, inventory *player.EquipmentInventory) {
 	s.equipmentCatalog, s.equipmentInventory = catalog, inventory
 }
@@ -68,11 +92,11 @@ func NewService(design *gamedata.InfiniteGachaDesign, regular *gamedata.RegularG
 	if design == nil || regular == nil || collection == nil || wallet == nil {
 		return nil, errors.New("gacha: invalid service configuration")
 	}
-	return &Service{design: design, regular: regular, collection: collection, wallet: wallet}, nil
+	return &Service{design: design, regular: regular, collection: collection, wallet: wallet, now: time.Now}, nil
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/GachaInfo" && path != "/GachaBuy" && path != "/GachaPointManualExchange" && path != "/GachaBuyPreview" && path != "/GachaBuyPreviewLock" && path != "/GachaSelectionSave" && path != "/CashShopPurchaseCountInfo" && path != "/CashShopBuy" {
+	if path != "/GachaInfo" && path != "/GachaBuy" && path != "/GachaPointExchange" && path != "/GachaPointManualExchange" && path != "/GachaBuyPreview" && path != "/GachaBuyPreviewLock" && path != "/GachaSelectionSave" && path != "/CashShopPurchaseCountInfo" && path != "/CashShopBuy" {
 		return 0, nil, false, nil
 	}
 	seq, found, err := wire.Varint(request, 1)
@@ -88,23 +112,54 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		return s.lockPreview(request)
 	case "/GachaBuy":
 		return s.buy(request, seq)
+	case "/GachaPointExchange":
+		return s.pointExchange(request, seq)
 	case "/GachaPointManualExchange":
 		return s.manualPointExchange(request, seq)
 	case "/GachaSelectionSave":
 		return s.saveSelection(request)
 	case "/CashShopPurchaseCountInfo":
-		if _, bought := s.collection.Grant(infiniteGrant); bought {
-			count := wire.AppendVarint(nil, 1, gamedata.InfiniteProductGroupID)
-			count = wire.AppendVarint(count, 2, gamedata.InfiniteProductID)
-			count = wire.AppendVarint(count, 4, 1)
-			return 432, wire.AppendBytes(nil, 1, count), true, nil
+		var response []byte
+		for _, count := range s.PurchaseCountDBInfos() {
+			response = wire.AppendBytes(response, 1, count)
 		}
-		return 432, nil, true, nil
+		return 432, response, true, nil
 	case "/CashShopBuy":
 		return s.confirm(request)
 	default:
 		return 0, nil, false, nil
 	}
+}
+
+// PurchaseCountDBInfos returns the same persisted cash-product purchase state
+// used by /CashShopPurchaseCountInfo. LoginUser consumes this method too, so
+// both protocol surfaces remain consistent after a restart.
+func (s *Service) PurchaseCountDBInfos() [][]byte {
+	products := []struct {
+		group, id uint64
+		bought    bool
+	}{}
+	_, infiniteBought := s.collection.Grant(infiniteGrant)
+	products = append(products, struct {
+		group, id uint64
+		bought    bool
+	}{gamedata.InfiniteProductGroupID, gamedata.InfiniteProductID, infiniteBought})
+	_, moonriseBought := s.collection.Grant(moonriseProductGrant)
+	products = append(products, struct {
+		group, id uint64
+		bought    bool
+	}{moonriseProductGroupID, moonriseProductID, moonriseBought})
+	var result [][]byte
+	for _, product := range products {
+		if !product.bought {
+			continue
+		}
+		count := wire.AppendVarint(nil, 1, product.group)
+		count = wire.AppendVarint(count, 2, product.id)
+		count = wire.AppendVarint(count, 4, 1)
+		result = append(result, count)
+	}
+	return result
 }
 
 func (s *Service) saveSelection(request []byte) (int, []byte, bool, error) {
@@ -138,16 +193,24 @@ func (s *Service) saveSelection(request []byte) (int, []byte, bool, error) {
 	}
 	groupID := selections[0].GroupID
 	expected := 0
+	changeLimit := uint64(0)
 	if group, ok := s.regular.Group(groupID); ok && group.SelectCount != 0 {
 		expected = int(group.SelectCount)
+		changeLimit = group.SelectionChangeCount
 	} else if groupID == paidTwelvePickGroupID {
 		expected = 12
 	}
 	if expected == 0 || len(selections) != expected {
 		return 198, nil, true, fmt.Errorf("gacha: group %d requires %d selections, got %d", groupID, expected, len(selections))
 	}
-	validItems := make(map[uint64]bool, len(s.design.FiveStarIDs))
-	for _, id := range s.design.FiveStarIDs {
+	eligible := s.design.FiveStarIDs
+	if group, ok := s.regular.Group(groupID); ok && group.GachaSubType == 1 && group.TenTimeGachaID != 0 {
+		if special := s.regular.SpecialSelectionIDs(group.TenTimeGachaID); len(special) != 0 {
+			eligible = special
+		}
+	}
+	validItems := make(map[uint64]bool, len(eligible))
+	for _, id := range eligible {
 		validItems[id] = true
 	}
 	seenSlots := make(map[uint64]bool, len(selections))
@@ -159,7 +222,7 @@ func (s *Service) saveSelection(request []byte) (int, []byte, bool, error) {
 		seenSlots[selection.Slot] = true
 		seenItems[selection.ItemID] = true
 	}
-	if err := s.collection.SaveGachaSelections(groupID, selections); err != nil {
+	if err := s.collection.SaveGachaSelections(groupID, selections, changeLimit); err != nil {
 		return 198, nil, true, err
 	}
 	return 198, nil, true, nil
@@ -185,7 +248,7 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 		return 146, nil, true, errors.New("gacha: missing gacha id")
 	}
 	buyType, _, err := wire.Varint(request, 3)
-	if err != nil || (buyType != 1 && buyType != 2) {
+	if err != nil || buyType > 3 {
 		return 146, nil, true, fmt.Errorf("gacha: unsupported buy type %d", buyType)
 	}
 	var tickets []player.Item
@@ -228,12 +291,24 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 			return s.buyEquipment(seq, buyType, tickets, equipment)
 		}
 	}
-	if !ok || (design.PriceType != 2 && design.PriceType != 3) || (buyType == 2 && design.PriceType != 2) {
+	if !ok {
+		return 146, nil, true, fmt.Errorf("gacha: unsupported regular gacha id=%d", id)
+	}
+	group, knownGroup := s.regular.GroupForGacha(id)
+	if !knownGroup {
+		group = gamedata.GachaGroupDesign{ID: id, PointCount: 1}
+	}
+	isDailyFree := buyType == 0 && design.Count == 1 && design.FreeCountDay != 0 && knownGroup
+	isDailyPaid := buyType == 2 && design.Count == 1 && design.DailyPayGachaCount != 0 && design.DailyPayGachaPriceCount != 0 && knownGroup
+	isMoonrise := buyType == 3 && design.PriceType == moonriseTicketType && design.PriceID == moonriseTicketID && id == moonriseProductID && group.ID == paidTwelvePickGroupID
+	validOrdinary := buyType == 1 && (design.PriceType == 2 || design.PriceType == 3)
+	if !isDailyFree && !isDailyPaid && !isMoonrise && !validOrdinary {
 		priceType := uint64(0)
-		if ok {
-			priceType = design.PriceType
-		}
-		return 146, nil, true, fmt.Errorf("gacha: unsupported regular gacha id=%d buyType=%d priceType=%d", id, buyType, priceType)
+		priceType = design.PriceType
+		return 146, nil, true, fmt.Errorf("gacha: unsupported regular gacha id=%d buyType=%d priceType=%d (server never substitutes diamonds for another currency)", id, buyType, priceType)
+	}
+	if buyType != 1 && len(tickets) != 0 {
+		return 146, nil, true, errors.New("gacha: discounted or content-ticket draw cannot use ordinary gacha tickets")
 	}
 	for _, ticket := range tickets {
 		allowed := false
@@ -247,53 +322,58 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 			return 146, nil, true, fmt.Errorf("gacha: ticket %d is not valid for gacha %d", ticket.ID, id)
 		}
 	}
-	group, knownGroup := s.regular.GroupForGacha(id)
-	if !knownGroup {
-		group = gamedata.GachaGroupDesign{ID: id, PointCount: 1}
-	}
 	identity := s.requestIdentity(id, seq)
 	grant, already := s.collection.Grant(identity)
-	step, isStepUp := stepUpStep(id)
+	if isMoonrise && !already {
+		if _, completed := s.collection.Grant(moonriseDrawGrant); completed {
+			return 146, nil, true, errors.New("gacha: Moonrise product already drawn")
+		}
+	}
+	var moonriseSelected []uint64
+	if isMoonrise && !already {
+		selections := s.collection.GachaSelections(group.ID)
+		if len(selections) != int(group.SelectCount) {
+			return 146, nil, true, fmt.Errorf("gacha: special selection group %d has %d choices, want %d", group.ID, len(selections), group.SelectCount)
+		}
+		moonriseSelected = make([]uint64, len(selections))
+		for i, selection := range selections {
+			moonriseSelected[i] = selection.ItemID
+		}
+	}
+	stepUpGroupID, stepDesign, isStepUp := s.stepForGacha(id)
 	if isStepUp && !already {
 		completed := s.collection.StepUpProgress(stepUpGroupID)
-		if completed+1 != step {
-			return 146, nil, true, fmt.Errorf("gacha: step-up group %d completed=%d cannot buy step=%d", stepUpGroupID, completed, step)
+		if completed+1 != stepDesign.Step {
+			return 146, nil, true, fmt.Errorf("gacha: step-up group %d completed=%d cannot buy step=%d", stepUpGroupID, completed, stepDesign.Step)
 		}
 	}
 	if !already {
+		day := dailyResetKey(s.now())
+		var dailyLimit uint64
+		if isDailyFree {
+			dailyLimit = design.FreeCountDay
+		} else if isDailyPaid {
+			dailyLimit = design.DailyPayGachaCount
+		}
+		if dailyLimit != 0 && s.collection.GachaDailyCount(day, group.ID, buyType) >= dailyLimit {
+			return 146, nil, true, fmt.Errorf("gacha: daily draw exhausted group=%d buyType=%d", group.ID, buyType)
+		}
 		var ticketCount uint64
 		for _, ticket := range tickets {
 			ticketCount += ticket.Count
 		}
-		if ticketCount > uint64(design.Count) || ((buyType == 2 || design.PriceType != 3) && ticketCount != 0) {
+		if ticketCount > uint64(design.Count) || (buyType != 1 && ticketCount != 0) || (design.PriceType != 3 && ticketCount != 0) {
 			return 146, nil, true, errors.New("gacha: invalid ticket count")
-		}
-		remaining := uint64(design.Count) - ticketCount
-		unitPrice := design.Price / uint64(design.Count)
-		if len(tickets) != 0 {
-			if s.inventory == nil {
-				return 146, nil, true, errors.New("gacha: inventory not attached")
-			}
-			if err := s.inventory.Consume(tickets); err != nil {
-				return 146, nil, true, err
-			}
-		}
-		if remaining != 0 {
-			price := unitPrice * remaining
-			if buyType == 2 || design.PriceType == 2 {
-				if _, err := s.wallet.SpendJewelryOnce(identity, price); err != nil {
-					return 146, nil, true, err
-				}
-			} else {
-				if _, err := s.wallet.SpendFreeJewelryOnce(identity, price); err != nil {
-					return 146, nil, true, err
-				}
-			}
 		}
 		var roll []uint64
 		var fixedStates []player.GachaFixedState
 		var selectionApplySortIDs []uint64
-		if fixed, found := s.regular.Fixed(group.FixedID); found && design.FixedCostumeID == 0 {
+		if isMoonrise {
+			roll, err = design.RollSpecialSelection(moonriseSelected)
+			for i := uint64(0); i < s.regular.SpecialSelectionCount(id); i++ {
+				selectionApplySortIDs = append(selectionApplySortIDs, i)
+			}
+		} else if fixed, found := s.regular.Fixed(group.FixedID); found && design.FixedCostumeID == 0 {
 			var fixedResult gamedata.GachaFixedRoll
 			var selected, normalSelected, pitySelected []uint64
 			if group.GachaSubType == 1 {
@@ -309,10 +389,7 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 			}
 			roll, fixedResult, err = design.RollWithCostumeFixedSelection(s.collection.GachaFixedCount(group.FixedID, 0), s.collection.GachaFixedCount(group.FixedID, 1), fixed, normalSelected, pitySelected)
 			if err == nil {
-				fixedStates = []player.GachaFixedState{
-					{FixedID: group.FixedID, Type: 0, Count: fixedResult.CostumeGrade4Count, ApplySort: fixedResult.CostumeGrade4Sort},
-					{FixedID: group.FixedID, Type: 1, Count: fixedResult.CostumeGrade5Count, ApplySort: fixedResult.CostumeGrade5Sort},
-				}
+				fixedStates = costumeFixedStates(fixed, fixedResult)
 				for _, sortID := range fixedResult.SelectionSorts {
 					selectionApplySortIDs = append(selectionApplySortIDs, uint64(sortID))
 				}
@@ -323,13 +400,90 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 		if err != nil {
 			return 146, nil, true, err
 		}
-		grant, err = s.collection.GrantRegularPurchase(identity, roll, s.regular, player.GachaPurchase{Group: group, BuyType: buyType, Fixed: fixedStates, SelectionApplySortIDs: selectionApplySortIDs})
-		if err != nil {
-			return 146, nil, true, err
+		// Generate and validate the complete reward before mutating any cost
+		// domain. The enclosing session transaction remains the final atomic
+		// boundary, but deterministic business errors can no longer consume a
+		// ticket or currency first.
+		if len(tickets) != 0 {
+			if s.inventory == nil {
+				return 146, nil, true, errors.New("gacha: inventory not attached")
+			}
+			if err := s.inventory.CanConsume(tickets); err != nil {
+				return 146, nil, true, err
+			}
 		}
-	}
-	if isStepUp {
-		if err := s.collection.CompleteStepUp(stepUpGroupID, step); err != nil {
+		var moonriseCost []player.Item
+		if isMoonrise {
+			if s.inventory == nil {
+				return 146, nil, true, errors.New("gacha: inventory not attached")
+			}
+			moonriseCost, err = s.inventory.SelectMutable(moonriseTicketType, moonriseTicketID, design.Price)
+			if err != nil {
+				return 146, nil, true, err
+			}
+		}
+		var charge uint64
+		var chargePaid bool
+		switch {
+		case isDailyPaid:
+			charge, chargePaid = design.DailyPayGachaPriceCount, true
+		case !isDailyFree && !isMoonrise:
+			remaining := uint64(design.Count) - ticketCount
+			charge = design.Price / uint64(design.Count) * remaining
+			chargePaid = design.PriceType == 2
+		}
+		if charge != 0 {
+			currency := s.wallet.Snapshot()
+			if chargePaid && currency.Jewelry < charge {
+				return 146, nil, true, errors.New("gacha: insufficient paid jewelry")
+			}
+			if !chargePaid && currency.FreeJewelry < charge {
+				return 146, nil, true, errors.New("gacha: insufficient free jewelry")
+			}
+		}
+		if len(tickets) != 0 {
+			if err := s.inventory.Consume(tickets); err != nil {
+				return 146, nil, true, err
+			}
+		}
+		switch {
+		case isDailyFree:
+			// The daily allowance is the complete cost.
+		case isDailyPaid:
+			if _, err := s.wallet.SpendJewelryOnce(identity, charge); err != nil {
+				return 146, nil, true, err
+			}
+		case isMoonrise:
+			if err := s.inventory.Consume(moonriseCost); err != nil {
+				return 146, nil, true, err
+			}
+		default:
+			if charge != 0 {
+				if chargePaid {
+					if _, err := s.wallet.SpendJewelryOnce(identity, charge); err != nil {
+						return 146, nil, true, err
+					}
+				} else {
+					if _, err := s.wallet.SpendFreeJewelryOnce(identity, charge); err != nil {
+						return 146, nil, true, err
+					}
+				}
+			}
+		}
+		purchase := player.GachaPurchase{Group: group, BuyType: buyType, Fixed: fixedStates, SelectionApplySortIDs: selectionApplySortIDs}
+		if isMoonrise {
+			purchase.CompletionGrant = moonriseDrawGrant
+		}
+		if dailyLimit != 0 {
+			purchase.DailyKey = day
+			purchase.DailyLimit = dailyLimit
+		}
+		if isStepUp {
+			purchase.StepUpGroupID = stepUpGroupID
+			purchase.StepUpStep = stepDesign.Step
+		}
+		grant, err = s.collection.GrantRegularPurchase(identity, roll, s.regular, purchase)
+		if err != nil {
 			return 146, nil, true, err
 		}
 	}
@@ -350,6 +504,21 @@ func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
 		}
 	}
 	return 146, response, true, nil
+}
+
+func (s *Service) stepForGacha(gachaID uint64) (uint64, gamedata.GachaStepDesign, bool) {
+	step, ok := s.regular.StepForGacha(gachaID)
+	if !ok {
+		return 0, gamedata.GachaStepDesign{}, false
+	}
+	for _, group := range s.regular.StepUps() {
+		for _, candidate := range group.Steps {
+			if candidate.GachaID == gachaID && candidate == step {
+				return group.ID, step, true
+			}
+		}
+	}
+	return 0, gamedata.GachaStepDesign{}, false
 }
 
 // Scheduled equipment draws update GachaUser/GachaFixed accounting. Standalone
@@ -481,6 +650,21 @@ func gachaFixedWire(fixed player.GachaFixedState) []byte {
 	return wire.AppendVarint(info, 4, uint64(int64(fixed.ApplySort)))
 }
 
+func costumeFixedStates(fixed gamedata.GachaFixedDesign, result gamedata.GachaFixedRoll) []player.GachaFixedState {
+	states := make([]player.GachaFixedState, 0, 2)
+	if fixed.CostumeGrade4Count != 0 {
+		states = append(states, player.GachaFixedState{
+			FixedID: fixed.ID, Type: 0, Count: result.CostumeGrade4Count, ApplySort: result.CostumeGrade4Sort,
+		})
+	}
+	if fixed.CostumeGrade5Count != 0 {
+		states = append(states, player.GachaFixedState{
+			FixedID: fixed.ID, Type: 1, Count: result.CostumeGrade5Count, ApplySort: result.CostumeGrade5Sort,
+		})
+	}
+	return states
+}
+
 func (s *Service) manualPointExchange(request []byte, seq uint64) (int, []byte, bool, error) {
 	groupID, found, err := wire.Varint(request, 2)
 	if err != nil || !found || groupID == 0 {
@@ -510,6 +694,44 @@ func (s *Service) manualPointExchange(request []byte, seq uint64) (int, []byte, 
 	return 188, wire.AppendBytes(nil, 1, bundle), true, nil
 }
 
+func (s *Service) pointExchange(request []byte, seq uint64) (int, []byte, bool, error) {
+	groupID, found, err := wire.Varint(request, 2)
+	if err != nil || !found || groupID == 0 {
+		return 147, nil, true, errors.New("gacha: missing point exchange group")
+	}
+	selectedItemID, _, err := wire.Varint(request, 3)
+	if err != nil {
+		return 147, nil, true, errors.New("gacha: invalid point exchange selection")
+	}
+	group, ok := s.regular.Group(groupID)
+	if !ok || group.GachaType != 1 || group.PickUpExchangeCost == 0 {
+		return 147, nil, true, fmt.Errorf("gacha: group %d does not support costume point exchange", groupID)
+	}
+	costumeID := group.PickUpCostumeID
+	if selectedItemID != 0 {
+		selections := s.collection.GachaSelections(groupID)
+		if len(selections) != 1 || selections[0].ItemID != selectedItemID {
+			return 147, nil, true, fmt.Errorf("gacha: selection %d is not the saved pickup target for group %d", selectedItemID, groupID)
+		}
+		costumeID = selectedItemID
+	}
+	if costumeID == 0 {
+		return 147, nil, true, fmt.Errorf("gacha: group %d has no pickup costume", groupID)
+	}
+	if _, ok := s.regular.Character(costumeID); !ok {
+		return 147, nil, true, fmt.Errorf("gacha: pickup costume %d has no character design", costumeID)
+	}
+	identity := fmt.Sprintf("gacha-point-costume:%s:%d:%d:seq:%d", s.loginIdentity(), groupID, costumeID, seq)
+	grant, err := s.collection.GrantGachaPointCostume(identity, group, costumeID, s.regular)
+	if err != nil {
+		return 147, nil, true, err
+	}
+	if err := s.creditOverflow(identity, grant); err != nil {
+		return 147, nil, true, err
+	}
+	return 147, wire.AppendBytes(nil, 1, s.rewardBundle(grant)), true, nil
+}
+
 func (s *Service) loginIdentity() string {
 	s.sessionMu.RLock()
 	defer s.sessionMu.RUnlock()
@@ -531,15 +753,6 @@ func (s *Service) requestIdentity(gachaID, seq uint64) string {
 	return fmt.Sprintf("regular-gacha:%d:session:%s:seq:%d", gachaID, sessionID, seq)
 }
 
-func stepUpStep(gachaID uint64) (uint64, bool) {
-	for i, id := range stepUpGachaIDs {
-		if id == gachaID {
-			return uint64(i + 1), true
-		}
-	}
-	return 0, false
-}
-
 func (s *Service) preview(request []byte) (int, []byte, bool, error) {
 	if _, bought := s.collection.Grant(infiniteGrant); bought {
 		return 175, nil, true, errors.New("gacha: infinite product already purchased")
@@ -556,11 +769,14 @@ func (s *Service) preview(request []byte) (int, []byte, bool, error) {
 	if err != nil || !found || product != gamedata.InfiniteProductID {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported preview product %d", product)
 	}
+	if s.previewEventIndex == 0 {
+		return 0, nil, true, errors.New("gacha: infinite preview event is not configured")
+	}
 	roll, err := s.design.Roll()
 	if err != nil {
 		return 0, nil, true, err
 	}
-	if err := s.collection.SetPreview(roll); err != nil {
+	if err := s.collection.SetPreview(s.previewEventIndex, roll); err != nil {
 		return 0, nil, true, err
 	}
 	if s.onPreview != nil {
@@ -581,7 +797,7 @@ func (s *Service) preview(request []byte) (int, []byte, bool, error) {
 
 func (s *Service) confirm(request []byte) (int, []byte, bool, error) {
 	group, found, err := wire.Varint(request, 3)
-	if err != nil || !found || group != gamedata.InfiniteProductGroupID {
+	if err != nil || !found {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported cash product group %d", group)
 	}
 	var productID, saleGroup, buyCount uint64
@@ -610,8 +826,31 @@ func (s *Service) confirm(request []byte) (int, []byte, bool, error) {
 	if err != nil {
 		return 0, nil, true, err
 	}
-	if productID != gamedata.InfiniteProductID || saleGroup != 0 || buyCount != 1 {
+	if saleGroup != 0 || buyCount != 1 {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported product %d sale %d count %d", productID, saleGroup, buyCount)
+	}
+	if group == moonriseProductGroupID && productID == moonriseProductID {
+		if s.inventory == nil {
+			return 61, nil, true, errors.New("gacha: inventory not attached")
+		}
+		items, err := s.inventory.GrantOnce(moonriseTicketGrant, []gamedata.BattleReward{{Type: moonriseTicketType, ID: moonriseTicketID, Count: 1}})
+		if err != nil {
+			return 61, nil, true, err
+		}
+		if err := s.collection.RecordGrantMarker(moonriseProductGrant); err != nil {
+			return 61, nil, true, err
+		}
+		if len(items) == 0 {
+			items = s.inventory.GrantedItems(moonriseTicketGrant)
+		}
+		var bundle []byte
+		for _, item := range items {
+			bundle = wire.AppendBytes(bundle, 1, player.ItemWire(item))
+		}
+		return 61, wire.AppendBytes(nil, 1, bundle), true, nil
+	}
+	if group != gamedata.InfiniteProductGroupID || productID != gamedata.InfiniteProductID {
+		return 0, nil, true, fmt.Errorf("gacha: unsupported cash product group=%d product=%d", group, productID)
 	}
 	grant, err := s.collection.ConfirmInfinite(infiniteGrant, s.design)
 	if err != nil {
@@ -709,54 +948,80 @@ func (s *Service) rewardBundle(grant player.CollectionGrant) []byte {
 	return bundle
 }
 
-// The dynamic schedule is taken from the verified 2026-09-20 official
-// GachaInfo response. Static banner definitions remain in GameData. The paid
-// infinite product is confirmed through CashShopBuy and is not one of these
-// ordinary schedule groups.
 func (s *Service) gachaInfo() []byte {
-	entries := []struct {
-		group      uint64
-		start, end uint64
-	}{
-		{135, 1787788800000, 1790121599000},
-		{205, 1788998400000, 1791417599000},
-		{121, 1788998400000, 1790121599000},
-	}
-	if s.equipmentCatalog != nil {
-		// Permanent equipment draw: direct client evidence is GachaBuy id=201,
-		// which GameData maps to group 10002. It has no SelectCount fields.
-		entries = append([]struct{ group, start, end uint64 }{{10002, 0, 4102444800000}}, entries...)
-	}
-	if _, bought := s.collection.Grant(infiniteGrant); !bought {
-		entries = append(entries, struct{ group, start, end uint64 }{30010, 1788998400000, 1791417599000})
-	}
 	var out []byte
-	for _, entry := range entries {
-		schedule := wire.AppendVarint(nil, 1, entry.group)
-		schedule = wire.AppendVarint(schedule, 2, entry.start)
-		schedule = wire.AppendVarint(schedule, 3, entry.end)
-		out = wire.AppendBytes(out, 1, schedule)
-	}
-	step := wire.AppendVarint(nil, 1, 29)
-	step = wire.AppendVarint(step, 2, 1788998400000)
-	step = wire.AppendVarint(step, 3, 1791417599000)
-	out = wire.AppendBytes(out, 7, step)
-	if completed := s.collection.StepUpProgress(stepUpGroupID); completed != 0 {
-		user := wire.AppendVarint(nil, 1, stepUpGroupID)
-		user = wire.AppendVarint(user, 2, completed)
-		out = wire.AppendBytes(out, 8, user)
-	}
-	for _, groupID := range []uint64{twelvePickGroupID, paidTwelvePickGroupID} {
-		for _, selection := range s.collection.GachaSelections(groupID) {
-			info := wire.AppendVarint(nil, 1, selection.GroupID)
-			if selection.Slot != 0 {
-				info = wire.AppendVarint(info, 2, selection.Slot)
+	_, infinitePurchased := s.collection.Grant(infiniteGrant)
+	_, moonriseDrawn := s.collection.Grant(moonriseDrawGrant)
+	if s.schedule != nil {
+		for _, entry := range s.schedule.Schedules {
+			// The versioned seed is the public schedule, while availability of
+			// the one-time infinite product is account state. Once the product
+			// grant exists, publishing this group makes the client reopen the
+			// preview flow even though the authoritative preview endpoint must
+			// reject a second purchase.
+			if infinitePurchased && entry.GroupID == infiniteScheduleGroupID {
+				continue
 			}
-			info = wire.AppendVarint(info, 3, selection.ItemID)
-			out = wire.AppendBytes(out, 5, info)
+			if moonriseDrawn && entry.GroupID == paidTwelvePickGroupID {
+				continue
+			}
+			schedule := wire.AppendVarint(nil, 1, entry.GroupID)
+			schedule = wire.AppendVarint(schedule, 2, entry.StartTime)
+			schedule = wire.AppendVarint(schedule, 3, entry.EndTime)
+			if entry.FreeCountBonus {
+				schedule = wire.AppendVarint(schedule, 4, 1)
+			}
+			if entry.CashCountBonus {
+				schedule = wire.AppendVarint(schedule, 5, 1)
+			}
+			out = wire.AppendBytes(out, 1, schedule)
+		}
+		for _, entry := range s.schedule.StepUps {
+			step := wire.AppendVarint(nil, 1, entry.GroupID)
+			step = wire.AppendVarint(step, 2, entry.StartTime)
+			step = wire.AppendVarint(step, 3, entry.EndTime)
+			out = wire.AppendBytes(out, 7, step)
+			if completed := s.collection.StepUpProgress(entry.GroupID); completed != 0 {
+				user := wire.AppendVarint(nil, 1, entry.GroupID)
+				user = wire.AppendVarint(user, 2, completed)
+				out = wire.AppendBytes(out, 8, user)
+			}
 		}
 	}
-	for _, user := range s.collection.GachaUsers() {
+	for _, selection := range s.collection.AllGachaSelections() {
+		info := wire.AppendVarint(nil, 1, selection.GroupID)
+		if selection.Slot != 0 {
+			info = wire.AppendVarint(info, 2, selection.Slot)
+		}
+		info = wire.AppendVarint(info, 3, selection.ItemID)
+		out = wire.AppendBytes(out, 5, info)
+	}
+	for _, change := range s.collection.GachaSelectionChangeCounts() {
+		info := wire.AppendVarint(nil, 1, change.GroupID)
+		info = wire.AppendVarint(info, 2, change.Count)
+		out = wire.AppendBytes(out, 6, info)
+	}
+	if !infinitePurchased {
+		preview := s.collection.LatestPreview()
+		eventIndex, locked := s.collection.PreviewLock()
+		if len(preview) == s.design.Count && eventIndex != 0 {
+			var bundle []byte
+			for sortID, costumeID := range preview {
+				costume := wire.AppendVarint(nil, 2, costumeID)
+				if sortID != 0 {
+					costume = wire.AppendVarint(costume, 6, uint64(sortID))
+				}
+				bundle = wire.AppendBytes(bundle, 3, costume)
+			}
+			persisted := wire.AppendVarint(nil, 1, eventIndex)
+			persisted = wire.AppendBytes(persisted, 8, bundle)
+			if locked {
+				persisted = wire.AppendVarint(persisted, 3, 1)
+			}
+			out = wire.AppendBytes(out, 9, persisted)
+		}
+	}
+	for _, user := range s.collection.GachaUsersForDay(dailyResetKey(s.now())) {
 		info := wire.AppendVarint(nil, 1, user.GroupID)
 		info = wire.AppendVarint(info, 2, user.Point)
 		info = wire.AppendVarint(info, 3, user.TotalBuyCount)
@@ -773,3 +1038,9 @@ func (s *Service) gachaInfo() []byte {
 	}
 	return out
 }
+
+// The 2.35.10 client converts Unix time to UTC+9 and applies GameData's
+// 09:00:00 DailyResetTime. That boundary is exactly 00:00 UTC. Keeping the
+// key independent of the host OS timezone prevents an early reset on a
+// Chinese development machine.
+func dailyResetKey(now time.Time) string { return now.UTC().Format("2006-01-02") }

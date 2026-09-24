@@ -4,15 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 )
 
 type CostumeUpgrade struct {
@@ -73,14 +72,24 @@ type GachaPointExchange struct {
 type GachaPurchase struct {
 	Group                 gamedata.GachaGroupDesign
 	BuyType               uint64
+	DailyKey              string
+	DailyLimit            uint64
+	CompletionGrant       string
 	Fixed                 []GachaFixedState
 	SelectionApplySortIDs []uint64
+	StepUpGroupID         uint64
+	StepUpStep            uint64
 }
 
 type GachaSelection struct {
 	GroupID uint64 `json:"group_id"`
 	Slot    uint64 `json:"slot"`
 	ItemID  uint64 `json:"item_id"`
+}
+
+type GachaSelectionChangeCount struct {
+	GroupID uint64 `json:"group_id"`
+	Count   uint64 `json:"count"`
 }
 
 // CharAwakeProgress is account-wide character state keyed by CharTable's
@@ -96,25 +105,26 @@ type CharAwakeProgress struct {
 const FirstGachaCompletedIdentity = "account:first-gacha-completed"
 
 type collectionSnapshot struct {
-	Version             string                        `json:"version"`
-	NextCharacterIndex  uint64                        `json:"next_character_index"`
-	NextCostumeIndex    uint64                        `json:"next_costume_index"`
-	LatestPreview       []uint64                      `json:"latest_preview,omitempty"`
-	PreviewEventIndex   uint64                        `json:"preview_event_index,omitempty"`
-	PreviewLocked       bool                          `json:"preview_locked,omitempty"`
-	Characters          []Character                   `json:"characters,omitempty"`
-	Costumes            []Costume                     `json:"costumes,omitempty"`
-	BaseCostumeLevels   map[string]uint64             `json:"base_costume_levels,omitempty"`
-	CostumePotential    map[string][]uint64           `json:"costume_potential"`
-	CharAwake           map[string]CharAwakeProgress  `json:"char_awake"`
-	GachaSelections     map[string][]GachaSelection   `json:"gacha_selections,omitempty"`
-	StepUpProgress      map[string]uint64             `json:"step_up_progress,omitempty"`
-	GachaUsers          map[string]GachaUserState     `json:"gacha_users,omitempty"`
-	GachaFixed          map[string]GachaFixedState    `json:"gacha_fixed,omitempty"`
-	GachaApplied        map[string]bool               `json:"gacha_applied,omitempty"`
-	GachaPointExchange  map[string]GachaPointExchange `json:"gacha_point_exchanges,omitempty"`
-	GachaCountCorrected bool                          `json:"gacha_count_corrected,omitempty"`
-	Grants              map[string]CollectionGrant    `json:"grants"`
+	Version               string                        `json:"version"`
+	NextCharacterIndex    uint64                        `json:"next_character_index"`
+	NextCostumeIndex      uint64                        `json:"next_costume_index"`
+	LatestPreview         []uint64                      `json:"latest_preview"`
+	PreviewEventIndex     uint64                        `json:"preview_event_index"`
+	PreviewLocked         bool                          `json:"preview_locked"`
+	Characters            []Character                   `json:"characters,omitempty"`
+	Costumes              []Costume                     `json:"costumes,omitempty"`
+	BaseCostumeLevels     map[string]uint64             `json:"base_costume_levels"`
+	CostumePotential      map[string][]uint64           `json:"costume_potential,omitempty"`
+	CharAwake             map[string]CharAwakeProgress  `json:"char_awake,omitempty"`
+	GachaSelections       map[string][]GachaSelection   `json:"gacha_selections,omitempty"`
+	GachaSelectionChanges map[string]uint64             `json:"gacha_selection_changes,omitempty"`
+	StepUpProgress        map[string]uint64             `json:"step_up_progress,omitempty"`
+	GachaUsers            map[string]GachaUserState     `json:"gacha_users,omitempty"`
+	GachaFixed            map[string]GachaFixedState    `json:"gacha_fixed,omitempty"`
+	GachaApplied          map[string]bool               `json:"gacha_applied,omitempty"`
+	GachaPointExchange    map[string]GachaPointExchange `json:"gacha_point_exchanges,omitempty"`
+	GachaCountCorrected   bool                          `json:"gacha_count_corrected"`
+	Grants                map[string]CollectionGrant    `json:"grants,omitempty"`
 }
 
 // CollectionStore owns non-stackable character/costume rewards as one atomic
@@ -122,32 +132,49 @@ type collectionSnapshot struct {
 // cannot exist only in the result animation and disappear after relogging.
 type CollectionStore struct {
 	mu             sync.Mutex
-	path           string
+	store          stateio.AtomicEntryStore
 	base           []Costume
 	baseCharacters []Character
 	data           collectionSnapshot
+	persisted      bool
 }
 
-func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) {
-	s := &CollectionStore{path: filepath.Clean(path), base: append([]Costume(nil), base...), data: collectionSnapshot{
-		Version: "2.34.13", NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
-		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{},
+func OpenCollectionStore(store stateio.Store, base []Costume) (*CollectionStore, error) {
+	if store == nil {
+		return nil, errors.New("player: nil collection store")
+	}
+	entries, ok := store.(stateio.AtomicEntryStore)
+	if !ok {
+		return nil, errors.New("player: collection store requires atomic entry storage")
+	}
+	s := &CollectionStore{store: entries, base: append([]Costume(nil), base...), data: collectionSnapshot{
+		Version: versionconfig.Protocol(), NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
+		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{}, GachaSelectionChanges: map[string]uint64{},
 		CostumePotential: map[string][]uint64{},
 		CharAwake:        map[string]CharAwakeProgress{},
 		StepUpProgress:   map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
 	}}
-	b, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	b, err := store.Load("collection")
+	if err != nil {
+		return nil, err
+	}
+	if b == nil {
+		if err := stateio.RequireNoEntries(entries, collectionDomain, collectionEntryBuckets[:]...); err != nil {
+			return nil, fmt.Errorf("player: invalid collection storage: %w", err)
+		}
 		return s, nil
 	}
-	if err != nil {
+	if err := rejectInlineCollectionEntries(b); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal(b, &s.data); err != nil {
 		return nil, fmt.Errorf("player: decode collection: %w", err)
 	}
-	if s.data.Version != "2.34.13" || s.data.NextCharacterIndex < 920000001 || s.data.NextCostumeIndex < 930000001 || s.data.Grants == nil {
+	if err := loadCollectionEntries(entries, &s.data); err != nil {
+		return nil, err
+	}
+	if s.data.Version != versionconfig.Protocol() || s.data.NextCharacterIndex < 920000001 || s.data.NextCostumeIndex < 930000001 {
 		return nil, errors.New("player: invalid collection save")
 	}
 	if s.data.BaseCostumeLevels == nil {
@@ -167,6 +194,15 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	}
 	if s.data.GachaSelections == nil {
 		s.data.GachaSelections = map[string][]GachaSelection{}
+	}
+	if s.data.GachaSelectionChanges == nil {
+		s.data.GachaSelectionChanges = map[string]uint64{}
+	}
+	for key, count := range s.data.GachaSelectionChanges {
+		groupID, parseErr := strconv.ParseUint(key, 10, 64)
+		if parseErr != nil || groupID == 0 || key != strconv.FormatUint(groupID, 10) || count == 0 {
+			return nil, errors.New("player: invalid gacha selection change ledger")
+		}
 	}
 	if s.data.StepUpProgress == nil {
 		s.data.StepUpProgress = map[string]uint64{}
@@ -189,16 +225,19 @@ func OpenCollectionStore(path string, base []Costume) (*CollectionStore, error) 
 	if err := validateCharacters(s.data.Characters); err != nil && len(s.data.Characters) != 0 {
 		return nil, err
 	}
+	s.persisted = true
 	return s, nil
 }
 
 func (s *CollectionStore) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	b, err := s.store.Load("collection")
+	if err != nil {
 		return err
+	}
+	if b != nil {
+		return nil
 	}
 	return s.commit(cloneCollection(s.data))
 }
@@ -211,65 +250,8 @@ func emptyCollectionGrant(grant CollectionGrant) bool {
 		len(grant.SelectionApplySortIDs) == 0
 }
 
-// AttachBaseCharacters supplies the character instances owned by the world
-// and starter stores. Collection characters must share those instances: a new
-// costume for an already-owned CharTable ID is not a second character. The
-// repair also migrates saves written by the old one-character-per-costume
-// implementation without deleting any costume, level, or gacha grant.
-func (s *CollectionStore) AttachBaseCharacters(base []Character) error {
-	if err := validateCharacters(base); err != nil && len(base) != 0 {
-		return fmt.Errorf("player: invalid base characters: %w", err)
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	next := cloneCollection(s.data)
-	canonical := make(map[uint64]uint64, len(base)+len(next.Characters))
-	for _, character := range base {
-		if _, exists := canonical[character.ID]; !exists {
-			canonical[character.ID] = character.InvenIndex
-		}
-	}
-
-	redirect := make(map[uint64]uint64)
-	kept := make([]Character, 0, len(next.Characters))
-	for _, character := range next.Characters {
-		if existing, exists := canonical[character.ID]; exists {
-			redirect[character.InvenIndex] = existing
-			continue
-		}
-		canonical[character.ID] = character.InvenIndex
-		kept = append(kept, character)
-	}
-
-	changed := len(kept) != len(next.Characters)
-	if changed {
-		next.Characters = kept
-		for i := range next.Costumes {
-			if replacement, exists := redirect[next.Costumes[i].UseChar]; exists {
-				next.Costumes[i].UseChar = replacement
-			}
-		}
-		for identity, grant := range next.Grants {
-			indices := grant.CharacterIndices[:0]
-			for _, index := range grant.CharacterIndices {
-				if _, removed := redirect[index]; !removed {
-					indices = append(indices, index)
-				}
-			}
-			grant.CharacterIndices = indices
-			next.Grants[identity] = grant
-		}
-		if err := s.commit(next); err != nil {
-			return err
-		}
-	}
-	s.baseCharacters = append([]Character(nil), base...)
-	return nil
-}
-
-// BindBaseCharacters attaches the authoritative base roster after the
-// Haskell startup repair has removed duplicate designs. It never writes state.
+// BindBaseCharacters attaches the authoritative base roster and rejects a
+// persisted collection that overlaps it. It never rewrites account state.
 func (s *CollectionStore) BindBaseCharacters(base []Character) error {
 	if err := validateCharacters(base); err != nil && len(base) != 0 {
 		return fmt.Errorf("player: invalid base characters: %w", err)
@@ -316,46 +298,6 @@ func (s *CollectionStore) AttachRewardCostume(reward Costume) error {
 	return nil
 }
 
-// RepairStepUpProgress derives the completed step count from durable grants
-// written before step-up progress had its own save field. Grant identities may
-// contain either the legacy request sequence or the newer login-session ID.
-func (s *CollectionStore) RepairStepUpProgress(groupID uint64, gachaIDs []uint64) (uint64, error) {
-	if groupID == 0 || len(gachaIDs) == 0 {
-		return 0, errors.New("player: invalid step-up design")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := strconv.FormatUint(groupID, 10)
-	completed := s.data.StepUpProgress[key]
-	if completed > uint64(len(gachaIDs)) {
-		return 0, fmt.Errorf("player: step-up group %d progress %d exceeds %d", groupID, completed, len(gachaIDs))
-	}
-	derived := uint64(0)
-	for i, gachaID := range gachaIDs {
-		prefix := fmt.Sprintf("regular-gacha:%d:", gachaID)
-		found := false
-		for identity := range s.data.Grants {
-			if strings.HasPrefix(identity, prefix) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			break
-		}
-		derived = uint64(i + 1)
-	}
-	if derived <= completed {
-		return completed, nil
-	}
-	next := cloneCollection(s.data)
-	next.StepUpProgress[key] = derived
-	if err := s.commit(next); err != nil {
-		return 0, err
-	}
-	return derived, nil
-}
-
 func (s *CollectionStore) StepUpProgress(groupID uint64) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -383,15 +325,39 @@ func (s *CollectionStore) CompleteStepUp(groupID, step uint64) error {
 	return s.commit(next)
 }
 
-func (s *CollectionStore) SaveGachaSelections(groupID uint64, selections []GachaSelection) error {
+func (s *CollectionStore) SaveGachaSelections(groupID uint64, selections []GachaSelection, changeLimit uint64) error {
 	if groupID == 0 || len(selections) == 0 {
 		return errors.New("player: invalid gacha selection")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	key := strconv.FormatUint(groupID, 10)
+	normalized := append([]GachaSelection(nil), selections...)
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].Slot < normalized[j].Slot })
+	if equalGachaSelections(s.data.GachaSelections[key], normalized) {
+		return nil
+	}
+	if changeLimit != 0 && s.data.GachaSelectionChanges[key] >= changeLimit {
+		return fmt.Errorf("player: gacha selection group %d exhausted %d changes", groupID, changeLimit)
+	}
 	next := cloneCollection(s.data)
-	next.GachaSelections[strconv.FormatUint(groupID, 10)] = append([]GachaSelection(nil), selections...)
+	next.GachaSelections[key] = normalized
+	if changeLimit != 0 {
+		next.GachaSelectionChanges[key]++
+	}
 	return s.commit(next)
+}
+
+func equalGachaSelections(a, b []GachaSelection) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *CollectionStore) GachaSelections(groupID uint64) []GachaSelection {
@@ -400,33 +366,65 @@ func (s *CollectionStore) GachaSelections(groupID uint64) []GachaSelection {
 	return append([]GachaSelection(nil), s.data.GachaSelections[strconv.FormatUint(groupID, 10)]...)
 }
 
-func (s *CollectionStore) SetPreview(costumeIDs []uint64) error {
-	if len(costumeIDs) != 10 {
-		return errors.New("player: infinite preview must contain ten costumes")
+func (s *CollectionStore) AllGachaSelections() []GachaSelection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var result []GachaSelection
+	for _, selections := range s.data.GachaSelections {
+		result = append(result, selections...)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].GroupID != result[j].GroupID {
+			return result[i].GroupID < result[j].GroupID
+		}
+		return result[i].Slot < result[j].Slot
+	})
+	return result
+}
+
+func (s *CollectionStore) GachaSelectionChangeCounts() []GachaSelectionChangeCount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result := make([]GachaSelectionChangeCount, 0, len(s.data.GachaSelectionChanges))
+	for key, count := range s.data.GachaSelectionChanges {
+		groupID, err := strconv.ParseUint(key, 10, 64)
+		if err == nil && groupID != 0 && count != 0 {
+			result = append(result, GachaSelectionChangeCount{GroupID: groupID, Count: count})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].GroupID < result[j].GroupID })
+	return result
+}
+
+func (s *CollectionStore) SetPreview(eventIndex uint64, costumeIDs []uint64) error {
+	if eventIndex == 0 || len(costumeIDs) != 10 {
+		return errors.New("player: infinite preview requires an event index and ten costumes")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneCollection(s.data)
 	next.LatestPreview = append([]uint64(nil), costumeIDs...)
-	next.PreviewEventIndex = 0
+	next.PreviewEventIndex = eventIndex
 	next.PreviewLocked = false
 	return s.commit(next)
 }
 
-// LockPreview records the official Resemara confirmation boundary. The
-// client sends the schedule's EventIndex after the player accepts the latest
-// preview; generating another preview clears this lock again.
+// LockPreview records the official Resemara confirmation boundary. The event
+// index is created and persisted with the preview; locking only changes the
+// confirmation bit, so an unlocked preview remains representable in GachaInfo.
 func (s *CollectionStore) LockPreview(eventIndex uint64) error {
 	if eventIndex == 0 {
 		return errors.New("player: invalid infinite preview event index")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.data.LatestPreview) != 10 {
+	if len(s.data.LatestPreview) != 10 || s.data.PreviewEventIndex == 0 {
 		return errors.New("player: no complete infinite gacha preview to lock")
 	}
+	if eventIndex != s.data.PreviewEventIndex {
+		return fmt.Errorf("player: stale infinite preview event index %d", eventIndex)
+	}
 	next := cloneCollection(s.data)
-	next.PreviewEventIndex = eventIndex
 	next.PreviewLocked = true
 	return s.commit(next)
 }
@@ -467,12 +465,67 @@ func (s *CollectionStore) GrantRegular(identity string, costumeIDs []uint64, des
 	return s.grantCostumes(identity, costumeIDs, design.Character, nil)
 }
 
+// RecordGrantMarker persists an account-level completion/purchase fact that
+// has no character or costume payload. It is intentionally separate from an
+// inventory reward marker so purchase-count protocol state remains correct
+// even after the granted consumable has been used.
+func (s *CollectionStore) RecordGrantMarker(identity string) error {
+	if identity == "" {
+		return errors.New("player: invalid collection marker")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.data.Grants[identity]; exists {
+		return nil
+	}
+	next := cloneCollection(s.data)
+	next.Grants[identity] = CollectionGrant{}
+	return s.commit(next)
+}
+
+// GrantGachaPointCostume debits one pickup exchange cost and grants the
+// selected costume in the same collection commit. The grant identity makes a
+// transport retry return the original result without spending points or
+// incrementing ExchangeItemCount twice.
+func (s *CollectionStore) GrantGachaPointCostume(identity string, group gamedata.GachaGroupDesign, costumeID uint64, design *gamedata.RegularGachaCatalog) (CollectionGrant, error) {
+	if identity == "" || group.ID == 0 || group.PickUpExchangeCost == 0 || costumeID == 0 || design == nil {
+		return CollectionGrant{}, errors.New("player: invalid gacha point costume exchange")
+	}
+	return s.grantCostumes(identity, []uint64{costumeID}, design.Character, func(next *collectionSnapshot, _ *CollectionGrant) error {
+		key := strconv.FormatUint(group.ID, 10)
+		user, ok := next.GachaUsers[key]
+		if !ok || user.Point < group.PickUpExchangeCost {
+			return errors.New("player: insufficient gacha point")
+		}
+		if user.ExchangeItemCount == ^uint64(0) {
+			return errors.New("player: gacha item exchange count overflow")
+		}
+		user.GroupID = group.ID
+		user.Point -= group.PickUpExchangeCost
+		user.ExchangeItemCount++
+		next.GachaUsers[key] = user
+		next.GachaPointExchange[identity] = GachaPointExchange{GroupID: group.ID, Count: group.PickUpExchangeCost}
+		return nil
+	})
+}
+
 func (s *CollectionStore) GrantRegularPurchase(identity string, costumeIDs []uint64, design *gamedata.RegularGachaCatalog, purchase GachaPurchase) (CollectionGrant, error) {
 	if identity == "" || len(costumeIDs) == 0 || design == nil || purchase.Group.ID == 0 {
 		return CollectionGrant{}, errors.New("player: invalid regular gacha purchase")
 	}
 	return s.grantCostumes(identity, costumeIDs, design.Character, func(next *collectionSnapshot, grant *CollectionGrant) error {
-		applyGachaPurchase(next, identity, costumeIDs, purchase, grant)
+		if err := applyStepUpProgress(next, purchase.StepUpGroupID, purchase.StepUpStep); err != nil {
+			return err
+		}
+		if err := applyGachaPurchase(next, identity, costumeIDs, purchase, grant); err != nil {
+			return err
+		}
+		if purchase.CompletionGrant != "" {
+			if _, exists := next.Grants[purchase.CompletionGrant]; exists {
+				return fmt.Errorf("player: gacha completion grant %q already exists", purchase.CompletionGrant)
+			}
+			next.Grants[purchase.CompletionGrant] = CollectionGrant{}
+		}
 		if purchase.Group.GachaSubType == 3 {
 			next.Grants[FirstGachaCompletedIdentity] = CollectionGrant{}
 		}
@@ -495,7 +548,9 @@ func (s *CollectionStore) GrantEquipmentPurchase(identity string, count uint64, 
 	}
 	next := cloneCollection(s.data)
 	grant := CollectionGrant{}
-	applyGachaPurchase(&next, identity, make([]uint64, count), purchase, &grant)
+	if err := applyGachaPurchase(&next, identity, make([]uint64, count), purchase, &grant); err != nil {
+		return CollectionGrant{}, err
+	}
 	next.Grants[identity] = cloneGrant(grant)
 	if err := s.commit(next); err != nil {
 		return CollectionGrant{}, err
@@ -541,8 +596,8 @@ func (s *CollectionStore) grantCostumes(identity string, costumeIDs []uint64, ch
 			return CollectionGrant{}, fmt.Errorf("player: costume %d has no character design", costumeID)
 		}
 		maxLevel := characterDesign.CostumeMaxLevel
-		if maxLevel == 0 { // compatibility for small constructor-only unit fixtures
-			maxLevel = 5
+		if maxLevel == 0 {
+			return CollectionGrant{}, fmt.Errorf("player: costume %d has zero max level", costumeID)
 		}
 		if position, found := findCostume(next.Costumes, costumeID); found {
 			before := next.Costumes[position].Level
@@ -616,107 +671,6 @@ func costumeOverflowExchange(costumeID, invenIndex, sortID uint64, design gameda
 		ExchangeItemType: design.OverflowItemType, ExchangeItemID: design.OverflowItemID,
 		ExchangeCount: design.OverflowItemCount, SortID: sortID,
 	}, nil
-}
-
-// RepairCostumeOverflow migrates grants written by the pre-cap implementation.
-// It rewrites every illegal +6/+7 upgrade into the same GameData-driven
-// post-max exchange a fresh request would have produced, then caps persisted
-// CostumeDBInfo levels. Returning all exchange-bearing grants lets the wallet
-// idempotently recover currency even after a crash between the two commits.
-func (s *CollectionStore) RepairCostumeOverflow(character func(uint64) (gamedata.CharacterDesign, bool)) (map[string][]CostumeExchange, error) {
-	if character == nil {
-		return nil, errors.New("player: nil costume design resolver")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	next := cloneCollection(s.data)
-	changed := false
-	for i := range next.Costumes {
-		design, ok := character(next.Costumes[i].ID)
-		if !ok || design.CostumeMaxLevel == 0 {
-			return nil, fmt.Errorf("player: costume %d has no max-level design", next.Costumes[i].ID)
-		}
-		if next.Costumes[i].Level > design.CostumeMaxLevel {
-			next.Costumes[i].Level = design.CostumeMaxLevel
-			changed = true
-		}
-	}
-	for i := range s.base {
-		key := strconv.FormatUint(s.base[i].InvenIndex, 10)
-		level := next.BaseCostumeLevels[key]
-		if level == 0 {
-			level = s.base[i].Level
-		}
-		design, ok := character(s.base[i].ID)
-		if !ok {
-			continue // starter costumes outside the active gacha pools are untouched
-		}
-		if design.CostumeMaxLevel == 0 {
-			return nil, fmt.Errorf("player: costume %d has no max-level design", s.base[i].ID)
-		}
-		if level > design.CostumeMaxLevel {
-			next.BaseCostumeLevels[key] = design.CostumeMaxLevel
-			changed = true
-		}
-	}
-	for identity, grant := range next.Grants {
-		kept := make([]CostumeUpgrade, 0, len(grant.Upgrades))
-		for _, upgrade := range grant.Upgrades {
-			design, ok := character(upgrade.CostumeID)
-			if !ok || design.CostumeMaxLevel == 0 {
-				return nil, fmt.Errorf("player: costume %d has no overflow repair design", upgrade.CostumeID)
-			}
-			if upgrade.After > design.CostumeMaxLevel {
-				exchange, err := costumeOverflowExchange(upgrade.CostumeID, upgrade.InvenIndex, upgrade.SortID, design)
-				if err != nil {
-					return nil, err
-				}
-				grant.Exchanges = append(grant.Exchanges, exchange)
-				changed = true
-				continue
-			}
-			kept = append(kept, upgrade)
-		}
-		grant.Upgrades = kept
-		for i := range grant.Exchanges {
-			exchange := &grant.Exchanges[i]
-			if exchange.InvenIndex == 0 {
-				if position, found := findCostume(next.Costumes, exchange.OriginalItemID); found {
-					exchange.InvenIndex = next.Costumes[position].InvenIndex
-				} else if position, found := findCostume(s.base, exchange.OriginalItemID); found {
-					exchange.InvenIndex = s.base[position].InvenIndex
-				} else {
-					return nil, fmt.Errorf("player: overflow costume %d has no inventory instance", exchange.OriginalItemID)
-				}
-				changed = true
-			}
-			found := false
-			for _, upgrade := range grant.Upgrades {
-				if upgrade.CostumeID == exchange.OriginalItemID && upgrade.SortID == exchange.SortID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				design, _ := character(exchange.OriginalItemID)
-				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: exchange.InvenIndex, CostumeID: exchange.OriginalItemID, Before: design.CostumeMaxLevel, After: design.CostumeMaxLevel, SortID: exchange.SortID})
-				changed = true
-			}
-		}
-		next.Grants[identity] = grant
-	}
-	if changed {
-		if err := s.commit(next); err != nil {
-			return nil, err
-		}
-	}
-	result := make(map[string][]CostumeExchange)
-	for identity, grant := range next.Grants {
-		if len(grant.Exchanges) != 0 {
-			result[identity] = append([]CostumeExchange(nil), grant.Exchanges...)
-		}
-	}
-	return result, nil
 }
 
 func (s *CollectionStore) Characters() []Character {
@@ -989,6 +943,10 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	for k, v := range in.GachaSelections {
 		out.GachaSelections[k] = append([]GachaSelection(nil), v...)
 	}
+	out.GachaSelectionChanges = make(map[string]uint64, len(in.GachaSelectionChanges))
+	for k, v := range in.GachaSelectionChanges {
+		out.GachaSelectionChanges[k] = v
+	}
 	out.StepUpProgress = make(map[string]uint64, len(in.StepUpProgress))
 	for k, v := range in.StepUpProgress {
 		out.StepUpProgress[k] = v
@@ -1017,31 +975,24 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 }
 
 func (s *CollectionStore) commit(next collectionSnapshot) error {
-	b, err := json.Marshal(next)
+	changes, err := diffCollectionEntries(s.data, next)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	var core []byte
+	if !s.persisted || !sameCollectionCore(s.data, next) {
+		core, err = json.Marshal(collectionCore(next))
+		if err != nil {
+			return err
+		}
 	}
-	f, err := os.CreateTemp(dir, ".collection-*.tmp")
-	if err != nil {
-		return err
+	if core == nil && len(changes) == 0 {
+		return nil
 	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
+	if err := s.store.SaveWithEntries("collection", core, changes); err != nil {
 		return fmt.Errorf("player: persist collection: %w", err)
 	}
 	s.data = next
+	s.persisted = true
 	return nil
 }

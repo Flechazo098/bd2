@@ -4,18 +4,18 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
 func TestCharImmortalReturnsFullOwnedSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	starter := &Starter{Version: "2.34.13"}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), starter)
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestCharImmortalReturnsFullOwnedSnapshot(t *testing.T) {
 		{InvenIndex: 535604120, ID: 6010, HP: 7, Level: 1, TalentLevel: 1},
 		{InvenIndex: 535607162, ID: 350, HP: 512, Level: 20, TalentLevel: 1},
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), owned, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), owned, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestCharImmortalReturnsFullOwnedSnapshot(t *testing.T) {
 func TestCharacterGrowthConsumesMaterialAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	starter := &Starter{Version: "2.34.13"}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), starter)
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestCharacterGrowthConsumesMaterialAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, Level: 1}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 350, Level: 1}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCharacterGrowthConsumesMaterialAndPersists(t *testing.T) {
 	if err != nil || !found || level != 20 {
 		t.Fatalf("level=%d found=%v err=%v", level, found, err)
 	}
-	restored, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), nil, inventory, "", "")
+	restored, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), nil, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestCharacterGrowthConsumesMaterialAndPersists(t *testing.T) {
 
 func TestGrowthAndImmortalShareDynamicMaximumHealth(t *testing.T) {
 	dir := t.TempDir()
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestGrowthAndImmortalShareDynamicMaximumHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, HP: 122, Level: 1}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 350, HP: 122, Level: 1}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,15 +179,15 @@ func TestGrowthAndImmortalShareDynamicMaximumHealth(t *testing.T) {
 	if hp, _, _ := wire.Varint(revived, 3); hp != 513 {
 		t.Fatalf("revived HP=%d want 513", hp)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "characters.json"))
-	if err != nil || !bytes.Contains(data, []byte(`"hp":513`)) {
+	data, found, err := testStore(filepath.Join(dir, "characters.json")).(stateio.EntryStore).LoadEntry("characters", "characters", "77")
+	if err != nil || !found || !bytes.Contains(data, []byte(`"hp":513`)) {
 		t.Fatalf("growth HP was not persisted: %s err=%v", data, err)
 	}
 }
 
 func TestCharacterPromotionUsesExactGameDataCosts(t *testing.T) {
 	dir := t.TempDir()
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,11 +195,11 @@ func TestCharacterPromotionUsesExactGameDataCosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 1500})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 1500})
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, Level: 20, HP: 513}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 350, Level: 20, HP: 513}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestCharacterPromotionUsesExactGameDataCosts(t *testing.T) {
 	if snapshot := wallet.Snapshot(); snapshot.Gold != 500 {
 		t.Fatalf("gold after promotion=%d", snapshot.Gold)
 	}
-	loaded, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), nil, inventory, "", "")
+	loaded, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), nil, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestCharacterPromotionUsesExactGameDataCosts(t *testing.T) {
 
 func TestCharacterGrowthPromotesAndLevelsInOneRequestAcrossStacks(t *testing.T) {
 	dir := t.TempDir()
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,11 +267,11 @@ func TestCharacterGrowthPromotesAndLevelsInOneRequestAcrossStacks(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 3000})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 3000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 351, Level: 40}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 351, Level: 40}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func promotionCostsEqual(got, want []gamedata.PromotionCost) bool {
 
 func TestCollectionCharacterCombinedGrowthChangesIDWithoutChargingTwice(t *testing.T) {
 	dir := t.TempDir()
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), &Starter{Version: "2.34.13"})
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), &Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,20 +348,21 @@ func TestCollectionCharacterCombinedGrowthChangesIDWithoutChargingTwice(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := OpenWallet(filepath.Join(dir, "wallet.json"), Currency{Gold: 12000})
+	wallet, err := OpenWallet(testStore(filepath.Join(dir, "wallet.json")), Currency{Gold: 12000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	collectionPath := filepath.Join(dir, "collection.json")
-	collection, err := OpenCollectionStore(collectionPath, nil)
+	collection, err := OpenCollectionStore(testStore(collectionPath), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collection.data.Characters = []Character{{InvenIndex: 920000054, ID: 6510, Level: 1}}
-	if err := collection.commit(collection.data); err != nil {
+	nextCollection := cloneCollection(collection.data)
+	nextCollection.Characters = []Character{{InvenIndex: 920000054, ID: 6510, Level: 1}}
+	if err := collection.commit(nextCollection); err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 77, ID: 350, Level: 1}}, inventory, "", "")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 350, Level: 1}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +402,7 @@ func TestCollectionCharacterCombinedGrowthChangesIDWithoutChargingTwice(t *testi
 	if wallet.Snapshot().Gold != 2000 {
 		t.Fatal("replay charged gold again")
 	}
-	reloaded, err := OpenCollectionStore(collectionPath, nil)
+	reloaded, err := OpenCollectionStore(testStore(collectionPath), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,25 +411,21 @@ func TestCollectionCharacterCombinedGrowthChangesIDWithoutChargingTwice(t *testi
 	}
 }
 
-func TestCharacterStoreMergesNewSeedCharacters(t *testing.T) {
+func TestCharacterStoreRejectsSeedDrift(t *testing.T) {
 	dir := t.TempDir()
 	starter := &Starter{Version: "2.34.13"}
-	inventory, err := OpenInventory(filepath.Join(dir, "items.json"), starter)
+	inventory, err := OpenInventory(testStore(filepath.Join(dir, "items.json")), starter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 1, ID: 10, Level: 1}}, inventory, "", "")
+	first, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 1, ID: 10, Level: 1}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := first.persist(first.All()); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := OpenCharacterStore(filepath.Join(dir, "characters.json"), []Character{{InvenIndex: 1, ID: 10, Level: 1}, {InvenIndex: 2, ID: 20, Level: 15}}, inventory, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := restored.All(); len(got) != 2 || got[1].InvenIndex != 2 {
-		t.Fatalf("merged=%+v", got)
+	if _, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 1, ID: 10, Level: 1}, {InvenIndex: 2, ID: 20, Level: 15}}, inventory, "", ""); err == nil {
+		t.Fatal("accepted seed characters absent from current persisted state")
 	}
 }

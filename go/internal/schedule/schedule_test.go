@@ -9,7 +9,7 @@ import (
 )
 
 func TestVersion23413ContainsRequiredContentSix(t *testing.T) {
-	service := Version23413()
+	service := Current()
 	code, response, handled, err := service.Handle("/ScheduleInfo", wire.AppendVarint(nil, 1, 1))
 	if err != nil || !handled || code != 117 {
 		t.Fatalf("schedule code=%d handled=%v err=%v", code, handled, err)
@@ -42,14 +42,14 @@ func TestVersion23413MatchesOptionalOfficialResponse(t *testing.T) {
 	if err != nil {
 		t.Skipf("optional official schedule sample unavailable: %v", err)
 	}
-	_, got, _, err := Version23413().Handle("/ScheduleInfo", wire.AppendVarint(nil, 1, 2))
+	_, got, _, err := Current().Handle("/ScheduleInfo", wire.AppendVarint(nil, 1, 2))
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("schedule differs from official 2.34.13 response: equal=%v err=%v\ngot=%x\nwant=%x", bytes.Equal(got, want), err, got, want)
 	}
 }
 
 func TestScheduleRejectsMissingSequence(t *testing.T) {
-	if _, _, handled, err := Version23413().Handle("/ScheduleInfo", nil); !handled || err == nil {
+	if _, _, handled, err := Current().Handle("/ScheduleInfo", nil); !handled || err == nil {
 		t.Fatalf("missing sequence handled=%v err=%v", handled, err)
 	}
 }

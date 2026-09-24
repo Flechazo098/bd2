@@ -8,19 +8,23 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 
+	"bd2server/internal/player"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
-const version = "2.34.13"
-
 type DeckEntry struct {
 	CharacterInvenIndex uint64 `json:"character_inven_index"`
-	CostumeInvenIndex   uint64 `json:"costume_inven_index"`
-	Slot                uint64 `json:"slot"`
+	// CostumeInvenIndex is retained as the persisted Go/JSON name for the
+	// development save format. On the wire DeckDBInfo field 2 is Position: a
+	// zero-based battle-grid cell (or -1 while unassigned), not a costume
+	// inventory index.
+	CostumeInvenIndex uint64 `json:"costume_inven_index"`
+	Slot              uint64 `json:"slot"`
 }
 type FieldEntry struct {
 	Slot                uint64 `json:"slot"`
@@ -43,12 +47,26 @@ type state struct {
 	Packs                    map[uint64]uint64 `json:"packs"`
 	HighestTotalBattlePower  uint64            `json:"highest_total_battle_power"`
 	PortraitCostumeID        uint64            `json:"portrait_costume_id"`
-	AutoReviveCatalyst       uint64            `json:"auto_revive_catalyst,omitempty"`
+	AutoReviveCatalyst       uint64            `json:"auto_revive_catalyst"`
 }
 type Store struct {
-	mu    sync.RWMutex
-	path  string
-	state state
+	mu              sync.RWMutex
+	storage         stateio.AtomicEntryStore
+	state           state
+	presets         map[uint64]Preset
+	presetSlots     uint64
+	costumeSettings map[uint64]CostumeSetting
+	wallet          *player.Wallet
+	characters      *player.CharacterStore
+	equipment       *player.EquipmentInventory
+	collection      *player.CollectionStore
+	sessionID       string
+	replies         map[string]deckReply
+}
+
+type deckReply struct {
+	code int
+	body []byte
 }
 
 func (s *Store) CurrentDeck() []DeckEntry {
@@ -72,18 +90,52 @@ func LoadSeed(path string) (Seed, error) {
 	return s, nil
 }
 func (s Seed) validate() error {
-	if s.Version != version {
+	if s.Version != versionconfig.Protocol() {
 		return errors.New("deck: wrong seed version")
 	}
 	return validField(s.FieldDeck)
 }
 func validField(entries []FieldEntry) error {
-	seen := map[uint64]bool{}
+	if len(entries) == 0 || len(entries) > 5 {
+		return errors.New("deck: invalid field deck size")
+	}
+	characters := map[uint64]bool{}
+	costumes := map[uint64]bool{}
+	sequences := map[uint64]bool{}
 	for _, e := range entries {
-		if e.Slot == 0 || e.CharacterInvenIndex == 0 || e.CostumeInvenIndex == 0 || seen[e.Slot] {
+		if e.Slot == 0 || e.Slot > 5 || e.CharacterInvenIndex == 0 ||
+			characters[e.CharacterInvenIndex] || sequences[e.Slot] ||
+			(e.CostumeInvenIndex != 0 && costumes[e.CostumeInvenIndex]) {
 			return errors.New("deck: invalid field deck")
 		}
-		seen[e.Slot] = true
+		characters[e.CharacterInvenIndex] = true
+		sequences[e.Slot] = true
+		if e.CostumeInvenIndex != 0 {
+			costumes[e.CostumeInvenIndex] = true
+		}
+	}
+	return nil
+}
+
+func validDeck(entries []DeckEntry) error {
+	if len(entries) == 0 || len(entries) > 5 {
+		return errors.New("deck: invalid battle deck size")
+	}
+	characters := map[uint64]bool{}
+	positions := map[uint64]bool{}
+	sequences := map[uint64]bool{}
+	for _, entry := range entries {
+		position := entry.CostumeInvenIndex
+		unassigned := position == ^uint64(0) // int32 -1 sign-extends in protobuf varints.
+		if entry.CharacterInvenIndex == 0 || (!unassigned && position > 11) || entry.Slot == 0 || entry.Slot > 5 ||
+			characters[entry.CharacterInvenIndex] || (!unassigned && positions[position]) || sequences[entry.Slot] {
+			return errors.New("deck: invalid battle deck")
+		}
+		characters[entry.CharacterInvenIndex] = true
+		if !unassigned {
+			positions[position] = true
+		}
+		sequences[entry.Slot] = true
 	}
 	return nil
 }
@@ -91,82 +143,63 @@ func NewStore(seed Seed) (*Store, error) {
 	if e := seed.validate(); e != nil {
 		return nil, e
 	}
-	return &Store{state: state{Version: version, FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}}, nil
+	return &Store{state: state{Version: versionconfig.Protocol(), FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}, presets: map[uint64]Preset{}, presetSlots: presetBaseCount, costumeSettings: map[uint64]CostumeSetting{}, replies: map[string]deckReply{}}, nil
 }
-func OpenStore(path string, seed Seed) (*Store, error) {
+func OpenStore(storage stateio.Store, seed Seed) (*Store, error) {
 	s, e := NewStore(seed)
 	if e != nil {
 		return nil, e
 	}
-	if path == "" {
-		return nil, errors.New("deck: empty save path")
+	entries, ok := storage.(stateio.AtomicEntryStore)
+	if storage == nil || !ok {
+		return nil, errors.New("deck: nil storage")
 	}
-	s.path = filepath.Clean(path)
-	b, e := os.ReadFile(s.path)
-	if errors.Is(e, os.ErrNotExist) {
+	s.storage = entries
+	b, e := storage.Load("deck")
+	if e != nil {
+		return nil, fmt.Errorf("deck: load state: %w", e)
+	}
+	if b == nil {
+		if e = stateio.RequireNoEntries(entries, "deck", "presets", "preset_config", "costume_settings"); e != nil {
+			return nil, fmt.Errorf("deck: invalid entry storage: %w", e)
+		}
 		return s, nil
 	}
-	if e != nil {
-		return nil, fmt.Errorf("deck: read state: %w", e)
+	if e = stateio.RequireExactJSONObject(b, "version", "deck", "field_deck", "field_char_control_deck_type", "waypoints", "costumes", "packs", "highest_total_battle_power", "portrait_costume_id", "auto_revive_catalyst"); e != nil {
+		return nil, fmt.Errorf("deck: incompatible state layout: %w", e)
 	}
-	if e = json.Unmarshal(b, &s.state); e != nil {
+	var loaded state
+	if e = json.Unmarshal(b, &loaded); e != nil {
 		return nil, fmt.Errorf("deck: malformed state: %w", e)
 	}
-	if s.state.Version != version || validField(s.state.FieldDeck) != nil {
+	if loaded.Version != versionconfig.Protocol() || (len(loaded.Deck) != 0 && validDeck(loaded.Deck) != nil) || validField(loaded.FieldDeck) != nil || loaded.Waypoints == nil || loaded.Costumes == nil || loaded.Packs == nil {
 		return nil, errors.New("deck: invalid saved state")
 	}
-	if s.state.Waypoints == nil {
-		s.state.Waypoints = map[uint64]uint64{}
-	}
-	if s.state.Costumes == nil {
-		s.state.Costumes = map[uint64]uint64{}
-	}
-	if s.state.Packs == nil {
-		s.state.Packs = map[uint64]uint64{}
-	}
-	// Saves from before the auto-revive protocol had no catalyst field. The
-	// versioned initial account seed provides its observed initial balance.
-	if s.state.AutoReviveCatalyst == 0 {
-		s.state.AutoReviveCatalyst = seed.AutoReviveCatalyst
+	s.state = loaded
+	if e = s.loadPresetEntries(); e != nil {
+		return nil, e
 	}
 	return s, nil
 }
 func (s *Store) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, e := os.Stat(s.path); e == nil {
-		return nil
-	} else if !errors.Is(e, os.ErrNotExist) {
+	b, e := s.storage.Load("deck")
+	if e != nil {
 		return e
+	}
+	if b != nil {
+		return nil
 	}
 	return s.commit(clone(s.state))
 }
 func (s *Store) commit(next state) error {
-	if s.path != "" {
+	if s.storage != nil {
 		b, e := json.MarshalIndent(next, "", "  ")
 		if e != nil {
 			return e
 		}
-		dir := filepath.Dir(s.path)
-		if e = os.MkdirAll(dir, 0700); e != nil {
-			return e
-		}
-		f, e := os.CreateTemp(dir, ".deck-*.tmp")
-		if e != nil {
-			return e
-		}
-		name := f.Name()
-		defer os.Remove(name)
-		if _, e = f.Write(append(b, '\n')); e == nil {
-			e = f.Sync()
-		}
-		if closeErr := f.Close(); e == nil {
-			e = closeErr
-		}
-		if e != nil {
-			return e
-		}
-		if e = os.Rename(name, s.path); e != nil {
+		if e = s.storage.Save("deck", append(b, '\n')); e != nil {
 			return e
 		}
 	}
@@ -211,15 +244,15 @@ func triples(req []byte) ([]DeckEntry, error) {
 		if e != nil || !aok || a == 0 {
 			return errors.New("deck: deck character")
 		}
-		b, _, e := wire.Varint(f.Value, 2)
-		if e != nil {
-			return errors.New("deck: deck costume")
+		position, _, e := wire.Varint(f.Value, 2)
+		if e != nil || (position > 11 && position != ^uint64(0)) {
+			return errors.New("deck: invalid deck position")
 		}
-		c, cok, e := wire.Varint(f.Value, 3)
-		if e != nil || !cok || c == 0 {
-			return errors.New("deck: deck slot")
+		sequence, sequenceOK, e := wire.Varint(f.Value, 3)
+		if e != nil || !sequenceOK || sequence == 0 || sequence > 5 {
+			return errors.New("deck: invalid deck sequence")
 		}
-		out = append(out, DeckEntry{a, b, c})
+		out = append(out, DeckEntry{CharacterInvenIndex: a, CostumeInvenIndex: position, Slot: sequence})
 		return nil
 	})
 	if e != nil {
@@ -228,12 +261,8 @@ func triples(req []byte) ([]DeckEntry, error) {
 	if len(out) == 0 {
 		return nil, errors.New("deck: empty deck")
 	}
-	seen := map[uint64]bool{}
-	for _, x := range out {
-		if seen[x.Slot] {
-			return nil, errors.New("deck: duplicate deck slot")
-		}
-		seen[x.Slot] = true
+	if e := validDeck(out); e != nil {
+		return nil, e
 	}
 	return out, nil
 }
@@ -254,8 +283,8 @@ func fieldEntries(req []byte) ([]FieldEntry, error) {
 		if err != nil || !characterOK || character == 0 {
 			return errors.New("deck: invalid field deck character")
 		}
-		costume, costumeOK, err := wire.Varint(f.Value, 3)
-		if err != nil || !costumeOK || costume == 0 {
+		costume, _, err := wire.Varint(f.Value, 3)
+		if err != nil {
 			return errors.New("deck: invalid field deck costume")
 		}
 		out = append(out, FieldEntry{Slot: slot, CharacterInvenIndex: character, CostumeInvenIndex: costume})
@@ -270,10 +299,60 @@ func fieldEntries(req []byte) ([]FieldEntry, error) {
 	return out, validField(out)
 }
 
+func (s *Store) validateOwnedDeckLocked(entries []DeckEntry) error {
+	if s.characters == nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if _, found := s.characters.Find(entry.CharacterInvenIndex); !found {
+			return fmt.Errorf("deck: battle deck references unknown character %d", entry.CharacterInvenIndex)
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateOwnedFieldDeckLocked(entries []FieldEntry) error {
+	if s.characters == nil || s.collection == nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if _, found := s.characters.Find(entry.CharacterInvenIndex); !found {
+			return fmt.Errorf("deck: field deck references unknown character %d", entry.CharacterInvenIndex)
+		}
+		if entry.CostumeInvenIndex == 0 {
+			continue
+		}
+		costume, found := s.collection.CostumeByIndex(entry.CostumeInvenIndex)
+		if !found {
+			return fmt.Errorf("deck: field deck references unknown costume %d", entry.CostumeInvenIndex)
+		}
+		if costume.UseChar != entry.CharacterInvenIndex {
+			return fmt.Errorf("deck: costume %d does not belong to character %d", entry.CostumeInvenIndex, entry.CharacterInvenIndex)
+		}
+	}
+	return nil
+}
+
 // Handle implements session.Handler. Every mutation validates its complete
 // typed request before committing a replacement JSON state.
 func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/PresetInfo":
+		return s.handlePresetInfo(req)
+	case "/PresetSave":
+		return s.handlePresetSave(req)
+	case "/PresetAddSlot":
+		return s.handlePresetAddSlot(req)
+	case "/PresetInfoChange":
+		return s.handlePresetInfoChange(req)
+	case "/PresetDelete":
+		return s.handlePresetDelete(req)
+	case "/PresetUse":
+		return s.handlePresetUse(req)
+	case "/DeckCostumeSettingInfo":
+		return s.handleCostumeSettingInfo(req)
+	case "/DeckCostumeSettingSave":
+		return s.handleCostumeSettingSave(req)
 	case "/DeckInfo":
 		if e := checkSeq(req); e != nil {
 			return 0, nil, true, e
@@ -338,12 +417,18 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		defer s.mu.RUnlock()
 		return 31, encodeWaypoints(s.state.Waypoints), true, nil
 	case "/DeckSave":
+		if e := checkSeq(req); e != nil {
+			return 0, nil, true, e
+		}
 		x, e := triples(req)
 		if e != nil {
 			return 0, nil, true, e
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if e = s.validateOwnedDeckLocked(x); e != nil {
+			return 0, nil, true, e
+		}
 		seq, _, _ := wire.Varint(req, 1)
 		slog.Info("team trace: client requested battle deck replacement", "seq", seq, "before", s.state.Deck, "after", x)
 		n := clone(s.state)
@@ -354,12 +439,18 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		}
 		return 10, nil, true, e
 	case "/FieldDeckSave":
+		if e := checkSeq(req); e != nil {
+			return 0, nil, true, e
+		}
 		x, e := fieldEntries(req)
 		if e != nil {
 			return 0, nil, true, e
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if e = s.validateOwnedFieldDeckLocked(x); e != nil {
+			return 0, nil, true, e
+		}
 		n := clone(s.state)
 		n.FieldDeck = x
 		e = s.commit(n)

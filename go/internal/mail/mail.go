@@ -10,10 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
+	"time"
 
 	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -79,7 +83,7 @@ func Load(path string) (*Starter, error) {
 }
 
 func (s *Starter) Validate() error {
-	if s == nil || s.Version != "2.34.13" {
+	if s == nil || s.Version != versionconfig.Protocol() {
 		return errors.New("mail: wrong starter version")
 	}
 	if s.MailCount != uint64(len(s.Mails))+1 {
@@ -178,8 +182,9 @@ func unpack(data []byte) ([]uint64, error) {
 }
 
 type stateSnapshot struct {
-	Version string   `json:"version"`
-	Opened  []uint64 `json:"opened,omitempty"`
+	Version           string   `json:"version"`
+	Opened            []uint64 `json:"opened"`
+	NextDynamicMailID uint64   `json:"next_dynamic_mail_id"`
 }
 
 // Service owns mailbox visibility and idempotent reward delivery. Starter is
@@ -189,10 +194,12 @@ type Service struct {
 	Starter   *Starter
 	seedPath  string
 	seedStamp fileStamp
-	path      string
+	storage   stateio.AtomicEntryStore
 	inventory *player.Inventory
 	wallet    *player.Wallet
 	state     stateSnapshot
+	dynamic   map[uint64]MailDBInfo
+	issued    map[string]uint64
 }
 
 type fileStamp struct {
@@ -200,24 +207,75 @@ type fileStamp struct {
 	modTime int64
 }
 
-func OpenService(path string, starter *Starter, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
-	if path == "" || starter == nil || inventory == nil || wallet == nil {
+func OpenService(storage stateio.Store, starter *Starter, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
+	entries, ok := storage.(stateio.AtomicEntryStore)
+	if !ok || starter == nil || inventory == nil || wallet == nil {
 		return nil, errors.New("mail: invalid service configuration")
 	}
 	if err := starter.Validate(); err != nil {
 		return nil, err
 	}
-	s := &Service{Starter: starter, path: filepath.Clean(path), inventory: inventory, wallet: wallet,
-		state: stateSnapshot{Version: "2.34.13"}}
-	b, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	if starter.MaxMailID == ^uint64(0) {
+		return nil, errors.New("mail: starter mail ID exhausted")
+	}
+	s := &Service{Starter: starter, storage: entries, inventory: inventory, wallet: wallet,
+		state:   stateSnapshot{Version: versionconfig.Protocol(), NextDynamicMailID: starter.MaxMailID + 1},
+		dynamic: map[uint64]MailDBInfo{}, issued: map[string]uint64{}}
+	b, err := storage.Load("mail")
+	if err != nil {
+		return nil, fmt.Errorf("mail: load state: %w", err)
+	}
+	if b == nil {
+		if err := stateio.RequireNoEntries(entries, "mail", "dynamic", "issued"); err != nil {
+			return nil, fmt.Errorf("mail: invalid storage: %w", err)
+		}
 		return s, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("mail: read state: %w", err)
+	if err := stateio.RequireExactJSONObject(b, "version", "opened", "next_dynamic_mail_id"); err != nil {
+		return nil, fmt.Errorf("mail: incompatible state layout: %w", err)
 	}
-	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != "2.34.13" {
+	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != versionconfig.Protocol() || s.state.NextDynamicMailID == 0 {
 		return nil, errors.New("mail: malformed state")
+	}
+	rawDynamic, err := entries.ListEntries("mail", "dynamic")
+	if err != nil {
+		return nil, err
+	}
+	for key, payload := range rawDynamic {
+		id, parseErr := strconv.ParseUint(key, 10, 64)
+		var entry MailDBInfo
+		if parseErr != nil || id == 0 || json.Unmarshal(payload, &entry) != nil || entry.MailID != id || entry.MailID >= s.state.NextDynamicMailID {
+			return nil, fmt.Errorf("mail: invalid dynamic entry %q", key)
+		}
+		s.dynamic[id] = entry
+	}
+	rawIssued, err := entries.ListEntries("mail", "issued")
+	if err != nil {
+		return nil, err
+	}
+	for identity, payload := range rawIssued {
+		var id uint64
+		if identity == "" || json.Unmarshal(payload, &id) != nil || id == 0 {
+			return nil, fmt.Errorf("mail: invalid issued entry %q", identity)
+		}
+		if _, found := s.dynamic[id]; !found {
+			return nil, fmt.Errorf("mail: issued entry %q references missing mail %d", identity, id)
+		}
+		s.issued[identity] = id
+	}
+	// A watched development seed is allowed to append immutable static mails
+	// between runs. Move the dynamic allocator above that range as long as none
+	// of the already-persisted dynamic IDs collide with the expanded starter.
+	if starter.MaxMailID >= s.state.NextDynamicMailID {
+		for id := range s.dynamic {
+			if id <= starter.MaxMailID {
+				return nil, fmt.Errorf("mail: starter mail range collides with dynamic mail %d", id)
+			}
+		}
+		if starter.MaxMailID == ^uint64(0) {
+			return nil, errors.New("mail: starter mail ID exhausted")
+		}
+		s.state.NextDynamicMailID = starter.MaxMailID + 1
 	}
 	sort.Slice(s.state.Opened, func(i, j int) bool { return s.state.Opened[i] < s.state.Opened[j] })
 	for i := 1; i < len(s.state.Opened); i++ {
@@ -231,10 +289,12 @@ func OpenService(path string, starter *Starter, inventory *player.Inventory, wal
 func (s *Service) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	b, err := s.storage.Load("mail")
+	if err != nil {
 		return err
+	}
+	if b != nil {
+		return nil
 	}
 	return s.persist(s.state)
 }
@@ -308,6 +368,22 @@ func (s *Service) reloadSeedIfChanged() error {
 	if err != nil {
 		return fmt.Errorf("mail: reject changed seed and retain last known-good mailbox: %w", err)
 	}
+	if next.MaxMailID >= s.state.NextDynamicMailID {
+		for id := range s.dynamic {
+			if id <= next.MaxMailID {
+				return fmt.Errorf("mail: reject changed seed because mail range collides with dynamic mail %d", id)
+			}
+		}
+		if next.MaxMailID == ^uint64(0) {
+			return errors.New("mail: reject changed seed because mail ID range is exhausted")
+		}
+		updated := s.state
+		updated.Opened = append([]uint64(nil), s.state.Opened...)
+		updated.NextDynamicMailID = next.MaxMailID + 1
+		if err := s.persist(updated); err != nil {
+			return fmt.Errorf("mail: persist watched seed mail range: %w", err)
+		}
+	}
 	s.Starter, s.seedStamp = next, stamp
 	return nil
 }
@@ -322,9 +398,25 @@ func (s *Service) info() []byte {
 		result = wire.AppendBytes(result, 1, entry.encode())
 		remaining++
 	}
+	dynamicIDs := make([]uint64, 0, len(s.dynamic))
+	for id := range s.dynamic {
+		dynamicIDs = append(dynamicIDs, id)
+	}
+	sort.Slice(dynamicIDs, func(i, j int) bool { return dynamicIDs[i] < dynamicIDs[j] })
+	for _, id := range dynamicIDs {
+		if containsID(s.state.Opened, id) {
+			continue
+		}
+		result = wire.AppendBytes(result, 1, s.dynamic[id].encode())
+		remaining++
+	}
 	// The official total includes one server-side sentinel row.
 	result = wire.AppendVarint(result, 2, remaining+1)
-	result = wire.AppendVarint(result, 3, s.Starter.MaxMailID)
+	maxMailID := s.Starter.MaxMailID
+	if s.state.NextDynamicMailID > maxMailID+1 {
+		maxMailID = s.state.NextDynamicMailID - 1
+	}
+	result = wire.AppendVarint(result, 3, maxMailID)
 	return result
 }
 
@@ -349,12 +441,18 @@ func (s *Service) open(request []byte) ([]byte, error) {
 			}
 		}
 		if !found {
+			if entry, exists := s.dynamic[id]; exists {
+				selected = append(selected, entry)
+				found = true
+			}
+		}
+		if !found {
 			return nil, fmt.Errorf("mail: unknown mail %d", id)
 		}
 	}
 
 	var bundle []byte
-	next := stateSnapshot{Version: s.state.Version, Opened: append([]uint64(nil), s.state.Opened...)}
+	next := stateSnapshot{Version: s.state.Version, Opened: append([]uint64(nil), s.state.Opened...), NextDynamicMailID: s.state.NextDynamicMailID}
 	for _, entry := range selected {
 		identity := fmt.Sprintf("mail:%d", entry.MailID)
 		rewards := make([]gamedata.Reward, len(entry.RewardTypes))
@@ -435,7 +533,7 @@ func requestMailIDs(request []byte) ([]uint64, error) {
 }
 
 func (s *Service) commit(next stateSnapshot) error {
-	if len(next.Opened) == len(s.state.Opened) {
+	if next.NextDynamicMailID == s.state.NextDynamicMailID && len(next.Opened) == len(s.state.Opened) {
 		equal := true
 		for i := range next.Opened {
 			if next.Opened[i] != s.state.Opened[i] {
@@ -455,28 +553,65 @@ func (s *Service) persist(next stateSnapshot) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".mail-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
+	if err := s.storage.SaveWithEntries("mail", b, nil); err != nil {
 		return fmt.Errorf("mail: persist state: %w", err)
 	}
 	s.state = next
+	return nil
+}
+
+// EnqueueCompensation creates one durable system mail for an expired,
+// completed reward. Identity is period-scoped and makes repeated rollover
+// checks idempotent.
+func (s *Service) EnqueueCompensation(identity, title, body string, rewards []gamedata.Reward, sentAt time.Time) error {
+	if identity == "" || title == "" || body == "" || sentAt.IsZero() || len(rewards) == 0 {
+		return errors.New("mail: invalid compensation")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.issued[identity]; exists {
+		return nil
+	}
+	if s.state.NextDynamicMailID == 0 || s.state.NextDynamicMailID == ^uint64(0) {
+		return errors.New("mail: dynamic mail ID exhausted")
+	}
+	entry := MailDBInfo{
+		MailID: s.state.NextDynamicMailID, MailType: 2, Title: title, Body: body,
+		SentAt: uint64(sentAt.UTC().UnixMilli()), ExpiresAt: uint64(sentAt.UTC().Add(30 * 24 * time.Hour).UnixMilli()),
+	}
+	for _, reward := range rewards {
+		if reward.Type == 0 || reward.Count == 0 || (reward.Type != 3 && reward.Type != 4 && (!itemDBInfoTypes[reward.Type] || reward.ID == 0)) {
+			return fmt.Errorf("mail: compensation %q has unsupported reward type=%d id=%d count=%d", identity, reward.Type, reward.ID, reward.Count)
+		}
+		entry.RewardTypes = append(entry.RewardTypes, reward.Type)
+		entry.RewardIDs = append(entry.RewardIDs, reward.ID)
+		entry.RewardCounts = append(entry.RewardCounts, reward.Count)
+	}
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	issuedPayload, err := json.Marshal(entry.MailID)
+	if err != nil {
+		return err
+	}
+	next := s.state
+	next.Opened = append([]uint64(nil), s.state.Opened...)
+	next.NextDynamicMailID++
+	core, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	changes := []stateio.EntryMutation{
+		{Bucket: "dynamic", Key: strconv.FormatUint(entry.MailID, 10), Payload: payload},
+		{Bucket: "issued", Key: identity, Payload: issuedPayload},
+	}
+	if err := s.storage.SaveWithEntries("mail", core, changes); err != nil {
+		return err
+	}
+	s.state = next
+	s.dynamic[entry.MailID] = entry
+	s.issued[identity] = entry.MailID
 	return nil
 }
 

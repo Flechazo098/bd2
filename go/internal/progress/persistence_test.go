@@ -2,21 +2,20 @@ package progress
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
 func TestStorePersistsProgressAcrossRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "player", "progress.json")
-	store, err := OpenStore(path)
+	storage := stateio.NewMemory()
+	store, err := OpenStore(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("unexpected initial save: %v", err)
+	if data, _ := storage.Load("progress"); data != nil {
+		t.Fatalf("unexpected initial save: %s", data)
 	}
 	position := wire.AppendVarint(nil, 2, 21)
 	position = wire.AppendString(position, 3, `{"MapId":211,"PlayerPosition":{"x":1,"y":2,"z":3}}`)
@@ -32,7 +31,7 @@ func TestStorePersistsProgressAcrossRestart(t *testing.T) {
 	if _, err := store.UpdateQuest(quest); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := OpenStore(path)
+	reopened, err := OpenStore(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,18 +44,18 @@ func TestStorePersistsProgressAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestStoreMigratesLegacyQuestKeysAndKeepsPackOverlap(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "progress.json")
-	legacy := `{"quests":{"1":{"QuestID":1,"PackID":21,"Values":[7]}},"cleared_quests":{"1":21}}`
-	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+func TestStoreKeepsPackOverlap(t *testing.T) {
+	storage := stateio.NewMemory()
+	initial := `{"version":2,"position":{"PackID":0,"Position":{"MapId":0,"PlayerPosition":{"x":0,"y":0,"z":0},"ColleaguePositions":null},"RawJSON":""},"tutorials":[],"quests":{"21:1":{"QuestID":1,"PackID":21,"Values":[7]}},"cleared_quests":{"21:1":true}}`
+	if err := storage.Save("progress", []byte(initial)); err != nil {
 		t.Fatal(err)
 	}
-	store, err := OpenStore(path)
+	store, err := OpenStore(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !store.QuestCleared(1, 21) || store.QuestCleared(1, 22) {
-		t.Fatal("legacy pack21 clear was not migrated with its pack identity")
+		t.Fatal("pack21 clear was not loaded with its pack identity")
 	}
 	request := wire.AppendVarint(nil, 2, 1)
 	request = wire.AppendVarint(request, 3, 22)
@@ -78,7 +77,7 @@ func TestStoreMigratesLegacyQuestKeysAndKeepsPackOverlap(t *testing.T) {
 			t.Fatalf("pack%d quest missing: %+v found=%v", packID, quest, found)
 		}
 	}
-	data, err := os.ReadFile(path)
+	data, err := storage.Load("progress")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,20 +87,28 @@ func TestStoreMigratesLegacyQuestKeysAndKeepsPackOverlap(t *testing.T) {
 	}
 	var version int
 	if err := json.Unmarshal(saved["version"], &version); err != nil || version != snapshotVersion {
-		t.Fatalf("migrated version=%d err=%v", version, err)
+		t.Fatalf("saved version=%d err=%v", version, err)
 	}
 	var cleared map[string]bool
 	if err := json.Unmarshal(saved["cleared_quests"], &cleared); err != nil || !cleared["21:1"] || !cleared["22:1"] {
-		t.Fatalf("migrated clears=%v err=%v", cleared, err)
+		t.Fatalf("saved clears=%v err=%v", cleared, err)
 	}
 }
 
 func TestStoreRejectsBrokenSave(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "broken.json")
-	if err := os.WriteFile(path, []byte(`{"quests":{"12":{"QuestID":5,"PackID":21}}}`), 0o600); err != nil {
+	storage := stateio.NewMemory()
+	if err := storage.Save("progress", []byte(`{"version":2,"quests":{"12":{"QuestID":5,"PackID":21}}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenStore(path); err == nil {
+	if _, err := OpenStore(storage); err == nil {
 		t.Fatal("accepted inconsistent save")
+	}
+}
+
+func TestStoreRejectsLegacySave(t *testing.T) {
+	storage := stateio.NewMemory()
+	_ = storage.Save("progress", []byte(`{"quests":{"1":{"QuestID":1,"PackID":21}}}`))
+	if _, err := OpenStore(storage); err == nil {
+		t.Fatal("accepted unversioned legacy state")
 	}
 }

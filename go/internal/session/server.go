@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"bd2server/internal/cryptox"
 	"bd2server/internal/progress"
 	"bd2server/internal/protocol"
-	"bd2server/internal/statetx"
+	"bd2server/internal/stateio"
 	"bd2server/internal/transport"
 	"bd2server/internal/wire"
 )
@@ -36,11 +37,6 @@ type SessionAware interface {
 	BeginSession(id string)
 }
 
-type StateCoordinator interface {
-	Check() error
-	BeginOperation() (statetx.RequestOperation, error)
-}
-
 type Server struct {
 	mu       sync.Mutex
 	key      []byte
@@ -49,19 +45,18 @@ type Server struct {
 	login    LoginService
 	handlers []Handler
 	progress *progress.Store
-	stateTx  StateCoordinator
+	stateTx  stateio.TransactionalStore
 }
 
-// AttachStateCoordinator wraps each authenticated request (the complete batch
-// for BatchRequest) in the account write-ahead transaction. An uncertain
-// operation fail-stops the dispatcher, including subsequent login attempts.
-func (s *Server) AttachStateCoordinator(coordinator StateCoordinator) error {
-	if coordinator == nil {
-		return errors.New("session state coordinator is nil")
+// AttachStateStore wraps each authenticated request (the complete batch for
+// BatchRequest) in one durable account database transaction.
+func (s *Server) AttachStateStore(store stateio.TransactionalStore) error {
+	if store == nil {
+		return errors.New("session state store is nil")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stateTx = coordinator
+	s.stateTx = store
 	return nil
 }
 
@@ -184,15 +179,23 @@ func (s *Server) withStateTransaction(run func() (transport.RawReply, error)) (r
 }
 
 func (s *Server) handleBatch(body []byte) (transport.RawReply, error) {
+	batchStarted := time.Now()
 	requests, decoded, err := protocol.DecodeBatchRequest(body, s.key)
 	if err != nil {
 		return transport.RawReply{}, err
 	}
 	items := make([]protocol.BatchResponse, 0, len(requests))
 	for i, request := range requests {
+		itemStarted := time.Now()
 		code, response, err := s.dispatch(request.Path, decoded[i])
 		if err != nil {
 			return transport.RawReply{}, fmt.Errorf("batch %s: %w", request.Path, err)
+		}
+		itemElapsed := time.Since(itemStarted)
+		if formationTimingPath(request.Path) {
+			slog.Info("formation batch item handled", "index", i, "path", request.Path, "duration_ms", float64(itemElapsed.Microseconds())/1000, "response_bytes", len(response))
+		} else if itemElapsed >= 100*time.Millisecond {
+			slog.Warn("slow batch item", "index", i, "path", request.Path, "duration_ms", float64(itemElapsed.Microseconds())/1000)
 		}
 		raw, err := protocol.Encode(code, response, s.key, time.Now().UnixMilli())
 		if err != nil {
@@ -205,7 +208,18 @@ func (s *Server) handleBatch(body []byte) (transport.RawReply, error) {
 		items = append(items, protocol.BatchResponse{Path: request.Path, ResponseData: envelope})
 	}
 	encoded, err := json.Marshal(items)
+	batchElapsed := time.Since(batchStarted)
+	if batchElapsed >= time.Second {
+		slog.Warn("slow batch request", "items", len(requests), "duration_ms", float64(batchElapsed.Microseconds())/1000, "responseBytes", len(encoded))
+	}
 	return transport.RawReply{Body: encoded}, err
+}
+
+func formationTimingPath(path string) bool {
+	return strings.HasPrefix(path, "/Preset") ||
+		strings.HasPrefix(path, "/Deck") ||
+		strings.HasPrefix(path, "/FieldDeck") ||
+		path == "/EquipBatchUse"
 }
 
 func (s *Server) dispatch(path string, request []byte) (int, []byte, error) {

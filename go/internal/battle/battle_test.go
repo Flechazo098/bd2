@@ -1,11 +1,11 @@
 package battle
 
 import (
-	"path/filepath"
 	"testing"
 
 	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
@@ -124,8 +124,8 @@ func TestBattleEnterUsesSamePictorialSnapshotAsAllCharRefresh(t *testing.T) {
 }
 
 func TestBattleVictoryLocksPackAtEnterForRewardsAndIdentity(t *testing.T) {
-	dir := t.TempDir()
-	inventory, err := player.OpenInventory(filepath.Join(dir, "items.json"), &player.Starter{Version: "2.34.13"})
+	storage := stateio.NewMemory()
+	inventory, err := player.OpenInventory(storage, &player.Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,13 +3,13 @@ package world
 import (
 	"bytes"
 	"encoding/binary"
-	"path/filepath"
 	"testing"
 
 	"bd2server/internal/deck"
 	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
 	"bd2server/internal/progress"
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
@@ -28,7 +28,9 @@ func TestQuest29EchoesCurrentStoryDeck(t *testing.T) {
 			}
 		}
 	}
-	decks, err := deck.NewStore(deck.Seed{Version: "2.34.13"})
+	decks, err := deck.NewStore(deck.Seed{Version: "2.34.13", FieldDeck: []deck.FieldEntry{
+		{Slot: 1, CharacterInvenIndex: 535607162},
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,12 +297,13 @@ func TestQuest28GrantsEquipmentInRewardBundle(t *testing.T) {
 			}
 		}
 	}
-	equipment, err := player.OpenEquipmentInventory(filepath.Join(t.TempDir(), "equipment.json"))
+	storage := stateio.NewMemory()
+	equipment, err := player.OpenEquipmentInventory(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	starter := &player.Starter{Version: "2.34.13"}
-	inventory, err := player.OpenInventory(filepath.Join(t.TempDir(), "items.json"), starter)
+	inventory, err := player.OpenInventory(storage, starter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +338,7 @@ func TestQuest28GrantsEquipmentInRewardBundle(t *testing.T) {
 }
 
 func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
-	dir := t.TempDir()
+	storage := stateio.NewMemory()
 	state := progress.NewStore()
 	quests := make(map[int]gamedata.QuestDesign)
 	for id := 1; id <= 27; id++ {
@@ -349,7 +352,7 @@ func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
 	design := quests[27]
 	design.Rewards[0] = []gamedata.Reward{{Type: 3, Count: 70}}
 	quests[27] = design
-	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	wallet, err := player.OpenWallet(storage, player.Currency{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,13 +378,13 @@ func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
 }
 
 func TestPackInfoUsesPersistedCharacterLevel(t *testing.T) {
-	dir := t.TempDir()
+	storage := stateio.NewMemory()
 	starter := &player.Starter{Version: "2.34.13"}
-	inventory, err := player.OpenInventory(filepath.Join(dir, "items.json"), starter)
+	inventory, err := player.OpenInventory(storage, starter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := player.OpenCharacterStore(filepath.Join(dir, "characters.json"),
+	characters, err := player.OpenCharacterStore(storage,
 		[]player.Character{{InvenIndex: 77, ID: 350, Level: 20}}, inventory, "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -391,7 +394,10 @@ func TestPackInfoUsesPersistedCharacterLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{seed: Seed{PackID: 21, BattleUnlockQuestID: 26, RewardCharacter: player.Character{InvenIndex: 77, ID: 350, Level: 1}}, state: state, starter: starter, characters: characters}
-	response := s.packInfo()
+	response, err := s.packInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var level uint64
 	if err := wire.Walk(response, func(field wire.Field) error {
 		if field.Number != 1 {

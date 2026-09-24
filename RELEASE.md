@@ -17,8 +17,7 @@
    & ..\bd2server.exe serve `
      --game-dir "<客户端目录>" `
      --cdn "<ServerData目录>" `
-     --game-data "<GameData目录>" `
-     --game-data-version "<GameData版本>"
+     --game-data "<GameData目录>"
    Pop-Location
    ```
 
@@ -32,4 +31,4 @@
 
 5. 最后启动游戏客户端。请勿在服务器启动前运行客户端。
 
-`bd2-state.exe` 是服务端启动期使用的 Haskell 状态工具，必须与 `bd2server.exe` 保持在同一目录。
+`versions.json` 是服务端和插件的统一版本选择，必须与 `bd2server.exe` 保持在同一目录；服务端从该位置解析包内 `go/seed`，不依赖当前工作目录。需要临时测试另一组版本时可传 `serve --version-config <文件>`。玩家存档位于 `data\state\state.db`；服务端以 Go 迁移器按相邻版本升级，并在同一个 SQLite 事务内完成迁移和最终校验，失败时不会留下部分升级。

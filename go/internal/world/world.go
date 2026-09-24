@@ -17,6 +17,8 @@ import (
 	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
 	"bd2server/internal/progress"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 	"bd2server/internal/wire"
 )
 
@@ -34,7 +36,7 @@ type Seed struct {
 
 // Load reads the small, versioned world seed.  Quest IDs are then verified
 // against the authoritative shared QuestTable<pack> GameData database.
-func Load(seedPath, gameDataRoot, gameDataVersion, characterStatePath string, state *progress.Store, starter *player.Starter, equipment *player.EquipmentInventory, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
+func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store, state *progress.Store, starter *player.Starter, equipment *player.EquipmentInventory, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
 	if state == nil || starter == nil || equipment == nil || inventory == nil || wallet == nil {
 		return nil, errors.New("world: nil player state")
 	}
@@ -46,13 +48,13 @@ func Load(seedPath, gameDataRoot, gameDataVersion, characterStatePath string, st
 	if err := json.Unmarshal(b, &seed); err != nil {
 		return nil, fmt.Errorf("world: decode seed: %w", err)
 	}
-	if seed.Version != "2.34.13" || seed.PackID <= 0 || seed.StartQuestID <= 0 || seed.BattleUnlockQuestID <= 0 || seed.RewardCharacter.ID == 0 || seed.RewardCostume.ID == 0 || len(seed.StoryCharacters) == 0 {
+	if seed.Version != versionconfig.Protocol() || seed.PackID <= 0 || seed.StartQuestID <= 0 || seed.BattleUnlockQuestID <= 0 || seed.RewardCharacter.ID == 0 || seed.RewardCostume.ID == 0 || len(seed.StoryCharacters) == 0 {
 		return nil, errors.New("world: invalid seed")
 	}
 	ownedCharacters := append([]player.Character(nil), starter.Characters...)
 	ownedCharacters = append(ownedCharacters, seed.RewardCharacter)
 	ownedCharacters = append(ownedCharacters, seed.StoryCharacters...)
-	characters, err := player.OpenCharacterStore(characterStatePath, ownedCharacters, inventory, gameDataRoot, gameDataVersion)
+	characters, err := player.OpenCharacterStore(storage, ownedCharacters, inventory, gameDataRoot, gameDataVersion)
 	if err != nil {
 		return nil, fmt.Errorf("world: open character state: %w", err)
 	}
@@ -72,9 +74,6 @@ func Load(seedPath, gameDataRoot, gameDataVersion, characterStatePath string, st
 		}
 	}
 	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack}
-	if err := service.MigrateClearedRewards(); err != nil {
-		return nil, fmt.Errorf("world: migrate cleared quest rewards: %w", err)
-	}
 	return service, nil
 }
 
@@ -188,7 +187,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		s.setCurrentPack(pack)
 		slog.Info("team trace: deliver pack progress", "pack", pack, "clearedQuests", s.state.ClearedQuests(pack), "storyCharacters", s.storyCharacters(pack))
-		return 5, s.packInfoFor(pack), true, nil
+		response, err := s.packInfoFor(pack)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		return 5, response, true, nil
 	case "/QuestClear":
 		quest, pack, err := requestQuest(request)
 		if err != nil {
@@ -319,33 +322,6 @@ func (s *Service) canClear(packID, quest int) bool {
 	return true
 }
 
-// MigrateClearedRewards repairs legacy saves created while QuestClear only
-// rendered rewards in its response. Every backing store is idempotent, so it
-// is safe to run at each startup and after a partially completed write.
-func (s *Service) MigrateClearedRewards() error {
-	packIDs := []int{s.seed.PackID}
-	if s.packs != nil {
-		packIDs = packIDs[:0]
-		for packID := range s.packs {
-			packIDs = append(packIDs, packID)
-		}
-		sort.Ints(packIDs)
-	}
-	for _, packID := range packIDs {
-		quests, _ := s.questsFor(packID)
-		for _, quest := range s.state.ClearedQuests(packID) {
-			design, ok := quests[quest]
-			if !ok {
-				return fmt.Errorf("cleared quest %d is absent from QuestTable%d", quest, packID)
-			}
-			if _, _, err := s.grantQuestRewards(packID, quest, design.Rewards[0]); err != nil {
-				return fmt.Errorf("pack %d quest %d: %w", packID, quest, err)
-			}
-		}
-	}
-	return nil
-}
-
 func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.Reward) ([]player.Item, *player.Equipment, error) {
 	identity := fmt.Sprintf("pack%d:quest%d", packID, quest)
 	if s.wallet != nil {
@@ -415,23 +391,23 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 
 // packInfo is the canonical protobuf encoding of the semantic new-account
 // starter-pack state. Its first-call bytes match the 2.34.13 observed response.
-func (s *Service) packInfo() []byte {
+func (s *Service) packInfo() ([]byte, error) {
 	return s.packInfoFor(s.seed.PackID)
 }
 
-func (s *Service) packInfoFor(packID int) []byte {
+func (s *Service) packInfoFor(packID int) ([]byte, error) {
 	var out []byte
 	if packID == s.seed.PackID && s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
-		for _, fallback := range s.seed.StoryCharacters {
-			character, found := s.characters.Find(fallback.InvenIndex)
+		for _, expected := range s.seed.StoryCharacters {
+			character, found := s.characters.Find(expected.InvenIndex)
 			if !found {
-				character = fallback
+				return nil, fmt.Errorf("world: persisted character %d is missing", expected.InvenIndex)
 			}
 			out = wire.AppendBytes(out, 1, encodeCharacter(character))
 		}
 		character, found := s.characters.Find(s.seed.RewardCharacter.InvenIndex)
 		if !found {
-			character = s.seed.RewardCharacter
+			return nil, fmt.Errorf("world: persisted reward character %d is missing", s.seed.RewardCharacter.InvenIndex)
 		}
 		out = wire.AppendBytes(out, 1, encodeCharacter(character))
 	}
@@ -459,7 +435,7 @@ func (s *Service) packInfoFor(packID int) []byte {
 	// not inherit them.
 	if packID != s.seed.PackID {
 		visit := wire.AppendVarint(nil, 5, uint64(packID))
-		return wire.AppendBytes(out, 12, visit)
+		return wire.AppendBytes(out, 12, visit), nil
 	}
 	open := wire.AppendVarint(nil, 1, 1)
 	open = wire.AppendVarint(open, 2, 1)
@@ -474,7 +450,7 @@ func (s *Service) packInfoFor(packID int) []byte {
 	reward = wire.AppendVarint(reward, 4, 150)
 	group := wire.AppendBytes(nil, 1, reward)
 	group = wire.AppendBytes(group, 6, reward)
-	return wire.AppendBytes(out, 16, group)
+	return wire.AppendBytes(out, 16, group), nil
 }
 
 func (s *Service) firstUnclearedQuest() int {

@@ -118,6 +118,7 @@ func (h HTTP) stateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	if r.Method != http.MethodPut {
 		http.Error(w, "PUT required", http.StatusMethodNotAllowed)
 		return
@@ -146,7 +147,7 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 		}
 		reply, err := h.Raw.DispatchRaw(path, body, r.Header.Get("Cookie"))
 		if err != nil {
-			h.logger().Warn("session packet rejected", "path", path, "error", err)
+			h.logger().Warn("session packet rejected", "path", path, "duration_ms", elapsedMilliseconds(started), "error", err)
 			http.Error(w, "session packet rejected", http.StatusBadRequest)
 			return
 		}
@@ -157,7 +158,7 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 			reply.ContentType = "application/json; charset=utf-8"
 		}
 		w.Header().Set("Content-Type", reply.ContentType)
-		h.logger().Info("session packet handled", "path", path, "responseBytes", len(reply.Body))
+		h.logger().Info("session packet handled", "path", path, "duration_ms", elapsedMilliseconds(started), "responseBytes", len(reply.Body))
 		_, _ = w.Write(reply.Body)
 		return
 	}
@@ -188,6 +189,10 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(answer); err != nil {
 		h.logger().Error("write response", "error", fmt.Errorf("%s: %w", path, err))
 	}
+}
+
+func elapsedMilliseconds(started time.Time) float64 {
+	return float64(time.Since(started).Microseconds()) / 1000
 }
 
 func (h HTTP) now() time.Time {

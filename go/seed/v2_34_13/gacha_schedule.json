@@ -1,0 +1,20 @@
+{
+  "client_version": "2.35.10",
+  "schedules": [
+    { "group_id": 166, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 30010, "start_time": 1788998400000, "end_time": 1791417599000 },
+    { "group_id": 30011, "start_time": 1788998400000, "end_time": 1791417599000 },
+    { "group_id": 206, "start_time": 1788998400000, "end_time": 1791417599000 },
+    { "group_id": 205, "start_time": 1788998400000, "end_time": 1791417599000 },
+    { "group_id": 208, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 153, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 72, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 71, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 207, "start_time": 1790121600000, "end_time": 1791417599000 },
+    { "group_id": 1009, "start_time": 1789776000000, "end_time": 1790985600000 }
+  ],
+  "step_ups": [
+    { "group_id": 29, "start_time": 1788998400000, "end_time": 1791417599000 },
+    { "group_id": 30, "start_time": 1790121600000, "end_time": 1791417599000 }
+  ]
+}

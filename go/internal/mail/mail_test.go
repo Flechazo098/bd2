@@ -5,9 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"bd2server/internal/fixture"
+	"bd2server/internal/gamedata"
 	"bd2server/internal/player"
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
@@ -28,22 +31,62 @@ func TestStarterAnswersMailInfoWithoutCapture(t *testing.T) {
 	}
 }
 
+func TestDynamicCompensationMailPersistsAndIsIdempotent(t *testing.T) {
+	seed := &Starter{Version: "2.34.13", MailCount: 1, MaxMailID: 100}
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	rewards := []gamedata.Reward{{Type: 4, Count: 123}}
+	if err := service.EnqueueCompensation("daily:2026-09-23:1", "日常任务到期补发", "任务已完成但未领取。", rewards, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnqueueCompensation("daily:2026-09-23:1", "日常任务到期补发", "任务已完成但未领取。", rewards, now); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reopened.dynamic) != 1 || reopened.issued["daily:2026-09-23:1"] != 101 {
+		t.Fatalf("dynamic=%+v issued=%+v", reopened.dynamic, reopened.issued)
+	}
+	request := wire.AppendVarint(nil, 1, 1)
+	request = wire.AppendVarint(request, 2, 101)
+	if _, _, _, err := reopened.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Snapshot().Gold != 123 {
+		t.Fatalf("gold=%d", wallet.Snapshot().Gold)
+	}
+}
+
 func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
-	dir := t.TempDir()
 	seed := &Starter{Version: "2.34.13", MailCount: 3, MaxMailID: 12, Mails: []MailDBInfo{
 		{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{3, 4}, RewardIDs: []uint64{0, 0}, RewardCounts: []uint64{70, 123456789}},
 		{MailID: 12, MailType: 2, ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{8}, RewardIDs: []uint64{9}, RewardCounts: []uint64{10}},
 	}}
 	starter := &player.Starter{Version: "2.34.13"}
-	inv, err := player.OpenInventory(filepath.Join(dir, "items.json"), starter)
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, starter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{Gold: 321})
+	wallet, err := player.OpenWallet(storage, player.Currency{Gold: 321})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := OpenService(filepath.Join(dir, "mail.json"), seed, inv, wallet)
+	service, err := OpenService(storage, seed, inv, wallet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +121,7 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	if !found || count != 1 {
 		t.Fatalf("mail count=%d found=%v", count, found)
 	}
-	service, err = OpenService(filepath.Join(dir, "mail.json"), seed, inv, wallet)
+	service, err = OpenService(storage, seed, inv, wallet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,21 +132,21 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 }
 
 func TestMailOpenGrantsNonResourceItemDBInfoType(t *testing.T) {
-	dir := t.TempDir()
 	seed := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 13, Mails: []MailDBInfo{{
 		MailID: 13, MailType: 2, ExpiresAt: 100, SentAt: 10,
 		RewardTypes: []uint64{14}, RewardIDs: []uint64{1}, RewardCounts: []uint64{2},
 	}}}
 	starter := &player.Starter{Version: "2.34.13"}
-	inv, err := player.OpenInventory(filepath.Join(dir, "items.json"), starter)
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, starter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	wallet, err := player.OpenWallet(storage, player.Currency{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := OpenService(filepath.Join(dir, "mail.json"), seed, inv, wallet)
+	service, err := OpenService(storage, seed, inv, wallet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,15 +172,16 @@ func TestWatchedSeedReloadsOnlyValidAtomicReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inv, err := player.OpenInventory(filepath.Join(dir, "items.json"), &player.Starter{Version: "2.34.13"})
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.34.13"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := player.OpenWallet(filepath.Join(dir, "wallet.json"), player.Currency{})
+	wallet, err := player.OpenWallet(storage, player.Currency{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := OpenService(filepath.Join(dir, "mail.json"), starter, inv, wallet)
+	service, err := OpenService(storage, starter, inv, wallet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +212,54 @@ func TestWatchedSeedReloadsOnlyValidAtomicReplacement(t *testing.T) {
 	// The malformed file did not replace the last known-good mailbox.
 	if service.Starter.Mails[0].MailID != 12 {
 		t.Fatalf("last known-good seed lost: %+v", service.Starter.Mails)
+	}
+}
+
+func TestExpandedWatchedSeedAdvancesDynamicMailAllocator(t *testing.T) {
+	dir := t.TempDir()
+	seedPath := filepath.Join(dir, "seed.json")
+	first := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 11, Mails: []MailDBInfo{{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10}}}
+	if err := first.Write(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, first, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.EnsurePersisted(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AttachSeedPath(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	second := &Starter{Version: "2.34.13", MailCount: 3, MaxMailID: 101, Mails: []MailDBInfo{
+		{MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10},
+		{MailID: 101, MailType: 2, ExpiresAt: 100, SentAt: 10},
+	}}
+	if err := second.Write(seedPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", wire.AppendVarint(nil, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if service.state.NextDynamicMailID != 102 {
+		t.Fatalf("next dynamic mail ID=%d", service.state.NextDynamicMailID)
+	}
+	reopened, err := OpenService(storage, second, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.state.NextDynamicMailID != 102 {
+		t.Fatalf("reopened next dynamic mail ID=%d", reopened.state.NextDynamicMailID)
 	}
 }
 

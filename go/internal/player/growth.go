@@ -2,29 +2,30 @@ package player
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
 	"bd2server/internal/wire"
 )
 
 type characterSnapshot struct {
-	Version    string      `json:"version"`
-	Characters []Character `json:"characters"`
+	Version        string   `json:"version"`
+	CharacterOrder []uint64 `json:"character_order"`
 }
 
 // CharacterStore owns mutable character growth separately from immutable
 // character design data. The seed supplies the initially owned instances.
 type CharacterStore struct {
 	mu              sync.Mutex
-	path            string
+	store           stateio.AtomicEntryStore
 	characters      []Character
+	persisted       map[uint64]bool
+	persistedOrder  []uint64
+	persistedCore   bool
 	inventory       *Inventory
 	gameDataRoot    string
 	gameDataVersion string
@@ -67,47 +68,50 @@ func (s *CharacterStore) AttachCollection(collection *CollectionStore) error {
 	return nil
 }
 
-func OpenCharacterStore(path string, seed []Character, inventory *Inventory, gameDataRoot, gameDataVersion string) (*CharacterStore, error) {
-	if path == "" || inventory == nil {
+func OpenCharacterStore(store stateio.Store, seed []Character, inventory *Inventory, gameDataRoot, gameDataVersion string) (*CharacterStore, error) {
+	if store == nil || inventory == nil {
 		return nil, errors.New("player: invalid character store configuration")
 	}
-	s := &CharacterStore{path: filepath.Clean(path), inventory: inventory, characters: append([]Character(nil), seed...), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion}
+	entries, ok := store.(stateio.AtomicEntryStore)
+	if !ok {
+		return nil, errors.New("player: character store requires atomic entries")
+	}
+	s := &CharacterStore{store: entries, inventory: inventory, characters: append([]Character(nil), seed...), persisted: make(map[uint64]bool), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion}
 	s.grow = func(character Character, materials []gamedata.GrowthMaterial) (uint64, uint64, []gamedata.GrowthMaterial, error) {
 		return gamedata.CharacterGrowth(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, materials)
 	}
 	s.promoteGrowth = func(character Character, submitted []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error) {
 		return gamedata.CharacterGrowthPromotions(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, submitted)
 	}
-	data, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, validateCharacters(s.characters)
-	}
+	data, err := entries.Load("characters")
 	if err != nil {
 		return nil, err
 	}
-	var saved characterSnapshot
-	if err := json.Unmarshal(data, &saved); err != nil {
-		return nil, fmt.Errorf("player: decode characters: %w", err)
-	}
-	if saved.Version != "2.34.13" {
-		return nil, errors.New("player: invalid character save version")
-	}
-	if len(saved.Characters) == 0 {
-		s.characters = append([]Character(nil), seed...)
+	if data == nil {
+		orphaned, err := entries.ListEntries("characters", "characters")
+		if err != nil {
+			return nil, fmt.Errorf("player: list character entries: %w", err)
+		}
+		if len(orphaned) != 0 {
+			return nil, errors.New("player: character entries exist without core")
+		}
 		return s, validateCharacters(s.characters)
 	}
-	if err := validateCharacters(saved.Characters); err != nil {
+	saved, loaded, err := loadCharacterEntries(entries, data)
+	if err != nil {
 		return nil, err
 	}
-	s.characters = append([]Character(nil), saved.Characters...)
+	s.characters = loaded
+	s.persistedOrder = append([]uint64{}, saved.CharacterOrder...)
+	s.persistedCore = true
 	seen := make(map[uint64]bool, len(s.characters))
 	for _, character := range s.characters {
 		seen[character.InvenIndex] = true
+		s.persisted[character.InvenIndex] = true
 	}
 	for _, character := range seed {
 		if !seen[character.InvenIndex] {
-			s.characters = append(s.characters, character)
-			seen[character.InvenIndex] = true
+			return nil, fmt.Errorf("player: current character state omits seeded inventory index %d", character.InvenIndex)
 		}
 	}
 	if err := validateCharacters(s.characters); err != nil {
@@ -119,11 +123,6 @@ func OpenCharacterStore(path string, seed []Character, inventory *Inventory, gam
 func (s *CharacterStore) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	return s.persist(append([]Character(nil), s.characters...))
 }
 
@@ -192,32 +191,6 @@ func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
 		return character, found
 	}
 	return Character{}, false
-}
-
-func (s *CharacterStore) persist(next []Character) error {
-	data, err := json.Marshal(characterSnapshot{Version: "2.34.13", Characters: next})
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".characters-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	return err
 }
 
 func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool, error) {

@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"sync"
 
 	"bd2server/internal/gamedata"
+	"bd2server/internal/stateio"
+	"bd2server/internal/versionconfig"
 )
 
 // Currency uses the UserDBInfo currency fields: type 3 is free jewelry and
@@ -19,8 +19,8 @@ type Currency struct {
 	Gold                     uint64 `json:"gold"`
 	FreeJewelry              uint64 `json:"free_jewelry"`
 	Jewelry                  uint64 `json:"jewelry"`
-	Mileage                  uint64 `json:"mileage,omitempty"`
-	HopePowder               uint64 `json:"hope_powder,omitempty"`
+	Mileage                  uint64 `json:"mileage"`
+	HopePowder               uint64 `json:"hope_powder"`
 	EquipMileage             uint64 `json:"equip_mileage"`
 	EquipMileageExchangeGage uint64 `json:"equip_mileage_exchange_gage"`
 }
@@ -28,45 +28,55 @@ type Currency struct {
 type walletSnapshot struct {
 	Version string `json:"version"`
 	Currency
-	Granted map[string]bool `json:"granted"`
-	Spent   map[string]bool `json:"spent,omitempty"`
+	Granted map[string]bool `json:"-"`
+	Spent   map[string]bool `json:"-"`
 }
 
 type Wallet struct {
 	mu    sync.Mutex
-	path  string
+	store stateio.AtomicEntryStore
 	state walletSnapshot
 }
 
-func OpenWallet(path string, initial Currency) (*Wallet, error) {
-	if path == "" {
-		return nil, errors.New("player: wallet path is empty")
+func OpenWallet(store stateio.Store, initial Currency) (*Wallet, error) {
+	entries, ok := store.(stateio.AtomicEntryStore)
+	if !ok {
+		return nil, errors.New("player: wallet store is nil")
 	}
-	s := &Wallet{path: filepath.Clean(path), state: walletSnapshot{
-		Version: "2.34.13", Currency: initial, Granted: map[string]bool{}, Spent: map[string]bool{},
+	s := &Wallet{store: entries, state: walletSnapshot{
+		Version: versionconfig.Protocol(), Currency: initial, Granted: map[string]bool{}, Spent: map[string]bool{},
 	}}
-	b, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
+	b, err := store.Load("wallet")
 	if err != nil {
-		return nil, fmt.Errorf("player: read wallet: %w", err)
+		return nil, fmt.Errorf("player: load wallet: %w", err)
 	}
-	var shape map[string]json.RawMessage
-	if err := json.Unmarshal(b, &shape); err != nil {
-		return nil, errors.New("player: malformed wallet state")
+	if b != nil {
+		if err := stateio.RequireExactJSONObject(b, "version", "gold", "free_jewelry", "jewelry", "mileage", "hope_powder", "equip_mileage", "equip_mileage_exchange_gage"); err != nil {
+			return nil, fmt.Errorf("player: incompatible wallet layout: %w", err)
+		}
+		var shape map[string]json.RawMessage
+		if err := json.Unmarshal(b, &shape); err != nil {
+			return nil, errors.New("player: malformed wallet state")
+		}
+		if _, ok := shape["granted"]; ok {
+			return nil, errors.New("player: wallet grant ledger must use entries")
+		}
+		if _, ok := shape["spent"]; ok {
+			return nil, errors.New("player: wallet spend ledger must use entries")
+		}
+		if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != versionconfig.Protocol() {
+			return nil, errors.New("player: malformed wallet state")
+		}
+	} else if err := stateio.RequireNoEntries(entries, "wallet", "granted", "spent"); err != nil {
+		return nil, fmt.Errorf("player: invalid wallet storage: %w", err)
 	}
-	if _, ok := shape["equip_mileage"]; !ok {
-		return nil, errors.New("player: wallet save requires equip_mileage; migrate the development save")
+	s.state.Granted, err = loadBoolEntries(entries, "wallet", "granted")
+	if err != nil {
+		return nil, err
 	}
-	if _, ok := shape["equip_mileage_exchange_gage"]; !ok {
-		return nil, errors.New("player: wallet save requires equip_mileage_exchange_gage; migrate the development save")
-	}
-	if err := json.Unmarshal(b, &s.state); err != nil || s.state.Version != "2.34.13" || s.state.Granted == nil {
-		return nil, errors.New("player: malformed wallet state")
-	}
-	if s.state.Spent == nil {
-		s.state.Spent = map[string]bool{}
+	s.state.Spent, err = loadBoolEntries(entries, "wallet", "spent")
+	if err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -74,10 +84,12 @@ func OpenWallet(path string, initial Currency) (*Wallet, error) {
 func (s *Wallet) EnsurePersisted() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Stat(s.path); err == nil {
-		return nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+	b, err := s.store.Load("wallet")
+	if err != nil {
 		return err
+	}
+	if b != nil {
+		return nil
 	}
 	return s.commit(cloneWallet(s.state))
 }
@@ -124,7 +136,7 @@ func (s *Wallet) SpendGoldOnce(identity string, amount uint64) (Currency, error)
 	next := cloneWallet(s.state)
 	next.Gold -= amount
 	next.Spent[identity] = true
-	if err := s.commit(next); err != nil {
+	if err := s.commit(next, entry("spent", identity, []byte("true"))...); err != nil {
 		return Currency{}, err
 	}
 	return next.Currency, nil
@@ -166,7 +178,7 @@ func (s *Wallet) spendJewelryOnce(identity string, amount uint64, paid bool) (Cu
 		next.FreeJewelry -= amount
 	}
 	next.Spent[identity] = true
-	if err := s.commit(next); err != nil {
+	if err := s.commit(next, entry("spent", identity, []byte("true"))...); err != nil {
 		return Currency{}, err
 	}
 	return next.Currency, nil
@@ -229,7 +241,7 @@ func (s *Wallet) GrantMileageOnce(identity string, amount uint64) (Currency, err
 	}
 	next.Mileage += amount
 	next.Granted[identity] = true
-	if err := s.commit(next); err != nil {
+	if err := s.commit(next, entry("granted", identity, []byte("true"))...); err != nil {
 		return Currency{}, err
 	}
 	return next.Currency, nil
@@ -250,7 +262,7 @@ func (s *Wallet) GrantHopePowderOnce(identity string, amount uint64) (Currency, 
 	}
 	next.HopePowder += amount
 	next.Granted[identity] = true
-	if err := s.commit(next); err != nil {
+	if err := s.commit(next, entry("granted", identity, []byte("true"))...); err != nil {
 		return Currency{}, err
 	}
 	return next.Currency, nil
@@ -284,7 +296,7 @@ func (s *Wallet) GrantQuestOnce(identity string, rewards []gamedata.Reward) (Cur
 		}
 	}
 	next.Granted[identity] = true
-	if err := s.commit(next); err != nil {
+	if err := s.commit(next, entry("granted", identity, []byte("true"))...); err != nil {
 		return Currency{}, err
 	}
 	return next.Currency, nil
@@ -301,30 +313,12 @@ func cloneWallet(in walletSnapshot) walletSnapshot {
 	return out
 }
 
-func (s *Wallet) commit(next walletSnapshot) error {
+func (s *Wallet) commit(next walletSnapshot, changes ...stateio.EntryMutation) error {
 	b, err := json.Marshal(next)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".wallet-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(f.Name(), s.path)
-	}
-	if err != nil {
+	if err := s.store.SaveWithEntries("wallet", b, changes); err != nil {
 		return fmt.Errorf("player: persist wallet: %w", err)
 	}
 	s.state = next
