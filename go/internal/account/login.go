@@ -35,6 +35,7 @@ type LoginSeed struct {
 	currencies     CurrencyProvider
 	purchaseCounts PurchaseCountProvider
 	presetSlots    PresetSlotProvider
+	inventorySlots InventorySlotProvider
 	firstGacha     *bool
 }
 
@@ -47,6 +48,10 @@ type CurrencyProvider interface {
 
 type HopePowderProvider interface {
 	HopePowderBalance() uint64
+}
+
+type CatalystProvider interface {
+	CatalystBalance() uint64
 }
 
 type EquipmentMileageProvider interface {
@@ -65,6 +70,13 @@ type PurchaseCountProvider interface {
 // slot state and the preset records stored in those slots.
 type PresetSlotProvider interface {
 	PresetSlotCount() uint64
+}
+
+// InventorySlotProvider owns the four mutable UserDBInfo capacity fields.
+// Development overrides are applied by the provider as a login-time view;
+// the immutable account seed is never rewritten.
+type InventorySlotProvider interface {
+	UserInventorySlots() (items, storage, equipment, equipmentStorage uint64, err error)
 }
 
 func (s *LoginSeed) AttachCurrencies(provider CurrencyProvider) error {
@@ -89,6 +101,29 @@ func (s *LoginSeed) AttachPresetSlots(provider PresetSlotProvider) error {
 	}
 	s.presetSlots = provider
 	return nil
+}
+
+func (s *LoginSeed) AttachInventorySlots(provider InventorySlotProvider) error {
+	if provider == nil {
+		return errors.New("account: nil inventory slot provider")
+	}
+	s.inventorySlots = provider
+	return nil
+}
+
+func (s *LoginSeed) SeedInventorySlots() (items, storage, equipment, equipmentStorage uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	values := []*uint64{&items, &storage, &equipment, &equipmentStorage}
+	for i, field := range []int{5, 6, 10, 15} {
+		value, _, readErr := wire.Varint(s.UserInfo, field)
+		if readErr != nil {
+			return 0, 0, 0, 0, readErr
+		}
+		*values[i] = value
+	}
+	return items, storage, equipment, equipmentStorage, nil
 }
 
 // SeedCurrencies returns the immutable starting balances embedded in the
@@ -131,6 +166,14 @@ func (s *LoginSeed) SeedHopePowder() (uint64, error) {
 		return value, err
 	}
 	return value, nil
+}
+
+func (s *LoginSeed) SeedCatalyst() (uint64, error) {
+	if err := s.Validate(); err != nil {
+		return 0, err
+	}
+	value, _, err := wire.Varint(s.UserInfo, 11)
+	return value, err
 }
 
 func (s *LoginSeed) SeedEquipmentMileage() (mileage, exchangeGage uint64, err error) {
@@ -284,6 +327,11 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		if user, _, err = wire.ReplaceVarint(user, 23, mileage); err != nil {
 			return nil, fmt.Errorf("account: replace mileage: %w", err)
 		}
+		if provider, ok := s.currencies.(CatalystProvider); ok {
+			if user, _, err = wire.ReplaceVarint(user, 11, provider.CatalystBalance()); err != nil {
+				return nil, fmt.Errorf("account: replace catalyst: %w", err)
+			}
+		}
 		if provider, ok := s.currencies.(HopePowderProvider); ok {
 			if user, _, err = wire.ReplaceVarint(user, 24, provider.HopePowderBalance()); err != nil {
 				return nil, fmt.Errorf("account: replace hope powder: %w", err)
@@ -319,6 +367,17 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		var err error
 		if user, _, err = wire.ReplaceVarint(user, 28, s.presetSlots.PresetSlotCount()); err != nil {
 			return nil, fmt.Errorf("account: replace preset slots: %w", err)
+		}
+	}
+	if s.inventorySlots != nil {
+		items, storage, equipment, equipmentStorage, err := s.inventorySlots.UserInventorySlots()
+		if err != nil {
+			return nil, fmt.Errorf("account: inventory slots: %w", err)
+		}
+		for field, value := range map[int]uint64{5: items, 6: storage, 10: equipment, 15: equipmentStorage} {
+			if user, _, err = wire.ReplaceVarint(user, field, value); err != nil {
+				return nil, fmt.Errorf("account: replace inventory slot field %d: %w", field, err)
+			}
 		}
 	}
 	user = wire.AppendBytes(user, 3, sessionKey)

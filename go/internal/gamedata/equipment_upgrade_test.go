@@ -21,6 +21,9 @@ func TestEquipmentUpgradeDesignReadsCostsAndRatio(t *testing.T) {
 	}
 	equipment := testVarintField(testVarintField(testVarintField(nil, 4, 954), 13, 9), 19, 904)
 	growth := testVarintField(testVarintField(nil, 4, 954), 5, 670)
+	growth = testPackedField(growth, 1, 2)
+	growth = testPackedField(growth, 2, 201)
+	growth = testPackedField(growth, 3, 8)
 	growth = testPackedField(growth, 7, 960)
 	growth = testPackedField(growth, 8, 0)
 	growth = testPackedField(growth, 9, 4)
@@ -52,6 +55,9 @@ func TestEquipmentUpgradeDesignReadsCostsAndRatio(t *testing.T) {
 	}
 	if rank, err := design.RollRank(943035, 1); err != nil || rank != 1 {
 		t.Fatalf("rank=%d err=%v", rank, err)
+	}
+	if rewards, err := design.BreakRewards(943035, 0); err != nil || len(rewards) != 1 || rewards[0] != (BattleReward{Type: 8, ID: 201, Count: 2}) {
+		t.Fatalf("break rewards=%+v err=%v", rewards, err)
 	}
 }
 

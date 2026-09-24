@@ -34,6 +34,14 @@ type CharacterStore struct {
 	wallet          *Wallet
 	maxHealth       func(Character) (uint64, error)
 	promoteGrowth   func(Character, []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error)
+	talentGrowth    *gamedata.TalentGrowthDesign
+	sessionID       string
+	talentReplies   map[string]talentUpgradeReply
+}
+
+type talentUpgradeReply struct {
+	code int
+	body []byte
 }
 
 func (s *CharacterStore) AttachWallet(wallet *Wallet) error {
@@ -44,6 +52,26 @@ func (s *CharacterStore) AttachWallet(wallet *Wallet) error {
 	defer s.mu.Unlock()
 	s.wallet = wallet
 	return nil
+}
+
+func (s *CharacterStore) AttachTalentGrowth(design *gamedata.TalentGrowthDesign) error {
+	if design == nil {
+		return errors.New("player: nil talent growth design")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.talentGrowth = design
+	return nil
+}
+
+// BeginSession scopes protobuf sequence replay. Network retries reuse the
+// exact TalentSkillUpgrade request and must receive success without a second
+// level increase or charge.
+func (s *CharacterStore) BeginSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionID = id
+	s.talentReplies = make(map[string]talentUpgradeReply)
 }
 
 // AttachMaxHealth makes growth and post-battle revival consume the same
@@ -76,7 +104,7 @@ func OpenCharacterStore(store stateio.Store, seed []Character, inventory *Invent
 	if !ok {
 		return nil, errors.New("player: character store requires atomic entries")
 	}
-	s := &CharacterStore{store: entries, inventory: inventory, characters: append([]Character(nil), seed...), persisted: make(map[uint64]bool), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion}
+	s := &CharacterStore{store: entries, inventory: inventory, characters: append([]Character(nil), seed...), persisted: make(map[uint64]bool), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion, talentReplies: make(map[string]talentUpgradeReply)}
 	s.grow = func(character Character, materials []gamedata.GrowthMaterial) (uint64, uint64, []gamedata.GrowthMaterial, error) {
 		return gamedata.CharacterGrowth(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, materials)
 	}
@@ -196,6 +224,9 @@ func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
 func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool, error) {
 	if path == "/CharImmortal" {
 		return s.charImmortal(request)
+	}
+	if path == "/TalentSkillUpgrade" {
+		return s.talentSkillUpgrade(request)
 	}
 	if path != "/CharGrowth" {
 		return 0, nil, false, nil

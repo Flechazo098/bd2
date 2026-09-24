@@ -418,6 +418,34 @@ func (c *RegularGachaCatalog) SpecialSelectionIDs(gachaID uint64) []uint64 {
 	return result
 }
 
+// FiveStarIDs returns the selectable five-star costumes in one ordinary
+// gacha's authoritative reward pool. Unlike SpecialSelectionIDs it also
+// supports a normal rarity tree, which is used by the newbie guaranteed draw.
+func (c *RegularGachaCatalog) FiveStarIDs(gachaID uint64) []uint64 {
+	gacha, ok := c.Gacha(gachaID)
+	if !ok {
+		return nil
+	}
+	seen := map[uint64]bool{}
+	var result []uint64
+	var visit func([]WeightedCostume)
+	visit = func(pool []WeightedCostume) {
+		for _, entry := range pool {
+			if entry.ID == 0 {
+				visit(entry.Children)
+				continue
+			}
+			if c.grades[entry.ID] == 5 && !seen[entry.ID] {
+				seen[entry.ID] = true
+				result = append(result, entry.ID)
+			}
+		}
+	}
+	visit(gacha.Pool)
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result
+}
+
 func (c *RegularGachaCatalog) SpecialSelectionCount(gachaID uint64) uint64 {
 	gacha, ok := c.Gacha(gachaID)
 	if !ok || gacha.RewardGroup == nil || gacha.RewardGroup.DropType != 1 || len(gacha.RewardGroup.Entries) == 0 || gacha.RewardGroup.Entries[0].Group == nil {
@@ -861,11 +889,50 @@ func LoadActiveGacha(root, version string, costumeGroupIDs, equipmentGroupIDs, s
 }
 
 func LoadActiveGachaForSchedules(root, version string, scheduleGroupIDs, stepUpGroupIDs []uint64) (*RegularGachaCatalog, *EquipmentGachaCatalog, error) {
+	permanent, err := permanentGachaGroupIDs(root, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	scheduleGroupIDs = append(append([]uint64(nil), scheduleGroupIDs...), permanent...)
 	costume, equipment, err := ClassifyActiveGachaGroups(root, version, scheduleGroupIDs)
 	if err != nil {
 		return nil, nil, err
 	}
 	return LoadActiveGacha(root, version, costume, equipment, stepUpGroupIDs)
+}
+
+// permanentGachaGroupIDs returns static selection groups. ScheduleType=0
+// groups are deliberately absent from the dynamic schedule response; the
+// selection metadata is what distinguishes permanent 12PICK-style banners
+// from standalone content-ticket banners handled by other flows.
+func permanentGachaGroupIDs(root, version string) ([]uint64, error) {
+	db, closeDB, err := openStatDatabase(root, version)
+	if err != nil {
+		return nil, err
+	}
+	defer closeDB()
+	rows, err := db.Query("SELECT id,ProtoBuf FROM GachaGroupTable WHERE scheduleType=0 AND gachaType=1 ORDER BY id")
+	if err != nil {
+		return nil, fmt.Errorf("gamedata: list permanent gacha groups: %w", err)
+	}
+	defer rows.Close()
+	var result []uint64
+	for rows.Next() {
+		var id uint64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		subTypes, _ := packedInts(raw, 16)
+		selectCounts, _ := packedInts(raw, 29)
+		if len(subTypes) == 1 && subTypes[0] == 1 && len(selectCounts) == 1 && selectCounts[0] != 0 {
+			result = append(result, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ClassifyActiveGachaGroups reads static type metadata for groups already

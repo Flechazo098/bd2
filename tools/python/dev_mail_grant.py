@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Local-only browser tool for adding ItemDBInfo-compatible GameData items to mail.
+"""Local-only BD2 development browser tool.
 
-This program deliberately is not part of bd2server.  It reads the selected
-2.34.13 GameData archive and writes a complete replacement mail seed using an
-atomic rename.  Start bd2server once with --mail-seed pointing at the same
---output; subsequent grants are hot-loaded by the normal /MailInfo request.
-It never reads or changes data/state.
+It provides development mail grants and loopback-only runtime settings without
+reading or changing account state. Files are replaced atomically and consumed
+by an explicitly configured local bd2server.
 
 Example:
   python tools/python/dev_mail_grant.py serve `
@@ -37,21 +35,26 @@ from gamedata_db import read_database, walk_wire  # noqa: E402
 VERSION = "2.34.13"
 MAX_INT32 = (1 << 31) - 1
 
-# These are the local server's ItemDBInfo-backed ElementTypes.  The mapping is
-# checked against 2.34.13 DataManager.GetItemInfo; characters, equipment,
-# costumes, and trophies use separate RewardDBInfoBundle fields and are not
-# falsely offered by this tool.
+# These are the local server's ItemDBInfo-backed ElementTypes.  Item names use
+# distinct GameData text namespaces, so the owning namespace is part of this
+# data-driven mapping instead of being guessed from numeric text IDs.
 ITEM_SOURCES = (
-    ("ResourceTable", 8, 4, 7, "资源"),
-    ("FoodTable", 5, 7, 10, "料理"),
-    ("CookingTable", 7, 3, 11, "烹饪配方"),
-    ("RandomBoxTable", 9, 4, 7, "随机箱"),
-    ("QuestItemTable", 13, 2, 5, "任务物品"),
-    ("UseItemTable", 14, 3, 6, "使用物品"),
-    ("CollectionTable", 17, 3, 7, "收藏品"),
-    ("MyRoomItemTable", 27, 7, 17, "我的房间物品"),
-    ("InstantUseItemTable", 29, 1, 3, "即时使用物品"),
+    ("ResourceTable", 8, 4, 7, "资源", "NameTextTable"),
+    ("FoodTable", 5, 7, 10, "料理", "NameTextTable"),
+    ("CookingTable", 7, 3, 11, "烹饪配方", "NameTextTable"),
+    ("RandomBoxTable", 9, 4, 7, "随机箱", "RandomBoxTextTable"),
+    ("QuestItemTable", 13, 2, 5, "任务物品", "NameTextTable"),
+    ("UseItemTable", 14, 3, 6, "使用物品", "NameTextTable"),
+    ("CollectionTable", 17, 3, 7, "收藏品", "NameTextTable"),
+    ("MyRoomItemTable", 27, 7, 17, "我的房间物品", "NameTextTable"),
+    ("InstantUseItemTable", 29, 1, 3, "即时使用物品", "NameTextTable"),
 )
+
+# CurrencyTable.id is the EElementType. Only currencies whose durable wallet
+# and mail-claim path are implemented by this server are offered. Their mail
+# reward ID is zero; names still come from the current GameData rather than
+# being embedded here.
+MAIL_CURRENCY_TYPES = frozenset({3, 4, 12})
 
 
 def _varint(value: Any) -> int:
@@ -144,6 +147,76 @@ def _localized_names(connection: sqlite3.Connection, table: str) -> dict[int, st
     return result
 
 
+def _static_items(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Load ItemDBInfo tables through their declared text namespaces."""
+    text_tables = {source[5] for source in ITEM_SOURCES}
+    localized_names = {
+        table: _localized_names(connection, table)
+        for table in text_tables
+    }
+    items: list[dict[str, Any]] = []
+    for table, element_type, id_field, name_field, category, text_table in ITEM_SOURCES:
+        text_names = localized_names[text_table]
+        for row_id, proto in connection.execute(f'SELECT id, ProtoBuf FROM "{table}" ORDER BY id'):
+            decoded = fields(proto)
+            item_id = first_varint(decoded, id_field) or int(row_id)
+            name_text_id = first_varint(decoded, name_field)
+            items.append({
+                "id": item_id,
+                "element_type": element_type,
+                "name": text_names.get(name_text_id, f"<未找到本地化文本 #{name_text_id}>"),
+                "category": category,
+                "source_table": table,
+                "name_text_id": name_text_id,
+                "resource_type": first_varint(decoded, 13) if table == "ResourceTable" else None,
+            })
+    return items
+
+
+def _mail_currencies(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Load server-supported account currencies from CurrencyTable."""
+    names = _localized_names(connection, "NameTextTable")
+    result: list[dict[str, Any]] = []
+    for row_id, proto in connection.execute('SELECT id, ProtoBuf FROM "CurrencyTable" ORDER BY id'):
+        decoded = fields(proto)
+        element_type = first_varint(decoded, 3) or int(row_id)
+        if element_type not in MAIL_CURRENCY_TYPES:
+            continue
+        name_text_id = first_varint(decoded, 5)
+        result.append({
+            "id": 0,
+            "element_type": element_type,
+            "name": names.get(name_text_id, f"<未找到本地化文本 #{name_text_id}>"),
+            "category": "货币（直接入账）",
+            "source_table": "CurrencyTable",
+            "name_text_id": name_text_id,
+            "resource_type": None,
+            "details": "邮件领取后直接叠加到账户余额，不生成背包物品或随机箱",
+        })
+    return result
+
+
+def load_inventory_limits(root: Path, version: str) -> dict[str, dict[str, int]]:
+    connection, temporary = open_readonly_database(root, version)
+    try:
+        row = connection.execute('SELECT ProtoBuf FROM "GameDefaultTable" WHERE id=0').fetchone()
+        if row is None:
+            raise ValueError("GameDefaultTable[0] 不存在")
+        decoded = fields(row[0])
+        result = {
+            "baseline": {"items": first_varint(decoded, 34), "equipment": first_varint(decoded, 30)},
+            "enabled_limits": {"items": first_varint(decoded, 80), "equipment": first_varint(decoded, 73)},
+        }
+        if any(value <= 0 for group in result.values() for value in group.values()):
+            raise ValueError("GameData 背包容量配置无效")
+        if result["baseline"]["items"] > result["enabled_limits"]["items"] or result["baseline"]["equipment"] > result["enabled_limits"]["equipment"]:
+            raise ValueError("GameData 背包默认容量超过最大值")
+        return result
+    finally:
+        connection.close()
+        temporary.unlink(missing_ok=True)
+
+
 def _safe_direct_mail_item(item: dict[str, Any]) -> bool:
     # RandomBox requires a second protocol and its entered count is not the
     # final reward count, so this direct-mail form never exposes type 9.
@@ -231,42 +304,13 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
     """Return every safe ItemDBInfo-backed static item, with Chinese names."""
     connection, temporary = open_readonly_database(root, version)
     try:
-        # Most inventory tables refer to LocalTextTable. RandomBoxTable owns a
-        # separate RandomBoxTextTable namespace with the same localized-text
-        # protobuf shape; resolving it through LocalTextTable silently loses
-        # material names when numeric text IDs do not overlap.
-        names = _localized_names(connection, "LocalTextTable")
-        random_box_names = _localized_names(connection, "RandomBoxTextTable")
-
-        items: list[dict[str, Any]] = []
-        for table, element_type, id_field, name_field, category in ITEM_SOURCES:
-            text_names = random_box_names if table == "RandomBoxTable" else names
-            for row_id, proto in connection.execute(f"SELECT id, ProtoBuf FROM {table} ORDER BY id"):
-                decoded = fields(proto)
-                item_id = first_varint(decoded, id_field) or int(row_id)
-                name_text_id = first_varint(decoded, name_field)
-                items.append({
-                    "id": item_id,
-                    "element_type": element_type,
-                    "name": text_names.get(name_text_id, f"<未找到本地化文本 #{name_text_id}>"),
-                    "category": category,
-                    "source_table": table,
-                    "name_text_id": name_text_id,
-                    "resource_type": first_varint(decoded, 13) if table == "ResourceTable" else None,
-                })
-        # Currency is not an ItemDBInfo row. MailOpen and RewardDBInfoBundle
-        # represent it as type=Gold(4), id=0 and the entered count, which the
-        # wallet atomically adds to the existing balance.
-        items.append({
-            "id": 0,
-            "element_type": 4,
-            "name": "金币",
-            "category": "货币（直接入账）",
-            "source_table": "Currency",
-            "name_text_id": 0,
-            "resource_type": None,
-            "details": "邮件领取后直接叠加到金币余额，不生成背包物品或随机箱",
-        })
+        items = _static_items(connection)
+        # CashProductTable.ProductLocalTextId is intentionally a LocalTextTable
+        # reference, unlike the ItemNameTextId fields handled above.
+        local_names = _localized_names(connection, "LocalTextTable")
+        # Supported account currencies are discovered from CurrencyTable. The
+        # mail protocol identifies them by ElementType with reward ID zero.
+        items.extend(_mail_currencies(connection))
         if not items:
             raise ValueError("可领取的 ItemDBInfo 静态表为空")
 
@@ -288,7 +332,7 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
                 groups[int(group_id)] = None
                 continue
             reward_id, reward_type, reward_count = reward_ids[0], reward_types[0], reward_counts[0]
-            valid_id = reward_id == 0 if reward_type in {3, 4} else reward_id != 0
+            valid_id = reward_id == 0 if reward_type in MAIL_CURRENCY_TYPES else reward_id != 0
             groups[int(group_id)] = (reward_type, reward_id, reward_count) if reward_type and valid_id and reward_count else None
 
         fixed_boxes: dict[int, tuple[int, int, int]] = {}
@@ -309,7 +353,7 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
             decoded = fields(proto)
             box_id = first_varint(decoded, 14)
             product_text_id = first_varint(decoded, 11)
-            product_name = names.get(product_text_id, "")
+            product_name = local_names.get(product_text_id, "")
             if box_id and product_name and box_id in fixed_boxes:
                 aliases = product_aliases.setdefault(box_id, {})
                 aliases[product_name] = aliases.get(product_name, 0) + 1
@@ -427,22 +471,78 @@ class MailGrantStore:
         return {"mail": entry, "output": str(self.output), "restart_required": False}
 
 
-PAGE = """<!doctype html><meta charset=utf-8><title>BD2 开发邮件发放</title>
-<style>body{font:14px system-ui;max-width:1060px;margin:2rem auto;padding:0 1rem}input,textarea,button{font:inherit;padding:.4rem}input{width:100%}table{border-collapse:collapse;width:100%;margin:0}th,td{border:1px solid #ccc;padding:.4rem;text-align:left}tr:hover{background:#f5f5f5}#status{white-space:pre-wrap;margin:1rem 0}.small{color:#555}.pick{white-space:nowrap}#item-picker{margin:1rem 0;border:1px solid #ccc;border-radius:.35rem;padding:.55rem}#item-picker summary{cursor:pointer;font-weight:600}#item-picker[open] summary{margin-bottom:.75rem}.item-list{max-height:min(40vh,28rem);overflow:auto;border:1px solid #ccc;margin-top:1rem}.item-list thead th{position:sticky;top:0;background:#fff}.item-list table{min-width:760px}</style>
-<h1>BD2 开发邮件发放</h1><p class=small>只列出可由当前邮件链路直接领取的安全物品和货币。固定内容随机箱已映射成真实内容物；其他随机箱与“遗失物品”等内部哨兵不会显示。金币直接叠加到钱包。提交会原子写入临时邮件种子；重新打开或刷新游戏邮箱即可热载，无需重启服务端。</p>
+class DevelopmentSettingsStore:
+    def __init__(self, path: Path, limits: dict[str, dict[str, int]]):
+        self.path = path.resolve()
+        self.limits = limits
+        self.lock = threading.Lock()
+        if self.path.exists():
+            self.settings = self._load()
+        else:
+            self.settings = {"version": 1, "inventory": {"unlimited": False}}
+            atomic_json(self.path, self.settings)
+
+    @staticmethod
+    def _validate(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict) or set(value) != {"version", "inventory"} or value.get("version") != 1:
+            raise ValueError("开发工具配置必须是 version=1 的严格对象")
+        inventory = value.get("inventory")
+        if not isinstance(inventory, dict) or set(inventory) != {"unlimited"} or type(inventory.get("unlimited")) is not bool:
+            raise ValueError("inventory.unlimited 必须是布尔值且不能包含额外字段")
+        return {"version": 1, "inventory": {"unlimited": inventory["unlimited"]}}
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            return self._validate(json.loads(self.path.read_text(encoding="utf-8")))
+        except OSError as exc:
+            raise ValueError(f"无法读取开发工具配置 {self.path}: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"开发工具配置不是 JSON: {exc}") from exc
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> dict[str, Any]:
+        return {
+            "inventory": {
+                "unlimited": self.settings["inventory"]["unlimited"],
+                **self.limits,
+                "effective_after": "next_login",
+            },
+            "output": str(self.path),
+        }
+
+    def set_inventory(self, payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict) or set(payload) != {"unlimited"} or type(payload.get("unlimited")) is not bool:
+            raise ValueError("请求必须只包含布尔字段 unlimited")
+        with self.lock:
+            next_settings = {"version": 1, "inventory": {"unlimited": payload["unlimited"]}}
+            atomic_json(self.path, next_settings)
+            self.settings = next_settings
+            return self._snapshot_locked()
+
+
+PAGE = """<!doctype html><meta charset=utf-8><title>BD2 开发工具</title>
+<style>body{font:14px system-ui;max-width:1060px;margin:2rem auto;padding:0 1rem}input,textarea,button{font:inherit;padding:.4rem}input{width:100%}input[type=checkbox]{width:auto;transform:scale(1.2);margin-right:.5rem}section{border-top:1px solid #ddd;margin-top:2rem;padding-top:1rem}table{border-collapse:collapse;width:100%;margin:0}th,td{border:1px solid #ccc;padding:.4rem;text-align:left}tr:hover{background:#f5f5f5}#status,#inventory-status{white-space:pre-wrap;margin:1rem 0}.small{color:#555}.pick{white-space:nowrap}#item-picker{margin:1rem 0;border:1px solid #ccc;border-radius:.35rem;padding:.55rem}#item-picker summary{cursor:pointer;font-weight:600}#item-picker[open] summary{margin-bottom:.75rem}.item-list{max-height:min(40vh,28rem);overflow:auto;border:1px solid #ccc;margin-top:1rem}.item-list thead th{position:sticky;top:0;background:#fff}.item-list table{min-width:760px}</style>
+<h1>BD2 开发工具</h1><section><h2>开发邮件发放</h2><p class=small>只列出可由当前邮件链路直接领取的安全物品和货币。固定内容随机箱已映射成真实内容物；其他随机箱与“遗失物品”等内部哨兵不会显示。货币直接叠加到钱包。提交会原子写入临时邮件种子；重新打开或刷新游戏邮箱即可热载，无需重启服务端。</p>
 <details id=item-picker><summary>选择开发测试物品 <span id=count class=small></span></summary><label>搜索（ID、名称、类别、固定箱映射）<input id=q></label><div class=item-list><table><thead><tr><th>ID</th><th>类型</th><th>名称</th><th>类别/内容</th><th></th></tr></thead><tbody id=items></tbody></table></div></details>
-<h2>发放一个附件</h2><form id=form><label>物品 ID<input id=item_id required readonly></label><input id=element_type required readonly type=hidden><label>数量（1–2147483647）<input id=quantity type=number min=1 max=2147483647 value=1 required></label><label>邮件标题<input id=title value="开发测试物品" required maxlength=500></label><label>正文<textarea id=body maxlength=5000>由本地开发邮件工具发放。</textarea></label><p><button>写入临时邮件种子</button></p></form><pre id=status></pre>
-<script>let all=[];const $=id=>document.getElementById(id);function render(){let q=$('q').value.toLowerCase();let matches=all.filter(x=>(x.id+' '+x.element_type+' '+x.name+' '+x.category+' '+(x.details||'')).toLowerCase().includes(q));let rows=matches.slice(0,500);$('count').textContent=`（匹配 ${matches.length} / ${all.length} 项；显示前 ${rows.length} 项）`; $('items').innerHTML=rows.map(x=>`<tr><td>${x.id}</td><td>${x.element_type}</td><td>${esc(x.name)}</td><td>${esc(x.category+(x.details?'：'+x.details:''))}</td><td class=pick><button onclick="pick(${x.element_type},${x.id})">选择</button></td></tr>`).join('')}function esc(s){let d=document.createElement('div');d.textContent=s;return d.innerHTML}function pick(t,id){$('item_id').value=id;$('element_type').value=t;$('item-picker').open=false;$('quantity').focus();$('form').scrollIntoView({block:'nearest',behavior:'smooth'})}$('q').oninput=render;$('form').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/grants',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item_id:+$('item_id').value,element_type:+$('element_type').value,count:+$('quantity').value,title:$('title').value,body:$('body').value})});let x=await r.json();$('status').textContent=r.ok?`已写入邮件 #${x.mail.mail_id}。\n重新打开或刷新游戏邮箱即可看到并领取；服务端无需重启。\n货币会直接叠加，固定箱映射会直接发放内容物。\n热载文件：${x.output}`:x.error};fetch('/api/items').then(r=>r.json()).then(x=>{all=x.items;render()});</script>"""
+<h3>发放一个附件</h3><form id=form><label>物品 ID<input id=item_id required readonly></label><input id=element_type required readonly type=hidden><label>数量（1–2147483647）<input id=quantity type=number min=1 max=2147483647 value=1 required></label><label>邮件标题<input id=title value="开发测试物品" required maxlength=500></label><label>正文<textarea id=body maxlength=5000>由本地开发工具发放。</textarea></label><p><button>写入临时邮件种子</button></p></form><pre id=status></pre></section>
+<section><h2>背包容量</h2><label><input id=unlimited-inventory type=checkbox>无限背包容量</label><p id=inventory-limits class=small></p><p class=small>使用当前客户端 GameData 的安全上限，不写入账号存档。切换后无需重启服务端，但必须重新登录客户端才会生效。</p><pre id=inventory-status></pre></section>
+<script>let all=[];const $=id=>document.getElementById(id);function render(){let q=$('q').value.toLowerCase();let matches=all.filter(x=>(x.id+' '+x.element_type+' '+x.name+' '+x.category+' '+(x.aliases||[]).join(' ')+' '+(x.details||'')).toLowerCase().includes(q));let rows=matches.slice(0,500);$('count').textContent=`（匹配 ${matches.length} / ${all.length} 项；显示前 ${rows.length} 项）`; $('items').innerHTML=rows.map(x=>`<tr><td>${x.id}</td><td>${x.element_type}</td><td>${esc(x.name)}</td><td>${esc(x.category+(x.details?'：'+x.details:''))}</td><td class=pick><button onclick="pick(${x.element_type},${x.id})">选择</button></td></tr>`).join('')}function esc(s){let d=document.createElement('div');d.textContent=s;return d.innerHTML}function pick(t,id){$('item_id').value=id;$('element_type').value=t;$('item-picker').open=false;$('quantity').focus();$('form').scrollIntoView({block:'nearest',behavior:'smooth'})}function showSettings(x){$('unlimited-inventory').checked=x.inventory.unlimited;$('inventory-limits').textContent=`关闭时：道具 ${x.inventory.baseline.items}、装备 ${x.inventory.baseline.equipment}；开启时：道具 ${x.inventory.enabled_limits.items}、装备 ${x.inventory.enabled_limits.equipment}`}$('q').oninput=render;$('form').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/grants',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item_id:+$('item_id').value,element_type:+$('element_type').value,count:+$('quantity').value,title:$('title').value,body:$('body').value})});let x=await r.json();$('status').textContent=r.ok?`已写入邮件 #${x.mail.mail_id}。\n重新打开或刷新游戏邮箱即可看到并领取；服务端无需重启。\n货币会直接叠加，固定箱映射会直接发放内容物。\n热载文件：${x.output}`:x.error};$('unlimited-inventory').onchange=async e=>{let box=e.target,old=!box.checked;box.disabled=true;let r=await fetch('/api/settings/inventory',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({unlimited:box.checked})});let x=await r.json();box.disabled=false;if(r.ok){showSettings(x);$('inventory-status').textContent='设置已保存。无需重启服务端；请重新登录客户端后生效。'}else{box.checked=old;$('inventory-status').textContent=x.error}};Promise.all([fetch('/api/items').then(r=>r.json()),fetch('/api/settings').then(r=>r.json())]).then(([x,s])=>{all=x.items;render();showSettings(s)});</script>"""
 
 
 class Handler(BaseHTTPRequestHandler):
     store: MailGrantStore
+    settings: DevelopmentSettingsStore
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/":
             self.reply(HTTPStatus.OK, "text/html; charset=utf-8", PAGE.encode())
         elif self.path == "/api/items":
             self.reply_json(HTTPStatus.OK, {"items": self.store.items})
+        elif self.path == "/api/settings":
+            self.reply_json(HTTPStatus.OK, self.settings.snapshot())
         else:
             self.reply_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
@@ -459,10 +559,24 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self.reply_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
+    def do_PUT(self) -> None:  # noqa: N802
+        if self.path != "/api/settings/inventory":
+            self.reply_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 1024:
+                raise ValueError("请求体大小无效")
+            result = self.settings.set_inventory(json.loads(self.rfile.read(length)))
+            self.reply_json(HTTPStatus.OK, result)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self.reply_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
     def reply(self, status: HTTPStatus, content_type: str, body: bytes) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -470,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(status, "application/json; charset=utf-8", json.dumps(value, ensure_ascii=False).encode())
 
     def log_message(self, format: str, *args: object) -> None:
-        print("dev-mail:", format % args)
+        print("dev-tools:", format % args)
 
 
 def serve(args: argparse.Namespace) -> int:
@@ -478,16 +592,19 @@ def serve(args: argparse.Namespace) -> int:
         raise ValueError("--expires-days 必须是 1 到 3650")
     items = load_items(args.game_data, args.game_data_version)
     store = MailGrantStore(args.mail_seed, args.output, items, args.expires_days)
+    settings = DevelopmentSettingsStore(args.settings_output, load_inventory_limits(args.game_data, args.game_data_version))
     Handler.store = store
+    Handler.settings = settings
     server = ThreadingHTTPServer((args.listen_host, args.listen_port), Handler)
     print(f"已读取 {len(items)} 个可由 ItemDBInfo 领取的 GameData 物品。")
     print(f"浏览器打开：http://{args.listen_host}:{args.listen_port}/")
     print(f"临时邮件种子：{store.output}")
+    print(f"开发工具配置：{settings.path}")
     print("此服务不修改 data/state；bd2server 指向该 seed 后，每次 /MailInfo 自动热载。")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n开发邮件工具已停止。")
+        print("\nBD2 开发工具已停止。")
     finally:
         server.server_close()
     return 0
@@ -501,6 +618,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--game-data-version", required=True, help="validated GameData version")
     command.add_argument("--mail-seed", type=Path, required=True, help="base mail seed; read only")
     command.add_argument("--output", type=Path, required=True, help="generated development mail seed")
+    command.add_argument("--settings-output", type=Path, default=Path("data/dev/dev-tools.json"), help="development settings JSON")
     command.add_argument("--listen-host", default="127.0.0.1", help="loopback host (default: 127.0.0.1)")
     command.add_argument("--listen-port", default=8765, type=int, help="loopback port (default: 8765)")
     command.add_argument("--expires-days", default=365, type=int, help="development mail validity (default: 365)")
@@ -512,10 +630,10 @@ def main() -> int:
     args = parser().parse_args()
     try:
         if args.listen_host not in {"127.0.0.1", "localhost", "::1"}:
-            raise ValueError("开发邮件服务只允许监听本机回环地址")
+            raise ValueError("开发工具只允许监听本机回环地址")
         return args.run(args)
     except (OSError, ValueError, sqlite3.Error) as exc:
-        print(f"dev_mail_grant: {exc}", file=sys.stderr)
+        print(f"dev_tools: {exc}", file=sys.stderr)
         return 1
 
 

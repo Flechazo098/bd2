@@ -161,6 +161,62 @@ func TestMailOpenGrantsNonResourceItemDBInfoType(t *testing.T) {
 	}
 }
 
+func TestMailOpenGrantsCatalystCurrencyAndPersists(t *testing.T) {
+	seed := &Starter{Version: "2.34.13", MailCount: 2, MaxMailID: 14, Mails: []MailDBInfo{{
+		MailID: 14, MailType: 2, ExpiresAt: 100, SentAt: 10,
+		RewardTypes: []uint64{12}, RewardIDs: []uint64{0}, RewardCounts: []uint64{250},
+	}}}
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.34.13"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{Catalyst: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(nil, 1, 1)
+	request = wire.AppendBytes(request, 2, packed([]uint64{14}))
+	_, response, _, err := service.Handle("/MailOpen", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Snapshot().Catalyst != 260 || len(inv.All()) != 0 {
+		t.Fatalf("wallet=%+v items=%+v", wallet.Snapshot(), inv.All())
+	}
+	bundle, found, _ := wire.Bytes(response, 1)
+	if !found {
+		t.Fatal("reward bundle missing")
+	}
+	item, found, _ := wire.Bytes(bundle, 1)
+	if !found {
+		t.Fatal("currency ItemDBInfo missing")
+	}
+	if typ, _, _ := wire.Varint(item, 3); typ != 12 {
+		t.Fatalf("currency type=%d", typ)
+	}
+	if count, _, _ := wire.Varint(item, 4); count != 250 {
+		t.Fatalf("currency count=%d", count)
+	}
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Snapshot().Catalyst != 260 {
+		t.Fatalf("replay catalyst=%d", wallet.Snapshot().Catalyst)
+	}
+	reopened, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Snapshot().Catalyst != 260 {
+		t.Fatalf("persisted catalyst=%d", reopened.Snapshot().Catalyst)
+	}
+}
+
 func TestWatchedSeedReloadsOnlyValidAtomicReplacement(t *testing.T) {
 	dir := t.TempDir()
 	seedPath := filepath.Join(dir, "seed.json")

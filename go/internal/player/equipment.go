@@ -62,6 +62,7 @@ type EquipmentInventory struct {
 	characters    *CharacterStore
 	slots         map[uint64]uint64
 	upgrade       *gamedata.EquipmentUpgradeDesign
+	craft         *gamedata.EquipmentCraftDesign
 	smelting      *gamedata.EquipmentSmeltingDesign
 	optionReroll  *gamedata.EquipmentOptionRerollDesign
 	wallet        *Wallet
@@ -88,6 +89,16 @@ func (s *EquipmentInventory) AttachUpgrade(design *gamedata.EquipmentUpgradeDesi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.upgrade, s.wallet, s.inventory = design, wallet, inventory
+	return nil
+}
+
+func (s *EquipmentInventory) AttachCraft(design *gamedata.EquipmentCraftDesign) error {
+	if design == nil {
+		return errors.New("player: incomplete equipment crafting configuration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.craft = design
 	return nil
 }
 
@@ -369,7 +380,7 @@ func equipmentOptionWire(option EquipmentOption) []byte {
 }
 
 func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipBatchUse" && path != "/EquipPresetInfo" && path != "/EquipPresetSave" && path != "/EquipPresetNameChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipOptionReRoll" && path != "/EquipOptionReRollConfirm" && path != "/EquipMainOptChange" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" {
+	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipBatchUse" && path != "/EquipPresetInfo" && path != "/EquipPresetSave" && path != "/EquipPresetNameChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipOptionReRoll" && path != "/EquipOptionReRollConfirm" && path != "/EquipMainOptChange" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" && path != "/EquipMaking" && path != "/EquipBreak" && path != "/EquipMakingToBreakAuto" && path != "/EquipUpgradeToBreakAuto" {
 		return 0, nil, false, nil
 	}
 	if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
@@ -398,6 +409,18 @@ func (s *EquipmentInventory) Handle(path string, request []byte) (int, []byte, b
 	}
 	if path == "/EquipSequenceUpgrade" {
 		return s.upgradeSequence(request)
+	}
+	if path == "/EquipMaking" {
+		return s.makeEquipment(request)
+	}
+	if path == "/EquipBreak" {
+		return s.breakEquipment(request)
+	}
+	if path == "/EquipMakingToBreakAuto" {
+		return s.makeToBreakAuto(request)
+	}
+	if path == "/EquipUpgradeToBreakAuto" {
+		return s.upgradeToBreakAuto(request)
 	}
 	if path == "/EquipSmelting" {
 		return s.smeltOnce(request)

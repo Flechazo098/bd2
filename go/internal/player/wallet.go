@@ -13,12 +13,13 @@ import (
 )
 
 // Currency uses the UserDBInfo currency fields: type 3 is free jewelry and
-// type 4 is gold. Paid jewelry is persisted as well, although quest rewards
-// in the audited tutorial range do not grant it.
+// type 4 is gold and type 12 is catalyst (天赋神药). Paid jewelry is persisted
+// as well, although quest rewards in the audited tutorial range do not grant it.
 type Currency struct {
 	Gold                     uint64 `json:"gold"`
 	FreeJewelry              uint64 `json:"free_jewelry"`
 	Jewelry                  uint64 `json:"jewelry"`
+	Catalyst                 uint64 `json:"catalyst"`
 	Mileage                  uint64 `json:"mileage"`
 	HopePowder               uint64 `json:"hope_powder"`
 	EquipMileage             uint64 `json:"equip_mileage"`
@@ -51,7 +52,7 @@ func OpenWallet(store stateio.Store, initial Currency) (*Wallet, error) {
 		return nil, fmt.Errorf("player: load wallet: %w", err)
 	}
 	if b != nil {
-		if err := stateio.RequireExactJSONObject(b, "version", "gold", "free_jewelry", "jewelry", "mileage", "hope_powder", "equip_mileage", "equip_mileage_exchange_gage"); err != nil {
+		if err := stateio.RequireExactJSONObject(b, "version", "gold", "free_jewelry", "jewelry", "catalyst", "mileage", "hope_powder", "equip_mileage", "equip_mileage_exchange_gage"); err != nil {
 			return nil, fmt.Errorf("player: incompatible wallet layout: %w", err)
 		}
 		var shape map[string]json.RawMessage
@@ -192,6 +193,35 @@ func (s *Wallet) Currencies() (gold, freeJewelry, jewelry, mileage uint64) {
 
 func (s *Wallet) HopePowderBalance() uint64 { return s.Snapshot().HopePowder }
 
+func (s *Wallet) CatalystBalance() uint64 { return s.Snapshot().Catalyst }
+
+func (s *Wallet) CanSpendCatalyst(amount uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return amount > 0 && s.state.Catalyst >= amount
+}
+
+func (s *Wallet) SpendCatalystOnce(identity string, amount uint64) (Currency, error) {
+	if identity == "" || amount == 0 {
+		return Currency{}, errors.New("player: invalid catalyst spend")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.Spent[identity] {
+		return s.state.Currency, nil
+	}
+	if s.state.Catalyst < amount {
+		return Currency{}, errors.New("player: insufficient catalyst")
+	}
+	next := cloneWallet(s.state)
+	next.Catalyst -= amount
+	next.Spent[identity] = true
+	if err := s.commit(next, entry("spent", identity, []byte("true"))...); err != nil {
+		return Currency{}, err
+	}
+	return next.Currency, nil
+}
+
 func (s *Wallet) EquipmentMileageBalances() (mileage, exchangeGage uint64) {
 	c := s.Snapshot()
 	return c.EquipMileage, c.EquipMileageExchangeGage
@@ -293,6 +323,11 @@ func (s *Wallet) GrantQuestOnce(identity string, rewards []gamedata.Reward) (Cur
 				return Currency{}, errors.New("player: gold overflow")
 			}
 			next.Gold += reward.Count
+		case 12:
+			if math.MaxUint64-next.Catalyst < reward.Count {
+				return Currency{}, errors.New("player: catalyst overflow")
+			}
+			next.Catalyst += reward.Count
 		}
 	}
 	next.Granted[identity] = true

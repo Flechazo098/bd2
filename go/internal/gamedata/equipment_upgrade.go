@@ -22,6 +22,8 @@ type EquipmentUpgradeDesign struct {
 	RankGroup map[uint64]uint64
 	Levels    map[[2]uint64]EquipmentUpgradeLevel
 	RankRatio map[[2]uint64][]float64
+	Break     map[[2]uint64][]BattleReward
+	NotTrash  map[uint64]bool
 	roll      func(float64) (bool, error)
 	rankRoll  func([]float64) (uint64, error)
 }
@@ -52,6 +54,7 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 	d := &EquipmentUpgradeDesign{
 		MaxLevel: map[uint64]uint64{}, Group: map[uint64]uint64{}, RankGroup: map[uint64]uint64{},
 		Levels: map[[2]uint64]EquipmentUpgradeLevel{}, RankRatio: map[[2]uint64][]float64{},
+		Break: map[[2]uint64][]BattleReward{}, NotTrash: map[uint64]bool{},
 		roll: cryptoRatioRoll, rankRoll: cryptoRankRoll,
 	}
 	groupMaximum := map[uint64]uint64{}
@@ -69,12 +72,14 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		}
 		groups, _ := packedInts(proto, 4)
 		maximum, _ := packedInts(proto, 13)
+		notTrash, _ := packedInts(proto, 14)
 		rankGroup, _ := packedInts(proto, 19)
 		if len(groups) != 1 || len(maximum) != 1 || len(rankGroup) != 1 || maximum[0] == 0 || rankGroup[0] == 0 {
 			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment %d invalid upgrade design", id)
 		}
 		d.Group[id], d.MaxLevel[id], d.RankGroup[id] = groups[0], maximum[0], rankGroup[0]
+		d.NotTrash[id] = len(notTrash) == 1 && notTrash[0] != 0
 		rankGroups[rankGroup[0]] = true
 		if prior, found := groupMaximum[groups[0]]; found && prior != maximum[0] {
 			rows.Close()
@@ -100,6 +105,22 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		if !referenced {
 			continue
 		}
+		breakCounts, _ := packedInts(proto, 1)
+		breakIDs, _ := packedInts(proto, 2)
+		breakTypes, _ := packedInts(proto, 3)
+		if len(breakCounts) == 0 || len(breakCounts) != len(breakIDs) || len(breakCounts) != len(breakTypes) {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: equipment break result %d/%d malformed", group, level)
+		}
+		breakRewards := make([]BattleReward, 0, len(breakCounts))
+		for i := range breakCounts {
+			if breakCounts[i] == 0 || breakIDs[i] == 0 || breakTypes[i] == 0 {
+				rows.Close()
+				return nil, fmt.Errorf("gamedata: equipment break result %d/%d invalid", group, level)
+			}
+			breakRewards = append(breakRewards, BattleReward{Type: breakTypes[i], ID: breakIDs[i], Count: breakCounts[i]})
+		}
+		d.Break[[2]uint64{group, level}] = breakRewards
 		// EquipmentGrowthTable includes the terminal maximum-level row, which
 		// intentionally has no next-upgrade cost or success ratio.
 		if level >= maximum {
@@ -171,6 +192,33 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		}
 	}
 	return d, nil
+}
+
+func (d *EquipmentUpgradeDesign) CanBreak(equipmentID uint64) bool {
+	if d == nil || equipmentID == 0 {
+		return false
+	}
+	// EquipmentTable.NotTrash controls the ordinary discard button. The
+	// client's batch break predicate is instead EquipDBInfo.IsAvailableBreak
+	// (not equipped and not locked), so crafting results with NotTrash=1 are
+	// still valid inputs to EquipMakingToBreakAuto.
+	_, exists := d.Group[equipmentID]
+	return exists
+}
+
+func (d *EquipmentUpgradeDesign) BreakRewards(equipmentID, level uint64) ([]BattleReward, error) {
+	if !d.CanBreak(equipmentID) {
+		return nil, fmt.Errorf("gamedata: equipment %d cannot be broken", equipmentID)
+	}
+	maximum := d.MaxLevel[equipmentID]
+	if level > maximum {
+		return nil, fmt.Errorf("gamedata: equipment %d invalid break level %d", equipmentID, level)
+	}
+	rewards, exists := d.Break[[2]uint64{d.Group[equipmentID], level}]
+	if !exists || len(rewards) == 0 {
+		return nil, fmt.Errorf("gamedata: missing equipment break result %d/%d", d.Group[equipmentID], level)
+	}
+	return append([]BattleReward(nil), rewards...), nil
 }
 
 func (d *EquipmentUpgradeDesign) Level(equipmentID, level uint64) (EquipmentUpgradeLevel, uint64, error) {

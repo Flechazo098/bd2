@@ -91,25 +91,29 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 }
 ```
 
-## 临时邮件物品发放
+## BD2 开发工具
 
-`dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。物品名按来源表引用的文本命名空间解析；确定性随机箱使用 `RandomBoxTextTable` 的真实名称作为内容物搜索别名，因此不依赖固定物品 ID。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。另提供单一金币货币条目 `type4/id0`，填写的数量在领取后直接叠加至钱包，不再发送“金币随机箱”。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
+`dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。普通物品的 `ItemNameTextId` 按客户端行为从 `NameTextTable` 解析；随机箱使用独立的 `RandomBoxTextTable`，现金商品搜索别名仍从其声明的 `LocalTextTable` 解析，三者不会依靠碰巧相同的数字文本 ID 串表。确定性随机箱使用真实名称作为内容物搜索别名，因此不依赖固定物品 ID。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。金币和天赋神药等服务端已实现的账户货币从当前 `CurrencyTable` 发现，以各自元素类型和 `id0` 直接入账；名称与物品 ID 均不硬编码。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
 
-启动工具时，`--mail-seed` 是只读的当前基础邮件种子；`--output` 是新生成的完整临时种子。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
+启动工具时，`--mail-seed` 是只读的当前基础邮件种子；`--output` 是新生成的完整临时种子；`--settings-output` 保存与账号存档分离的开发选项。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
 
 ```powershell
 python .\tools\python\dev_mail_grant.py serve `
   --game-data "E:\bd2\dl\GameData" `
-  --game-data-version "20260910162539" `
+  --game-data-version "20260923193640" `
   --mail-seed .\go\seed\v2_34_13\mail.json `
-  --output .\data\dev\mail-grants.json
+  --output .\data\dev\mail-grants.json `
+  --settings-output .\data\dev\dev-tools.json
 ```
 
 工具启动时立即原子写出规范化的完整 `--output`（尚未发放也一样），因此首次启用时可先启动工具、再让本地服务端监听这个输出文件。每次发放同样原子更新该文件。`bd2server` 的邮件服务会在下一次正常 `/MailInfo` 请求检查它：网页发放后重新打开或刷新游戏邮箱即可看到新邮件，**不需要每次重启服务器**。服务仅在启动时需要加入（或替换为）以下参数：
 
 ```powershell
 --mail-seed ".\data\dev\mail-grants.json"
+--dev-tools-config ".\data\dev\dev-tools.json"
 ```
+
+页面下方的“无限背包容量”不会写入账号状态，也不会使用任意巨大容量；它从当前 GameData 读取客户端安全上限（2.35.10 当前为普通道具 500、装备 2000）。切换后无需重启服务端，但客户端必须重新登录以重新取得 `UserDBInfo`。普通背包、普通仓库、装备背包和装备仓库的正式扩充接口仍按 `GameDefaultTable` 的逐格阶梯价格扣除金币并持久化；开发开关不覆盖或删除已购买容量。
 
 客户端 `MailDBInfo.ItemType`、`ItemId` 和 `ItemCount` 均为 `int32`，所以该工具把单附件数量限制为 `1..2147483647`；每封工具邮件固定只有一个附件。当前官方样本中单封最多观察到 5 个附件，但没有证据证明这是协议上限，因此工具不据此宣称或实施“5 件”上限。客户端邮箱 UI 按一次请求加载最多 100 封普通邮件，现有本地服务目前回传全部未开封邮件，故大量历史未领取邮件的实际 UI 表现尚待验证。现有本地 `/MailOpen` 对同一邮件 ID 的领取由 `data/state/mail.json` 的 `opened` 集合持久化，重试不会重复发奖；工具会在完整种子中分配唯一递增邮件 ID。
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 from pathlib import Path
 import sys
@@ -151,6 +152,63 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
         self.assertEqual(dev_mail_grant._localized_names(connection, "RandomBoxTextTable"), {7: "精炼粉末"})
         connection.close()
 
+    def test_static_items_use_each_sources_declared_text_namespace(self):
+        import sqlite3
+
+        def text_proto(text_id: int, value: str) -> bytes:
+            return import_seed.encode_field(2, 0, text_id) + import_seed.encode_field(4, 2, value.encode("utf-8"))
+
+        connection = sqlite3.connect(":memory:")
+        for table in {source[0] for source in dev_mail_grant.ITEM_SOURCES}:
+            connection.execute(f'CREATE TABLE "{table}" (id INTEGER, ProtoBuf BLOB)')
+        for table in {source[5] for source in dev_mail_grant.ITEM_SOURCES}:
+            connection.execute(f'CREATE TABLE "{table}" (id INTEGER, ProtoBuf BLOB)')
+
+        connection.execute("INSERT INTO NameTextTable VALUES (?, ?)", (32401, text_proto(32401, "普通布料")))
+        connection.execute("INSERT INTO NameTextTable VALUES (?, ?)", (32501, text_proto(32501, "原木")))
+        connection.execute("INSERT INTO RandomBoxTextTable VALUES (?, ?)", (77, text_proto(77, "材料选择箱")))
+        connection.execute(
+            "INSERT INTO ResourceTable VALUES (?, ?)",
+            (401, import_seed.encode_field(4, 0, 401) + import_seed.encode_field(7, 0, 32401)),
+        )
+        connection.execute(
+            "INSERT INTO ResourceTable VALUES (?, ?)",
+            (501, import_seed.encode_field(4, 0, 501) + import_seed.encode_field(7, 0, 32501)),
+        )
+        connection.execute(
+            "INSERT INTO RandomBoxTable VALUES (?, ?)",
+            (700, import_seed.encode_field(4, 0, 700) + import_seed.encode_field(7, 0, 77)),
+        )
+
+        items = dev_mail_grant._static_items(connection)
+        by_key = {(item["element_type"], item["id"]): item["name"] for item in items}
+        self.assertEqual(by_key[(8, 401)], "普通布料")
+        self.assertEqual(by_key[(8, 501)], "原木")
+        self.assertEqual(by_key[(9, 700)], "材料选择箱")
+        connection.close()
+
+    def test_mail_currencies_are_discovered_from_currency_table(self):
+        import sqlite3
+
+        def proto_field(number: int, value: int) -> bytes:
+            return import_seed.encode_field(number, 0, value)
+
+        connection = sqlite3.connect(":memory:")
+        connection.execute("CREATE TABLE NameTextTable (id INTEGER, ProtoBuf BLOB)")
+        connection.execute("CREATE TABLE CurrencyTable (id INTEGER, ProtoBuf BLOB)")
+        for text_id, value in ((264, "天赋神药"), (999, "未支持货币")):
+            encoded = value.encode("utf-8")
+            connection.execute(
+                "INSERT INTO NameTextTable VALUES (?, ?)",
+                (text_id, proto_field(2, text_id) + import_seed.encode_field(4, 2, encoded)),
+            )
+        connection.execute("INSERT INTO CurrencyTable VALUES (?, ?)", (12, proto_field(3, 12) + proto_field(5, 264)))
+        connection.execute("INSERT INTO CurrencyTable VALUES (?, ?)", (99, proto_field(3, 99) + proto_field(5, 999)))
+
+        currencies = dev_mail_grant._mail_currencies(connection)
+        self.assertEqual([(item["element_type"], item["id"], item["name"]) for item in currencies], [(12, 0, "天赋神药")])
+        connection.close()
+
     def test_internal_lost_resource_is_not_mail_safe(self):
         self.assertFalse(dev_mail_grant._safe_direct_mail_item({
             "id": 90045, "element_type": 8, "name": "金币遗失物品",
@@ -185,7 +243,39 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
         self.assertIn("$('item-picker').open=false", dev_mail_grant.PAGE)
 
     def test_picker_search_includes_random_box_aliases(self):
-        self.assertIn("x.category+' '+(x.details||'')", dev_mail_grant.PAGE)
+        self.assertIn("(x.aliases||[]).join(' ')", dev_mail_grant.PAGE)
+
+    def test_mail_tool_disables_browser_response_caching(self):
+        self.assertIn('self.send_header("Cache-Control", "no-store")', inspect.getsource(dev_mail_grant.Handler.reply))
+
+    def test_development_settings_are_strict_and_atomic(self):
+        limits = {
+            "baseline": {"items": 100, "equipment": 500},
+            "enabled_limits": {"items": 500, "equipment": 2000},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "dev-tools.json"
+            store = dev_mail_grant.DevelopmentSettingsStore(path, limits)
+            self.assertFalse(store.snapshot()["inventory"]["unlimited"])
+            updated = store.set_inventory({"unlimited": True})
+            self.assertTrue(updated["inventory"]["unlimited"])
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {
+                "version": 1, "inventory": {"unlimited": True},
+            })
+            reopened = dev_mail_grant.DevelopmentSettingsStore(path, limits)
+            self.assertTrue(reopened.snapshot()["inventory"]["unlimited"])
+            for invalid in ({"unlimited": 1}, {"unlimited": "true"}, {"unlimited": True, "extra": 1}, {}):
+                with self.assertRaises(ValueError):
+                    store.set_inventory(invalid)
+            path.write_text('{"version":1,"inventory":{"unlimited":true},"extra":1}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dev_mail_grant.DevelopmentSettingsStore(path, limits)
+
+    def test_development_tool_page_places_inventory_after_mail(self):
+        self.assertIn("<title>BD2 开发工具</title>", dev_mail_grant.PAGE)
+        self.assertLess(dev_mail_grant.PAGE.index("开发邮件发放"), dev_mail_grant.PAGE.index("无限背包容量"))
+        self.assertIn("重新登录客户端后生效", dev_mail_grant.PAGE)
+        self.assertIn("/api/settings/inventory", dev_mail_grant.PAGE)
 
     def test_grant_writes_complete_seed_without_state_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:
