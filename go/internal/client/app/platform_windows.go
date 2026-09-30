@@ -1,0 +1,182 @@
+//go:build windows
+
+package app
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+var (
+	platformUser32DLL            = syscall.NewLazyDLL("user32.dll")
+	messageBoxW                  = platformUser32DLL.NewProc("MessageBoxW")
+	enumWindowsProc              = platformUser32DLL.NewProc("EnumWindows")
+	getWindowThreadProcessIDProc = platformUser32DLL.NewProc("GetWindowThreadProcessId")
+	isWindowVisibleProc          = platformUser32DLL.NewProc("IsWindowVisible")
+	showWindowAsyncProc          = platformUser32DLL.NewProc("ShowWindowAsync")
+	setForegroundWindowProc      = platformUser32DLL.NewProc("SetForegroundWindow")
+)
+
+// ShowFatalError keeps startup failures visible even though the release
+// executable uses the Windows GUI subsystem and therefore has no console.
+func ShowFatalError(err error) {
+	if err == nil {
+		return
+	}
+	message, conversionErr := syscall.UTF16PtrFromString(fmt.Sprintf(
+		"BD2 Client Studio could not start:\n\n%s\n\nSee the logs directory next to bd2client.exe for details.", err,
+	))
+	if conversionErr != nil {
+		return
+	}
+	title, conversionErr := syscall.UTF16PtrFromString("BD2 Client Studio")
+	if conversionErr != nil {
+		return
+	}
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(message)), uintptr(unsafe.Pointer(title)), 0x10)
+}
+
+// CREATE_NO_WINDOW prevents console-subsystem helpers such as powershell.exe
+// from allocating a visible console when bd2client is built as a Windows GUI
+// executable. HideWindow also covers helpers that elect to create a window
+// despite inheriting no console from the parent process.
+const createNoWindow = 0x08000000
+
+func hiddenCommand(name string, args ...string) *exec.Cmd {
+	command := exec.Command(name, args...)
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
+	return command
+}
+
+// visibleCommand suppresses a console allocation without hiding the GUI
+// window created by the child process. It must be used for the game itself;
+// hiddenCommand is reserved for background helper processes.
+func visibleCommand(name string, args ...string) *exec.Cmd {
+	command := exec.Command(name, args...)
+	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
+	return command
+}
+
+func openBrowser(url string) error {
+	for _, edge := range edgeCandidates() {
+		if info, err := os.Stat(edge); err == nil && !info.IsDir() {
+			return hiddenCommand(edge, "--app="+url, "--window-size=1100,760", "--no-first-run").Start()
+		}
+	}
+	return hiddenCommand("rundll32.exe", "url.dll,FileProtocolHandler", url).Start()
+}
+
+func edgeCandidates() []string {
+	var candidates []string
+	if edge, err := exec.LookPath("msedge.exe"); err == nil {
+		candidates = append(candidates, edge)
+	}
+	for _, root := range []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")} {
+		if root != "" {
+			candidates = append(candidates, filepath.Join(root, "Microsoft", "Edge", "Application", "msedge.exe"))
+		}
+	}
+	return candidates
+}
+
+func browseForGameDirectory(language string) (string, error) {
+	title := "Select the Brown Dust II installation directory"
+	if language == "zh-CN" {
+		title = "选择 Brown Dust II 安装目录"
+	}
+	return browseForDirectory(title)
+}
+
+func browseForResourceDirectory(language string) (string, error) {
+	title := "Select the CDN directory containing ServerData and GameData"
+	if language == "zh-CN" {
+		title = "选择包含 ServerData 和 GameData 的 CDN 目录"
+	}
+	return browseForDirectory(title)
+}
+
+func launchGame(target string) error {
+	if processID, running, err := windowsExecutableProcessID(filepath.Base(target)); err != nil {
+		return err
+	} else if running {
+		if !activateProcessWindow(processID, 5*time.Second) {
+			return fmt.Errorf("Brown Dust II is running, but its window could not be restored")
+		}
+		return errGameAlreadyRunning
+	}
+	command := visibleCommand(target)
+	command.Dir = filepath.Dir(target)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	// Unity creates the top-level window asynchronously. Best-effort foreground
+	// activation prevents the new window from opening behind Client Studio.
+	activateProcessWindow(uint32(command.Process.Pid), 15*time.Second)
+	return nil
+}
+
+func windowsExecutableProcessID(name string) (uint32, bool, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	defer windows.CloseHandle(snapshot)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return 0, false, err
+	}
+	for {
+		if strings.EqualFold(windows.UTF16ToString(entry.ExeFile[:]), name) {
+			return entry.ProcessID, true, nil
+		}
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			if err == windows.ERROR_NO_MORE_FILES {
+				return 0, false, nil
+			}
+			return 0, false, err
+		}
+	}
+}
+
+func activateProcessWindow(processID uint32, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if window := topLevelWindowForProcess(processID); window != 0 {
+			const swRestore = 9
+			showWindowAsyncProc.Call(window, swRestore)
+			setForegroundWindowProc.Call(window)
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func topLevelWindowForProcess(processID uint32) uintptr {
+	var found uintptr
+	callback := syscall.NewCallback(func(window uintptr, _ uintptr) uintptr {
+		var owner uint32
+		getWindowThreadProcessIDProc.Call(window, uintptr(unsafe.Pointer(&owner)))
+		visible, _, _ := isWindowVisibleProc.Call(window)
+		if owner == processID && visible != 0 {
+			found = window
+			return 0
+		}
+		return 1
+	})
+	enumWindowsProc.Call(callback, 0)
+	return found
+}

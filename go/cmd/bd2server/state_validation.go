@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"bd2server/internal/accountstate"
+	"bd2server/internal/server/accountstate"
 )
 
 func stateProblemsError(prefix string, problems []accountstate.Problem) error {
