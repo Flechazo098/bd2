@@ -82,7 +82,16 @@ func SaveSettings(gameDir string, settings clientconfig.Settings, versions clien
 	if _, err := Inspect(gameDir, versions); err != nil {
 		return clientconfig.Settings{}, err
 	}
-	return clientconfig.Save(gameDir, settings)
+	normalized, err := clientconfig.Normalize(settings)
+	if err != nil {
+		return clientconfig.Settings{}, err
+	}
+	if normalized.CDNMode == clientconfig.CDNLocal {
+		if err := installCurrentLocalCatalog(gameDir, normalized.LocalResourceDirectory, versions.BundleVersion); err != nil {
+			return clientconfig.Settings{}, err
+		}
+	}
+	return clientconfig.Save(gameDir, normalized)
 }
 
 func Patch(gameDir string, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (introdb.Result, error) {
@@ -116,7 +125,7 @@ func InstallPlugins(
 	if !status.BepInEx {
 		return InstallResult{}, fmt.Errorf("BepInEx is not installed; install it from %s before installing the plugins", plugin.BepInExReleasesURL)
 	}
-	if _, err := clientconfig.Save(gameDir, settings); err != nil {
+	if _, err := SaveSettings(gameDir, settings, versions); err != nil {
 		return InstallResult{}, err
 	}
 	localSource, err := plugin.ResolvePackaged(plugin.LocalIdentity, localIdentitySource)
