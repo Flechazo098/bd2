@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -290,7 +291,22 @@ func (s *Service) callback(w http.ResponseWriter, r *http.Request) {
 	clear(verifier)
 	clear(nonce)
 	if err != nil {
-		_, _ = s.store.db.Exec(`UPDATE devices SET status='failed',error_code='provider_rejected' WHERE id=? AND status='authorizing'`, id)
+		_, _ = s.store.db.Exec(`UPDATE devices SET status='failed',error_code='provider_rejected',state_hash=NULL,verifier_cipher=NULL,nonce_cipher=NULL WHERE id=? AND status='authorizing'`, id)
+		var failure *providerFailure
+		if errors.As(err, &failure) {
+			slog.Warn("OAuth provider authorization failed",
+				"provider", failure.Provider,
+				"stage", failure.Stage,
+				"reason", failure.Reason,
+				"http_status", failure.HTTPStatus,
+				"oauth_error", failure.OAuthError)
+			if failure.OAuthError == "invalid_client" {
+				http.Error(w, "server OAuth configuration is invalid; contact the server administrator", http.StatusBadGateway)
+				return
+			}
+		} else {
+			slog.Warn("OAuth provider authorization failed", "provider", provider, "reason", "internal_error")
+		}
 		http.Error(w, "provider authorization failed", http.StatusBadGateway)
 		return
 	}
@@ -311,28 +327,81 @@ func (s *Service) callback(w http.ResponseWriter, r *http.Request) {
 
 type providerIdentity struct{ issuer, subject string }
 
+type providerFailure struct {
+	Provider   string
+	Stage      string
+	Reason     string
+	HTTPStatus int
+	OAuthError string
+}
+
+func (e *providerFailure) Error() string {
+	return fmt.Sprintf("provider=%s stage=%s reason=%s status=%d oauth_error=%s", e.Provider, e.Stage, e.Reason, e.HTTPStatus, e.OAuthError)
+}
+
+func networkProviderFailure(ctx context.Context, provider, stage string, err error) error {
+	reason := "network_error"
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		reason = "timeout"
+	} else if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		reason = "cancelled"
+	} else {
+		var networkError net.Error
+		if errors.As(err, &networkError) && networkError.Timeout() {
+			reason = "timeout"
+		}
+	}
+	return &providerFailure{Provider: provider, Stage: stage, Reason: reason}
+}
+
+func rejectedProviderFailure(provider, stage string, response *http.Response) error {
+	failure := &providerFailure{Provider: provider, Stage: stage, Reason: "http_rejected", HTTPStatus: response.StatusCode}
+	var body struct {
+		Error string `json:"error"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<10))
+	if decoder.Decode(&body) == nil {
+		failure.OAuthError = safeOAuthError(body.Error)
+	}
+	return failure
+}
+
+func invalidProviderResponse(provider, stage string) error {
+	return &providerFailure{Provider: provider, Stage: stage, Reason: "invalid_response", HTTPStatus: http.StatusOK}
+}
+
+func safeOAuthError(value string) string {
+	switch value {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+		"unsupported_grant_type", "invalid_scope", "access_denied", "server_error", "temporarily_unavailable":
+		return value
+	default:
+		return "unknown"
+	}
+}
+
 func (s *Service) exchangeIdentity(ctx context.Context, provider, code, verifier, nonce string) (providerIdentity, error) {
 	values := url.Values{"client_id": {s.config.Providers[provider].ClientID}, "client_secret": {s.config.ProviderSecrets[provider]}, "grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {s.redirectURL(provider)}, "code_verifier": {verifier}}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, providerTokenURL(provider), strings.NewReader(values.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := s.client.Do(request)
 	if err != nil {
-		return providerIdentity{}, err
+		return providerIdentity{}, networkProviderFailure(ctx, provider, "token_exchange", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return providerIdentity{}, errors.New("token exchange rejected")
+		return providerIdentity{}, rejectedProviderFailure(provider, "token_exchange", response)
 	}
 	var token struct {
 		AccessToken string `json:"access_token"`
 		IDToken     string `json:"id_token"`
 	}
 	if err := decodeProviderJSON(response.Body, &token); err != nil || token.AccessToken == "" {
-		return providerIdentity{}, errors.New("invalid token response")
+		return providerIdentity{}, invalidProviderResponse(provider, "token_exchange")
 	}
 	if provider == "google" {
 		if token.IDToken == "" {
-			return providerIdentity{}, errors.New("Google ID token missing")
+			return providerIdentity{}, invalidProviderResponse(provider, "token_exchange")
 		}
 		identity, err := s.verifyGoogleIDToken(ctx, token.IDToken, nonce)
 		token.AccessToken, token.IDToken = "", ""
@@ -343,23 +412,23 @@ func (s *Service) exchangeIdentity(ctx context.Context, provider, code, verifier
 	response, err = s.client.Do(userinfo)
 	token.AccessToken = ""
 	if err != nil {
-		return providerIdentity{}, err
+		return providerIdentity{}, networkProviderFailure(ctx, provider, "userinfo", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return providerIdentity{}, errors.New("userinfo rejected")
+		return providerIdentity{}, rejectedProviderFailure(provider, "userinfo", response)
 	}
 	var user struct {
 		ID  string `json:"id"`
 		Sub string `json:"sub"`
 	}
 	if err := decodeProviderJSON(response.Body, &user); err != nil {
-		return providerIdentity{}, err
+		return providerIdentity{}, invalidProviderResponse(provider, "userinfo")
 	}
 	if provider == "discord" && user.ID != "" {
 		return providerIdentity{issuer: "https://discord.com", subject: user.ID}, nil
 	}
-	return providerIdentity{}, errors.New("provider subject missing")
+	return providerIdentity{}, invalidProviderResponse(provider, "userinfo")
 }
 
 // verifyGoogleIDToken delegates signature and standard-claim verification to
@@ -370,11 +439,11 @@ func (s *Service) verifyGoogleIDToken(ctx context.Context, idToken, nonce string
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	response, err := s.client.Do(request)
 	if err != nil {
-		return providerIdentity{}, err
+		return providerIdentity{}, networkProviderFailure(ctx, "google", "id_token_verify", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return providerIdentity{}, errors.New("Google ID token rejected")
+		return providerIdentity{}, rejectedProviderFailure("google", "id_token_verify", response)
 	}
 	var claims struct {
 		Issuer   string `json:"iss"`
@@ -384,12 +453,12 @@ func (s *Service) verifyGoogleIDToken(ctx context.Context, idToken, nonce string
 		Expires  string `json:"exp"`
 	}
 	if err := decodeProviderJSON(response.Body, &claims); err != nil {
-		return providerIdentity{}, err
+		return providerIdentity{}, invalidProviderResponse("google", "id_token_verify")
 	}
 	expires, err := strconv.ParseInt(claims.Expires, 10, 64)
 	validIssuer := claims.Issuer == "https://accounts.google.com" || claims.Issuer == "accounts.google.com"
 	if err != nil || !validIssuer || claims.Audience != s.config.Providers["google"].ClientID || claims.Subject == "" || claims.Nonce != nonce || s.store.now().Unix() >= expires {
-		return providerIdentity{}, errors.New("Google ID token claims rejected")
+		return providerIdentity{}, &providerFailure{Provider: "google", Stage: "id_token_verify", Reason: "invalid_claims"}
 	}
 	return providerIdentity{issuer: "https://accounts.google.com", subject: claims.Subject}, nil
 }

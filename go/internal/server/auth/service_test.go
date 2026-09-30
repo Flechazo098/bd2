@@ -451,6 +451,94 @@ func TestProviderIdentityVerification(t *testing.T) {
 	}
 }
 
+func TestProviderFailureIsStructuredAndSanitized(t *testing.T) {
+	service, _ := testService(t)
+	secretDescription := "provider leaked secret sentinel"
+	service.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusUnauthorized, `{"error":"invalid_client","error_description":"`+secretDescription+`"}`), nil
+	})}
+	_, err := service.exchangeIdentity(context.Background(), "discord", "code", "verifier", "nonce")
+	var failure *providerFailure
+	if !errors.As(err, &failure) {
+		t.Fatalf("error %T does not expose provider failure", err)
+	}
+	if failure.Provider != "discord" || failure.Stage != "token_exchange" || failure.Reason != "http_rejected" ||
+		failure.HTTPStatus != http.StatusUnauthorized || failure.OAuthError != "invalid_client" {
+		t.Fatalf("failure=%+v", failure)
+	}
+	if strings.Contains(err.Error(), secretDescription) {
+		t.Fatal("provider error description leaked through diagnostic error")
+	}
+}
+
+func TestProviderFailureRejectsUntrustedOAuthError(t *testing.T) {
+	service, _ := testService(t)
+	service.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusBadRequest, `{"error":"access-token-sentinel"}`), nil
+	})}
+	_, err := service.exchangeIdentity(context.Background(), "discord", "code", "verifier", "nonce")
+	var failure *providerFailure
+	if !errors.As(err, &failure) || failure.OAuthError != "unknown" {
+		t.Fatalf("failure=%+v err=%v", failure, err)
+	}
+	if strings.Contains(err.Error(), "access-token-sentinel") {
+		t.Fatal("untrusted provider error leaked through diagnostic error")
+	}
+}
+
+func TestGoogleProviderNetworkFailureDoesNotLeakIDTokenURL(t *testing.T) {
+	service, _ := testService(t)
+	idToken := "signed-id-token-sentinel"
+	service.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/token" {
+			return jsonResponse(http.StatusOK, `{"access_token":"provider-access","id_token":"`+idToken+`"}`), nil
+		}
+		return nil, &url.Error{Op: "Get", URL: "https://oauth2.googleapis.com/tokeninfo?id_token=" + idToken, Err: errors.New("transport sentinel")}
+	})}
+	_, err := service.exchangeIdentity(context.Background(), "google", "code", "verifier", "nonce")
+	var failure *providerFailure
+	if !errors.As(err, &failure) || failure.Provider != "google" || failure.Stage != "id_token_verify" || failure.Reason != "network_error" {
+		t.Fatalf("failure=%+v err=%v", failure, err)
+	}
+	if strings.Contains(err.Error(), idToken) || strings.Contains(err.Error(), "transport sentinel") {
+		t.Fatal("Google ID token URL or transport details leaked through diagnostic error")
+	}
+}
+
+func TestCallbackFailureClearsShortLivedOAuthMaterial(t *testing.T) {
+	service, store := testService(t)
+	insertAuthorizingDevice(t, store, "failed-device", "discord")
+	state := "failed-state"
+	verifier, err := store.seal("failed-device", "pkce", []byte("verifier"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce, err := store.seal("failed-device", "nonce", []byte("nonce"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE devices SET state_hash=?,verifier_cipher=?,nonce_cipher=? WHERE id='failed-device'`, store.digest("oauth-state", state), verifier, nonce); err != nil {
+		t.Fatal(err)
+	}
+	service.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusUnauthorized, `{"error":"invalid_client"}`), nil
+	})}
+	request := httptest.NewRequest(http.MethodGet, "/auth/discord/callback?code=failed-code&state="+url.QueryEscape(state), nil)
+	response := httptest.NewRecorder()
+	service.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "server OAuth configuration is invalid") {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
+	}
+	var status string
+	var stateHash, verifierCipher, nonceCipher []byte
+	if err := store.db.QueryRow(`SELECT status,COALESCE(state_hash,X''),COALESCE(verifier_cipher,X''),COALESCE(nonce_cipher,X'') FROM devices WHERE id='failed-device'`).Scan(&status, &stateHash, &verifierCipher, &nonceCipher); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || len(stateHash) != 0 || len(verifierCipher) != 0 || len(nonceCipher) != 0 {
+		t.Fatalf("status=%q state=%d verifier=%d nonce=%d", status, len(stateHash), len(verifierCipher), len(nonceCipher))
+	}
+}
+
 func TestProviderScopesUseLeastPrivilege(t *testing.T) {
 	if got := providerScope("discord"); got != "identify" {
 		t.Fatalf("Discord scope=%q, want identify", got)
