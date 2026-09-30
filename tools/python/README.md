@@ -66,16 +66,16 @@ GameData 根目录和版本没有机器相关默认值，所有查询都必须�
 
 ```powershell
 python .\tools\python\import_seed.py login .\decoded\LoginUser.pb `
-  --packet-code 11 --output .\go\seed\v2_34_13\login_user.json
+  --packet-code 11 --output .\go\seed\v2_35_10\login_user.json
 
 python .\tools\python\import_seed.py starter `
   --items .\decoded\ItemInfo.pb `
   --costumes .\decoded\CostumeInfo.pb `
   --characters .\decoded\CharInfo.pb `
-  --output .\go\seed\v2_34_13\starter_player.json
+  --output .\go\seed\v2_35_10\starter_player.json
 
 python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
-  --output .\go\seed\v2_34_13\mail.json
+  --output .\go\seed\v2_35_10\mail.json
 ```
 
 输出已存在时默认拒绝覆盖；审阅输入和预期差异后才传 `--force`。
@@ -101,7 +101,7 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 python .\tools\python\dev_mail_grant.py serve `
   --game-data "E:\bd2\dl\GameData" `
   --game-data-version "20260923193640" `
-  --mail-seed .\go\seed\v2_34_13\mail.json `
+  --mail-seed .\go\seed\v2_35_10\mail.json `
   --output .\data\dev\mail-grants.json `
   --settings-output .\data\dev\dev-tools.json
 ```

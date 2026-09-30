@@ -16,8 +16,9 @@ public sealed class Plugin : BaseUnityPlugin
     public const string Guid = "bd2.localidentity";
     public const string Name = "BD2 Local Identity";
     public const string Version = Bd2Build.Versions.Plugin;
-    private const string LocalServerURL = "http://127.0.0.1:8080/game/";
     private static ManualLogSource Log;
+    private static ClientRouting Routing;
+    private static int ShutdownHooksInstalled;
 
     internal static void LogWarning(string message)
     {
@@ -29,11 +30,17 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
-            // The non-SDK branch creates/uses this local token and calls
-            // SendMaintenanceInfo directly, bypassing Neon account UI.
+            // The non-SDK branch still needs a local bootstrap identity for
+            // MaintenanceInfo. OAuth LoginUI replaces this value after its
+            // browser/device transaction completes.
             PlayerPrefs.SetString("AccessToken", "bd2-local-development-user");
             PlayerPrefs.Save();
-
+            Routing = ClientRouting.Load(Logger);
+            if (Interlocked.Exchange(ref ShutdownHooksInstalled, 1) == 0)
+            {
+                AppDomain.CurrentDomain.ProcessExit += delegate { DisposeRouting(); };
+                AppDomain.CurrentDomain.DomainUnload += delegate { DisposeRouting(); };
+            }
             Type appManager = FindType("AppManager");
             PropertyInfo useSdk = appManager?.GetProperty(
                 "ὬὦὠὫὡὥὥὦὠὠὠ",
@@ -51,21 +58,7 @@ public sealed class Plugin : BaseUnityPlugin
             harmony.Patch(getter, prefix: new HarmonyMethod(prefix));
 
             Type introUI = FindType("IntroUI");
-            MethodInfo sendMaintenance = introUI?.GetMethod(
-                "SendMaintenanceInfo",
-                BindingFlags.Instance | BindingFlags.Public,
-                null,
-                new[] { typeof(bool) },
-                null);
-            MethodInfo maintenancePrefix = typeof(Plugin).GetMethod(
-                nameof(SendMaintenancePrefix),
-                BindingFlags.Static | BindingFlags.NonPublic);
-            if (sendMaintenance == null || maintenancePrefix == null)
-            {
-                throw new MissingMethodException("IntroUI.SendMaintenanceInfo(bool) was not found");
-            }
-            harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(maintenancePrefix));
-
+            InstallClientRouting(harmony, introUI);
             TryInstall("maintenance timeout guard", () => InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => InstallAgeGatePersistence(harmony));
             TryInstall("local purchase bypass", () => InstallLocalPurchaseBypass(harmony));
@@ -76,6 +69,17 @@ public sealed class Plugin : BaseUnityPlugin
         {
             Logger.LogError("Local identity patch failed: " + ex);
         }
+    }
+
+    private void OnApplicationQuit()
+    {
+        DisposeRouting();
+    }
+
+    private static void DisposeRouting()
+    {
+        ClientRouting routing = Interlocked.Exchange(ref Routing, null);
+        routing?.Dispose();
     }
 
     private void TryInstall(string name, Action install)
@@ -96,18 +100,63 @@ public sealed class Plugin : BaseUnityPlugin
         return false;
     }
 
-    private static void SendMaintenancePrefix()
+    private static void InstallClientRouting(Harmony harmony, Type introUI)
     {
-        Type serverURLInfo = FindType("ὫὡὩὤὣὨὯὭὥὠὩ");
-        FieldInfo maintenanceUri = serverURLInfo?.GetField(
-            "ὫὯὯὦὢὤὫὫὧὢὨ",
-            BindingFlags.Static | BindingFlags.Public);
-        if (maintenanceUri == null || maintenanceUri.FieldType != typeof(Uri))
+        Type serverURLInfo = FindType("ὫὡὩὤὣὨὯὭὥὠὩ") ?? FindType("BDNetwork.ServerURLInfo");
+        MethodInfo load = serverURLInfo?.GetMethod(
+            "ὣὪὦὮὦὠὪὯὧὯὭ",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            Type.EmptyTypes,
+            null) ?? serverURLInfo?.GetMethod(
+            "Load",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            Type.EmptyTypes,
+            null);
+        MethodInfo sendMaintenance = introUI?.GetMethod(
+            "SendMaintenanceInfo",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            new[] { typeof(bool) },
+            null);
+        Type commonPacket = FindType("ὣὡὧὡὦὣὣὬὨὪὫ");
+        MethodInfo makeCDNInfo = commonPacket?.GetMethod(
+            "ὥὢὨὡὪὨὥὥὪὩὠ",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            new[] { typeof(string) },
+            null);
+        if (load == null || sendMaintenance == null || makeCDNInfo == null)
         {
-            throw new MissingFieldException("Client maintenance URI field was not found");
+            throw new MissingMethodException("2.35.10 server/resource routing methods were not found");
         }
-        maintenanceUri.SetValue(null, new Uri(LocalServerURL));
-        Log?.LogInfo("MaintenanceUri => " + LocalServerURL);
+        harmony.Patch(load, postfix: new HarmonyMethod(typeof(Plugin), nameof(ApplyServerOrigin)));
+        harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(typeof(Plugin), nameof(ApplyServerOrigin)));
+        harmony.Patch(makeCDNInfo, postfix: new HarmonyMethod(typeof(Plugin), nameof(ApplyResources)));
+        Log?.LogInfo("Server origin and native CdnInfo routing patches installed");
+    }
+
+    private static void ApplyServerOrigin()
+    {
+        ClientRouting routing = Routing;
+        if (routing == null)
+        {
+            Log?.LogError("Client routing is unavailable while applying the server origin");
+            return;
+        }
+        routing.ApplyServerOrigin();
+    }
+
+    private static void ApplyResources()
+    {
+        ClientRouting routing = Routing;
+        if (routing == null)
+        {
+            Log?.LogError("Client routing is unavailable while applying resources");
+            return;
+        }
+        routing.ApplyResources();
     }
 
     private static void InstallMaintenanceTimeoutGuard(Harmony harmony, Type introUI)
@@ -396,7 +445,7 @@ public sealed class Plugin : BaseUnityPlugin
         return field?.GetValue(value) as string;
     }
 
-    private static Type FindType(string name)
+    internal static Type FindType(string name)
     {
         Assembly assembly = Assembly.Load("Assembly-CSharp");
         Type type = assembly?.GetType(name);

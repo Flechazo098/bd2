@@ -44,6 +44,7 @@ $pluginDir = Join-Path $GameDir 'BepInEx\plugins'
 $localRes = Join-Path $pluginDir 'PluginLocalRes.dll'
 $capturePlugin = Join-Path $pluginDir 'BD2CaptureEnvironment.dll'
 $identityPlugin = Join-Path $pluginDir 'BD2LocalIdentity.dll'
+$loginUIPlugin = Join-Path $pluginDir 'BD2LoginUI.dll'
 $doorstop = Join-Path $GameDir 'doorstop_config.ini'
 $isolatedData = Join-Path $GameDir 'IsolatedUserData'
 $stagedCapturePlugin = Join-Path $PSScriptRoot '..\..\plugins\CaptureEnvironment\bin\Release\netstandard2.1\BD2CaptureEnvironment.dll'
@@ -109,14 +110,18 @@ $localResText = $localResText.Replace('<BUNDLE_VERSION>', $BundleVersion)
 $localResText = $localResText.Replace('<GAME_DATA_VERSION>', $GameDataVersion)
 [IO.File]::WriteAllText($localResConfig, $localResText, [Text.UTF8Encoding]::new($false))
 
-if (Test-Path -LiteralPath $identityPlugin) {
-    throw "Unsafe plugin found in official environment: $identityPlugin"
+foreach ($unsafePlugin in @($identityPlugin, $loginUIPlugin)) {
+    if (Test-Path -LiteralPath $unsafePlugin) {
+        throw "Unsafe plugin found in official environment: $unsafePlugin"
+    }
 }
 
-$unexpectedIdentity = Get-ChildItem -LiteralPath (Join-Path $GameDir 'BepInEx') `
-    -Recurse -File -Filter 'BD2LocalIdentity.dll' -ErrorAction SilentlyContinue
-if ($unexpectedIdentity) {
-    throw "BD2LocalIdentity.dll must not exist anywhere in the official environment."
+foreach ($unsafeName in @('BD2LocalIdentity.dll', 'BD2LoginUI.dll')) {
+    $unexpectedPlugin = Get-ChildItem -LiteralPath (Join-Path $GameDir 'BepInEx') `
+        -Recurse -File -Filter $unsafeName -ErrorAction SilentlyContinue
+    if ($unexpectedPlugin) {
+        throw "$unsafeName must not exist anywhere in the official environment."
+    }
 }
 
 $sharedStaticPaths = @{
