@@ -17,6 +17,15 @@ type clientRunOptions struct {
 }
 
 func main() {
+	relaunched, err := relaunchDevelopmentIfNeeded(os.Args[1:])
+	if err != nil {
+		clientapp.ShowFatalError(err)
+		fmt.Fprintln(os.Stderr, "bd2client:", err)
+		os.Exit(1)
+	}
+	if relaunched {
+		return
+	}
 	args, options, err := developmentRunOptions(os.Args[1:])
 	if err == nil {
 		err = runClient(args, options)
