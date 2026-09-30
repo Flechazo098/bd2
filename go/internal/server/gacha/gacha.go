@@ -93,19 +93,17 @@ func (s *Service) FirstGachaCompleted() bool {
 	return s.collection.FirstGachaCompleted()
 }
 
-// BeginSession is called by the transport session after each successful
-// login. Request sequence numbers restart with the client, so the login ID is
-// part of the durable idempotency key: retries in one login remain idempotent,
-// while a new login may legitimately reuse the same protobuf sequence.
+// BeginSession activates the transport's current login. The transport calls
+// it before every authenticated request, not only when the login is created.
+// Request sequence numbers restart with the client, so the login ID remains
+// part of durable idempotency keys. In-memory first-gacha previews are already
+// keyed by that ID and must survive activation: preview and confirmation are
+// separate requests, and clearing here would discard the result immediately
+// before the client confirms it.
 func (s *Service) BeginSession(id string) {
 	s.sessionMu.Lock()
 	s.sessionID = id
 	s.sessionMu.Unlock()
-	s.firstMu.Lock()
-	if s.firstPreviews != nil {
-		s.firstPreviews = make(map[string]firstGachaPreview)
-	}
-	s.firstMu.Unlock()
 }
 
 func NewService(design *gamedata.InfiniteGachaDesign, regular *gamedata.RegularGachaCatalog, collection *player.CollectionStore, wallet *player.Wallet) (*Service, error) {
@@ -266,9 +264,6 @@ func (s *Service) lockPreview(request []byte) (int, []byte, bool, error) {
 	return 175, nil, true, nil
 }
 
-// multiBuy is the client's AllGacha daily-free macro, not a paid multi-pull.
-// Every item runs within the transport's one account transaction. 146 follows
-// GachaBuy; its exact MultiBuy envelope awaits a 2.35.10 official capture.
 func (s *Service) multiBuy(request []byte, seq uint64) (int, []byte, bool, error) {
 	const maxBatchSize = 256
 	var ids []uint64
@@ -341,7 +336,13 @@ func (s *Service) multiBuy(request []byte, seq uint64) (int, []byte, bool, error
 				}
 			}
 		}
-		if allowance == 0 || !s.dailyFreeScheduleOpen(groupID) {
+		var open bool
+		var allowanceErr error
+		allowance, open, allowanceErr = s.dailyFreeAllowance(groupID, allowance)
+		if allowanceErr != nil {
+			return 146, nil, true, allowanceErr
+		}
+		if allowance == 0 || !open {
 			return 146, nil, true, fmt.Errorf("gacha: unavailable daily free gacha %d", id)
 		}
 		requested[groupID]++
@@ -385,17 +386,25 @@ func (s *Service) multiBuy(request []byte, seq uint64) (int, []byte, bool, error
 	return 146, response, true, nil
 }
 
-func (s *Service) dailyFreeScheduleOpen(groupID uint64) bool {
+func (s *Service) dailyFreeAllowance(groupID, base uint64) (uint64, bool, error) {
 	if s.schedule == nil {
-		return false
+		return 0, false, nil
 	}
 	now := s.now().UnixMilli()
 	for _, entry := range s.schedule.Schedules {
-		if entry.GroupID == groupID && !entry.FreeCountBonus && now >= 0 && uint64(now) >= entry.StartTime && uint64(now) <= entry.EndTime {
-			return true
+		if entry.GroupID != groupID || now < 0 || uint64(now) < entry.StartTime || uint64(now) > entry.EndTime {
+			continue
 		}
+		if entry.FreeCountBonus {
+			bonus := s.regular.GachaEventAddFreeCount()
+			if ^uint64(0)-base < bonus {
+				return 0, false, errors.New("gacha: daily free allowance overflows")
+			}
+			base += bonus
+		}
+		return base, true, nil
 	}
-	return false
+	return 0, false, nil
 }
 
 func (s *Service) buy(request []byte, seq uint64) (int, []byte, bool, error) {
@@ -462,6 +471,17 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 		group = gamedata.GachaGroupDesign{ID: id, PointCount: 1}
 	}
 	isDailyFree := buyType == 0 && design.Count == 1 && design.FreeCountDay != 0 && knownGroup
+	var freeDailyLimit uint64
+	if isDailyFree {
+		var open bool
+		freeDailyLimit, open, err = s.dailyFreeAllowance(group.ID, design.FreeCountDay)
+		if err != nil {
+			return 146, nil, true, err
+		}
+		if !open {
+			return 146, nil, true, fmt.Errorf("gacha: daily free schedule is closed for group %d", group.ID)
+		}
+	}
 	isDailyPaid := buyType == 2 && design.Count == 1 && design.DailyPayGachaCount != 0 && design.DailyPayGachaPriceCount != 0 && knownGroup
 	isMoonrise := buyType == 3 && design.PriceType == moonriseTicketType && design.PriceID == moonriseTicketID && id == moonriseProductID && group.ID == paidTwelvePickGroupID
 	validOrdinary := buyType == 1 && (design.PriceType == 2 || design.PriceType == 3)
@@ -519,7 +539,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 		day := dailyResetKey(s.now())
 		var dailyLimit uint64
 		if isDailyFree {
-			dailyLimit = design.FreeCountDay
+			dailyLimit = freeDailyLimit
 		} else if isDailyPaid {
 			dailyLimit = design.DailyPayGachaCount
 		}
@@ -558,6 +578,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 			roll, fixedResult, err = design.RollWithCostumeFixedSelection(s.collection.GachaFixedCount(group.FixedID, 0), s.collection.GachaFixedCount(group.FixedID, 1), fixed, normalSelected, pitySelected)
 			if err == nil {
 				fixedStates = costumeFixedStates(fixed, fixedResult)
+				fixedStates = s.completeSharedFixedStates(fixed.ID, fixedStates)
 				for _, sortID := range fixedResult.SelectionSorts {
 					selectionApplySortIDs = append(selectionApplySortIDs, uint64(sortID))
 				}
@@ -726,6 +747,18 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 	if isDailyFree && len(tickets) != 0 {
 		return 146, nil, true, errors.New("gacha: daily free equipment draw cannot use tickets")
 	}
+	var freeDailyLimit uint64
+	if isDailyFree {
+		var open bool
+		var err error
+		freeDailyLimit, open, err = s.dailyFreeAllowance(group.ID, design.FreeCountDay)
+		if err != nil {
+			return 146, nil, true, err
+		}
+		if !open {
+			return 146, nil, true, fmt.Errorf("gacha: daily free equipment schedule is closed for group %d", group.ID)
+		}
+	}
 	if identity == "" {
 		identity = s.requestIdentity(design.ID, seq)
 	}
@@ -740,7 +773,7 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 			entries = append(entries, entry)
 		}
 	} else {
-		if isDailyFree && s.collection.GachaDailyCount(dailyResetKey(s.now()), group.ID, 0) >= design.FreeCountDay {
+		if isDailyFree && s.collection.GachaDailyCount(dailyResetKey(s.now()), group.ID, 0) >= freeDailyLimit {
 			return 146, nil, true, fmt.Errorf("gacha: daily equipment draw exhausted group=%d", group.ID)
 		}
 		var ticketCount uint64
@@ -779,6 +812,7 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 		var fixedStates []player.GachaFixedState
 		if !design.TicketOnly {
 			fixedStates = []player.GachaFixedState{{FixedID: fixed.ID, Type: 2, Count: state.SRCount, ApplySort: state.SRSort}, {FixedID: fixed.ID, Type: 3, Count: state.URCount, ApplySort: state.URSort}}
+			fixedStates = s.completeSharedFixedStates(fixed.ID, fixedStates)
 		}
 		for sort, equipmentID := range roll {
 			main, sub, private, err := s.equipmentCatalog.RollOptions(equipmentID)
@@ -806,7 +840,7 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 		} else {
 			purchase := player.GachaPurchase{Group: gamedata.GachaGroupDesign{ID: group.ID, PointCount: group.PointCount}, BuyType: buyType, Fixed: fixedStates}
 			if isDailyFree {
-				purchase.DailyKey, purchase.DailyLimit = dailyResetKey(s.now()), design.FreeCountDay
+				purchase.DailyKey, purchase.DailyLimit = dailyResetKey(s.now()), freeDailyLimit
 			}
 			grant, err = s.collection.GrantEquipmentPurchase(identity, uint64(len(entries)), purchase)
 		}
@@ -846,6 +880,26 @@ func costumeFixedStates(fixed gamedata.GachaFixedDesign, result gamedata.GachaFi
 		states = append(states, player.GachaFixedState{
 			FixedID: fixed.ID, Type: 1, Count: result.CostumeGrade5Count, ApplySort: result.CostumeGrade5Sort,
 		})
+	}
+	return states
+}
+
+func (s *Service) completeSharedFixedStates(fixedID uint64, updates []player.GachaFixedState) []player.GachaFixedState {
+	if fixedID == 0 || s.equipmentCatalog == nil || s.equipmentCatalog.Fixed().ID != fixedID {
+		return updates
+	}
+	states := make([]player.GachaFixedState, 4)
+	for fixedType := range states {
+		states[fixedType] = player.GachaFixedState{
+			FixedID: fixedID, Type: uint64(fixedType),
+			Count: s.collection.GachaFixedCount(fixedID, uint64(fixedType)), ApplySort: -1,
+		}
+	}
+	for _, update := range updates {
+		if update.FixedID != fixedID || update.Type >= uint64(len(states)) {
+			return updates
+		}
+		states[update.Type] = update
 	}
 	return states
 }
@@ -1234,7 +1288,7 @@ func (s *Service) gachaInfo() []byte {
 	return out
 }
 
-// The 2.35.10 client converts Unix time to UTC+9 and applies GameData's
+// The client converts Unix time to UTC+9 and applies GameData's
 // 09:00:00 DailyResetTime. That boundary is exactly 00:00 UTC. Keeping the
 // key independent of the host OS timezone prevents an early reset on a
 // Chinese development machine.

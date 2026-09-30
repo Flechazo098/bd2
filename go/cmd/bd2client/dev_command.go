@@ -20,6 +20,40 @@ type clientDevelopmentConfig struct {
 	GameDirectory string `json:"game_directory"`
 }
 
+var runDevelopmentChild = func(root string, args []string) error {
+	command := exec.Command("go", args...)
+	command.Dir = filepath.Join(root, "go")
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	return command.Run()
+}
+
+// relaunchDevelopmentIfNeeded preserves the documented plain `go run`
+// command. Wails selects its real desktop backend with the `dev` or
+// `production` build tag; without either it deliberately links a diagnostic
+// placeholder. The outer process therefore rebuilds itself once with
+// `production`, retaining the embedded frontend and normal native host while
+// the project-level --dev option supplies development paths and plugin builds.
+func relaunchDevelopmentIfNeeded(args []string) (bool, error) {
+	if len(args) == 0 || args[0] != "--dev" || wailsDevelopmentBuild {
+		return false, nil
+	}
+	if len(args) < 2 || args[1] != "run" {
+		return false, nil
+	}
+	root, err := findClientDevelopmentRoot()
+	if err != nil {
+		return false, err
+	}
+	childArgs := []string{"run", "-tags", "production", "./cmd/bd2client", "--dev", "run"}
+	childArgs = append(childArgs, args[2:]...)
+	if err := runDevelopmentChild(root, childArgs); err != nil {
+		return false, fmt.Errorf("run Wails development client: %w", err)
+	}
+	return true, nil
+}
+
 func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
 	if len(args) == 0 || args[0] != "--dev" {
 		return args, clientRunOptions{}, nil

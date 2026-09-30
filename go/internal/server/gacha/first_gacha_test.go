@@ -76,6 +76,10 @@ func TestFirstGachaPreviewConfirmAndReplay(t *testing.T) {
 	if err != nil || !bytes.Equal(preview, replayPreview) {
 		t.Fatalf("same preview request was not idempotent: err=%v", err)
 	}
+	// session.Server activates every SessionAware handler before every request.
+	// Re-activating the same login between preview and confirmation must not
+	// discard the server-owned result selected by the player.
+	service.BeginSession("first-session")
 
 	buyRequest := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 12), 2, 20), 3, 1)
 	code, response, handled, err := service.Handle("/GachaBuy", buyRequest)

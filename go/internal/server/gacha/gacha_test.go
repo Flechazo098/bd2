@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -613,6 +614,67 @@ func multiBuyRequest(seq uint64, packed bool, ids ...uint64) []byte {
 	return request
 }
 
+func multiFixedSnapshots(t *testing.T, response []byte, wantIDs []uint64) [][4]uint64 {
+	t.Helper()
+	index := 0
+	snapshots := make([][4]uint64, 0, len(wantIDs))
+	if err := wire.Walk(response, func(field wire.Field) error {
+		if field.Number != 1 || field.Type != 2 || index >= len(wantIDs) {
+			return errors.New("unexpected multi-buy result")
+		}
+		id, found, err := wire.Varint(field.Value, 1)
+		if err != nil || !found || id != wantIDs[index] {
+			return fmt.Errorf("result %d id=%d found=%v want=%d", index, id, found, wantIDs[index])
+		}
+		point, found, err := wire.Varint(field.Value, 3)
+		if err != nil || !found || point != 1 {
+			return fmt.Errorf("result %d point=%d found=%v", index, point, found)
+		}
+		seen := [4]bool{}
+		counts := [4]uint64{}
+		if err := wire.Walk(field.Value, func(resultField wire.Field) error {
+			if resultField.Number != 4 {
+				return nil
+			}
+			fixedID, fixedFound, err := wire.Varint(resultField.Value, 1)
+			if err != nil || !fixedFound || fixedID != 1 {
+				return fmt.Errorf("result %d fixed id=%d found=%v", index, fixedID, fixedFound)
+			}
+			fixedType, _, err := wire.Varint(resultField.Value, 2)
+			if err != nil || fixedType >= uint64(len(seen)) || seen[fixedType] {
+				return fmt.Errorf("result %d invalid fixed type=%d", index, fixedType)
+			}
+			count, _, err := wire.Varint(resultField.Value, 3)
+			if err != nil {
+				return err
+			}
+			applySort, applyFound, err := wire.Varint(resultField.Value, 4)
+			if err != nil || !applyFound || applySort != ^uint64(0) {
+				return fmt.Errorf("result %d type=%d apply=%d found=%v", index, fixedType, applySort, applyFound)
+			}
+			seen[fixedType] = true
+			counts[fixedType] = count
+			return nil
+		}); err != nil {
+			return err
+		}
+		for fixedType, found := range seen {
+			if !found {
+				return fmt.Errorf("result %d missing fixed type %d", index, fixedType)
+			}
+		}
+		snapshots = append(snapshots, counts)
+		index++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if index != len(wantIDs) {
+		t.Fatalf("results=%d want=%d", index, len(wantIDs))
+	}
+	return snapshots
+}
+
 func TestGachaMultiBuyPreservesOrderRepeatedIDsAndRestartReplay(t *testing.T) {
 	storage := stateio.NewMemory()
 	service := newMultiBuyTestService(t, storage)
@@ -696,6 +758,25 @@ func TestGachaMultiBuyInvalidOrExcessBatchDoesNotGrantAnySlot(t *testing.T) {
 	}
 }
 
+func TestGachaMultiBuyUsesGameDefaultBonusAllowanceAndRepeatedIDs(t *testing.T) {
+	service := newMultiBuyTestService(t, stateio.NewMemory())
+	if err := service.regular.SetGachaEventAddFreeCount(1); err != nil {
+		t.Fatal(err)
+	}
+	service.schedule.Schedules[0].FreeCountBonus = true
+	request := multiBuyRequest(1, true, 11, 11, 11)
+	if code, response, handled, err := service.Handle("/GachaMultiBuy", request); err != nil || !handled || code != 146 || countFields(response, 1) != 3 {
+		t.Fatalf("bonus multi code=%d results=%d handled=%v err=%v", code, countFields(response, 1), handled, err)
+	}
+	if got := service.collection.GachaDailyCount("2026-09-30", 1, 0); got != 3 {
+		t.Fatalf("bonus daily count=%d want=3", got)
+	}
+	service.BeginSession("bonus-next-login")
+	if _, _, _, err := service.Handle("/GachaMultiBuy", multiBuyRequest(2, true, 11)); err == nil {
+		t.Fatal("bonus allowance accepted a fourth draw")
+	}
+}
+
 func TestGachaMultiBuyFailureRollsBackWholeSQLiteOperation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	repo, err := accountstate.Open(path)
@@ -749,6 +830,9 @@ func TestGachaMultiBuyCurrent23510CostumeAndEquipmentPools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if bonus := regular.GachaEventAddFreeCount(); bonus != 1 {
+		t.Fatalf("2.35.10 GachaEventAddFreeCount=%d want=1", bonus)
+	}
 	equipmentCatalog, err := gamedata.LoadEquipmentGachaGroups(root, version, []uint64{72, 153, 206, 208})
 	if err != nil {
 		t.Fatal(err)
@@ -763,14 +847,36 @@ func TestGachaMultiBuyCurrent23510CostumeAndEquipmentPools(t *testing.T) {
 	for _, groupID := range []uint64{71, 166, 205, 207, 72, 153, 206, 208} {
 		service.schedule.Schedules = append(service.schedule.Schedules, ScheduleWindow{GroupID: groupID, StartTime: 1, EndTime: 2000000000000})
 	}
-	ids := []uint64{10100040, 20100034, 10100113, 20100070, 10100145, 20100082, 10100146, 20100083}
-	request := multiBuyRequest(99, true, ids...)
+	// Exact ordered ID list captured from the official 2.35.10 client at
+	// 2026-10-01 00:44:17. Each result must carry the complete fixed-id 1
+	// snapshot, including the untouched equipment counters.
+	ids := []uint64{10100146, 10100145, 10100040, 10100113}
+	request := multiBuyRequest(98, true, ids...)
 	code, response, handled, err := service.Handle("/GachaMultiBuy", request)
 	if err != nil || !handled || code != 146 {
 		t.Fatalf("installed mixed batch: code=%d handled=%v err=%v", code, handled, err)
 	}
-	if countFields(response, 1) != 8 || len(equipment.All()) != 4 {
+	if countFields(response, 1) != 4 || len(equipment.All()) != 0 {
 		t.Fatalf("results=%d equipment=%d", countFields(response, 1), len(equipment.All()))
+	}
+	costumeSnapshots := multiFixedSnapshots(t, response, ids)
+	for index, snapshot := range costumeSnapshots {
+		if snapshot[2] != 0 || snapshot[3] != 0 {
+			t.Fatalf("costume result %d changed equipment counters: %v", index, snapshot)
+		}
+	}
+	wantCostumeCounters := costumeSnapshots[len(costumeSnapshots)-1]
+	equipmentIDs := []uint64{20100034, 20100070, 20100082, 20100083}
+	equipmentRequest := multiBuyRequest(99, true, equipmentIDs...)
+	_, equipmentResponse, _, err := service.Handle("/GachaMultiBuy", equipmentRequest)
+	if err != nil || countFields(equipmentResponse, 1) != 4 || len(equipment.All()) != 4 {
+		t.Fatalf("equipment results=%d equipment=%d err=%v", countFields(equipmentResponse, 1), len(equipment.All()), err)
+	}
+	equipmentSnapshots := multiFixedSnapshots(t, equipmentResponse, equipmentIDs)
+	for index, snapshot := range equipmentSnapshots {
+		if snapshot[0] != wantCostumeCounters[0] || snapshot[1] != wantCostumeCounters[1] {
+			t.Fatalf("equipment result %d lost costume counters: got=%v want=%v", index, snapshot, wantCostumeCounters)
+		}
 	}
 	if service.wallet.Snapshot().FreeJewelry != 1000 {
 		t.Fatal("installed free batch spent diamonds")
@@ -1227,6 +1333,7 @@ func TestDailyFreeAndPaidSingleDrawsResetByUTCDate(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
+	service.schedule = &ScheduleSeed{Schedules: []ScheduleWindow{{GroupID: 205, StartTime: 1, EndTime: 2000000000000}}}
 	buy := func(seq, buyType uint64) error {
 		request := wire.AppendVarint(nil, 1, seq)
 		request = wire.AppendVarint(request, 2, 101)
