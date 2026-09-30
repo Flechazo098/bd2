@@ -10,7 +10,7 @@ func TestInstalledPack21FirstMonsterRewards(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	rewards, err := BattleRewards(root, "20260910162539", 21, 1)
+	rewards, err := BattleRewards(root, "20260923193640", 21, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,14 +24,14 @@ func TestInstalledPack22DeckAbsentFromPack21Rewards(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	rewards, err := BattleDeckRewards(root, "20260910162539", 22, 9)
+	rewards, err := BattleDeckRewards(root, "20260923193640", 22, 9)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rewards) != 1 || rewards[0] != (BattleReward{Type: 8, ID: 14, Count: 1}) {
 		t.Fatalf("pack22 deck9 rewards = %+v, want type8/item14 x1", rewards)
 	}
-	if _, err := BattleDeckRewards(root, "20260910162539", 21, 9); err == nil {
+	if _, err := BattleDeckRewards(root, "20260923193640", 21, 9); err == nil {
 		t.Fatal("pack21 unexpectedly contains pack22-only deck9")
 	}
 }
@@ -41,7 +41,7 @@ func TestInstalledTutorialGrowthReachesLevel20(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	level, exp, refunds, err := CharacterGrowth(root, "20260910162539", 350, 1, 0, []GrowthMaterial{{ID: 8, Count: 3}})
+	level, exp, refunds, err := CharacterGrowth(root, "20260923193640", 350, 1, 0, []GrowthMaterial{{ID: 8, Count: 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestInstalledTutorialGrowthClientSelectionRefund(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	level, exp, refunds, err := CharacterGrowth(root, "20260910162539", 350, 1, 0, []GrowthMaterial{{ID: 8, Count: 2}})
+	level, exp, refunds, err := CharacterGrowth(root, "20260923193640", 350, 1, 0, []GrowthMaterial{{ID: 8, Count: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}

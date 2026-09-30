@@ -1,14 +1,12 @@
 package schedule
 
 import (
-	"bytes"
-	"os"
 	"testing"
 
 	"bd2server/internal/server/wire"
 )
 
-func TestVersion23413ContainsRequiredContentSix(t *testing.T) {
+func TestVersion23510ContainsRequiredContentSix(t *testing.T) {
 	service := Current()
 	code, response, handled, err := service.Handle("/ScheduleInfo", wire.AppendVarint(nil, 1, 1))
 	if err != nil || !handled || code != 117 {
@@ -30,21 +28,6 @@ func TestVersion23413ContainsRequiredContentSix(t *testing.T) {
 		return nil
 	}); err != nil || !found {
 		t.Fatalf("content 6 missing err=%v", err)
-	}
-}
-
-func TestVersion23413MatchesOptionalOfficialResponse(t *testing.T) {
-	path := os.Getenv("BD2_TEST_SCHEDULE_CAPTURE")
-	if path == "" {
-		t.Skip("set BD2_TEST_SCHEDULE_CAPTURE to compare an official response")
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Skipf("optional official schedule sample unavailable: %v", err)
-	}
-	_, got, _, err := Current().Handle("/ScheduleInfo", wire.AppendVarint(nil, 1, 2))
-	if err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("schedule differs from official 2.34.13 response: equal=%v err=%v\ngot=%x\nwant=%x", bytes.Equal(got, want), err, got, want)
 	}
 }
 

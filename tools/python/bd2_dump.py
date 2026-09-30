@@ -50,9 +50,9 @@ mitmproxy 会把它们全缓冲进内存。加了之后超过 1MB 的响应不�
 ## 输出
 
 - 控制台：`game=true` 的实时打印
-- `capture/2.34.13/<时间戳>/bd2_dump.jsonl`：全部流量，每行一条
-- `capture/2.34.13/<时间戳>/bd2_dump.log`：便于人工检查的文本日志
-- `capture/2.34.13/<时间戳>/bodies/`：`game=true` 的原始 body 原样存一份
+- `capture/2.35.10/<时间戳>/bd2_dump.jsonl`：全部流量，每行一条
+- `capture/2.35.10/<时间戳>/bd2_dump.log`：便于人工检查的文本日志
+- `capture/2.35.10/<时间戳>/bodies/`：`game=true` 的原始 body 原样存一份
   （服务端实现要按 schema 解，原字节比文本更值钱）
 
 可用环境变量 `BD2_CAPTURE_DIR` 覆盖输出根目录。
@@ -78,7 +78,7 @@ TAG = time.strftime("%Y%m%d-%H%M%S")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 CAPTURE_ROOT = os.path.abspath(
-    os.environ.get("BD2_CAPTURE_DIR", os.path.join(PROJECT_DIR, "data", "capture", "2.34.13"))
+    os.environ.get("BD2_CAPTURE_DIR", os.path.join(PROJECT_DIR, "data", "capture", "2.35.10"))
 )
 RUN_DIR = os.path.join(CAPTURE_ROOT, TAG)
 LOG_PATH = os.path.join(RUN_DIR, "bd2_dump.jsonl")

@@ -1,10 +1,15 @@
 package gacha
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"bd2server/internal/server/accountstate"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
@@ -16,7 +21,7 @@ func TestTicketOnlyEquipmentDrawUsesGameDataAndNoScheduleAccounting(t *testing.T
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	const version = "20260910162539"
+	const version = "20260923193640"
 	infinite, err := gamedata.LoadInfiniteGacha(root, version)
 	if err != nil {
 		t.Fatal(err)
@@ -546,10 +551,241 @@ func TestUnverifiedGachaRPCsRemainUnhandled(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := wire.AppendVarint(nil, 1, 1)
-	for _, path := range []string{"/GachaMultiBuy", "/GachaLog"} {
+	for _, path := range []string{"/GachaLog"} {
 		if code, response, handled, err := service.Handle(path, request); err != nil || handled || code != 0 || response != nil {
 			t.Fatalf("%s code=%d bytes=%x handled=%v err=%v", path, code, response, handled, err)
 		}
+	}
+}
+
+func newMultiBuyTestService(t *testing.T, storage stateio.Store) *Service {
+	t.Helper()
+	character := fixtureCharacter(6090, 253)
+	characters := map[uint64]gamedata.CharacterDesign{60901: character}
+	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, characters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+		11: {ID: 11, Count: 1, FreeCountDay: 2, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
+		12: {ID: 12, Count: 1, FreeCountDay: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
+		13: {ID: 13, Count: 10, PriceType: 3, Price: 2000, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
+	}, characters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range []gamedata.GachaGroupDesign{{ID: 1, OneTimeGachaID: 11, TenTimeGachaID: 13, PointCount: 1}, {ID: 2, OneTimeGachaID: 12, PointCount: 1}} {
+		if err := regular.AddGroupDesign(group, gamedata.GachaFixedDesign{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{FreeJewelry: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(design, regular, collection, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.BeginSession("multi-login")
+	service.now = func() time.Time { return time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC) }
+	service.schedule = &ScheduleSeed{Schedules: []ScheduleWindow{{GroupID: 1, StartTime: 1, EndTime: 2000000000000}, {GroupID: 2, StartTime: 1, EndTime: 2000000000000}}}
+	return service
+}
+
+func multiBuyRequest(seq uint64, packed bool, ids ...uint64) []byte {
+	request := wire.AppendVarint(nil, 1, seq)
+	var values []byte
+	for _, id := range ids {
+		if packed {
+			values = binary.AppendUvarint(values, id)
+		} else {
+			request = wire.AppendVarint(request, 2, id)
+		}
+	}
+	if packed {
+		request = wire.AppendBytes(request, 2, values)
+	}
+	return request
+}
+
+func TestGachaMultiBuyPreservesOrderRepeatedIDsAndRestartReplay(t *testing.T) {
+	storage := stateio.NewMemory()
+	service := newMultiBuyTestService(t, storage)
+	request := multiBuyRequest(10, true, 12, 11, 11)
+	code, response, handled, err := service.Handle("/GachaMultiBuy", request)
+	if err != nil || code != 146 || !handled {
+		t.Fatalf("multi code=%d handled=%v err=%v", code, handled, err)
+	}
+	var gotIDs []uint64
+	if err := wire.Walk(response, func(field wire.Field) error {
+		if field.Number != 1 || field.Type != 2 {
+			return errors.New("invalid result")
+		}
+		id, _, err := wire.Varint(field.Value, 1)
+		if err != nil {
+			return err
+		}
+		gotIDs = append(gotIDs, id)
+		bundle, found, err := wire.Bytes(field.Value, 2)
+		if err != nil || !found || (countFields(bundle, 3)+countFields(bundle, 9)) != 1 {
+			return errors.New("missing costume/upgrade")
+		}
+		point, _, err := wire.Varint(field.Value, 3)
+		if err != nil || point != 1 {
+			return errors.New("missing point")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gotIDs) != 3 || gotIDs[0] != 12 || gotIDs[1] != 11 || gotIDs[2] != 11 {
+		t.Fatalf("order=%v", gotIDs)
+	}
+	if service.wallet.Snapshot().FreeJewelry != 1000 {
+		t.Fatal("free batch charged currency")
+	}
+	if owned := service.collection.Costumes(); len(owned) != 1 || owned[0].Level != 2 {
+		t.Fatalf("owned=%+v", owned)
+	}
+	if service.collection.GachaDailyCount("2026-09-30", 1, 0) != 2 || service.collection.GachaUser(1).Point != 2 {
+		t.Fatal("repeated IDs did not make independent draws")
+	}
+	service = newMultiBuyTestService(t, storage)
+	_, replay, _, err := service.Handle("/GachaMultiBuy", multiBuyRequest(10, false, 12, 11, 11))
+	if err != nil || !bytes.Equal(response, replay) {
+		t.Fatalf("restart/unpacked replay differs: %v", err)
+	}
+	if service.collection.Costumes()[0].Level != 2 || service.collection.GachaUser(1).Point != 2 {
+		t.Fatal("replay mutated rewards")
+	}
+	if _, _, _, err := service.Handle("/GachaMultiBuy", multiBuyRequest(10, true, 11, 12, 11)); err == nil {
+		t.Fatal("same sequence changed ordered request")
+	}
+	service.BeginSession("next-login")
+	if _, _, _, err := service.Handle("/GachaMultiBuy", request); err == nil {
+		t.Fatal("new login bypassed exhausted daily limits")
+	}
+	service.now = func() time.Time { return time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC) }
+	if _, _, _, err := service.Handle("/GachaMultiBuy", request); err != nil {
+		t.Fatalf("next UTC reset did not restore allowance: %v", err)
+	}
+}
+
+func TestGachaMultiBuyInvalidOrExcessBatchDoesNotGrantAnySlot(t *testing.T) {
+	for name, ids := range map[string][]uint64{"unknown": {11, 999}, "excess": {11, 11, 11}, "ten-pull": {11, 13}, "zero": {11, 0}, "negative-int32": {11, ^uint64(0)}, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			service := newMultiBuyTestService(t, stateio.NewMemory())
+			code, _, handled, err := service.Handle("/GachaMultiBuy", multiBuyRequest(1, true, ids...))
+			if code != 146 || !handled || err == nil {
+				t.Fatalf("code=%d handled=%v err=%v", code, handled, err)
+			}
+			if len(service.collection.Costumes()) != 0 || service.collection.GachaDailyCount("2026-09-30", 1, 0) != 0 || service.collection.GachaUser(1).Point != 0 {
+				t.Fatal("invalid batch partly granted")
+			}
+		})
+	}
+	service := newMultiBuyTestService(t, stateio.NewMemory())
+	service.schedule.Schedules[1].EndTime = 2
+	if _, _, _, err := service.Handle("/GachaMultiBuy", multiBuyRequest(1, true, 11, 12)); err == nil || len(service.collection.Costumes()) != 0 {
+		t.Fatal("closed schedule partly granted")
+	}
+}
+
+func TestGachaMultiBuyFailureRollsBackWholeSQLiteOperation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	service := newMultiBuyTestService(t, repo)
+	if err := service.collection.EnsurePersisted(); err != nil {
+		t.Fatal(err)
+	}
+	service.AttachPreviewMission(func() error { return errors.New("injected mission failure after reward") })
+	operation, err := repo.BeginOperation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/GachaMultiBuy", multiBuyRequest(1, true, 11, 12)); err == nil {
+		t.Fatal("expected failure")
+	}
+	// A dirty rollback intentionally fail-stops domain memory. Reopen below
+	// verifies the disk state and prevents stale in-memory objects being reused.
+	if err := operation.Rollback(); err == nil || repo.Check() == nil {
+		t.Fatal("dirty rollback must fail-stop the current repository")
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	reopened := newMultiBuyTestService(t, repo)
+	if len(reopened.collection.Costumes()) != 0 || reopened.collection.GachaDailyCount("2026-09-30", 1, 0) != 0 || reopened.collection.GachaUser(1).Point != 0 {
+		t.Fatal("failed request persisted a partial batch")
+	}
+	if _, found, _ := reopened.collection.GachaBatchResponse("multi-gacha:session:multi-login:seq:1", "ignored"); found {
+		t.Fatal("failed request stored completion")
+	}
+}
+
+func TestGachaMultiBuyCurrent23510CostumeAndEquipmentPools(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "data", "resources", "GameData")
+	const version = "20260923193640"
+	if _, err := os.Stat(filepath.Join(root, version, "release", "common-dbdata.bin")); os.IsNotExist(err) {
+		t.Skip("installed 2.35.10 GameData archive is unavailable")
+	}
+	storage := stateio.NewMemory()
+	service := newMultiBuyTestService(t, storage)
+	regular, err := gamedata.LoadRegularCostumeGachaGroups(root, version, []uint64{71, 166, 205, 207}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipmentCatalog, err := gamedata.LoadEquipmentGachaGroups(root, version, []uint64{72, 153, 206, 208})
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipment, err := player.OpenEquipmentInventory(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.regular = regular
+	service.AttachEquipmentGacha(equipmentCatalog, equipment)
+	service.schedule.Schedules = nil
+	for _, groupID := range []uint64{71, 166, 205, 207, 72, 153, 206, 208} {
+		service.schedule.Schedules = append(service.schedule.Schedules, ScheduleWindow{GroupID: groupID, StartTime: 1, EndTime: 2000000000000})
+	}
+	ids := []uint64{10100040, 20100034, 10100113, 20100070, 10100145, 20100082, 10100146, 20100083}
+	request := multiBuyRequest(99, true, ids...)
+	code, response, handled, err := service.Handle("/GachaMultiBuy", request)
+	if err != nil || !handled || code != 146 {
+		t.Fatalf("installed mixed batch: code=%d handled=%v err=%v", code, handled, err)
+	}
+	if countFields(response, 1) != 8 || len(equipment.All()) != 4 {
+		t.Fatalf("results=%d equipment=%d", countFields(response, 1), len(equipment.All()))
+	}
+	if service.wallet.Snapshot().FreeJewelry != 1000 {
+		t.Fatal("installed free batch spent diamonds")
+	}
+	for _, groupID := range []uint64{71, 166, 205, 207, 72, 153, 206, 208} {
+		if service.collection.GachaDailyCount("2026-09-30", groupID, 0) != 1 || service.collection.GachaUser(groupID).Point != 1 {
+			t.Fatalf("missing daily allowance/point group=%d", groupID)
+		}
+	}
+	if states := service.collection.GachaFixedStates(); len(states) != 4 {
+		t.Fatalf("missing four costume/equipment fixed types: %+v", states)
+	}
+	_, replay, _, err := service.Handle("/GachaMultiBuy", request)
+	if err != nil || !bytes.Equal(response, replay) || len(equipment.All()) != 4 {
+		t.Fatalf("installed replay changed equipment/rewards: %v", err)
 	}
 }
 

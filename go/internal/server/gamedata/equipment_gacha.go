@@ -25,6 +25,7 @@ type EquipmentGachaCatalog struct {
 type EquipmentGacha struct {
 	ID               uint64
 	Count            int
+	FreeCountDay     uint64
 	PriceType, Price uint64
 	TicketIDs        []uint64
 	Pool             []WeightedEquipment
@@ -225,6 +226,14 @@ func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
 	price, _ := packedInts(raw, 10)
 	kind, _ := packedInts(raw, 12)
 	tickets, _ := packedInts(raw, 8)
+	freeCounts, err := packedInts(raw, 4)
+	if err != nil || len(freeCounts) > 1 {
+		return EquipmentGacha{}, fmt.Errorf("gamedata: malformed equipment free allowance %d", id)
+	}
+	var freeCount uint64
+	if len(freeCounts) == 1 {
+		freeCount = freeCounts[0]
+	}
 	if len(count) != 1 || len(reward) != 1 || len(price) != 1 || len(kind) != 1 || kind[0] != 3 || price[0] != uint64(count[0])*200 {
 		return EquipmentGacha{}, fmt.Errorf("gamedata: malformed equipment gacha %d", id)
 	}
@@ -246,7 +255,7 @@ func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
 			return EquipmentGacha{}, fmt.Errorf("gamedata: equipment gacha %d branch %d rate=%d", id, i, pool[i].Weight)
 		}
 	}
-	return EquipmentGacha{ID: id, Count: int(count[0]), PriceType: kind[0], Price: price[0], TicketIDs: append([]uint64(nil), tickets...), Pool: pool}, nil
+	return EquipmentGacha{ID: id, Count: int(count[0]), FreeCountDay: freeCount, PriceType: kind[0], Price: price[0], TicketIDs: append([]uint64(nil), tickets...), Pool: pool}, nil
 }
 func loadEquipmentRewardPool(db *sql.DB, groupID uint64) ([]WeightedEquipment, error) {
 	var raw []byte

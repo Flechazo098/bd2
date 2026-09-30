@@ -59,21 +59,25 @@ func applyGachaPurchase(next *collectionSnapshot, identity string, costumeIDs []
 		}
 		next.GachaApplied[prefix+identity] = true
 	}
-	point := purchase.Group.PointCount * uint64(len(costumeIDs))
+	rewardCount := uint64(len(costumeIDs))
+	if purchase.RewardCount != 0 {
+		rewardCount = purchase.RewardCount
+	}
+	point := purchase.Group.PointCount * rewardCount
 	user.Point += point
 	switch purchase.BuyType {
 	case 1: // GB_NORMAL
-		user.TotalBuyCount += uint64(len(costumeIDs))
+		user.TotalBuyCount += rewardCount
 	case 2: // GB_CASH outside the date-scoped daily discount
 		if purchase.DailyLimit == 0 {
-			if len(costumeIDs) == 1 {
+			if rewardCount == 1 {
 				user.OneCashPickCount++
 			} else {
 				user.TenCashPickCount++
 			}
 		}
 	case 3: // GB_CASH_CONTENT_TICKET
-		user.TotalBuyCount += uint64(len(costumeIDs))
+		user.TotalBuyCount += rewardCount
 	}
 	next.GachaUsers[groupKey] = user
 	grant.GachaGroupID = purchase.Group.ID

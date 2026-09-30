@@ -2,12 +2,10 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -40,13 +38,9 @@ func TestOpenPersistentLoggerUsesExecutableLogDirectory(t *testing.T) {
 func TestPersistentOperationalLogsUseEnglish(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
-	h := &handler{token: "test-session", origin: "http://local.invalid", logger: logger}
-	body := `{"game_directory":"Z:\\missing","server_origin":"http://127.0.0.1:8080","cdn_mode":"official","local_resource_directory":"","ui_language":"zh-CN"}`
-	request := httptest.NewRequest(http.MethodPost, "/api/inspect", strings.NewReader(body))
-	request.Header.Set("X-BD2-Session", "test-session")
-	request.Header.Set("Origin", "http://local.invalid")
-	response := httptest.NewRecorder()
-	h.routes().ServeHTTP(response, request)
+	studio := NewStudio(Options{Logger: logger}, NativeHost{})
+	studio.Startup(context.Background())
+	_, _ = studio.Inspect(Request{GameDirectory: `Z:\missing`, UILanguage: "zh-CN"})
 	for len(output.Bytes()) > 0 {
 		r, size := utf8.DecodeRune(output.Bytes())
 		if unicode.Is(unicode.Han, r) {
@@ -83,25 +77,5 @@ func TestRollingLogRetainsOneBackup(t *testing.T) {
 	}
 	if string(active) != "second" || string(previous) != "first" {
 		t.Fatalf("active=%q backup=%q", active, previous)
-	}
-}
-
-func TestAuthorizationLogDoesNotIncludeSessionValues(t *testing.T) {
-	var output bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&output, nil))
-	h := &handler{token: "expected-session-secret", origin: "http://local.invalid", logger: logger}
-	request := httptest.NewRequest(http.MethodPost, "/api/inspect", strings.NewReader("{}"))
-	request.Header.Set("X-BD2-Session", "provided-session-secret")
-	request.Header.Set("Origin", "http://local.invalid")
-	response := httptest.NewRecorder()
-	h.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
-	}
-	logged := output.String()
-	for _, secret := range []string{"expected-session-secret", "provided-session-secret"} {
-		if strings.Contains(logged, secret) {
-			t.Fatalf("log contains session value %q: %s", secret, logged)
-		}
 	}
 }

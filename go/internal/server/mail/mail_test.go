@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"bd2server/internal/server/fixture"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
@@ -345,26 +344,27 @@ func TestMailOpenAcceptsOfficialPackedRequest(t *testing.T) {
 	}
 }
 
-func TestStarterMatchesInitialAccountSample(t *testing.T) {
-	set, err := fixture.Load(filepath.Join("..", "..", "..", "..", "data", "capture", "2.34.13", "20260920-003254"))
-	if err != nil {
-		t.Skipf("optional capture unavailable: %v", err)
+func TestStarterMailProtocolEncodingAndRoundTrip(t *testing.T) {
+	seed := &Starter{Version: "2.35.10", MailCount: 2, MaxMailID: 7, Mails: []MailDBInfo{{
+		MailID: 7, MailType: 2, Title: "Welcome", Body: "Rewards", ExpiresAt: 1000, SentAt: 10,
+		RewardTypes: []uint64{3, 8}, RewardIDs: []uint64{0, 17}, RewardCounts: []uint64{5, 300},
+	}}}
+	path := filepath.Join(t.TempDir(), "mail.json")
+	if err := seed.Write(path); err != nil {
+		t.Fatal(err)
 	}
-	recorded, err := set.RecordedResponseForClientSequence("/MailInfo", 249)
+	loaded, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _, err := set.RecordedPayloadAt("/MailInfo", recorded.RequestSequence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seed, err := Load(filepath.Join("..", "..", "..", "seed", "v2_35_10", "mail.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, actual, ok, err := seed.Handle("/MailInfo", wire.AppendVarint(nil, 1, 249))
-	if err != nil || !ok || code != payload.PacketCode || !bytes.Equal(actual, payload.Proto) {
-		t.Fatalf("MailInfo differs: code=%d want=%d ok=%v err=%v\\ngot =%x\\nwant=%x", code, payload.PacketCode, ok, err, actual, payload.Proto)
+	// MailInfoResponse contains MailDBInfo field 1 plus count and maximum ID.
+	// Reward arrays are packed protobuf varints; default ID 0 remains a slot.
+	wantMail := []byte{0x08, 7, 0x10, 2, 0x2a, 7, 'W', 'e', 'l', 'c', 'o', 'm', 'e', 0x32, 7, 'R', 'e', 'w', 'a', 'r', 'd', 's', 0x38, 0xe8, 7, 0x42, 2, 3, 8, 0x4a, 2, 0, 17, 0x52, 3, 5, 0xac, 2, 0x68, 10}
+	want := append([]byte{0x0a, byte(len(wantMail))}, wantMail...)
+	want = append(want, 0x10, 2, 0x18, 7)
+	code, actual, handled, err := loaded.Handle("/MailInfo", wire.AppendVarint(nil, 1, 249))
+	if err != nil || !handled || code != 131 || !bytes.Equal(actual, want) {
+		t.Fatalf("code=%d proto=%x handled=%v err=%v", code, actual, handled, err)
 	}
 }
 

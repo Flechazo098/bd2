@@ -127,7 +127,7 @@ func CharacterGrowth(root, version string, charID int, level, exp uint64, materi
 }
 
 // Convert max-level overflow back into the installed experience resources.
-// The official 2.34.13 server uses larger denominations greedily and rounds
+// Growth refunds use larger denominations greedily and round
 // the final remainder up to one smallest slime.  This can refund slightly
 // more nominal EXP than the overflow: the verified tutorial sample has 551
 // overflow EXP and returns resource 7 x3 (600 EXP), not x2.

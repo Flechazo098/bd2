@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert decoded 2.34.13 protobuf messages into reviewed JSON seeds.
+"""Convert decoded 2.35.10 protobuf messages into reviewed JSON seeds.
 
 This replaces the old Go cmd/import-* programs. Network/capture decryption is
 kept separate: inputs here are raw, already-decoded protobuf files. Outputs
@@ -27,7 +27,7 @@ from pathlib import Path
 import struct
 
 
-VERSION = "2.34.13"
+VERSION = "2.35.10"
 
 
 @dataclass(frozen=True)

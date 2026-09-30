@@ -213,6 +213,10 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load active gacha GameData: %w", err)
 	}
+	firstGacha, err := gamedata.LoadFirstGacha(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load first gacha GameData: %w", err)
+	}
 	stateRepository, err := accountstate.Open(filepath.Clean(*stateFile))
 	if err != nil {
 		return fmt.Errorf("open account state database: %w", err)
@@ -426,7 +430,12 @@ func serve(args []string) (serveErr error) {
 	}
 	// The mapped client property is IsDoneFirstGachaPick. Its authoritative
 	// local state is the explicit GachaSubType=3 completion marker.
-	login.SetFirstGacha(gachaService.FirstGachaCompleted())
+	if err := login.AttachFirstGacha(gachaService); err != nil {
+		return fmt.Errorf("attach first gacha status to login: %w", err)
+	}
+	if err := gachaService.AttachFirstGacha(firstGacha); err != nil {
+		return fmt.Errorf("attach first gacha GameData: %w", err)
+	}
 	gachaService.AttachInventory(ownedItems)
 	gachaService.AttachEquipmentGacha(equipmentGacha, ownedEquipment)
 	gachaService.AttachPreviewMission(func() error {

@@ -221,7 +221,7 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
             source = root / "mail.json"
             output = root / "generated.json"
             source.write_text(json.dumps({
-                "version": "2.34.13", "mails": [], "mail_count": 1, "max_mail_id": 0,
+                "version": "2.35.10", "mails": [], "mail_count": 1, "max_mail_id": 0,
             }), encoding="utf-8")
             gold = {"id": 0, "element_type": 4, "name": "金币"}
             store = dev_mail_grant.MailGrantStore(source, output, [gold], 365)
@@ -283,7 +283,7 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
             source = root / "source-mail.json"
             output = root / "generated-mail.json"
             source.write_text(json.dumps({
-                "version": "2.34.13",
+                "version": "2.35.10",
                 "mails": [{
                     "mail_id": 100, "mail_type": 2, "title": "base", "body": "base",
                     "expires_at": 200, "reward_types": [8], "reward_ids": [7],
