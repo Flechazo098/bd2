@@ -1,118 +1,183 @@
 #!/usr/bin/env python3
-"""把远程 bundle 变成本地直读：硬链接进 StreamingAssets/aa + 改写 catalog。
+"""Install one complete downloaded ServerData release as the built-in local catalog.
 
-## 为什么要用 {RuntimePath} 而不是绝对路径
+The source directory must contain the exact ``catalog_alpha.json`` and every
+bundle referenced by it. Referenced bundles are hard-linked into the game's
+``StreamingAssets/aa`` directory, then a localized copy of the *same* catalog
+atomically replaces ``catalog.json``. No bundle data is duplicated when source
+and game are on the same filesystem.
 
-试过把 catalog 里的条目改成 `E:/bd2/dl/.../xxx.bundle` 这种绝对路径，结果带子目录的
-bundle 报：
+Usage:
 
-    RemoteProviderException : Invalid path in AssetBundleProvider
-
-原因是 Addressables 的 `AssetBundleResource.GetLoadInfo()`：
-
-    if (!(location?.Data is AssetBundleRequestOptions)) { loadType = None; }   // ← 落到这
-    else if (ShouldPathUseWebRequest(path))      loadType = Web;
-    else if (UseUnityWebRequestForLocalBundles)  loadType = Web;
-    else                                         loadType = Local;
-
-    ...
-    default:  // LoadType.None
-        Complete(null, false, new RemoteProviderException(
-            $"Invalid path in AssetBundleProvider: '{path}'."));
-
-绝对路径这种 location 上挂不到 `AssetBundleRequestOptions`，于是 LoadType.None。
-
-**客户端自带那 10 个本地 bundle 用的是 `{RuntimePath}\\<包名>`** ——
-那是 Addressables 原生的本地形态，一定挂得上 options。照抄它。
-
-## 硬链接
-
-`RuntimePath` 解析成 `StreamingAssets/aa`，所以 bundle 得摆进去。用 NTFS 硬链接
-**零额外空间**（同一份数据两个路径）。包名里带子目录的（798 个）要建同样的子目录。
-
-## 用法
-
-    python localize_bundles.py <bundle 所在目录> <aa 目录>
+    python localize_bundles.py <ServerData version directory> <game aa directory>
 """
+
 import hashlib
 import io
 import json
 import os
-import re
 import shutil
 import sys
+import tempfile
+
 
 BS = chr(92)
+REMOTE_PREFIX = "{BDNetwork.CdnInfo.Info}" + BS
 LOCAL_PREFIX = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}" + BS
+BACKUP_NAME = "catalog.json.bak-before-local-catalog-sync"
 
 
-def strip_prefix(s):
-    """`{BDNetwork.CdnInfo.Info}\\平台\\{分辨率}\\{版本}\\<包名>` -> `<包名>`"""
-    parts = s.replace(BS, "/").split("/")
-    return "/".join(parts[4:])
+def relative_bundle(internal_id):
+    """Return the path below the version root for one remote internal ID."""
+    if not internal_id.startswith(REMOTE_PREFIX):
+        return None
+    parts = internal_id.replace(BS, "/").split("/")
+    if len(parts) < 5:
+        raise ValueError("remote internal ID has no bundle path: %r" % internal_id)
+    relative = "/".join(parts[4:])
+    if not relative or "{" in relative or not relative.endswith(".bundle"):
+        raise ValueError("remote internal ID has an invalid bundle path: %r" % internal_id)
+    if relative.startswith("/") or any(part in ("", ".", "..") for part in relative.split("/")):
+        raise ValueError("remote internal ID escapes the release directory: %r" % internal_id)
+    return relative
+
+
+def inside(root, relative):
+    root = os.path.realpath(root)
+    candidate = os.path.realpath(os.path.join(root, *relative.split("/")))
+    if os.path.commonpath((root, candidate)) != root:
+        raise ValueError("bundle path escapes its root: %s" % relative)
+    return candidate
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with open(path, "rb") as stream:
+        while True:
+            block = stream.read(1024 * 1024)
+            if not block:
+                return value.digest()
+            value.update(block)
+
+
+def same_content(left, right):
+    try:
+        if os.path.samefile(left, right):
+            return True
+    except OSError:
+        pass
+    return os.path.getsize(left) == os.path.getsize(right) and digest(left) == digest(right)
+
+
+def load_catalog(path):
+    with io.open(path, encoding="utf-8") as stream:
+        value = json.load(stream)
+    internal_ids = value.get("m_InternalIds")
+    if not isinstance(internal_ids, list) or not internal_ids:
+        raise ValueError("catalog has no non-empty m_InternalIds array")
+    if not all(isinstance(item, str) for item in internal_ids):
+        raise ValueError("catalog m_InternalIds contains a non-string value")
+    return value
+
+
+def prepare_catalog(source_directory, aa_directory):
+    source_directory = os.path.realpath(source_directory)
+    aa_directory = os.path.realpath(aa_directory)
+    source_catalog = os.path.join(source_directory, "catalog_alpha.json")
+    target_catalog = os.path.join(aa_directory, "catalog.json")
+    if not os.path.isfile(source_catalog):
+        raise FileNotFoundError("source release is missing catalog_alpha.json: " + source_catalog)
+    if not os.path.isdir(aa_directory):
+        raise NotADirectoryError("game Addressables directory does not exist: " + aa_directory)
+    if not os.path.isfile(target_catalog):
+        raise FileNotFoundError("game Addressables catalog does not exist: " + target_catalog)
+
+    catalog = load_catalog(source_catalog)
+    referenced = {}
+    changed = 0
+    for index, internal_id in enumerate(catalog["m_InternalIds"]):
+        relative = relative_bundle(internal_id)
+        if relative is None:
+            continue
+        source = inside(source_directory, relative)
+        if not os.path.isfile(source):
+            raise FileNotFoundError("catalog references a missing source bundle: " + source)
+        referenced[relative] = source
+        catalog["m_InternalIds"][index] = LOCAL_PREFIX + relative.replace("/", BS)
+        changed += 1
+    if changed == 0:
+        raise ValueError("source catalog contains no BDNetwork CDN bundle entries")
+
+    linked = existing = 0
+    for relative, source in sorted(referenced.items()):
+        destination = inside(aa_directory, relative)
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        if os.path.exists(destination):
+            if not os.path.isfile(destination) or not same_content(source, destination):
+                raise FileExistsError("game bundle conflicts with downloaded release: " + destination)
+            existing += 1
+            continue
+        try:
+            os.link(source, destination)
+        except OSError as error:
+            raise OSError(
+                "could not hard-link bundle without duplicating data; keep the download and game on the same filesystem: "
+                + destination
+            ) from error
+        linked += 1
+
+    for internal_id in catalog["m_InternalIds"]:
+        if not internal_id.startswith(LOCAL_PREFIX):
+            continue
+        relative = internal_id[len(LOCAL_PREFIX):].replace(BS, "/")
+        if not os.path.isfile(inside(aa_directory, relative)):
+            raise FileNotFoundError("localized catalog references a missing game bundle: " + relative)
+
+    raw = json.dumps(catalog, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    backup = os.path.join(aa_directory, BACKUP_NAME)
+    if not os.path.exists(backup):
+        shutil.copy2(target_catalog, backup)
+    elif not os.path.isfile(backup):
+        raise FileExistsError("catalog backup path is not a regular file: " + backup)
+
+    descriptor, temporary = tempfile.mkstemp(prefix=".catalog-local-", suffix=".json", dir=aa_directory)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target_catalog)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    return {
+        "changed_ids": changed,
+        "unique_bundles": len(referenced),
+        "linked": linked,
+        "existing": existing,
+        "catalog_bytes": len(raw),
+        "catalog_sha256": hashlib.sha256(raw).hexdigest(),
+        "backup": backup,
+    }
 
 
 def main():
     if len(sys.argv) != 3:
         print(__doc__)
+        return 2
+    try:
+        result = prepare_catalog(sys.argv[1], sys.argv[2])
+    except Exception as error:
+        print("local catalog sync failed: %s" % error, file=sys.stderr)
         return 1
-    src, aa = sys.argv[1], sys.argv[2]
-    cat = os.path.join(aa, "catalog.json")
-    if not os.path.isfile(cat):
-        print("找不到 %s" % cat)
-        return 1
-    if not os.path.isdir(src):
-        print("找不到 bundle 目录 %s" % src)
-        return 1
-
-    # ---- 1. 备份 ----
-    bak = cat + ".bak-before-localize"
-    if not os.path.exists(bak):
-        shutil.copy2(cat, bak)
-        print("备份 -> %s" % os.path.basename(bak))
-    else:
-        print("备份已存在，跳过")
-
-    # ---- 2. 硬链接 ----
-    linked = skipped = copied = 0
-    for dp, _, fn in os.walk(src):
-        for f in fn:
-            if not f.endswith(".bundle"):
-                continue
-            s = os.path.join(dp, f)
-            d = os.path.join(aa, os.path.relpath(s, src))
-            os.makedirs(os.path.dirname(d), exist_ok=True)
-            if os.path.exists(d):
-                skipped += 1
-                continue
-            try:
-                os.link(s, d)
-                linked += 1
-            except OSError:
-                shutil.copy2(s, d)
-                copied += 1
-    print("硬链接 新建%d 已存在%d 退回复制%d" % (linked, skipped, copied))
-
-    # ---- 3. 改写 internal id ----
-    o = json.load(io.open(cat, encoding="utf-8"))
-    ids = o["m_InternalIds"]
-    changed = 0
-    for i, s in enumerate(ids):
-        if not s.startswith("{BDNetwork.CdnInfo.Info}"):
-            continue
-        name = strip_prefix(s)
-        if not name or "{" in name:
-            print("解析异常，中止：%r -> %r" % (s, name))
-            return 1
-        ids[i] = LOCAL_PREFIX + name
-        changed += 1
-    print("改写 %d 条" % changed)
-
-    # 长度不变，下标引用依然有效
-    raw = json.dumps(o, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    io.open(cat, "wb").write(raw)
-    print("写回 %s（%d 字节）" % (os.path.basename(cat), len(raw)))
-    print("  md5 = %s" % hashlib.md5(raw).hexdigest())
+    print("localized current catalog: %d IDs, %d unique bundles" % (
+        result["changed_ids"], result["unique_bundles"]))
+    print("hard links: %d new, %d already exact" % (result["linked"], result["existing"]))
+    print("catalog: %d bytes, sha256=%s" % (result["catalog_bytes"], result["catalog_sha256"]))
+    print("backup: %s" % result["backup"])
     return 0
 
 
