@@ -8,7 +8,7 @@ by an explicitly configured local bd2server.
 Example:
   python tools/python/dev_mail_grant.py serve `
     --game-data E:\\bd2\\dl\\GameData --game-data-version 20260910162539 `
-    --mail-seed go\\seed\\v2_34_13\\mail.json --output data\\dev\\mail-grants.json
+    --mail-seed go\\seed\\v2_35_10\\mail.json --output data\\dev\\mail-grants.json
 """
 
 from __future__ import annotations

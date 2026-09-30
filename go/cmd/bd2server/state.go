@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"bd2server/internal/accountstate"
+	"bd2server/internal/server/accountstate"
 )
 
 func stateCommand(args []string) error {

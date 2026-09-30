@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)] [string]$Config,
     [Parameter(Mandatory)] [string]$Output,
-    [Parameter(Mandatory)] [ValidateSet('local_identity', 'capture_environment')] [string]$Plugin
+    [Parameter(Mandatory)] [ValidateSet('local_identity', 'capture_environment', 'login_ui')] [string]$Plugin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +12,6 @@ $semver = '^[0-9]+\.[0-9]+\.[0-9]+$'
 $resource = '^[0-9]{14}$'
 foreach ($entry in @(
     @('client_version', $versions.client_version, $semver),
-    @('protocol_version', $versions.protocol_version, $semver),
     @('game_data_version', $versions.game_data_version, $resource),
     @('bundle_version', $versions.bundle_version, $resource),
     @("plugins.$Plugin", $pluginVersion, $semver)
@@ -29,7 +28,6 @@ namespace Bd2Build
     internal static class Versions
     {
         internal const string Client = "$($versions.client_version)";
-        internal const string Protocol = "$($versions.protocol_version)";
         internal const string GameData = "$($versions.game_data_version)";
         internal const string Bundle = "$($versions.bundle_version)";
         internal const string Plugin = "$pluginVersion";

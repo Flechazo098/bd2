@@ -9,32 +9,42 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"bd2server/internal/account"
-	"bd2server/internal/accountstate"
-	"bd2server/internal/battle"
-	"bd2server/internal/bootstrap"
-	"bd2server/internal/clientplugin"
-	"bd2server/internal/deck"
-	"bd2server/internal/feature"
-	"bd2server/internal/gacha"
-	"bd2server/internal/gamedata"
-	"bd2server/internal/introdb"
-	"bd2server/internal/mail"
-	"bd2server/internal/missions"
-	"bd2server/internal/pictorial"
-	"bd2server/internal/player"
-	"bd2server/internal/progress"
-	"bd2server/internal/readonly"
-	"bd2server/internal/schedule"
-	"bd2server/internal/session"
-	"bd2server/internal/transport"
-	"bd2server/internal/versionconfig"
-	"bd2server/internal/world"
+	"bd2server/internal/server/account"
+	"bd2server/internal/server/accountstate"
+	"bd2server/internal/server/auth"
+	"bd2server/internal/server/authconfig"
+	"bd2server/internal/server/battle"
+	"bd2server/internal/server/bootstrap"
+	"bd2server/internal/server/deck"
+	"bd2server/internal/server/feature"
+	"bd2server/internal/server/gacha"
+	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/mail"
+	"bd2server/internal/server/missions"
+	"bd2server/internal/server/pictorial"
+	"bd2server/internal/server/player"
+	"bd2server/internal/server/progress"
+	"bd2server/internal/server/readonly"
+	"bd2server/internal/server/resourcefetch"
+	"bd2server/internal/server/resourcepolicy"
+	"bd2server/internal/server/schedule"
+	"bd2server/internal/server/session"
+	"bd2server/internal/server/transport"
+	"bd2server/internal/server/versionconfig"
+	"bd2server/internal/server/world"
 )
 
 func main() {
+	if handled, err := runDevelopmentCommand(os.Args[1:]); handled {
+		if err != nil {
+			slog.Error("development command failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -43,10 +53,10 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
-	case "patch-client":
-		err = patchClient(os.Args[2:])
 	case "state":
 		err = stateCommand(os.Args[2:])
+	case "resources":
+		err = resourcesCommand(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -62,21 +72,20 @@ func main() {
 func serve(args []string) (serveErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
+	authConfigPath := fs.String("authentication-config", "", "authentication.json override for development")
+	resourceConfigPath := fs.String("resource-config", "", "resources.json override for development")
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
-	cdn := fs.String("cdn", "", "ServerData root (required)")
-	gameData := fs.String("game-data", "", "versioned GameData root (required)")
+	dataDir := fs.String("data-dir", "", "server data directory (defaults beside the executable)")
 	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (defaults to versions.json)")
-	gameDataOrigin := fs.String("game-data-origin", "https://dl.bd2.pmang.cloud/GameData", "official repair source used only when local validation fails")
+	gameDataOrigin := fs.String("game-data-origin", resourcepolicy.OfficialGameDataURL, "official GameData repair source override for development")
 	accountSeed := fs.String("account-seed", "", "versioned local account seed")
 	playerSeed := fs.String("player-seed", "", "versioned starter inventory and characters")
 	readonlySeed := fs.String("readonly-seed", "", "versioned server schedules and optional feature defaults")
 	mailSeed := fs.String("mail-seed", "", "versioned starter mailbox")
-	stateFile := fs.String("state", `..\data\state\state.db`, "local account SQLite database")
+	stateFile := fs.String("state", "", "account SQLite database override")
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
 	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
-	gameDir := fs.String("game-dir", "", "Brown Dust II client directory (required)")
-	identityPlugin := fs.String("identity-plugin", "", "optional BD2LocalIdentity.dll override for development")
 	devToolsConfig := fs.String("dev-tools-config", "", "optional local development-tool settings JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -102,6 +111,49 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	versionconfig.Use(versions)
+	if *authConfigPath == "" {
+		*authConfigPath, err = authconfig.BesideExecutable()
+		if err != nil {
+			return err
+		}
+	}
+	authentication, err := authconfig.Load(*authConfigPath)
+	if err != nil {
+		return err
+	}
+	authRuntime, err := authentication.ResolveEnvironment()
+	if err != nil {
+		return err
+	}
+	defer clear(authRuntime.MasterKey)
+	if *resourceConfigPath == "" {
+		*resourceConfigPath, err = resourcepolicy.BesideExecutable()
+		if err != nil {
+			return err
+		}
+	}
+	resources, err := resourcepolicy.Load(*resourceConfigPath)
+	if err != nil {
+		return err
+	}
+	if *dataDir == "" {
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			return fmt.Errorf("resolve server data directory: %w", executableErr)
+		}
+		*dataDir = filepath.Join(filepath.Dir(executable), "data")
+	}
+	*dataDir, err = filepath.Abs(filepath.Clean(*dataDir))
+	if err != nil {
+		return fmt.Errorf("resolve server data directory: %w", err)
+	}
+	gameData := filepath.Join(*dataDir, "resources", "GameData")
+	if *stateFile == "" {
+		*stateFile = filepath.Join(*dataDir, "state", "state.db")
+	}
+	if err := os.MkdirAll(filepath.Dir(filepath.Clean(*stateFile)), 0o755); err != nil {
+		return fmt.Errorf("create server state directory: %w", err)
+	}
 	seedRoot := versions.Resolve(versions.SeedDirectory)
 	for target, name := range map[*string]string{
 		accountSeed: "login_user.json", playerSeed: "starter_player.json", readonlySeed: "readonly.json",
@@ -111,38 +163,24 @@ func serve(args []string) (serveErr error) {
 			*target = filepath.Join(seedRoot, name)
 		}
 	}
-	if *cdn == "" || *gameData == "" || *gameDir == "" {
-		return errors.New("serve requires --game-dir, --cdn, and --game-data")
+	clientOrigin := "http://" + *listen
+	if authentication.Mode == "oauth" {
+		clientOrigin = strings.TrimSuffix(authentication.PublicURL, "/")
 	}
-	packagedPlugin, err := clientplugin.ResolvePackaged(*identityPlugin)
-	if err != nil {
-		return err
-	}
-	pluginResult, err := clientplugin.Install(*gameDir, packagedPlugin)
-	if err != nil {
-		return err
-	}
-	if pluginResult.Changed {
-		slog.Info("installed local identity plugin", "path", pluginResult.Destination)
-	} else {
-		slog.Info("local identity plugin is current", "path", pluginResult.Destination)
-	}
-	base := "http://" + *listen + "/game/"
+	base := clientOrigin + "/game/"
+	publicResources := resources.Public(versions.BundleVersion, *gameDataVersion)
 	cfg := bootstrap.Config{
 		BaseURL:     base,
-		CDNURL:      "http://" + *listen + "/assets/ServerData",
+		CDNURL:      publicResources.ServerDataURL,
 		Version:     versions.ClientVersion,
 		BundleVer:   versions.BundleVersion,
-		GameDataURL: "http://" + *listen + "/assets/GameData",
+		GameDataURL: publicResources.GameDataURL,
 		GameDataVer: *gameDataVersion,
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if info, err := os.Stat(*cdn); err != nil || !info.IsDir() {
-		return fmt.Errorf("CDN directory is unavailable: %q", *cdn)
-	}
-	verifiedGameData, downloaded, err := gamedata.Ensure(context.Background(), nil, filepath.Clean(*gameData), *gameDataVersion, *gameDataOrigin)
+	verifiedGameData, downloaded, err := gamedata.Ensure(context.Background(), nil, gameData, *gameDataVersion, *gameDataOrigin)
 	if err != nil {
 		return fmt.Errorf("refuse to advertise unavailable or unverified GameData: %w", err)
 	}
@@ -157,8 +195,8 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter player: %w", err)
 	}
-	if login.Version != versions.ProtocolVersion || starter.Version != versions.ProtocolVersion {
-		return fmt.Errorf("protocol version %s requires matching account and player seeds (got %s and %s)", versions.ProtocolVersion, login.Version, starter.Version)
+	if login.Version != versions.ClientVersion || starter.Version != versions.ClientVersion {
+		return fmt.Errorf("client version %s requires matching account and player seeds (got %s and %s)", versions.ClientVersion, login.Version, starter.Version)
 	}
 	gachaSchedule, err := gacha.LoadScheduleSeed(filepath.Clean(*gachaScheduleSeed), versions.ClientVersion)
 	if err != nil {
@@ -171,7 +209,7 @@ func serve(args []string) (serveErr error) {
 	for _, window := range gachaSchedule.StepUps {
 		stepUpGroupIDs = append(stepUpGroupIDs, window.GroupID)
 	}
-	regularGacha, equipmentGacha, err := gamedata.LoadActiveGachaForSchedules(filepath.Clean(*gameData), *gameDataVersion, scheduleGroupIDs, stepUpGroupIDs)
+	regularGacha, equipmentGacha, err := gamedata.LoadActiveGachaForSchedules(gameData, *gameDataVersion, scheduleGroupIDs, stepUpGroupIDs)
 	if err != nil {
 		return fmt.Errorf("load active gacha GameData: %w", err)
 	}
@@ -180,6 +218,18 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("open account state database: %w", err)
 	}
 	defer stateRepository.Close()
+	var authService *auth.Service
+	if authentication.Mode == "oauth" {
+		authStore, err := auth.Open(filepath.Join(filepath.Dir(filepath.Clean(*stateFile)), "auth.db"), authRuntime.MasterKey)
+		if err != nil {
+			return fmt.Errorf("open authentication database: %w", err)
+		}
+		defer authStore.Close()
+		authService, err = auth.New(authRuntime, authStore)
+		if err != nil {
+			return err
+		}
+	}
 	accountDomains := []string{"characters", "collection", "deck", "equipment", "items", "mail", "missions", "progress", "wallet"}
 	if !stateRepository.IsNew() {
 		if err := stateRepository.RequireDomains(accountDomains...); err != nil {
@@ -226,7 +276,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load owned inventory: %w", err)
 	}
-	randomBoxes, err := gamedata.LoadRandomBoxDesign(filepath.Clean(*gameData), *gameDataVersion)
+	randomBoxes, err := gamedata.LoadRandomBoxDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load deterministic random-box GameData: %w", err)
 	}
@@ -259,7 +309,7 @@ func serve(args []string) (serveErr error) {
 	if err := login.AttachCurrencies(wallet); err != nil {
 		return fmt.Errorf("attach wallet to login: %w", err)
 	}
-	slotDesign, err := gamedata.LoadInventorySlotDesign(filepath.Clean(*gameData), *gameDataVersion)
+	slotDesign, err := gamedata.LoadInventorySlotDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load inventory slot GameData: %w", err)
 	}
@@ -286,7 +336,7 @@ func serve(args []string) (serveErr error) {
 	if err := mailService.AttachSeedPath(filepath.Clean(*mailSeed)); err != nil {
 		return fmt.Errorf("watch mail seed: %w", err)
 	}
-	missionDesign, err := gamedata.LoadMissionDesign(filepath.Clean(*gameData), *gameDataVersion)
+	missionDesign, err := gamedata.LoadMissionDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load mission GameData: %w", err)
 	}
@@ -310,39 +360,39 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load owned equipment: %w", err)
 	}
-	equipmentSlots, err := gamedata.LoadEquipmentSlots(filepath.Clean(*gameData), *gameDataVersion)
+	equipmentSlots, err := gamedata.LoadEquipmentSlots(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load equipment slot GameData: %w", err)
 	}
 	if err := ownedEquipment.AttachSlots(equipmentSlots); err != nil {
 		return fmt.Errorf("attach equipment slot GameData: %w", err)
 	}
-	equipmentUpgrade, err := gamedata.LoadEquipmentUpgradeDesign(filepath.Clean(*gameData), *gameDataVersion)
+	equipmentUpgrade, err := gamedata.LoadEquipmentUpgradeDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load equipment upgrade GameData: %w", err)
 	}
 	if err := ownedEquipment.AttachUpgrade(equipmentUpgrade, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment upgrade GameData: %w", err)
 	}
-	equipmentCraft, err := gamedata.LoadEquipmentCraftDesign(filepath.Clean(*gameData), *gameDataVersion)
+	equipmentCraft, err := gamedata.LoadEquipmentCraftDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load equipment crafting GameData: %w", err)
 	}
-	talentGrowth, err := gamedata.LoadTalentGrowthDesign(filepath.Clean(*gameData), *gameDataVersion)
+	talentGrowth, err := gamedata.LoadTalentGrowthDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load talent growth GameData: %w", err)
 	}
 	if err := ownedEquipment.AttachCraft(equipmentCraft); err != nil {
 		return fmt.Errorf("attach equipment crafting GameData: %w", err)
 	}
-	equipmentSmelting, err := gamedata.LoadEquipmentSmeltingDesign(filepath.Clean(*gameData), *gameDataVersion)
+	equipmentSmelting, err := gamedata.LoadEquipmentSmeltingDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load equipment smelting GameData: %w", err)
 	}
 	if err := ownedEquipment.AttachSmelting(equipmentSmelting, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment smelting GameData: %w", err)
 	}
-	equipmentOptionReroll, err := gamedata.LoadEquipmentOptionRerollDesign(filepath.Clean(*gameData), *gameDataVersion)
+	equipmentOptionReroll, err := gamedata.LoadEquipmentOptionRerollDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load equipment option reroll GameData: %w", err)
 	}
@@ -353,7 +403,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load owned collection: %w", err)
 	}
-	infiniteGacha, err := gamedata.LoadInfiniteGacha(filepath.Clean(*gameData), *gameDataVersion)
+	infiniteGacha, err := gamedata.LoadInfiniteGacha(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load infinite gacha GameData: %w", err)
 	}
@@ -382,7 +432,7 @@ func serve(args []string) (serveErr error) {
 	gachaService.AttachPreviewMission(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 111})
 	})
-	worldService, err := world.Load(filepath.Clean(*worldSeed), filepath.Clean(*gameData), *gameDataVersion,
+	worldService, err := world.Load(filepath.Clean(*worldSeed), gameData, *gameDataVersion,
 		stateRepository, progressState, starter, ownedEquipment, ownedItems, wallet)
 	if err != nil {
 		return fmt.Errorf("load world state: %w", err)
@@ -407,12 +457,12 @@ func serve(args []string) (serveErr error) {
 	if err := deckStateStore.AttachPresetRuntime(wallet, worldService.CharacterService(), ownedEquipment, collection); err != nil {
 		return fmt.Errorf("attach ordinary preset runtime: %w", err)
 	}
-	pictorialDesign, err := gamedata.LoadPictorialDesign(filepath.Clean(*gameData), *gameDataVersion)
+	pictorialDesign, err := gamedata.LoadPictorialDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load pictorial GameData: %w", err)
 	}
 	pictorialService := &pictorial.Service{Design: pictorialDesign, Owned: worldService}
-	charAwakeDesign, err := gamedata.LoadCharAwakeDesign(filepath.Clean(*gameData), *gameDataVersion)
+	charAwakeDesign, err := gamedata.LoadCharAwakeDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load character awakening GameData: %w", err)
 	}
@@ -430,7 +480,7 @@ func serve(args []string) (serveErr error) {
 	if err := worldService.CharacterService().AttachTalentGrowth(talentGrowth); err != nil {
 		return fmt.Errorf("attach character talent growth: %w", err)
 	}
-	costumePotentialDesign, err := gamedata.LoadCostumePotentialDesign(filepath.Clean(*gameData), *gameDataVersion)
+	costumePotentialDesign, err := gamedata.LoadCostumePotentialDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load costume potential GameData: %w", err)
 	}
@@ -438,7 +488,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
-	battleService := battle.NewService(filepath.Clean(*gameData), *gameDataVersion, ownedItems, worldService.CurrentPackID)
+	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
 	battleService.AttachTutorialWin(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 113})
 	})
@@ -469,6 +519,11 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	if authService != nil {
+		if err := game.AttachLoginAuthenticator(authService); err != nil {
+			return err
+		}
+	}
 	if stateRepository.IsNew() {
 		if err := ensureAccountStateInitialized(
 			progressState, deckStateStore, ownedItems, ownedEquipment,
@@ -495,7 +550,14 @@ func serve(args []string) (serveErr error) {
 		return err
 	}
 	dispatcher := transport.Bootstrap{Config: cfg}
-	handler := transport.HTTP{Dispatcher: dispatcher, Raw: game, CDNDir: filepath.Clean(*cdn), GameDataDir: filepath.Clean(*gameData)}.Handler()
+	var authHandler http.Handler
+	if authService != nil {
+		authHandler = authService.Handler()
+	}
+	handler := transport.HTTP{
+		Dispatcher: dispatcher, Raw: game, Authentication: authentication,
+		AuthenticationHandler: authHandler, ResourcePolicy: publicResources,
+	}.Handler()
 	server := &http.Server{
 		Addr:              *listen,
 		Handler:           handler,
@@ -504,7 +566,7 @@ func serve(args []string) (serveErr error) {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	slog.Info("BD2 local server listening", "address", *listen, "client", cfg.Version, "bundle", cfg.BundleVer, "cdn", *cdn, "gameData", verifiedGameData.ArchivePath, "gameDataEntries", verifiedGameData.EntryCount, "accountSeed", *accountSeed)
+	slog.Info("BD2 server listening", "address", *listen, "client", cfg.Version, "bundle", cfg.BundleVer, "resourceMode", publicResources.Mode, "gameData", verifiedGameData.ArchivePath, "gameDataEntries", verifiedGameData.EntryCount, "accountSeed", *accountSeed)
 	return server.ListenAndServe()
 }
 
@@ -524,73 +586,49 @@ func ensureAccountStateInitialized(stores ...accountStateInitializer) error {
 	return nil
 }
 
-func patchClient(args []string) error {
-	fs := flag.NewFlagSet("patch-client", flag.ContinueOnError)
-	gameDir := fs.String("game-dir", "", "BrownDust II game directory (required)")
-	serverURL := fs.String("url", "http://127.0.0.1:8080/game/", "exactly 27-byte replacement LIVE_URL")
-	verify := fs.Bool("verify", false, "inspect the embedded LIVE_URL without writing")
-	if err := fs.Parse(args); err != nil {
+func resourcesCommand(args []string) error {
+	if len(args) == 0 || args[0] != "fetch" {
+		return errors.New("resources requires the fetch subcommand")
+	}
+	fs := flag.NewFlagSet("resources fetch", flag.ContinueOnError)
+	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
+	output := fs.String("output", "", "resource mirror output directory (required)")
+	platform := fs.String("platform", "StandaloneWindows64", "official ServerData platform")
+	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *gameDir == "" {
-		return errors.New("patch-client requires --game-dir")
+	if *output == "" {
+		return errors.New("resources fetch requires --output")
 	}
-	if *verify {
-		result, err := introdb.VerifyClient(*gameDir)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("resources.assets: %s\nTextAsset pathID: %d\nLIVE_URL: %s\n", result.AssetsPath, result.ObjectPath, result.URL)
-		return nil
+	var versions versionconfig.Config
+	var err error
+	if *versionConfigPath == "" {
+		versions, err = versionconfig.Find()
+	} else {
+		versions, err = versionconfig.Load(*versionConfigPath)
 	}
-	result, err := introdb.PatchClient(*gameDir, *serverURL)
 	if err != nil {
 		return err
 	}
-	disabled, err := disableLegacyPlugin(*gameDir)
+	manifest, err := resourcefetch.Fetch(context.Background(), resourcefetch.Options{
+		OutputRoot: *output, Platform: *platform, BundleVersion: versions.BundleVersion,
+		GameDataVersion: versions.GameDataVersion,
+		Progress:        func(message string) { slog.Info(message) },
+	})
 	if err != nil {
 		return err
 	}
-	verified, err := introdb.VerifyClient(*gameDir)
-	if err != nil {
-		return fmt.Errorf("post-patch verification: %w", err)
-	}
-	fmt.Printf("patched: %s\nbackup: %s\nLIVE_URL: %s\n", result.AssetsPath, result.BackupPath, verified.URL)
-	if disabled != "" {
-		fmt.Printf("legacy plugin disabled: %s\n", disabled)
-	}
+	slog.Info("official resource mirror complete", "output", *output, "bundles", manifest.ServerData.Bundles, "bytes", manifest.ServerData.Bytes)
 	return nil
 }
 
-func disableLegacyPlugin(gameDir string) (string, error) {
-	source := filepath.Join(gameDir, "BepInEx", "plugins", "PluginLocalRes.dll")
-	destination := filepath.Join(gameDir, "BepInEx", "disabled", "PluginLocalRes.dll")
-	if _, err := os.Stat(source); errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	} else if err != nil {
-		return "", fmt.Errorf("inspect legacy local-resource plugin: %w", err)
-	}
-	if _, err := os.Stat(destination); err == nil {
-		return "", fmt.Errorf("legacy plugin exists at both active and disabled paths")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Rename(source, destination); err != nil {
-		return "", fmt.Errorf("disable legacy local-resource plugin: %w", err)
-	}
-	return destination, nil
-}
-
 func usage() {
-	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II local development server
+	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II server
 
 Usage:
-  bd2server serve --game-dir DIR --cdn DIR --game-data DIR [--version-config FILE] [options]
-  bd2server patch-client --game-dir DIR [options]
-  bd2server state check [options]
+	bd2server serve [--data-dir DIR] [--version-config FILE] [options]
+	bd2server resources fetch --output DIR [--version-config FILE]
+	bd2server state check [options]
 
-The server binds to loopback by default and is intended for local research.`)
+The server binds to loopback by default.`+developmentUsage())
 }
