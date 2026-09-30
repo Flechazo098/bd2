@@ -97,3 +97,37 @@ func TestLocalizeCatalogPreservesMetadataAndCreatesHardLink(t *testing.T) {
 		t.Fatal("localized bundle is not a hard link to the selected release")
 	}
 }
+
+func TestSynchronizePersistentCatalogBacksUpAndIsIdempotent(t *testing.T) {
+	cache := t.TempDir()
+	oldCatalog := []byte("old catalog")
+	oldHash := []byte("old hash")
+	if err := os.WriteFile(filepath.Join(cache, "catalog_alpha.json"), oldCatalog, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "catalog_alpha.hash"), oldHash, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newCatalog := []byte("new catalog")
+	newHash := []byte("new hash")
+	if err := synchronizePersistentCatalog(cache, newCatalog, newHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := synchronizePersistentCatalog(cache, newCatalog, newHash); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string][]byte{
+		"catalog_alpha.json":                       newCatalog,
+		"catalog_alpha.hash":                       newHash,
+		"catalog_alpha.json.bd2-before-local-sync": oldCatalog,
+		"catalog_alpha.hash.bd2-before-local-sync": oldHash,
+	} {
+		got, err := os.ReadFile(filepath.Join(cache, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s=%q, want %q", name, got, want)
+		}
+	}
+}
