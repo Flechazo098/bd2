@@ -30,8 +30,6 @@ func main() {
 
 func runClient(args []string, options clientRunOptions) error {
 	fs := flag.NewFlagSet("bd2client", flag.ContinueOnError)
-	listen := fs.String("listen", "127.0.0.1:0", "loopback address for the local setup interface")
-	noBrowser := fs.Bool("no-browser", false, "print the interface URL without opening a browser")
 	gameDir := fs.String("game-dir", "", "initial Brown Dust II installation directory")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -66,8 +64,6 @@ func runClient(args []string, options clientRunOptions) error {
 		}
 	}
 	if err := clientapp.Run(clientapp.Options{
-		Listen:              *listen,
-		NoBrowser:           *noBrowser,
 		InitialGameDir:      *gameDir,
 		Logger:              logger,
 		LogPath:             logPath,

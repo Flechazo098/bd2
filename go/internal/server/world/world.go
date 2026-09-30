@@ -390,7 +390,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 }
 
 // packInfo is the canonical protobuf encoding of the semantic new-account
-// starter-pack state. Its first-call bytes match the 2.34.13 observed response.
+// starter-pack state. Its response is generated from the authoritative local progress state.
 func (s *Service) packInfo() ([]byte, error) {
 	return s.packInfoFor(s.seed.PackID)
 }
@@ -531,7 +531,7 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 	if next != 0 {
 		out = wire.AppendBytes(out, 2, wire.AppendVarint(nil, 1, uint64(next)))
 	} else {
-		// QuestClearResponse.QuestInfo is dereferenced by the 2.34.13 client
+		// QuestClearResponse.QuestInfo is dereferenced by the client
 		// even when this is the final quest of a pack. An explicitly present,
 		// empty QuestDBInfo gives that generated protobuf property a non-null
 		// object whose Id is the client-recognized zero sentinel. Omitting the
@@ -562,7 +562,7 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 			out = wire.AppendBytes(out, 5, encodeCharacter(character))
 		}
 	} else if s.decks != nil {
-		// Official 2.34.13 QuestClear always echoes the authoritative current
+		// QuestClear echoes the authoritative current
 		// DeckInfo. Omitting it after quest 29 makes the client rebuild a party
 		// from ordinary owned characters and overwrite the story formation.
 		for _, current := range s.decks.CurrentDeck() {

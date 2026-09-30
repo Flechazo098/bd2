@@ -4,7 +4,6 @@ package app
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -66,44 +65,6 @@ func visibleCommand(name string, args ...string) *exec.Cmd {
 	command := exec.Command(name, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}
 	return command
-}
-
-func openBrowser(url string) error {
-	for _, edge := range edgeCandidates() {
-		if info, err := os.Stat(edge); err == nil && !info.IsDir() {
-			return hiddenCommand(edge, "--app="+url, "--window-size=1100,760", "--no-first-run").Start()
-		}
-	}
-	return hiddenCommand("rundll32.exe", "url.dll,FileProtocolHandler", url).Start()
-}
-
-func edgeCandidates() []string {
-	var candidates []string
-	if edge, err := exec.LookPath("msedge.exe"); err == nil {
-		candidates = append(candidates, edge)
-	}
-	for _, root := range []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")} {
-		if root != "" {
-			candidates = append(candidates, filepath.Join(root, "Microsoft", "Edge", "Application", "msedge.exe"))
-		}
-	}
-	return candidates
-}
-
-func browseForGameDirectory(language string) (string, error) {
-	title := "Select the Brown Dust II installation directory"
-	if language == "zh-CN" {
-		title = "选择 Brown Dust II 安装目录"
-	}
-	return browseForDirectory(title)
-}
-
-func browseForResourceDirectory(language string) (string, error) {
-	title := "Select the CDN directory containing ServerData and GameData"
-	if language == "zh-CN" {
-		title = "选择包含 ServerData 和 GameData 的 CDN 目录"
-	}
-	return browseForDirectory(title)
 }
 
 func launchGame(target string) error {

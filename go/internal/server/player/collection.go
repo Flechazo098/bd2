@@ -39,10 +39,13 @@ type CollectionGrant struct {
 	Upgrades              []CostumeUpgrade  `json:"upgrades,omitempty"`
 	Exchanges             []CostumeExchange `json:"exchanges,omitempty"`
 	ViewCostumeIDs        []uint64          `json:"view_costume_ids"`
+	ViewCostumeSortIDs    []uint64          `json:"view_costume_sort_ids,omitempty"`
 	GachaGroupID          uint64            `json:"gacha_group_id,omitempty"`
 	GachaPoint            uint64            `json:"gacha_point,omitempty"`
 	GachaFixed            []GachaFixedState `json:"gacha_fixed,omitempty"`
 	SelectionApplySortIDs []uint64          `json:"selection_apply_sort_ids,omitempty"`
+	GachaRequestDigest    string            `json:"gacha_request_digest,omitempty"`
+	GachaResponse         []byte            `json:"gacha_response,omitempty"`
 }
 
 type GachaUserState struct {
@@ -79,6 +82,10 @@ type GachaPurchase struct {
 	SelectionApplySortIDs []uint64
 	StepUpGroupID         uint64
 	StepUpStep            uint64
+	RewardCount           uint64
+	// RewardSortIDs preserves positions from mixed reward programs. Ordinary
+	// costume-only gachas leave it empty and use their slice positions.
+	RewardSortIDs []uint64
 }
 
 type GachaSelection struct {
@@ -245,9 +252,9 @@ func (s *CollectionStore) EnsurePersisted() error {
 func emptyCollectionGrant(grant CollectionGrant) bool {
 	return len(grant.CharacterIndices) == 0 && len(grant.CostumeIndices) == 0 &&
 		len(grant.Upgrades) == 0 && len(grant.Exchanges) == 0 &&
-		len(grant.ViewCostumeIDs) == 0 && grant.GachaGroupID == 0 &&
+		len(grant.ViewCostumeIDs) == 0 && len(grant.ViewCostumeSortIDs) == 0 && grant.GachaGroupID == 0 &&
 		grant.GachaPoint == 0 && len(grant.GachaFixed) == 0 &&
-		len(grant.SelectionApplySortIDs) == 0
+		len(grant.SelectionApplySortIDs) == 0 && grant.GachaRequestDigest == "" && len(grant.GachaResponse) == 0
 }
 
 // BindBaseCharacters attaches the authoritative base roster and rejects a
@@ -513,7 +520,7 @@ func (s *CollectionStore) GrantRegularPurchase(identity string, costumeIDs []uin
 	if identity == "" || len(costumeIDs) == 0 || design == nil || purchase.Group.ID == 0 {
 		return CollectionGrant{}, errors.New("player: invalid regular gacha purchase")
 	}
-	return s.grantCostumes(identity, costumeIDs, design.Character, func(next *collectionSnapshot, grant *CollectionGrant) error {
+	return s.grantCostumesSorted(identity, costumeIDs, purchase.RewardSortIDs, design.Character, func(next *collectionSnapshot, grant *CollectionGrant) error {
 		if err := applyStepUpProgress(next, purchase.StepUpGroupID, purchase.StepUpStep); err != nil {
 			return err
 		}
@@ -579,15 +586,26 @@ func (s *CollectionStore) GrantEquipmentDraw(identity string) (CollectionGrant, 
 }
 
 func (s *CollectionStore) grantCostumes(identity string, costumeIDs []uint64, character func(uint64) (gamedata.CharacterDesign, bool), mutate func(*collectionSnapshot, *CollectionGrant) error) (CollectionGrant, error) {
+	return s.grantCostumesSorted(identity, costumeIDs, nil, character, mutate)
+}
+
+func (s *CollectionStore) grantCostumesSorted(identity string, costumeIDs, sortIDs []uint64, character func(uint64) (gamedata.CharacterDesign, bool), mutate func(*collectionSnapshot, *CollectionGrant) error) (CollectionGrant, error) {
+	if len(sortIDs) != 0 && len(sortIDs) != len(costumeIDs) {
+		return CollectionGrant{}, errors.New("player: costume reward sort count mismatch")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if grant, ok := s.data.Grants[identity]; ok {
 		return cloneGrant(grant), nil
 	}
 	next := cloneCollection(s.data)
-	grant := CollectionGrant{ViewCostumeIDs: append([]uint64(nil), costumeIDs...)}
+	grant := CollectionGrant{ViewCostumeIDs: append([]uint64(nil), costumeIDs...), ViewCostumeSortIDs: append([]uint64(nil), sortIDs...)}
 	now := uint64(time.Now().UnixMilli())
 	for sortIndex, costumeID := range costumeIDs {
+		sortID := uint64(sortIndex)
+		if len(sortIDs) != 0 {
+			sortID = sortIDs[sortIndex]
+		}
 		if costumeID == 0 {
 			return CollectionGrant{}, errors.New("player: preview has invalid costume")
 		}
@@ -603,9 +621,9 @@ func (s *CollectionStore) grantCostumes(identity string, costumeIDs []uint64, ch
 			before := next.Costumes[position].Level
 			if before < maxLevel {
 				next.Costumes[position].Level++
-				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: next.Costumes[position].InvenIndex, CostumeID: costumeID, Before: before, After: next.Costumes[position].Level, SortID: uint64(sortIndex)})
+				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: next.Costumes[position].InvenIndex, CostumeID: costumeID, Before: before, After: next.Costumes[position].Level, SortID: sortID})
 			} else {
-				exchange, err := costumeOverflowExchange(costumeID, next.Costumes[position].InvenIndex, uint64(sortIndex), characterDesign)
+				exchange, err := costumeOverflowExchange(costumeID, next.Costumes[position].InvenIndex, sortID, characterDesign)
 				if err != nil {
 					return CollectionGrant{}, err
 				}
@@ -622,9 +640,9 @@ func (s *CollectionStore) grantCostumes(identity string, costumeIDs []uint64, ch
 			}
 			if before < maxLevel {
 				next.BaseCostumeLevels[key] = before + 1
-				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: s.base[base].InvenIndex, CostumeID: costumeID, Before: before, After: before + 1, SortID: uint64(sortIndex)})
+				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: s.base[base].InvenIndex, CostumeID: costumeID, Before: before, After: before + 1, SortID: sortID})
 			} else {
-				exchange, err := costumeOverflowExchange(costumeID, s.base[base].InvenIndex, uint64(sortIndex), characterDesign)
+				exchange, err := costumeOverflowExchange(costumeID, s.base[base].InvenIndex, sortID, characterDesign)
 				if err != nil {
 					return CollectionGrant{}, err
 				}
@@ -645,7 +663,7 @@ func (s *CollectionStore) grantCostumes(identity string, costumeIDs []uint64, ch
 			next.Characters = append(next.Characters, ownedCharacter)
 			grant.CharacterIndices = append(grant.CharacterIndices, characterIndex)
 		}
-		costume := Costume{InvenIndex: costumeIndex, ID: costumeID, UseChar: characterIndex, SortID: uint64(sortIndex), TimeValue: now}
+		costume := Costume{InvenIndex: costumeIndex, ID: costumeID, UseChar: characterIndex, SortID: sortID, TimeValue: now}
 		next.Costumes = append(next.Costumes, costume)
 		grant.CostumeIndices = append(grant.CostumeIndices, costumeIndex)
 	}
@@ -912,11 +930,13 @@ func findCharacterByID(base, collection []Character, id uint64) (uint64, bool) {
 }
 
 func cloneGrant(grant CollectionGrant) CollectionGrant {
+	grant.GachaResponse = append([]byte(nil), grant.GachaResponse...)
 	grant.CharacterIndices = append([]uint64(nil), grant.CharacterIndices...)
 	grant.CostumeIndices = append([]uint64(nil), grant.CostumeIndices...)
 	grant.Upgrades = append([]CostumeUpgrade(nil), grant.Upgrades...)
 	grant.Exchanges = append([]CostumeExchange(nil), grant.Exchanges...)
 	grant.ViewCostumeIDs = append([]uint64(nil), grant.ViewCostumeIDs...)
+	grant.ViewCostumeSortIDs = append([]uint64(nil), grant.ViewCostumeSortIDs...)
 	grant.GachaFixed = append([]GachaFixedState(nil), grant.GachaFixed...)
 	grant.SelectionApplySortIDs = append([]uint64(nil), grant.SelectionApplySortIDs...)
 	return grant

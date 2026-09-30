@@ -18,14 +18,14 @@ func TestRandomBoxOpenAggregatesOnlyKnownDeterministicReward(t *testing.T) {
 	}
 }
 
-// This locks the actual 2.34.13 row behind the installed GameData opt-in,
+// This locks the actual current-version row behind the installed GameData opt-in,
 // rather than replacing GameData lookup with a hand-written item mapping.
 func TestLoadRandomBoxDesignInstalledEngravingEssence(t *testing.T) {
 	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	design, err := LoadRandomBoxDesign(root, "20260910162539")
+	design, err := LoadRandomBoxDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}

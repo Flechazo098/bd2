@@ -69,17 +69,18 @@ func TestCharAwakeActivationRequiresAllSlotsAndAddsEveryEffect(t *testing.T) {
 	}
 }
 
-func TestCharAwakeAgainstInstalledVersion23413(t *testing.T) {
+func TestCharAwakeAgainstInstalledVersion23510(t *testing.T) {
 	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	design, err := LoadCharAwakeDesign(root, "20260910162539")
+	design, err := LoadCharAwakeDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry := design.Characters[35]
-	if len(design.Characters) != 86 || len(entry.ImprintGrowth[0]) != 10 || len(entry.ImprintGrowth[1]) != 10 || len(entry.ImprintGrowth[2]) != 10 || len(entry.AwakeGrowth) != 2 {
+	// Current GameData CharAwakeTable contains 87 unique-character rows.
+	if len(design.Characters) != 87 || len(entry.ImprintGrowth[0]) != 10 || len(entry.ImprintGrowth[1]) != 10 || len(entry.ImprintGrowth[2]) != 10 || len(entry.AwakeGrowth) != 2 {
 		t.Fatalf("installed awakening design characters=%d char35=%+v", len(design.Characters), entry)
 	}
 	if entry.AwakeGrowth[0].Costs[0] != (CharAwakeCost{Type: 8, ID: 705, Count: 200}) || entry.AwakeGrowth[1].StatType != 14 || entry.AwakeGrowth[1].StatValue != .1 {

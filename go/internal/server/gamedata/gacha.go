@@ -26,7 +26,7 @@ const (
 	officialFourStarRate   = 1400
 )
 
-// InfiniteGachaDesign is the non-account portion of the 2.34.13 paid
+// InfiniteGachaDesign is the non-account portion of the paid
 // "infinite reroll" product. The local server deliberately makes final
 // confirmation free, but still reads the official result pool from GameData.
 type InfiniteGachaDesign struct {

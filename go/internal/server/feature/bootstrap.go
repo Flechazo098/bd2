@@ -2,7 +2,7 @@ package feature
 
 import "bd2server/internal/server/wire"
 
-// initialResponses are locally constructed, typed defaults for the 2.34.13
+// initialResponses are locally constructed, typed defaults for the
 // new-player account. These do not reuse recorded response bytes. Stateful
 // entities (inventory, characters, quests, decks) are deliberately excluded.
 func initialResponse(path string) (int, []byte, bool) {

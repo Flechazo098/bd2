@@ -152,7 +152,7 @@ func TestQuestClearAdvancesAndPersists(t *testing.T) {
 }
 
 func TestFinalQuestClearIncludesEmptyNextQuestInfo(t *testing.T) {
-	// In 2.34.13 the completion coroutine unconditionally evaluates
+	// The client completion coroutine unconditionally evaluates
 	// QuestClearResponse.QuestInfo.Id.  An absent protobuf field becomes a
 	// null C# reference; an explicitly present zero-length message becomes a
 	// non-null QuestDBInfo with ID 0, satisfying the client's final-quest

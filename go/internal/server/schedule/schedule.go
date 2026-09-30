@@ -27,7 +27,7 @@ type RegularSeason struct {
 	Season    uint64
 }
 
-// Service contains the official 2.34.13 calendar active for this fixed
+// Service contains the configured regular-content calendar for this fixed
 // client/GameData version. It is server configuration, not a captured packet:
 // Handle encodes every protobuf field from these named values.
 type Service struct {

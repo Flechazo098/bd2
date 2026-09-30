@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func TestEquipmentSmeltingAgainstInstalledVersion23413(t *testing.T) {
+func TestEquipmentSmeltingAgainstInstalledVersion23510(t *testing.T) {
 	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	design, err := LoadEquipmentSmeltingDesign(root, "20260910162539")
+	design, err := LoadEquipmentSmeltingDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -169,12 +169,12 @@ func TestActiveGachaAgainstInstalledVersion23510(t *testing.T) {
 	}
 }
 
-func TestLegacyRegularGachaLoaderAgainstInstalledVersion23413(t *testing.T) {
+func TestLegacyRegularGachaLoaderAgainstInstalledVersion23510(t *testing.T) {
 	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	catalog, err := LoadRegularCostumeGacha(root, "20260910162539")
+	catalog, err := LoadRegularCostumeGacha(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}

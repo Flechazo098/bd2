@@ -49,7 +49,7 @@ type AchievementDesign struct {
 }
 
 // LoadMissionDesign loads the three non-event design tables from the shared
-// 2.34.13 database. Event missions intentionally remain outside this reader:
+// current database. Event missions intentionally remain outside this reader:
 // their eligibility depends on an active server schedule, not just GameData.
 func LoadMissionDesign(root, version string) (*MissionDesign, error) {
 	plain, err := ReadQuestDatabase(root, version)

@@ -75,7 +75,7 @@ func TestRealQuest21Formations(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	formations, err := LoadQuestFormations(root, "20260910162539", 21)
+	formations, err := LoadQuestFormations(root, "20260923193640", 21)
 	if err != nil {
 		t.Fatal(err)
 	}
