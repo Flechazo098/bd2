@@ -3,16 +3,22 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	clientconfig "bd2server/internal/client/config"
 	clientlayout "bd2server/internal/client/layout"
 )
+
+type clientDevelopmentConfig struct {
+	SchemaVersion int    `json:"schema_version"`
+	GameDirectory string `json:"game_directory"`
+}
 
 func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
 	if len(args) == 0 || args[0] != "--dev" {
@@ -31,10 +37,11 @@ func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
 		return nil, clientRunOptions{}, err
 	}
 	if gameDir == "" {
-		preferences, preferenceErr := clientconfig.LoadPreferences()
-		if preferenceErr == nil {
-			gameDir = preferences.GameDirectory
+		config, configErr := loadClientDevelopmentConfig(filepath.Join(root, "go", "config.json"))
+		if configErr != nil {
+			return nil, clientRunOptions{}, configErr
 		}
+		gameDir = config.GameDirectory
 	}
 	if gameDir != "" {
 		if err := buildDevelopmentPlugins(root, gameDir); err != nil {
@@ -47,6 +54,35 @@ func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
 		localIdentityPlugin: filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll"),
 		loginUIPlugin:       filepath.Join(root, "plugins", "LoginUI", "bin", "Release", "netstandard2.1", "BD2LoginUI.dll"),
 	}, nil
+}
+
+func loadClientDevelopmentConfig(path string) (clientDevelopmentConfig, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return clientDevelopmentConfig{}, fmt.Errorf("development config %s is missing; copy go/config.example.json to go/config.json or pass --game-dir", path)
+	}
+	if err != nil {
+		return clientDevelopmentConfig{}, fmt.Errorf("read development config: %w", err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var config clientDevelopmentConfig
+	if err := decoder.Decode(&config); err != nil {
+		return clientDevelopmentConfig{}, fmt.Errorf("decode development config: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return clientDevelopmentConfig{}, errors.New("development config must contain exactly one JSON object")
+	}
+	if config.SchemaVersion != 1 || strings.TrimSpace(config.GameDirectory) == "" {
+		return clientDevelopmentConfig{}, errors.New("development config requires schema_version 1 and game_directory")
+	}
+	absolute, err := filepath.Abs(filepath.Clean(config.GameDirectory))
+	if err != nil {
+		return clientDevelopmentConfig{}, fmt.Errorf("resolve development game directory: %w", err)
+	}
+	config.GameDirectory = absolute
+	return config, nil
 }
 
 func findClientDevelopmentRoot() (string, error) {

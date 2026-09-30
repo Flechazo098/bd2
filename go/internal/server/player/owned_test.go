@@ -48,7 +48,7 @@ func TestUseRandomBoxPersistsExactStackAndRewardFromInstalledGameData(t *testing
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	design, err := gamedata.LoadRandomBoxDesign(root, "20260910162539")
+	design, err := gamedata.LoadRandomBoxDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}

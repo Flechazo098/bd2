@@ -1,7 +1,4 @@
 {
-  "listen": "127.0.0.1:8080",
-  "serverDataDir": "",
-  "gameDataDir": "",
-  "clientDir": "",
-  "versionConfig": "../versions.json"
+  "schema_version": 1,
+  "game_directory": "C:\\Path\\To\\BrownDust II"
 }

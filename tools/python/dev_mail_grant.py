@@ -7,7 +7,7 @@ by an explicitly configured local bd2server.
 
 Example:
   python tools/python/dev_mail_grant.py serve `
-    --game-data E:\\bd2\\dl\\GameData --game-data-version 20260910162539 `
+    --game-data E:\\bd2\\dl\\GameData --game-data-version 20260923193640 `
     --mail-seed go\\seed\\v2_35_10\\mail.json --output data\\dev\\mail-grants.json
 """
 
@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gamedata_db import read_database, walk_wire  # noqa: E402
 
 
-VERSION = "2.34.13"
+VERSION = "2.35.10"
 MAX_INT32 = (1 << 31) - 1
 
 # These are the local server's ItemDBInfo-backed ElementTypes.  Item names use
@@ -449,7 +449,7 @@ class MailGrantStore:
 
         current_ids = {entry["mail_id"] for entry in self.seed["mails"]}
         mail_id = max(current_ids, default=13_000_000_000) + 1
-        # MailDBInfo's InvenIndex is int64 in the 2.34.13 client descriptor.
+        # MailDBInfo's InvenIndex is int64 in the 2.35.10 client descriptor.
         if mail_id > (1 << 63) - 1:
             raise ValueError("没有可用的正 int64 邮件 ID")
         now = int(time.time() * 1000)

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCharacterGrowthPromotionsAgainstInstalledVersion23413(t *testing.T) {
+func TestCharacterGrowthPromotionsAgainstInstalledVersion23510(t *testing.T) {
 	root := os.Getenv("BD2_TEST_GAMEDATA_ROOT")
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
@@ -20,12 +20,12 @@ func TestCharacterGrowthPromotionsAgainstInstalledVersion23413(t *testing.T) {
 		{Type: 8, ID: 14, Count: 4},
 		{Type: 4, Count: 10000},
 	}
-	result, err := CharacterGrowthPromotions(root, "20260910162539", 6510, 1, 0, submitted)
+	result, err := CharacterGrowthPromotions(root, "20260923193640", 6510, 1, 0, submitted)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.CharacterID != 6514 || result.Level != 100 || result.Exp != 0 || len(result.Costs) != 8 {
-		t.Fatalf("installed 2.34.13 combined promotion=%+v", result)
+		t.Fatalf("installed 2.35.10 combined promotion=%+v", result)
 	}
 }
 

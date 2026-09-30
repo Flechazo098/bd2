@@ -31,9 +31,9 @@ func (s *ownedState) PictorialDiscovered() []player.Pictorial { return s.discove
 func TestOfficialPictorialProgression(t *testing.T) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
-		t.Skip("set BD2_REAL_GAMEDATA to verify installed 2.34.13 GameData")
+		t.Skip("set BD2_REAL_GAMEDATA to verify installed 2.35.10 GameData")
 	}
-	design, err := gamedata.LoadPictorialDesign(root, "20260910162539")
+	design, err := gamedata.LoadPictorialDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}

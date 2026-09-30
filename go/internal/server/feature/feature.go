@@ -15,7 +15,7 @@ import (
 // ErrInvalidRequest means a known endpoint was sent a malformed request.
 var ErrInvalidRequest = errors.New("feature: invalid protobuf request")
 
-// emptyResponses is the stateless subset of the 2.34.13 new-player batch whose
+// emptyResponses is the stateless subset of the new-player batch whose
 // successful response protobuf has zero bytes. Stateful routes leave this map
 // as soon as their owning domain persists them. Packet codes are protocol
 // values, not ordinals derived from the request or response order.

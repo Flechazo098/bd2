@@ -3,6 +3,8 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -15,7 +17,7 @@ func TestClientDevelopmentGameDirectory(t *testing.T) {
 	}{
 		{name: "separate", args: []string{"--game-dir", filepath.Join("some", "game")}, want: filepath.Join("some", "game")},
 		{name: "equals", args: []string{"--game-dir=" + filepath.Join("other", "game")}, want: filepath.Join("other", "game")},
-		{name: "absent", args: []string{"--no-browser"}},
+		{name: "absent", args: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := clientDevelopmentGameDirectory(test.args)
@@ -37,14 +39,53 @@ func TestClientDevelopmentGameDirectoryRequiresValue(t *testing.T) {
 	}
 }
 
-func TestDevelopmentRunOptionsUsesRepositoryFiles(t *testing.T) {
-	t.Setenv("APPDATA", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	args, options, err := developmentRunOptions([]string{"--dev", "run", "--no-browser"})
+func TestLoadClientDevelopmentConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	gameDir := filepath.Join(dir, "BrownDust II")
+	quoted, err := json.Marshal(gameDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(args) != 1 || args[0] != "--no-browser" {
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"game_directory":`+string(quoted)+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadClientDevelopmentConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.Abs(gameDir)
+	if config.SchemaVersion != 1 || config.GameDirectory != want {
+		t.Fatalf("config=%+v want directory %q", config, want)
+	}
+	if _, err := loadClientDevelopmentConfig(filepath.Join(dir, "missing.json")); err == nil {
+		t.Fatal("missing development config accepted")
+	}
+	for name, body := range map[string]string{
+		"unknown":  `{"schema_version":1,"game_directory":"x","extra":true}`,
+		"version":  `{"schema_version":2,"game_directory":"x"}`,
+		"empty":    `{"schema_version":1,"game_directory":""}`,
+		"trailing": `{"schema_version":1,"game_directory":"x"}{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := filepath.Join(dir, name+".json")
+			if err := os.WriteFile(bad, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadClientDevelopmentConfig(bad); err == nil {
+				t.Fatal("invalid development config accepted")
+			}
+		})
+	}
+}
+
+func TestDevelopmentRunOptionsUsesRepositoryFiles(t *testing.T) {
+	gameDir := t.TempDir()
+	args, options, err := developmentRunOptions([]string{"--dev", "run", "--game-dir", gameDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != "--game-dir" || args[1] != gameDir {
 		t.Fatalf("client args = %v", args)
 	}
 	for name, path := range map[string]string{

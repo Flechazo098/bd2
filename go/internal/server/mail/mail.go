@@ -28,7 +28,7 @@ const openPacketCode = 132
 // represented by ItemDBInfo in RewardDBInfoBundle.  They are deliberately
 // separate from character (6), equipment (10), and costume (11): the client
 // requires CharDBInfo, EquipDBInfo, and CostumeDBInfo for those rewards, and
-// this mailbox owns no such domain stores.  The values are from 2.34.13
+// this mailbox owns no such domain stores.  The values are from the client
 // DataManager.GetItemInfo and ItemDBInfo, not inferred from table names.
 var itemDBInfoTypes = map[uint64]bool{
 	5:  true, // food

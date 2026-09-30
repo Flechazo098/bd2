@@ -36,10 +36,22 @@ type LoginSeed struct {
 	purchaseCounts PurchaseCountProvider
 	presetSlots    PresetSlotProvider
 	inventorySlots InventorySlotProvider
-	firstGacha     *bool
+	firstGacha     FirstGachaProvider
 }
 
-func (s *LoginSeed) SetFirstGacha(value bool) { s.firstGacha = &value }
+// FirstGachaProvider reads the mutable account flag for every login, including
+// a login after confirming the starter draw without restarting the server.
+type FirstGachaProvider interface {
+	FirstGachaCompleted() bool
+}
+
+func (s *LoginSeed) AttachFirstGacha(provider FirstGachaProvider) error {
+	if provider == nil {
+		return errors.New("account: missing first gacha provider")
+	}
+	s.firstGacha = provider
+	return nil
+}
 
 // CurrencyProvider supplies the authoritative mutable UserDBInfo wallet.
 type CurrencyProvider interface {
@@ -349,7 +361,7 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 	}
 	if s.firstGacha != nil {
 		value := uint64(0)
-		if *s.firstGacha {
+		if s.firstGacha.FirstGachaCompleted() {
 			value = 1
 		}
 		var err error

@@ -17,14 +17,14 @@ func TestRealTutorialStatsDoNotMisclassifyAttackAsHealth(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	base, err := CharacterBaseStats(root, "20260910162539", 350, 20)
+	base, err := CharacterBaseStats(root, "20260923193640", 350, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if base.Health != 505 {
 		t.Fatalf("base health=%v, want 505", base.Health)
 	}
-	option, err := EquipmentOptionContribution(root, "20260910162539", EquipmentOption{GroupID: 1010010, ID: 3})
+	option, err := EquipmentOptionContribution(root, "20260923193640", EquipmentOption{GroupID: 1010010, ID: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestLoadedCharacterStatDesignMatchesDirectLookup(t *testing.T) {
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
-	design, err := LoadPictorialDesign(root, "20260910162539")
+	design, err := LoadPictorialDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestLoadedCharacterStatDesignMatchesDirectLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, err := CharacterBaseStats(root, "20260910162539", 350, 20)
+	direct, err := CharacterBaseStats(root, "20260923193640", 350, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
