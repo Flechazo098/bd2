@@ -297,6 +297,8 @@ public sealed class Plugin : BaseUnityPlugin
 
             google.gameObject.SetActive(ProviderEnabled("google"));
             discord.gameObject.SetActive(ProviderEnabled("discord"));
+            int providerCount = (google.gameObject.activeSelf ? 1 : 0) +
+                (discord.gameObject.activeSelf ? 1 : 0);
             discord.transform.SetSiblingIndex(0);
             google.transform.SetSiblingIndex(1);
             discord.gameObject.name = "Button - Discord";
@@ -304,6 +306,7 @@ public sealed class Plugin : BaseUnityPlugin
             ReplaceClick(google, introUI, "google");
             ReplaceClick(discord, introUI, "discord");
             ApplyDiscordBrand(box, logo, title);
+            ConfigureProviderGrid(panel, providerCount);
 
             Canvas.ForceUpdateCanvases();
             if (panel is RectTransform panelRect)
@@ -315,6 +318,100 @@ public sealed class Plugin : BaseUnityPlugin
         {
             Log?.LogError("Could not configure login panel: " + ex);
         }
+    }
+
+    private static void ConfigureProviderGrid(Transform panel, int providerCount)
+    {
+        GridLayoutGroup grid = panel.GetComponentInChildren<GridLayoutGroup>(true);
+        if (grid == null)
+        {
+            throw new MissingMemberException("Login provider grid was not found");
+        }
+        int columns = Math.Max(1, providerCount);
+        grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        grid.constraintCount = columns;
+        if (grid.transform is RectTransform gridRect)
+        {
+            float width = grid.padding.horizontal + grid.cellSize.x * columns +
+                grid.spacing.x * Math.Max(0, columns - 1);
+            UpdateBetterGridProfiles(grid, columns);
+            UpdateBetterLocatorProfiles(grid, width);
+            gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(gridRect);
+        }
+    }
+
+    private static void UpdateBetterGridProfiles(GridLayoutGroup grid, int columns)
+    {
+        Type type = grid.GetType();
+        if (type.FullName != "TheraBytes.BetterUi.BetterGridLayoutGroup")
+        {
+            return;
+        }
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        UpdateBetterGridSettings(type.GetField("settingsFallback", flags)?.GetValue(grid), columns);
+        object collection = type.GetField("customSettings", flags)?.GetValue(grid);
+        IEnumerable items = collection?.GetType().GetProperty("Items", flags)?.GetValue(collection, null) as IEnumerable;
+        if (items == null)
+        {
+            return;
+        }
+        foreach (object settings in items)
+        {
+            UpdateBetterGridSettings(settings, columns);
+        }
+    }
+
+    private static void UpdateBetterGridSettings(object settings, int columns)
+    {
+        if (settings == null)
+        {
+            return;
+        }
+        Type type = settings.GetType();
+        FieldInfo constraint = type.GetField("Constraint", BindingFlags.Instance | BindingFlags.Public);
+        FieldInfo count = type.GetField("ConstraintCount", BindingFlags.Instance | BindingFlags.Public);
+        if (constraint != null)
+        {
+            constraint.SetValue(settings, Enum.ToObject(constraint.FieldType, (int)GridLayoutGroup.Constraint.FixedColumnCount));
+        }
+        count?.SetValue(settings, columns);
+    }
+
+    private static void UpdateBetterLocatorProfiles(GridLayoutGroup grid, float width)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (Component component in grid.GetComponents<Component>())
+        {
+            Type type = component?.GetType();
+            if (type?.FullName != "TheraBytes.BetterUi.BetterLocator")
+            {
+                continue;
+            }
+            UpdateBetterRectTransformData(type.GetField("transformFallback", flags)?.GetValue(component), width);
+            object collection = type.GetField("transformConfigs", flags)?.GetValue(component);
+            IEnumerable items = collection?.GetType().GetProperty("Items", flags)?.GetValue(collection, null) as IEnumerable;
+            if (items == null)
+            {
+                continue;
+            }
+            foreach (object data in items)
+            {
+                UpdateBetterRectTransformData(data, width);
+            }
+        }
+    }
+
+    private static void UpdateBetterRectTransformData(object data, float width)
+    {
+        FieldInfo sizeField = data?.GetType().GetField("SizeDelta", BindingFlags.Instance | BindingFlags.Public);
+        if (sizeField == null || sizeField.FieldType != typeof(Vector2))
+        {
+            return;
+        }
+        Vector2 size = (Vector2)sizeField.GetValue(data);
+        size.x = width;
+        sizeField.SetValue(data, size);
     }
 
     private static void ReplaceClick(Button button, object introUI, string provider)
