@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -103,5 +104,40 @@ func TestDevelopmentRunOptionsUsesRepositoryFiles(t *testing.T) {
 func TestDevelopmentRunOptionsRequiresRun(t *testing.T) {
 	if _, _, err := developmentRunOptions([]string{"--dev"}); err == nil {
 		t.Fatal("development command without run unexpectedly succeeded")
+	}
+}
+
+func TestDevelopmentRunRelaunchesWithWailsProductionHost(t *testing.T) {
+	if wailsDevelopmentBuild {
+		t.Skip("test exercises the untagged bootstrap process")
+	}
+	previous := runDevelopmentChild
+	t.Cleanup(func() { runDevelopmentChild = previous })
+	var gotRoot string
+	var gotArgs []string
+	runDevelopmentChild = func(root string, args []string) error {
+		gotRoot = root
+		gotArgs = append([]string(nil), args...)
+		return nil
+	}
+	relaunched, err := relaunchDevelopmentIfNeeded([]string{"--dev", "run", "--game-dir", "example"})
+	if err != nil || !relaunched {
+		t.Fatalf("relaunched=%v err=%v", relaunched, err)
+	}
+	if !filepath.IsAbs(gotRoot) {
+		t.Fatalf("root is not absolute: %q", gotRoot)
+	}
+	want := []string{"run", "-tags", "production", "./cmd/bd2client", "--dev", "run", "--game-dir", "example"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("child args=%v want=%v", gotArgs, want)
+	}
+}
+
+func TestDevelopmentRunDoesNotRelaunchOtherCommands(t *testing.T) {
+	for _, args := range [][]string{nil, {"--game-dir", "example"}, {"--dev"}, {"--dev", "other"}} {
+		relaunched, err := relaunchDevelopmentIfNeeded(args)
+		if err != nil || relaunched {
+			t.Fatalf("args=%v relaunched=%v err=%v", args, relaunched, err)
+		}
 	}
 }

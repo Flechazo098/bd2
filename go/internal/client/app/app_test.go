@@ -21,6 +21,7 @@ func TestEmbeddedStudioUsesNativeBindings(t *testing.T) {
 	text := string(page)
 	for _, marker := range []string{
 		"BD2 Client Studio", "window.go.app.Studio", "bridge().Initialize()",
+		"(()=>{", "async function navigateScene(next)",
 		`id="directoryScene"`, `id="serverScene"`, `id="deskScene"`,
 		`id="patch"`, `id="install"`, `id="launch"`,
 		`value="official"`, `value="local"`, `value="server"`,
@@ -32,7 +33,7 @@ func TestEmbeddedStudioUsesNativeBindings(t *testing.T) {
 			t.Errorf("embedded desktop interface lacks %q", marker)
 		}
 	}
-	for _, obsolete := range []string{"fetch(", "/api/", "bd2-session", "X-BD2-Session", "{{.", "window_darwin.js"} {
+	for _, obsolete := range []string{"fetch(", "/api/", "bd2-session", "X-BD2-Session", "{{.", "window_darwin.js", "function go("} {
 		if strings.Contains(text, obsolete) {
 			t.Errorf("embedded desktop interface retains obsolete browser bridge %q", obsolete)
 		}

@@ -137,14 +137,30 @@ type GachaFixedRoll struct {
 }
 
 type RegularGachaCatalog struct {
-	Gachas      map[uint64]RegularGacha
-	characters  map[uint64]CharacterDesign
-	groups      map[uint64]GachaGroupDesign
-	byGacha     map[uint64]uint64
-	fixed       map[uint64]GachaFixedDesign
-	grades      map[uint64]uint64
-	stepUps     map[uint64]GachaStepUpDesign
-	stepByGacha map[uint64]GachaStepDesign
+	Gachas                 map[uint64]RegularGacha
+	gachaEventAddFreeCount uint64
+	characters             map[uint64]CharacterDesign
+	groups                 map[uint64]GachaGroupDesign
+	byGacha                map[uint64]uint64
+	fixed                  map[uint64]GachaFixedDesign
+	grades                 map[uint64]uint64
+	stepUps                map[uint64]GachaStepUpDesign
+	stepByGacha            map[uint64]GachaStepDesign
+}
+
+func (c *RegularGachaCatalog) GachaEventAddFreeCount() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.gachaEventAddFreeCount
+}
+
+func (c *RegularGachaCatalog) SetGachaEventAddFreeCount(count uint64) error {
+	if c == nil || count > 256 {
+		return errors.New("gamedata: invalid gacha event free-count bonus")
+	}
+	c.gachaEventAddFreeCount = count
+	return nil
 }
 
 // GachaMigrationFact is the minimal stable GameData view consumed by the
@@ -1020,6 +1036,19 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 		Gachas: map[uint64]RegularGacha{}, characters: make(map[uint64]CharacterDesign),
 		groups: map[uint64]GachaGroupDesign{}, byGacha: map[uint64]uint64{}, fixed: map[uint64]GachaFixedDesign{}, grades: map[uint64]uint64{},
 		stepUps: map[uint64]GachaStepUpDesign{}, stepByGacha: map[uint64]GachaStepDesign{},
+	}
+	var defaults []byte
+	if err := db.QueryRow("SELECT ProtoBuf FROM GameDefaultTable WHERE id=0").Scan(&defaults); err != nil {
+		return nil, fmt.Errorf("gamedata: gacha defaults: %w", err)
+	}
+	bonusCounts, err := packedInts(defaults, 48)
+	if err != nil || len(bonusCounts) > 1 {
+		return nil, errors.New("gamedata: malformed GachaEventAddFreeCount")
+	}
+	if len(bonusCounts) == 1 {
+		if err := catalog.SetGachaEventAddFreeCount(bonusCounts[0]); err != nil {
+			return nil, err
+		}
 	}
 	for id, character := range infinite.characters {
 		catalog.characters[id] = character
