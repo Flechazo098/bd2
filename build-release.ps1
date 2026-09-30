@@ -97,8 +97,8 @@ Copy-Item -LiteralPath $authenticationConfig -Destination (Join-Path $serverPack
 Copy-Item -LiteralPath $resourceConfig -Destination (Join-Path $serverPackage 'resources.json') -Force
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $clientPackage 'versions.json') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RELEASE.md') -Destination (Join-Path $serverPackage 'README.md') -Force
-Copy-Item -LiteralPath (Join-Path $root 'docs\AUTHENTICATION.md') -Destination (Join-Path $serverPackage 'AUTHENTICATION.md') -Force
-Copy-Item -LiteralPath (Join-Path $root 'docs\RESOURCES.md') -Destination (Join-Path $serverPackage 'RESOURCES.md') -Force
+Copy-Item -LiteralPath (Join-Path $root 'AUTHENTICATION.md') -Destination (Join-Path $serverPackage 'AUTHENTICATION.md') -Force
+Copy-Item -LiteralPath (Join-Path $root 'RESOURCES.md') -Destination (Join-Path $serverPackage 'RESOURCES.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'docs\CLIENT.md') -Destination (Join-Path $clientPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $serverPackage 'LICENSE') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $clientPackage 'LICENSE') -Force
