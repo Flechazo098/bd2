@@ -1,0 +1,6 @@
+*
+!go/
+!go/**
+!versions.json
+!authentication.json
+!resources.json
