@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	clientlayout "bd2server/internal/client/layout"
@@ -27,6 +28,7 @@ func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error 
 	}
 	release := filepath.Join(filepath.Clean(localRoot), "ServerData", "StandaloneWindows64", "HD", bundleVersion)
 	source := filepath.Join(release, "catalog_alpha.json")
+	sourceHash := filepath.Join(release, "catalog_alpha.hash")
 	raw, err := readCatalog(source)
 	if err != nil {
 		return err
@@ -41,19 +43,80 @@ func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error 
 	if err != nil {
 		return fmt.Errorf("read built-in Addressables catalog: %w", err)
 	}
-	if bytes.Equal(current, raw) {
-		return nil
-	}
-	backup := filepath.Join(aa, localCatalogBackup)
-	if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
-		if err := writeExclusiveFile(backup, current, 0o600); err != nil {
-			return fmt.Errorf("back up built-in Addressables catalog: %w", err)
+	if !bytes.Equal(current, raw) {
+		backup := filepath.Join(aa, localCatalogBackup)
+		if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
+			if err := writeExclusiveFile(backup, current, 0o600); err != nil {
+				return fmt.Errorf("back up built-in Addressables catalog: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("inspect built-in Addressables catalog backup: %w", err)
 		}
-	} else if err != nil {
-		return fmt.Errorf("inspect built-in Addressables catalog backup: %w", err)
+		if err := replaceCatalog(target, raw); err != nil {
+			return fmt.Errorf("install current local Addressables catalog: %w", err)
+		}
 	}
-	if err := replaceCatalog(target, raw); err != nil {
-		return fmt.Errorf("install current local Addressables catalog: %w", err)
+	hash, err := os.ReadFile(sourceHash)
+	if err != nil {
+		return fmt.Errorf("read local ServerData catalog hash: %w", err)
+	}
+	if len(hash) == 0 || len(hash) > 1024 {
+		return errors.New("local ServerData catalog hash has an invalid size")
+	}
+	cache, err := addressablesCacheDirectory()
+	if err != nil {
+		return err
+	}
+	return synchronizePersistentCatalog(cache, raw, hash)
+}
+
+func addressablesCacheDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate user home for Addressables cache: %w", err)
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return filepath.Join(home, "AppData", "LocalLow", "Gamfs", "BrownDust II", "com.unity.addressables"), nil
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Gamfs", "BrownDust II", "com.unity.addressables"), nil
+	default:
+		return "", fmt.Errorf("local Brown Dust II resources are unsupported on %s", runtime.GOOS)
+	}
+}
+
+func synchronizePersistentCatalog(cache string, catalog, hash []byte) error {
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		return fmt.Errorf("create persistent Addressables cache: %w", err)
+	}
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "catalog_alpha.json", data: catalog},
+		{name: "catalog_alpha.hash", data: hash},
+	} {
+		target := filepath.Join(cache, file.name)
+		current, err := os.ReadFile(target)
+		if err == nil && bytes.Equal(current, file.data) {
+			continue
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read persistent Addressables %s: %w", file.name, err)
+		}
+		if err == nil {
+			backup := target + ".bd2-before-local-sync"
+			if _, backupErr := os.Stat(backup); errors.Is(backupErr, os.ErrNotExist) {
+				if backupErr := writeExclusiveFile(backup, current, 0o600); backupErr != nil {
+					return fmt.Errorf("back up persistent Addressables %s: %w", file.name, backupErr)
+				}
+			} else if backupErr != nil {
+				return fmt.Errorf("inspect persistent Addressables %s backup: %w", file.name, backupErr)
+			}
+		}
+		if err := replaceCatalog(target, file.data); err != nil {
+			return fmt.Errorf("install persistent Addressables %s: %w", file.name, err)
+		}
 	}
 	return nil
 }
