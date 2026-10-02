@@ -95,6 +95,8 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 
 `dev_mail_grant.py` 是独立的、仅监听环回地址的开发期浏览器工具。它只读取指定版本的 GameData，列出已验证、可走 `ItemDBInfo` 领取路径的有名道具：`FoodTable`（类型 5）、`CookingTable`（7）、`ResourceTable`（8）、`QuestItemTable`（13）、`UseItemTable`（14）、`CollectionTable`（17）、`MyRoomItemTable`（27）和 `InstantUseItemTable`（29）。普通物品的 `ItemNameTextId` 按客户端行为从 `NameTextTable` 解析；随机箱使用独立的 `RandomBoxTextTable`，现金商品搜索别名仍从其声明的 `LocalTextTable` 解析，三者不会依靠碰巧相同的数字文本 ID 串表。确定性随机箱使用真实名称作为内容物搜索别名，因此不依赖固定物品 ID。`ResourceTable.Type=2` 的场景/展示哨兵和无可用名称行不提供；固定内容随机箱只用于反查内容物的真实 ID，所有 type 9 随机箱均不作为邮件选项。金币和天赋神药等服务端已实现的账户货币从当前 `CurrencyTable` 发现，以各自元素类型和 `id0` 直接入账；名称与物品 ID 均不硬编码。工具本身既不属于 `bd2server.exe`，也不修改 `data/state` 的九份账号状态。
 
+无需 GameData 或第三方 Python 包的 `grant` 子命令可追加一封含多个附件的动态邮件。服务端使用 `--mail-grant-spool` 读取该 JSON，每次 `/MailInfo` 导入未发放的 identity；已发放 identity 在领取和重启后仍保持幂等。CLI 允许付费钻石 `2:0:数量`、免费钻石 `3:0:数量`、金币 `4:0:数量`、天赋神药 `12:0:数量`、金线 `20:0:数量`，以及当前 2.35.10 已核实的抽抽乐券 `8:1000:数量` 和 UR 专用装备抽抽乐券 `8:1104:数量`，每个附件数量均限制为 `1..2147483647`。例如 `python tools/python/dev_mail_grant.py grant --output data/dev/currency-grants.json --identity test-paid-and-tickets-1 --attachment 2:0:100000000 --attachment 8:1000:100000000 --attachment 8:1104:100000000 --attachment 4:0:1000000000`。两种券通过 `ItemDBInfo` 写入背包，钻石和金币直接叠加账户余额；发放前应检查同类券现有库存加附件后的总量仍在客户端 `int32` 范围内。
+
 启动工具时，`--mail-seed` 是只读的当前基础邮件种子；`--output` 是新生成的完整临时种子；`--settings-output` 保存与账号存档分离的开发选项。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
 
 ```powershell
@@ -117,7 +119,7 @@ python .\tools\python\dev_mail_grant.py serve `
 
 客户端 `MailDBInfo.ItemType`、`ItemId` 和 `ItemCount` 均为 `int32`，所以该工具把单附件数量限制为 `1..2147483647`；每封工具邮件固定只有一个附件。当前官方样本中单封最多观察到 5 个附件，但没有证据证明这是协议上限，因此工具不据此宣称或实施“5 件”上限。客户端邮箱 UI 按一次请求加载最多 100 封普通邮件，现有本地服务目前回传全部未开封邮件，故大量历史未领取邮件的实际 UI 表现尚待验证。现有本地 `/MailOpen` 对同一邮件 ID 的领取由 `data/state/mail.json` 的 `opened` 集合持久化，重试不会重复发奖；工具会在完整种子中分配唯一递增邮件 ID。
 
-这不是“所有 GameData 表都可发放”的虚假承诺：角色（元素类型 6）、装备（10）、服装（11）和我的房间奖杯（28）在客户端 `RewardDBInfoBundle` 中分别必须使用 `CharDBInfo`、`EquipDBInfo`、`CostumeDBInfo`、`MyRoomTrophyDBInfo`，而当前本地邮件服务尚未连接相应领域存档，工具不会提供它们；直接伪装成 `ItemDBInfo` 会造成客户端状态错误。付费/普通货币之外的特殊货币亦不在当前本地钱包实现范围内。客户端 `DataManager.GetItemDTO` 对 `ContentTicket`（19）和 `LobbySettingItem`（25）没有可用于 `ItemDBInfo` 领取的 DTO 分支，故也没有提供；`GetItemInfo` 的显示分支不足以证明可安全存储。若要补齐这些类型，需要先实现对应的服务端存储、去重及正确 reward-bundle 字段，不需要客户端 patch。
+这不是“所有 GameData 表都可发放”的虚假承诺：角色（元素类型 6）、装备（10）、服装（11）和我的房间奖杯（28）在客户端 `RewardDBInfoBundle` 中分别必须使用 `CharDBInfo`、`EquipDBInfo`、`CostumeDBInfo`、`MyRoomTrophyDBInfo`，而当前本地邮件服务尚未连接相应领域存档，工具不会提供它们；直接伪装成 `ItemDBInfo` 会造成客户端状态错误。付费/普通货币之外的特殊货币亦不在当前本地钱包实现范围内。`ContentTicket`（19）仅为已核实的满月一次性专用券开放 `19:450030:1`：客户端 `CommonPacket.AddItemInfo` 将其交给 `AddContentTicketItem`，服务端按实例存入物品存档并沿用邮件领取去重；其他内容券 ID 和其他数量均拒绝。浏览器道具列表不开放内容券，`grant` 子命令可使用这一严格限定的附件。`LobbySettingItem`（25）仍未提供；`GetItemInfo` 的显示分支不足以证明可安全存储。若要补齐其余类型，需要先实现对应的服务端存储、去重及正确 reward-bundle 字段，不需要客户端 patch。
 
 热载只接受经过 `mail.Starter.Validate` 校验的完整 JSON 种子：文件未变化时不会重新读取；被检测到的坏替换会保留上一次已验证邮箱，并使该次 `/MailInfo` 请求失败而不会部分加载。工具本身总是完整写临时文件、`fsync` 后原子替换，正常发放不会让服务器看到半文件。
 

@@ -313,6 +313,11 @@ func (s *Wallet) GrantQuestOnce(identity string, rewards []gamedata.Reward) (Cur
 	next := cloneWallet(s.state)
 	for _, reward := range rewards {
 		switch reward.Type {
+		case 2:
+			if math.MaxUint64-next.Jewelry < reward.Count {
+				return Currency{}, errors.New("player: paid jewelry overflow")
+			}
+			next.Jewelry += reward.Count
 		case 3:
 			if math.MaxUint64-next.FreeJewelry < reward.Count {
 				return Currency{}, errors.New("player: free jewelry overflow")

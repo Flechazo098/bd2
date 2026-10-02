@@ -67,6 +67,22 @@ class CurrencyMailGrantTests(unittest.TestCase):
         self.assertEqual(first["grant"], second["grant"])
         self.assertEqual(self.output.read_bytes(), original)
 
+    def test_paid_jewelry_draw_tickets_and_large_gold_share_one_idempotent_mail(self):
+        extra = ("--identity", "large-rewards", "--attachment", "2:0:100000000",
+                 "--attachment", "8:1000:100000000", "--attachment", "8:1104:100000000",
+                 "--attachment", "4:0:1000000000")
+        first = self.run_grant(*extra)
+        second = self.run_grant(*extra)
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(first["grant"], second["grant"])
+        self.assertEqual(first["grant"]["rewards"][1:], [
+            {"type": 2, "id": 0, "count": 100000000},
+            {"type": 8, "id": 1000, "count": 100000000},
+            {"type": 8, "id": 1104, "count": 100000000},
+            {"type": 4, "id": 0, "count": 1000000000},
+        ])
+
     def test_identity_conflict_is_rejected_without_changing_file(self):
         self.run_grant("--identity", "once")
         original = self.output.read_bytes()
@@ -75,13 +91,21 @@ class CurrencyMailGrantTests(unittest.TestCase):
                 self.run_grant("--identity", "once", *extra)
         self.assertEqual(self.output.read_bytes(), original)
 
+    def test_one_use_content_ticket_is_an_idempotent_single_item_attachment(self):
+        first = self.run_grant("--identity", "full-moon-ticket", "--attachment", "19:450030:1")
+        second = self.run_grant("--identity", "full-moon-ticket", "--attachment", "19:450030:1")
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(first["grant"], second["grant"])
+        self.assertEqual(first["grant"]["rewards"][-1], {"type": 19, "id": 450030, "count": 1})
+
     def test_omitted_identity_appends_distinct_grants(self):
         first, second = self.run_grant(), self.run_grant()
         self.assertNotEqual(first["grant"]["identity"], second["grant"]["identity"])
         self.assertEqual(len(dev_mail_grant.load_grants(self.output)["grants"]), 2)
 
     def test_invalid_attachments_are_rejected(self):
-        for attachment in ("8:1:1", "4:1:1", "4:0:0", "4:0:-1", "4:0:2147483648", "4:0", "4:0:1:2", "4:0:true"):
+        for attachment in ("8:1:1", "8:0:1", "8:1001:1", "8:1104:2147483648", "8:1000:0", "14:1000:1", "2:1:1", "19:450029:1", "19:450030:0", "19:450030:2", "4:1:1", "4:0:0", "4:0:-1", "4:0:2147483648", "4:0", "4:0:1:2", "4:0:true"):
             with self.subTest(attachment=attachment), self.assertRaises(SystemExit), redirect_stdout(io.StringIO()):
                 with mock.patch("sys.stderr", new=io.StringIO()):
                     self.args("--attachment", attachment)
