@@ -297,6 +297,8 @@ func TestGameSessionExpiresAndClearsKey(t *testing.T) {
 	}
 	if _, err := server.DispatchRaw("/EmptyInfo", []byte(body), "s="+reply.Cookie); err == nil {
 		t.Fatal("expired game session was accepted")
+	} else if !errors.Is(err, transport.ErrGameSessionExpired) {
+		t.Fatalf("expired game session error=%v, want ErrGameSessionExpired", err)
 	}
 	if len(server.sessions) != 0 {
 		t.Fatalf("expired game session remains in map: %d", len(server.sessions))
@@ -395,8 +397,16 @@ func TestNativeLoginAndBatch(t *testing.T) {
 
 func TestSessionRejectsMissingCookieAndUnknownPath(t *testing.T) {
 	server, _ := NewServer(fakeLogin{}, fakeDomain{})
-	if _, err := server.DispatchRaw("/EmptyInfo", nil, ""); err == nil {
-		t.Fatal("authenticated endpoint accepted missing cookie")
+	if _, err := server.DispatchRaw("/EmptyInfo", nil, ""); !errors.Is(err, transport.ErrGameSessionExpired) {
+		t.Fatalf("missing cookie error=%v, want ErrGameSessionExpired", err)
+	}
+	unknown := strings.Repeat("a", 48) + "|1"
+	if _, err := server.DispatchRaw("/BatchRequest", nil, "s="+unknown); !errors.Is(err, transport.ErrGameSessionExpired) {
+		t.Fatalf("unknown cookie error=%v, want ErrGameSessionExpired", err)
+	}
+	if _, err := server.DispatchRaw("/EmptyInfo", nil, "s=malformed"); err == nil ||
+		errors.Is(err, transport.ErrGameSessionExpired) {
+		t.Fatalf("malformed cookie error=%v, want ordinary rejection", err)
 	}
 	reply := login(t, server)
 	request := wire.AppendVarint(nil, 1, 99)
