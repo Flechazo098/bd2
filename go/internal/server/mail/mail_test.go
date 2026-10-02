@@ -160,17 +160,17 @@ func TestMailOpenGrantsNonResourceItemDBInfoType(t *testing.T) {
 	}
 }
 
-func TestMailOpenGrantsCatalystCurrencyAndPersists(t *testing.T) {
+func TestMailOpenGrantsCatalystAndMileageCurrenciesAndPersists(t *testing.T) {
 	seed := &Starter{Version: "2.35.10", MailCount: 2, MaxMailID: 14, Mails: []MailDBInfo{{
 		MailID: 14, MailType: 2, ExpiresAt: 100, SentAt: 10,
-		RewardTypes: []uint64{12}, RewardIDs: []uint64{0}, RewardCounts: []uint64{250},
+		RewardTypes: []uint64{12, 20}, RewardIDs: []uint64{0, 0}, RewardCounts: []uint64{250, 300},
 	}}}
 	storage := stateio.NewMemory()
 	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wallet, err := player.OpenWallet(storage, player.Currency{Catalyst: 10})
+	wallet, err := player.OpenWallet(storage, player.Currency{Catalyst: 10, Mileage: 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,35 +184,46 @@ func TestMailOpenGrantsCatalystCurrencyAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wallet.Snapshot().Catalyst != 260 || len(inv.All()) != 0 {
+	if wallet.Snapshot().Catalyst != 260 || wallet.Snapshot().Mileage != 320 || len(inv.All()) != 0 {
 		t.Fatalf("wallet=%+v items=%+v", wallet.Snapshot(), inv.All())
 	}
 	bundle, found, _ := wire.Bytes(response, 1)
 	if !found {
 		t.Fatal("reward bundle missing")
 	}
-	item, found, _ := wire.Bytes(bundle, 1)
-	if !found {
-		t.Fatal("currency ItemDBInfo missing")
+	gotCurrencies := map[uint64]uint64{}
+	if err := wire.Walk(bundle, func(field wire.Field) error {
+		if field.Number != 1 {
+			return nil
+		}
+		typ, _, err := wire.Varint(field.Value, 3)
+		if err != nil {
+			return err
+		}
+		count, _, err := wire.Varint(field.Value, 4)
+		if err != nil {
+			return err
+		}
+		gotCurrencies[typ] = count
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if typ, _, _ := wire.Varint(item, 3); typ != 12 {
-		t.Fatalf("currency type=%d", typ)
-	}
-	if count, _, _ := wire.Varint(item, 4); count != 250 {
-		t.Fatalf("currency count=%d", count)
+	if gotCurrencies[12] != 250 || gotCurrencies[20] != 300 {
+		t.Fatalf("currency rewards=%v", gotCurrencies)
 	}
 	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
 		t.Fatal(err)
 	}
-	if wallet.Snapshot().Catalyst != 260 {
-		t.Fatalf("replay catalyst=%d", wallet.Snapshot().Catalyst)
+	if wallet.Snapshot().Catalyst != 260 || wallet.Snapshot().Mileage != 320 {
+		t.Fatalf("replay wallet=%+v", wallet.Snapshot())
 	}
 	reopened, err := player.OpenWallet(storage, player.Currency{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Snapshot().Catalyst != 260 {
-		t.Fatalf("persisted catalyst=%d", reopened.Snapshot().Catalyst)
+	if reopened.Snapshot().Catalyst != 260 || reopened.Snapshot().Mileage != 320 {
+		t.Fatalf("persisted wallet=%+v", reopened.Snapshot())
 	}
 }
 

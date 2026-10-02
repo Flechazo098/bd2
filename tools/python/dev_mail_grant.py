@@ -54,7 +54,7 @@ ITEM_SOURCES = (
 # and mail-claim path are implemented by this server are offered. Their mail
 # reward ID is zero; names still come from the current GameData rather than
 # being embedded here.
-MAIL_CURRENCY_TYPES = frozenset({3, 4, 12})
+MAIL_CURRENCY_TYPES = frozenset({3, 4, 12, 20})
 
 
 def _varint(value: Any) -> int:

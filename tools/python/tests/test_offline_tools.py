@@ -196,17 +196,18 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
         connection = sqlite3.connect(":memory:")
         connection.execute("CREATE TABLE NameTextTable (id INTEGER, ProtoBuf BLOB)")
         connection.execute("CREATE TABLE CurrencyTable (id INTEGER, ProtoBuf BLOB)")
-        for text_id, value in ((264, "天赋神药"), (999, "未支持货币")):
+        for text_id, value in ((264, "天赋神药"), (681, "金线"), (999, "未支持货币")):
             encoded = value.encode("utf-8")
             connection.execute(
                 "INSERT INTO NameTextTable VALUES (?, ?)",
                 (text_id, proto_field(2, text_id) + import_seed.encode_field(4, 2, encoded)),
             )
         connection.execute("INSERT INTO CurrencyTable VALUES (?, ?)", (12, proto_field(3, 12) + proto_field(5, 264)))
+        connection.execute("INSERT INTO CurrencyTable VALUES (?, ?)", (20, proto_field(3, 20) + proto_field(5, 681)))
         connection.execute("INSERT INTO CurrencyTable VALUES (?, ?)", (99, proto_field(3, 99) + proto_field(5, 999)))
 
         currencies = dev_mail_grant._mail_currencies(connection)
-        self.assertEqual([(item["element_type"], item["id"], item["name"]) for item in currencies], [(12, 0, "天赋神药")])
+        self.assertEqual([(item["element_type"], item["id"], item["name"]) for item in currencies], [(12, 0, "天赋神药"), (20, 0, "金线")])
         connection.close()
 
     def test_internal_lost_resource_is_not_mail_safe(self):
