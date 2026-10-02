@@ -130,6 +130,21 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	}
 }
 
+func TestStarterContentTicketOnlyAllowsAuditedSingleUseReward(t *testing.T) {
+	for _, reward := range []struct {
+		id, count uint64
+		valid     bool
+	}{{450030, 1, true}, {450029, 1, false}, {450030, 0, false}, {450030, 2, false}} {
+		seed := &Starter{Version: "2.35.10", MailCount: 2, MaxMailID: 13, Mails: []MailDBInfo{{
+			MailID: 13, MailType: 2, ExpiresAt: 100, SentAt: 10,
+			RewardTypes: []uint64{19}, RewardIDs: []uint64{reward.id}, RewardCounts: []uint64{reward.count},
+		}}}
+		if err := seed.Validate(); (err == nil) != reward.valid {
+			t.Fatalf("id=%d count=%d valid=%v err=%v", reward.id, reward.count, reward.valid, err)
+		}
+	}
+}
+
 func TestMailOpenGrantsNonResourceItemDBInfoType(t *testing.T) {
 	seed := &Starter{Version: "2.35.10", MailCount: 2, MaxMailID: 13, Mails: []MailDBInfo{{
 		MailID: 13, MailType: 2, ExpiresAt: 100, SentAt: 10,

@@ -3,6 +3,7 @@ package mail
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,6 +162,171 @@ func TestGrantSpoolPersistsIssuedIdentityInSQLiteRequestTransaction(t *testing.T
 	}
 	if len(service.dynamic) != 1 || service.issued["dev-mail:sqlite"] != 101 || service.state.NextDynamicMailID != 102 {
 		t.Fatalf("SQLite restart reissued grant: state=%+v issued=%+v", service.state, service.issued)
+	}
+}
+
+func TestGrantSpoolPaidJewelryAndDrawTicketsClaimAndRestart(t *testing.T) {
+	store := stateio.NewMemory()
+	service, _, _ := spoolTestService(t, store)
+	path := filepath.Join(t.TempDir(), "grants.json")
+	writeSpool(t, path, spoolGrant("paid-and-draw-tickets",
+		GrantReward{Type: 2, Count: 100000000},
+		GrantReward{Type: 8, ID: 1000, Count: 100000000},
+		GrantReward{Type: 8, ID: 1104, Count: 100000000},
+		GrantReward{Type: 4, Count: 1000000000},
+	))
+	if err := service.AttachGrantSpoolPath(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", wire.AppendVarint(nil, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 101)
+	_, response, _, err := service.Handle("/MailOpen", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("reward bundle missing: %v", err)
+	}
+	items := map[[2]uint64]uint64{}
+	views := map[[2]uint64]uint64{}
+	if err := wire.Walk(bundle, func(field wire.Field) error {
+		if field.Number != 1 && field.Number != 6 {
+			t.Fatalf("unexpected reward bundle field %d", field.Number)
+		}
+		id, _, err := wire.Varint(field.Value, 2)
+		if err != nil {
+			return err
+		}
+		typ, _, err := wire.Varint(field.Value, 3)
+		if err != nil {
+			return err
+		}
+		count, _, err := wire.Varint(field.Value, 4)
+		if err != nil {
+			return err
+		}
+		index, _, err := wire.Varint(field.Value, 1)
+		if err != nil {
+			return err
+		}
+		if field.Number == 1 {
+			if typ == 8 && index == 0 || typ != 8 && index != 0 {
+				t.Fatalf("incorrect item instance for type=%d index=%d", typ, index)
+			}
+			items[[2]uint64{typ, id}] = count
+		} else {
+			views[[2]uint64{typ, id}] = count
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 || items[[2]uint64{2, 0}] != 100000000 || items[[2]uint64{4, 0}] != 1000000000 ||
+		items[[2]uint64{8, 1000}] != 100000000 || items[[2]uint64{8, 1104}] != 100000000 ||
+		len(views) != 2 || views[[2]uint64{8, 1000}] != 100000000 || views[[2]uint64{8, 1104}] != 100000000 {
+		t.Fatalf("items=%v views=%v", items, views)
+	}
+	service, inventory, wallet := spoolTestService(t, store)
+	if err := service.AttachGrantSpoolPath(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", wire.AppendVarint(nil, 1, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	if got := wallet.Snapshot(); got.Jewelry != 100000000 || got.Gold != 1000000000 || len(inventory.All()) != 2 || service.state.NextDynamicMailID != 102 {
+		t.Fatalf("grant duplicated after restart: wallet=%+v items=%+v state=%+v", got, inventory.All(), service.state)
+	}
+}
+
+func TestGrantSpoolEnforcesMailInt32IDAndCountBoundaries(t *testing.T) {
+	for _, reward := range []GrantReward{
+		{Type: 8, ID: math.MaxInt32, Count: math.MaxInt32},
+		{Type: 2, Count: math.MaxInt32},
+		{Type: 19, ID: 450030, Count: 1},
+	} {
+		input, err := json.Marshal(GrantSpool{Version: 1, Grants: []Grant{spoolGrant("boundary", reward)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeGrantSpool(input); err != nil {
+			t.Fatalf("valid boundary reward rejected: %+v: %v", reward, err)
+		}
+	}
+	for _, reward := range []GrantReward{
+		{Type: 8, ID: math.MaxInt32 + 1, Count: 1},
+		{Type: 8, ID: 1000, Count: math.MaxInt32 + 1},
+		{Type: 2, ID: 1, Count: 1},
+		{Type: 2, Count: math.MaxInt32 + 1},
+		{Type: 19, ID: 450031, Count: 1},
+		{Type: 19, ID: 450030, Count: 0},
+		{Type: 19, ID: 450030, Count: 2},
+	} {
+		input, err := json.Marshal(GrantSpool{Version: 1, Grants: []Grant{spoolGrant("boundary", reward)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := decodeGrantSpool(input); err == nil {
+			t.Fatalf("invalid boundary reward accepted: %+v", reward)
+		}
+	}
+}
+
+func TestGrantSpoolOneUseContentTicketItemDBInfoPersistsAndIsIdempotent(t *testing.T) {
+	// In 2.35.10 CommonPacket.AddItemInfo dispatches ElementType 19 to
+	// AddContentTicketItem; it consumes a normal ItemDBInfo with an instance ID.
+	store := stateio.NewMemory()
+	service, inventory, _ := spoolTestService(t, store)
+	path := filepath.Join(t.TempDir(), "grants.json")
+	writeSpool(t, path, spoolGrant("full-moon-one-use", GrantReward{Type: 19, ID: 450030, Count: 1}))
+	if err := service.AttachGrantSpoolPath(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", wire.AppendVarint(nil, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 101)
+	_, response, _, err := service.Handle("/MailOpen", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("reward bundle missing: %v", err)
+	}
+	item, found, err := wire.Bytes(bundle, 1)
+	if err != nil || !found {
+		t.Fatalf("ItemDBInfo missing: %v", err)
+	}
+	for field, want := range map[int]uint64{2: 450030, 3: 19, 4: 1} {
+		if got, present, err := wire.Varint(item, field); err != nil || !present || got != want {
+			t.Fatalf("ItemDBInfo field %d=%d present=%v err=%v", field, got, present, err)
+		}
+	}
+	index, _, err := wire.Varint(item, 1)
+	if err != nil || index == 0 {
+		t.Fatalf("content ticket instance=%d err=%v", index, err)
+	}
+	if got := inventory.All(); len(got) != 1 || got[0].Type != 19 || got[0].ID != 450030 || got[0].Count != 1 || got[0].InvenIndex != index {
+		t.Fatalf("content ticket not stored: %+v", got)
+	}
+	service, inventory, _ = spoolTestService(t, store)
+	if err := service.AttachGrantSpoolPath(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailInfo", wire.AppendVarint(nil, 1, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	if got := inventory.All(); len(got) != 1 || got[0].Count != 1 || got[0].InvenIndex != index || service.state.NextDynamicMailID != 102 {
+		t.Fatalf("content ticket reissued: items=%+v state=%+v", got, service.state)
 	}
 }
 

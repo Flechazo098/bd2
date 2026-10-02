@@ -38,11 +38,21 @@ var itemDBInfoTypes = map[uint64]bool{
 	13: true, // quest item
 	14: true, // use item
 	17: true, // collection item
+	19: true, // audited one-use content ticket; restricted below
 	27: true, // my-room item
 	29: true, // instant-use item
 }
 
+// The currently audited ContentTicket claim uses CommonPacket.AddContentTicketItem
+// through ItemDBInfo. Other content tickets have independent state and are not
+// enabled by this local mail implementation.
+func supportedItemDBInfoReward(reward gamedata.Reward) bool {
+	return itemDBInfoTypes[reward.Type] && reward.ID != 0 &&
+		(reward.Type != 19 || reward.ID == 450030 && reward.Count == 1)
+}
+
 var currencyRewardTypes = map[uint64]bool{
+	2:  true, // paid jewelry
 	3:  true, // free jewelry
 	4:  true, // gold
 	12: true, // catalyst / talent elixir
@@ -105,6 +115,11 @@ func (s *Starter) Validate() error {
 		}
 		if len(m.RewardTypes) != len(m.RewardIDs) || len(m.RewardTypes) != len(m.RewardCounts) {
 			return errors.New("mail: reward arrays differ in length")
+		}
+		for i, typ := range m.RewardTypes {
+			if typ == 19 && !supportedItemDBInfoReward(gamedata.Reward{Type: typ, ID: m.RewardIDs[i], Count: m.RewardCounts[i]}) {
+				return errors.New("mail: content ticket reward requires id 450030 and count 1")
+			}
 		}
 	}
 	return nil
@@ -486,7 +501,7 @@ func (s *Service) open(request []byte) ([]byte, error) {
 				// ItemDBInfo would make the local state and client model disagree.
 				return nil, errors.New("mail: my-room trophy rewards require MyRoomTrophyDBInfo")
 			default:
-				if !itemDBInfoTypes[reward.Type] {
+				if !supportedItemDBInfoReward(reward) {
 					return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
 				}
 				if reward.ID == 0 || reward.Count == 0 {
