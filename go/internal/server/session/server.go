@@ -28,6 +28,8 @@ const (
 	maxCookieHeaderLen = 8 << 10
 )
 
+var errSessionRequired = errors.New("session login required")
+
 type LoginService interface {
 	Login(request, sessionKey []byte) ([]byte, error)
 }
@@ -372,13 +374,16 @@ func (s *Server) dispatch(path string, request []byte) (int, []byte, error) {
 func (s *Server) authorize(cookie string) (*gameSession, error) {
 	token, err := parseSessionCookie(cookie)
 	if err != nil {
+		if errors.Is(err, errSessionRequired) {
+			return nil, fmt.Errorf("%w: %v", transport.ErrGameSessionExpired, err)
+		}
 		return nil, err
 	}
 	now := s.now()
 	s.pruneSessions(now)
 	game, ok := s.sessions[sessionTokenKey(token)]
 	if !ok {
-		return nil, errors.New("invalid game session cookie")
+		return nil, fmt.Errorf("%w: cookie no longer names a live session", transport.ErrGameSessionExpired)
 	}
 	game.lastUsed = now
 	return game, nil
@@ -386,7 +391,7 @@ func (s *Server) authorize(cookie string) (*gameSession, error) {
 
 func parseSessionCookie(cookie string) (string, error) {
 	if cookie == "" {
-		return "", errors.New("session login required")
+		return "", errSessionRequired
 	}
 	if len(cookie) > maxCookieHeaderLen {
 		return "", errors.New("game session cookie header is too large")
@@ -405,7 +410,7 @@ func parseSessionCookie(cookie string) (string, error) {
 		token = candidate
 	}
 	if !seen {
-		return "", errors.New("session login required")
+		return "", errSessionRequired
 	}
 	if len(token) != 50 || token[48:] != "|1" {
 		return "", errors.New("invalid game session cookie")
