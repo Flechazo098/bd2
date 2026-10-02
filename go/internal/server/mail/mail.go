@@ -197,16 +197,17 @@ type stateSnapshot struct {
 // Service owns mailbox visibility and idempotent reward delivery. Starter is
 // immutable source data; only opened IDs are persisted in the player state.
 type Service struct {
-	mu        sync.Mutex
-	Starter   *Starter
-	seedPath  string
-	seedStamp fileStamp
-	storage   stateio.AtomicEntryStore
-	inventory *player.Inventory
-	wallet    *player.Wallet
-	state     stateSnapshot
-	dynamic   map[uint64]MailDBInfo
-	issued    map[string]uint64
+	mu             sync.Mutex
+	Starter        *Starter
+	seedPath       string
+	seedStamp      fileStamp
+	grantSpoolPath string
+	storage        stateio.AtomicEntryStore
+	inventory      *player.Inventory
+	wallet         *player.Wallet
+	state          stateSnapshot
+	dynamic        map[uint64]MailDBInfo
+	issued         map[string]uint64
 }
 
 type fileStamp struct {
@@ -339,7 +340,14 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if path == "/MailInfo" {
+		grants, err := readGrantSpool(s.grantSpoolPath)
+		if err != nil {
+			return 0, nil, true, err
+		}
 		if err := s.reloadSeedIfChanged(); err != nil {
+			return 0, nil, true, err
+		}
+		if err := s.enqueueCompensations(grants); err != nil {
 			return 0, nil, true, err
 		}
 		return packetCode, s.info(), true, nil
@@ -571,54 +579,72 @@ func (s *Service) persist(next stateSnapshot) error {
 // completed reward. Identity is period-scoped and makes repeated rollover
 // checks idempotent.
 func (s *Service) EnqueueCompensation(identity, title, body string, rewards []gamedata.Reward, sentAt time.Time) error {
-	if identity == "" || title == "" || body == "" || sentAt.IsZero() || len(rewards) == 0 {
-		return errors.New("mail: invalid compensation")
+	grant := compensation{identity: identity, title: title, body: body, rewards: rewards, sentAt: sentAt}
+	if err := grant.validate(); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.issued[identity]; exists {
-		return nil
-	}
-	if s.state.NextDynamicMailID == 0 || s.state.NextDynamicMailID == ^uint64(0) {
-		return errors.New("mail: dynamic mail ID exhausted")
-	}
-	entry := MailDBInfo{
-		MailID: s.state.NextDynamicMailID, MailType: 2, Title: title, Body: body,
-		SentAt: uint64(sentAt.UTC().UnixMilli()), ExpiresAt: uint64(sentAt.UTC().Add(30 * 24 * time.Hour).UnixMilli()),
-	}
-	for _, reward := range rewards {
-		if reward.Type == 0 || reward.Count == 0 || (!currencyRewardTypes[reward.Type] && (!itemDBInfoTypes[reward.Type] || reward.ID == 0)) {
-			return fmt.Errorf("mail: compensation %q has unsupported reward type=%d id=%d count=%d", identity, reward.Type, reward.ID, reward.Count)
-		}
-		entry.RewardTypes = append(entry.RewardTypes, reward.Type)
-		entry.RewardIDs = append(entry.RewardIDs, reward.ID)
-		entry.RewardCounts = append(entry.RewardCounts, reward.Count)
-	}
-	payload, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	issuedPayload, err := json.Marshal(entry.MailID)
-	if err != nil {
-		return err
-	}
+	return s.enqueueCompensations([]compensation{grant})
+}
+
+// enqueueCompensations shares the EnqueueCompensation allocator and durable
+// identity ledger. The entire batch is prepared before a single atomic write;
+// neither storage nor memory can retain a partially imported grant spool.
+// Caller holds s.mu and has validated every grant.
+func (s *Service) enqueueCompensations(grants []compensation) error {
 	next := s.state
 	next.Opened = append([]uint64(nil), s.state.Opened...)
-	next.NextDynamicMailID++
+	var changes []stateio.EntryMutation
+	var entries []MailDBInfo
+	var identities []string
+	for _, grant := range grants {
+		if _, exists := s.issued[grant.identity]; exists {
+			continue
+		}
+		if next.NextDynamicMailID == 0 || next.NextDynamicMailID == ^uint64(0) {
+			return errors.New("mail: dynamic mail ID exhausted")
+		}
+		entry := MailDBInfo{
+			MailID: next.NextDynamicMailID, MailType: 2, Title: grant.title, Body: grant.body,
+			SentAt: uint64(grant.sentAt.UTC().UnixMilli()), ExpiresAt: uint64(grant.sentAt.UTC().Add(30 * 24 * time.Hour).UnixMilli()),
+		}
+		for _, reward := range grant.rewards {
+			entry.RewardTypes = append(entry.RewardTypes, reward.Type)
+			entry.RewardIDs = append(entry.RewardIDs, reward.ID)
+			entry.RewardCounts = append(entry.RewardCounts, reward.Count)
+		}
+		payload, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		issuedPayload, err := json.Marshal(entry.MailID)
+		if err != nil {
+			return err
+		}
+		changes = append(changes,
+			stateio.EntryMutation{Bucket: "dynamic", Key: strconv.FormatUint(entry.MailID, 10), Payload: payload},
+			stateio.EntryMutation{Bucket: "issued", Key: grant.identity, Payload: issuedPayload},
+		)
+		entries = append(entries, entry)
+		identities = append(identities, grant.identity)
+		next.NextDynamicMailID++
+	}
+	if len(entries) == 0 {
+		return nil
+	}
 	core, err := json.Marshal(next)
 	if err != nil {
 		return err
-	}
-	changes := []stateio.EntryMutation{
-		{Bucket: "dynamic", Key: strconv.FormatUint(entry.MailID, 10), Payload: payload},
-		{Bucket: "issued", Key: identity, Payload: issuedPayload},
 	}
 	if err := s.storage.SaveWithEntries("mail", core, changes); err != nil {
 		return err
 	}
 	s.state = next
-	s.dynamic[entry.MailID] = entry
-	s.issued[identity] = entry.MailID
+	for i, entry := range entries {
+		s.dynamic[entry.MailID] = entry
+		s.issued[identities[i]] = entry.MailID
+	}
 	return nil
 }
 
