@@ -73,8 +73,8 @@ public sealed class Plugin : BaseUnityPlugin
             OpenPCLoginPopup = FindOpenPCLoginPopup();
             MethodInfo accessTokenGetter = FindAccessTokenGetter();
             MethodInfo clearPCLocalData = FindClearPCLocalData();
-            MethodInfo sendWebRequest = typeof(UnityWebRequest).GetMethod(
-                nameof(UnityWebRequest.SendWebRequest),
+            MethodInfo disposeWebRequest = typeof(UnityWebRequest).GetMethod(
+                nameof(UnityWebRequest.Dispose),
                 BindingFlags.Instance | BindingFlags.Public,
                 null,
                 Type.EmptyTypes,
@@ -89,7 +89,7 @@ public sealed class Plugin : BaseUnityPlugin
                 "ExponetialBackOff",
                 BindingFlags.Instance | BindingFlags.NonPublic);
             if (SendMaintenance == null || SetIntroState == null || OpenPCLoginPopup == null ||
-                accessTokenGetter == null || clearPCLocalData == null || sendWebRequest == null ||
+                accessTokenGetter == null || clearPCLocalData == null || disposeWebRequest == null ||
                 clientNetworkError == null || exponentialBackOff == null)
             {
                 throw new MissingMethodException("IntroUI authentication transition methods were not found (client version mismatch)");
@@ -107,8 +107,8 @@ public sealed class Plugin : BaseUnityPlugin
                 clearPCLocalData,
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(ClearPCLocalDataPostfix)));
             harmony.Patch(
-                sendWebRequest,
-                postfix: new HarmonyMethod(typeof(Plugin), nameof(SendWebRequestPostfix)));
+                disposeWebRequest,
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(DisposeWebRequestPrefix)));
             harmony.Patch(
                 clientNetworkError,
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressNetworkErrorDuringRecovery)));
@@ -128,18 +128,13 @@ public sealed class Plugin : BaseUnityPlugin
         ConfigureLoginPanel(__instance);
     }
 
-    private static void SendWebRequestPostfix(
-        UnityWebRequest __instance,
-        UnityWebRequestAsyncOperation __result)
+    private static void DisposeWebRequestPrefix(UnityWebRequest __instance)
     {
-        if (__instance == null || __result == null)
+        if (__instance == null || !__instance.isDone)
         {
             return;
         }
-        __result.completed += delegate
-        {
-            InspectCompletedGameRequest(__instance);
-        };
+        InspectCompletedGameRequest(__instance);
     }
 
     private static void InspectCompletedGameRequest(UnityWebRequest request)
