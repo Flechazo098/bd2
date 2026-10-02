@@ -59,6 +59,13 @@ type Bootstrap struct {
 
 var ErrNotImplemented = errors.New("packet not implemented")
 
+// ErrGameSessionExpired tells the HTTP adapter that a syntactically valid
+// game-session cookie no longer names a live session. A dedicated status and
+// header let the client distinguish this condition from a transient network
+// outage for both ordinary and batch requests; the server cannot encode a
+// response with the per-session key after that key has been lost.
+var ErrGameSessionExpired = errors.New("game session expired")
+
 func (b Bootstrap) Dispatch(path string, request []byte) (Reply, error) {
 	switch path {
 	case "/MaintenanceInfo":
@@ -207,6 +214,13 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 		}
 		reply, err := h.Raw.DispatchRaw(path, body, r.Header.Get("Cookie"))
 		if err != nil {
+			if errors.Is(err, ErrGameSessionExpired) {
+				h.logger().Info("game session expired", "path", path, "duration_ms", elapsedMilliseconds(started))
+				w.Header().Set("X-BD2-Session-Expired", "1")
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, "game session expired", http.StatusUnauthorized)
+				return
+			}
 			h.logger().Warn("session packet rejected", "path", path, "duration_ms", elapsedMilliseconds(started), "error", err)
 			http.Error(w, "session packet rejected", http.StatusBadRequest)
 			return

@@ -3,6 +3,7 @@ using System.Collections;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -39,6 +40,7 @@ public sealed class Plugin : BaseUnityPlugin
     private static MethodInfo OpenPCLoginPopup;
     private static MemoryAccessTokenStore AccessTokens;
     private static IRefreshCredentialStore RefreshCredentials;
+    private static int SessionRecoveryInProgress;
 
     private void Awake()
     {
@@ -71,8 +73,24 @@ public sealed class Plugin : BaseUnityPlugin
             OpenPCLoginPopup = FindOpenPCLoginPopup();
             MethodInfo accessTokenGetter = FindAccessTokenGetter();
             MethodInfo clearPCLocalData = FindClearPCLocalData();
+            MethodInfo sendWebRequest = typeof(UnityWebRequest).GetMethod(
+                nameof(UnityWebRequest.SendWebRequest),
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                Type.EmptyTypes,
+                null);
+            Type networkManager = FindType("BDNetwork.NetworkManager");
+            MethodInfo clientNetworkError = networkManager?.GetMethod(
+                "ClientNetworkError",
+                BindingFlags.Instance | BindingFlags.Public);
+            MethodInfo exponentialBackOff = networkManager?.GetMethod(
+                "ὧὥὡὠὮὦὯὥὭὣὩ",
+                BindingFlags.Instance | BindingFlags.NonPublic) ?? networkManager?.GetMethod(
+                "ExponetialBackOff",
+                BindingFlags.Instance | BindingFlags.NonPublic);
             if (SendMaintenance == null || SetIntroState == null || OpenPCLoginPopup == null ||
-                accessTokenGetter == null || clearPCLocalData == null)
+                accessTokenGetter == null || clearPCLocalData == null || sendWebRequest == null ||
+                clientNetworkError == null || exponentialBackOff == null)
             {
                 throw new MissingMethodException("IntroUI authentication transition methods were not found (client version mismatch)");
             }
@@ -88,6 +106,15 @@ public sealed class Plugin : BaseUnityPlugin
             harmony.Patch(
                 clearPCLocalData,
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(ClearPCLocalDataPostfix)));
+            harmony.Patch(
+                sendWebRequest,
+                postfix: new HarmonyMethod(typeof(Plugin), nameof(SendWebRequestPostfix)));
+            harmony.Patch(
+                clientNetworkError,
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressNetworkErrorDuringRecovery)));
+            harmony.Patch(
+                exponentialBackOff,
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressNetworkErrorDuringRecovery)));
             Logger.LogInfo("Server-authoritative Discord and Google login UI patch installed");
         }
         catch (Exception ex)
@@ -99,6 +126,103 @@ public sealed class Plugin : BaseUnityPlugin
     private static void IntroAwakePostfix(object __instance)
     {
         ConfigureLoginPanel(__instance);
+    }
+
+    private static void SendWebRequestPostfix(
+        UnityWebRequest __instance,
+        UnityWebRequestAsyncOperation __result)
+    {
+        if (__instance == null || __result == null)
+        {
+            return;
+        }
+        __result.completed += delegate
+        {
+            InspectCompletedGameRequest(__instance);
+        };
+    }
+
+    private static void InspectCompletedGameRequest(UnityWebRequest request)
+    {
+        try
+        {
+            if (!IsCurrentGameRequest(request, out Uri requestUri))
+            {
+                return;
+            }
+            if (requestUri.AbsolutePath.Equals("/game/LoginUser", StringComparison.Ordinal) &&
+                request.responseCode >= 200 && request.responseCode < 300)
+            {
+                Interlocked.Exchange(ref SessionRecoveryInProgress, 0);
+                return;
+            }
+            if (request.responseCode != 401 ||
+                !string.Equals(request.GetResponseHeader("X-BD2-Session-Expired"), "1", StringComparison.Ordinal))
+            {
+                return;
+            }
+            RecoverExpiredGameSession();
+        }
+        catch (Exception ex)
+        {
+            Log?.LogError("Could not inspect the completed game request: " + ex);
+        }
+    }
+
+    private static bool IsCurrentGameRequest(UnityWebRequest request, out Uri requestUri)
+    {
+        requestUri = null;
+        if (ServerRoot == null || request == null ||
+            !Uri.TryCreate(request.url, UriKind.Absolute, out Uri parsed) ||
+            !SameOrigin(ServerRoot, parsed) ||
+            !parsed.AbsolutePath.StartsWith("/game/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        requestUri = parsed;
+        return true;
+    }
+
+    private static void RecoverExpiredGameSession()
+    {
+        if (Interlocked.CompareExchange(ref SessionRecoveryInProgress, 1, 0) != 0)
+        {
+            return;
+        }
+        try
+        {
+            object network = FindSGSingleton("Net");
+            object app = FindSGSingleton("App");
+            MethodInfo refresh = network?.GetType().GetMethod(
+                "Refresh",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                Type.EmptyTypes,
+                null);
+            MethodInfo restart = app?.GetType().GetMethod(
+                "AppReStart",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                Type.EmptyTypes,
+                null);
+            if (refresh == null || restart == null)
+            {
+                throw new MissingMethodException("client game-session recovery methods were not found");
+            }
+            Log?.LogWarning("Game session expired; returning to login and creating a new session");
+            refresh.Invoke(network, null);
+            restart.Invoke(app, null);
+        }
+        catch
+        {
+            Interlocked.Exchange(ref SessionRecoveryInProgress, 0);
+            throw;
+        }
+    }
+
+    private static bool SuppressNetworkErrorDuringRecovery()
+    {
+        return Volatile.Read(ref SessionRecoveryInProgress) == 0;
     }
 
     private static bool AccessTokenPrefix(ref string __result)
@@ -971,6 +1095,13 @@ public sealed class Plugin : BaseUnityPlugin
             }
         }
         return null;
+    }
+
+    private static object FindSGSingleton(string propertyName)
+    {
+        Type sg = FindType("SG");
+        PropertyInfo property = sg?.GetProperty(propertyName, BindingFlags.Static | BindingFlags.Public);
+        return property?.GetValue(null);
     }
 
     private static bool ProviderEnabled(string provider)

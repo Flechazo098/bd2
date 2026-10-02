@@ -3,6 +3,7 @@ package transport
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,6 +67,38 @@ type cookieRawDispatcher struct{}
 
 func (cookieRawDispatcher) DispatchRaw(string, []byte, string) (RawReply, error) {
 	return RawReply{Body: []byte(`{}`), Cookie: "0123456789abcdef0123456789abcdef0123456789abcdef|1"}, nil
+}
+
+type failedRawDispatcher struct {
+	err error
+}
+
+func (d failedRawDispatcher) DispatchRaw(string, []byte, string) (RawReply, error) {
+	return RawReply{}, d.err
+}
+
+func TestExpiredGameSessionUsesDedicatedHTTPMarker(t *testing.T) {
+	h := HTTP{Raw: failedRawDispatcher{err: ErrGameSessionExpired}}.Handler()
+	request := httptest.NewRequest(http.MethodPut, "/game/BatchRequest", strings.NewReader("encrypted"))
+	request.Header.Set("Cookie", "s=0123456789abcdef0123456789abcdef0123456789abcdef|1")
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || response.Header().Get("X-BD2-Session-Expired") != "1" ||
+		response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d marker=%q cache=%q body=%q", response.Code,
+			response.Header().Get("X-BD2-Session-Expired"), response.Header().Get("Cache-Control"), response.Body.String())
+	}
+}
+
+func TestDomainFailureDoesNotUseExpiredSessionMarker(t *testing.T) {
+	h := HTTP{Raw: failedRawDispatcher{err: errors.New("mail seed is invalid")}}.Handler()
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/game/MailInfo", strings.NewReader("encrypted")))
+	if response.Code != http.StatusBadRequest || response.Header().Get("X-BD2-Session-Expired") != "" {
+		t.Fatalf("status=%d marker=%q body=%q", response.Code,
+			response.Header().Get("X-BD2-Session-Expired"), response.Body.String())
+	}
 }
 
 func TestOAuthGameSessionCookieIsHostOnlySecureAndGameScoped(t *testing.T) {
