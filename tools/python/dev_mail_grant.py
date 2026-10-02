@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local-only BD2 development browser tool.
+"""Local-only BD2 development mail and browser tool.
 
 It provides development mail grants and loopback-only runtime settings without
 reading or changing account state. Files are replaced atomically and consumed
@@ -9,11 +9,17 @@ Example:
   python tools/python/dev_mail_grant.py serve `
     --game-data E:\\bd2\\dl\\GameData --game-data-version 20260923193640 `
     --mail-seed go\\seed\\v2_35_10\\mail.json --output data\\dev\\mail-grants.json
+
+  python tools/python/dev_mail_grant.py grant `
+    --output data\\dev\\currency-grants.json --identity test-grant-1 `
+    --attachment 4:0:10000 --attachment 3:0:100
 """
 
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import errno
 import html
 import json
 import os
@@ -23,13 +29,19 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-# gamedata_db is the repository's reviewed, read-only GameData decryptor.
+# The grant command requires only the Python standard library. GameData's
+# optional decryptor dependency is imported only by the browser's data readers.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gamedata_db import read_database, walk_wire  # noqa: E402
+
+
+def _gamedata():
+    import gamedata_db
+    return gamedata_db
 
 
 VERSION = "2.35.10"
@@ -65,7 +77,7 @@ def _varint(value: Any) -> int:
 
 def fields(proto: bytes) -> dict[int, list[Any]]:
     result: dict[int, list[Any]] = {}
-    for number, wire_type, value in walk_wire(proto):
+    for number, wire_type, value in _gamedata().walk_wire(proto):
         if wire_type != 0 and wire_type != 2:
             continue
         result.setdefault(number, []).append(value)
@@ -114,7 +126,7 @@ def packed_varints(values: dict[int, list[Any]], number: int) -> list[int]:
 
 def open_readonly_database(root: Path, version: str) -> tuple[sqlite3.Connection, Path]:
     """Open the current common database in a private read-only SQLite file."""
-    plain = read_database(root, version, "quest")
+    plain = _gamedata().read_database(root, version, "quest")
     handle = tempfile.NamedTemporaryFile(prefix="bd2-dev-mail-", suffix=".db", delete=False)
     path = Path(handle.name)
     try:
@@ -399,9 +411,10 @@ def normalise_seed(seed: dict[str, Any]) -> dict[str, Any]:
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
     try:
-        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             json.dump(value, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
             stream.flush()
@@ -409,6 +422,124 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def grant_file_lock(path: Path):
+    """Serialize each complete read/append/replace across CLI processes.
+
+    Keep the sidecar lock file: deleting it would allow another process to lock
+    a different file while a waiting process still owns the original inode.
+    """
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(path.name + ".lock").open("a+b") as stream:
+        if os.name == "nt":
+            import msvcrt
+            stream.seek(0, os.SEEK_END)
+            if stream.tell() == 0:
+                stream.write(b"\0")
+                stream.flush()
+            while True:
+                stream.seek(0)
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def _validate_reward(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict) or set(value) != {"type", "id", "count"}:
+        raise ValueError("附件必须只包含 type、id、count")
+    if type(value["type"]) is not int or value["type"] not in MAIL_CURRENCY_TYPES:
+        raise ValueError("附件 type 只允许 3、4、12、20")
+    if type(value["id"]) is not int or value["id"] != 0:
+        raise ValueError("货币附件 id 必须为 0")
+    if type(value["count"]) is not int or not 1 <= value["count"] <= MAX_INT32:
+        raise ValueError(f"附件 count 必须是 1 到 {MAX_INT32} 的整数")
+    return dict(value)
+
+
+def attachment(value: str) -> dict[str, int]:
+    try:
+        parts = value.split(":")
+        if len(parts) != 3:
+            raise ValueError("附件格式必须是 TYPE:ID:COUNT")
+        return _validate_reward(dict(zip(("type", "id", "count"), map(int, parts))))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _validate_grant(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"identity", "title", "body", "sent_at", "rewards"}:
+        raise ValueError("发放记录必须只包含 identity、title、body、sent_at、rewards")
+    identity, title, body = value["identity"], value["title"], value["body"]
+    if not isinstance(identity, str) or not identity.strip() or len(identity) > 500:
+        raise ValueError("identity 不能为空且不超过 500 字符")
+    if not isinstance(title, str) or not title.strip() or len(title) > 500:
+        raise ValueError("标题不能为空且不超过 500 字符")
+    if not isinstance(body, str) or not body.strip() or len(body) > 5000:
+        raise ValueError("正文不能为空且不超过 5000 字符")
+    if type(value["sent_at"]) is not int or not 1 <= value["sent_at"] <= (1 << 63) - 1:
+        raise ValueError("sent_at 必须是正 int64 毫秒时间戳")
+    if not isinstance(value["rewards"], list) or not value["rewards"]:
+        raise ValueError("至少需要一个附件")
+    return {**value, "rewards": [_validate_reward(reward) for reward in value["rewards"]]}
+
+
+def load_grants(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "grants": []}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"无法读取邮件发放文件 {path}: {exc}") from exc
+    if not isinstance(value, dict) or set(value) != {"version", "grants"} or type(value["version"]) is not int or value["version"] != 1 or not isinstance(value["grants"], list):
+        raise ValueError("邮件发放文件必须只包含 version=1 和 grants 数组")
+    grants = [_validate_grant(entry) for entry in value["grants"]]
+    identities = [entry["identity"] for entry in grants]
+    if len(set(identities)) != len(identities):
+        raise ValueError("邮件发放文件包含重复 identity")
+    return {"version": 1, "grants": grants}
+
+
+def grant(args: argparse.Namespace) -> int:
+    entry = _validate_grant({
+        "identity": args.identity.strip() if args.identity is not None else str(uuid.uuid4()),
+        "title": args.title.strip(),
+        "body": args.body.strip(),
+        "sent_at": time.time_ns() // 1_000_000,
+        "rewards": args.attachment,
+    })
+    output = args.output.resolve()
+    with grant_file_lock(output):
+        value = load_grants(output)
+        existing = next((item for item in value["grants"] if item["identity"] == entry["identity"]), None)
+        if existing is not None:
+            if any(existing[key] != entry[key] for key in ("title", "body", "rewards")):
+                raise ValueError(f"identity {entry['identity']!r} 已存在且内容不同")
+            entry, created = existing, False
+        else:
+            value["grants"].append(entry)
+            atomic_json(output, value)
+            created = True
+    print(json.dumps({"grant": entry, "output": str(output), "created": created}, ensure_ascii=False))
+    return 0
 
 
 class MailGrantStore:
@@ -623,13 +754,20 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--listen-port", default=8765, type=int, help="loopback port (default: 8765)")
     command.add_argument("--expires-days", default=365, type=int, help="development mail validity (default: 365)")
     command.set_defaults(run=serve)
+    command = commands.add_parser("grant", help="append one durable currency mail grant (standard library only)")
+    command.add_argument("--output", type=Path, required=True, help="version=1 development mail grants JSON")
+    command.add_argument("--attachment", type=attachment, action="append", required=True, metavar="TYPE:ID:COUNT", help="currency reward; repeat to include multiple attachments in one mail")
+    command.add_argument("--identity", help="stable idempotency identity (default: a new UUID)")
+    command.add_argument("--title", default="开发测试物品", help="mail title (maximum 500 characters)")
+    command.add_argument("--body", default="由本地开发邮件工具发放。", help="mail body (maximum 5000 characters)")
+    command.set_defaults(run=grant)
     return result
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        if args.listen_host not in {"127.0.0.1", "localhost", "::1"}:
+        if args.command == "serve" and args.listen_host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("开发工具只允许监听本机回环地址")
         return args.run(args)
     except (OSError, ValueError, sqlite3.Error) as exc:
