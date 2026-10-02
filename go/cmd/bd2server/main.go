@@ -82,6 +82,7 @@ func serve(args []string) (serveErr error) {
 	playerSeed := fs.String("player-seed", "", "versioned starter inventory and characters")
 	readonlySeed := fs.String("readonly-seed", "", "versioned server schedules and optional feature defaults")
 	mailSeed := fs.String("mail-seed", "", "versioned starter mailbox")
+	mailGrantSpool := fs.String("mail-grant-spool", "", "optional local JSON spool for idempotent dynamic system mail")
 	stateFile := fs.String("state", "", "account SQLite database override")
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
@@ -339,6 +340,11 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := mailService.AttachSeedPath(filepath.Clean(*mailSeed)); err != nil {
 		return fmt.Errorf("watch mail seed: %w", err)
+	}
+	if *mailGrantSpool != "" {
+		if err := mailService.AttachGrantSpoolPath(*mailGrantSpool); err != nil {
+			return fmt.Errorf("attach mail grant spool: %w", err)
+		}
 	}
 	missionDesign, err := gamedata.LoadMissionDesign(gameData, *gameDataVersion)
 	if err != nil {
