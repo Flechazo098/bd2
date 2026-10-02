@@ -186,8 +186,8 @@ public sealed class Plugin : BaseUnityPlugin
         }
         try
         {
-            object network = FindSGSingleton("Net");
-            object app = FindSGSingleton("App");
+            object network = FindUnitySingleton("BDNetwork.NetworkManager");
+            object app = FindUnitySingleton("AppManager");
             MethodInfo refresh = network?.GetType().GetMethod(
                 "Refresh",
                 BindingFlags.Instance | BindingFlags.Public,
@@ -1092,11 +1092,10 @@ public sealed class Plugin : BaseUnityPlugin
         return null;
     }
 
-    private static object FindSGSingleton(string propertyName)
+    private static object FindUnitySingleton(string typeName)
     {
-        Type sg = FindType("SG");
-        PropertyInfo property = sg?.GetProperty(propertyName, BindingFlags.Static | BindingFlags.Public);
-        return property?.GetValue(null);
+        Type type = FindType(typeName);
+        return type == null ? null : UnityEngine.Object.FindObjectOfType(type);
     }
 
     private static bool ProviderEnabled(string provider)
