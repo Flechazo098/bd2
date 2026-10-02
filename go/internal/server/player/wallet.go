@@ -328,6 +328,11 @@ func (s *Wallet) GrantQuestOnce(identity string, rewards []gamedata.Reward) (Cur
 				return Currency{}, errors.New("player: catalyst overflow")
 			}
 			next.Catalyst += reward.Count
+		case 20:
+			if math.MaxUint64-next.Mileage < reward.Count {
+				return Currency{}, errors.New("player: mileage overflow")
+			}
+			next.Mileage += reward.Count
 		}
 	}
 	next.Granted[identity] = true

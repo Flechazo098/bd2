@@ -46,6 +46,7 @@ var currencyRewardTypes = map[uint64]bool{
 	3:  true, // free jewelry
 	4:  true, // gold
 	12: true, // catalyst / talent elixir
+	20: true, // mileage / golden thread
 }
 
 // MailDBInfo is the persisted shape used by the client.  A mail either has a
