@@ -66,7 +66,12 @@ ITEM_SOURCES = (
 # and mail-claim path are implemented by this server are offered. Their mail
 # reward ID is zero; names still come from the current GameData rather than
 # being embedded here.
-MAIL_CURRENCY_TYPES = frozenset({3, 4, 12, 20})
+MAIL_CURRENCY_TYPES = frozenset({2, 3, 4, 12, 20})
+
+# The standalone grant CLI intentionally offers only the two audited draw
+# ticket resources, rather than accepting arbitrary GameData item IDs.
+MAIL_DRAW_TICKET_IDS = frozenset({1000, 1104})
+MAIL_CONTENT_TICKET_ID = 450030
 
 
 def _varint(value: Any) -> int:
@@ -419,7 +424,18 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        for attempt in range(20):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                # Windows virus scanners and indexers can briefly open the
+                # destination without delete sharing. The grant-file lock
+                # already serializes writers, so retry only this transient OS
+                # condition and never fall back to a non-atomic overwrite.
+                if os.name != "nt" or attempt == 19:
+                    raise
+                time.sleep(0.025 * (attempt + 1))
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -466,10 +482,16 @@ def grant_file_lock(path: Path):
 def _validate_reward(value: Any) -> dict[str, int]:
     if not isinstance(value, dict) or set(value) != {"type", "id", "count"}:
         raise ValueError("附件必须只包含 type、id、count")
-    if type(value["type"]) is not int or value["type"] not in MAIL_CURRENCY_TYPES:
-        raise ValueError("附件 type 只允许 3、4、12、20")
-    if type(value["id"]) is not int or value["id"] != 0:
-        raise ValueError("货币附件 id 必须为 0")
+    if type(value["type"]) is not int or type(value["id"]) is not int:
+        raise ValueError("附件 type 和 id 必须是整数")
+    if value["type"] in MAIL_CURRENCY_TYPES:
+        if value["id"] != 0:
+            raise ValueError("货币附件 id 必须为 0")
+    elif value["type"] == 19:
+        if value["id"] != MAIL_CONTENT_TICKET_ID or type(value["count"]) is not int or value["count"] != 1:
+            raise ValueError("内容券附件只允许满月甄选券 type19、id450030、count1")
+    elif value["type"] != 8 or value["id"] not in MAIL_DRAW_TICKET_IDS:
+        raise ValueError("附件只允许货币类型 2、3、4、12、20 的 id0，资源类型 8 的抽抽乐券 id1000、UR 专用装备抽抽乐券 id1104，或内容券 type19、id450030、count1")
     if type(value["count"]) is not int or not 1 <= value["count"] <= MAX_INT32:
         raise ValueError(f"附件 count 必须是 1 到 {MAX_INT32} 的整数")
     return dict(value)
@@ -754,9 +776,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--listen-port", default=8765, type=int, help="loopback port (default: 8765)")
     command.add_argument("--expires-days", default=365, type=int, help="development mail validity (default: 365)")
     command.set_defaults(run=serve)
-    command = commands.add_parser("grant", help="append one durable currency mail grant (standard library only)")
+    command = commands.add_parser("grant", help="append one durable currency or draw ticket mail grant (standard library only)")
     command.add_argument("--output", type=Path, required=True, help="version=1 development mail grants JSON")
-    command.add_argument("--attachment", type=attachment, action="append", required=True, metavar="TYPE:ID:COUNT", help="currency reward; repeat to include multiple attachments in one mail")
+    command.add_argument("--attachment", type=attachment, action="append", required=True, metavar="TYPE:ID:COUNT", help="supported currency or draw ticket reward; repeat to include multiple attachments in one mail")
     command.add_argument("--identity", help="stable idempotency identity (default: a new UUID)")
     command.add_argument("--title", default="开发测试物品", help="mail title (maximum 500 characters)")
     command.add_argument("--body", default="由本地开发邮件工具发放。", help="mail body (maximum 5000 characters)")
