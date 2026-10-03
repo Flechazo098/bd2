@@ -246,12 +246,4 @@ dotnet $tool self-test
 
 手动编译须引用 `ref/Assembly-CSharp.Readable.dll` 并编译同目录 `GameSdkIdentity.g.cs`，保留相邻 `lib` 以供 IDE 查找。`verify-navigation` 全量检查 PE/PDB 身份、内嵌/本地源码校验和、类型文档和全部方法体的符号。
 
-`self-test` 生成合成游戏 DLL，验证重载、泛型、继承、嵌套/编译器生成类型、私有成员、事件、参数、表达式、字符串不变和版本拒绝；它会打印合成 SDK 目录。使用实际 Roslyn 引擎验证该目录的导航：
-
-```powershell
-dotnet run --project plugins/GameSdk.NavigationTests -- '<合成 SDK 目录>' --embedded-only
-# 或验证完整游戏导航：
-dotnet run --project plugins/GameSdk.NavigationTests -- '<插件 obj 中的 SDK 目录>' '<游戏 Managed 目录>'
-```
-
-嵌入源码测试临时移走合成 fixture 的 `.cs`，结束时恢复；它限制在 `.build/game-sdk-tests` 下运行。测试断言类型、重载、泛型、参数、字段、事件和嵌套类型跳到准确的源码标识符，并拒绝签名/反编译回退。`VerifyPackages.ps1` 验证仓库外 NuGet 项目。实际 Unity/Harmony 行为需在游戏启动后检查日志。
+`self-test` 生成合成游戏 DLL，验证重载、泛型、继承、嵌套/编译器生成类型、私有成员、事件、参数、表达式、字符串不变和版本拒绝。`.build/game-sdk-tests` 仅保存每次自测的临时产物，不参与 SDK 构建、源码导航或客户端启动，用完可以删除；下次自测会重新生成。`VerifyPackages.ps1` 验证仓库外 NuGet 项目及完整源码/PDB 覆盖。实际 Unity/Harmony 行为需在游戏启动后检查日志。
