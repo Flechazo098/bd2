@@ -11,11 +11,11 @@
   <Target Name="PrepareBD2GameSdk" BeforeTargets="ResolveProjectReferences;ResolveAssemblyReferences">
     <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == ''" Text="Set BD2LocalGameDir in plugins/Directory.Build.local.props, or pass -p:GameDir=&lt;game-directory&gt;." />
     <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
-    <Exec Condition="'$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)')" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />
-    <Exec EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; &quot;$(BD2VersionConfig)&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)')" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; &quot;$(BD2VersionConfig)&quot;" />
   </Target>
   <Target Name="ReobfuscateBD2Plugin" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipCompilerExecution)' != 'true'">
-    <Exec Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SdkDir)\names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(TargetPath)&quot; &quot;$(BD2ManagedDir)\Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)\core&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SdkDir)\names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(TargetPath)&quot; &quot;$(BD2ManagedDir)\Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)\core&quot;" />
     <Delete Files="$(TargetDir)$(TargetName).pdb" />
   </Target>
 </Project>

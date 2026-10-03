@@ -9,6 +9,9 @@
     <!-- The navigation cache hashes this DLL. Unrelated repository commits
          must not change it through informational-version metadata. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Source Link embeds commit URLs in the tool PDB. Its checksum is also
+         embedded in this DLL, so it must not vary with unrelated commits. -->
+    <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
