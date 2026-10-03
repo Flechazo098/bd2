@@ -25,5 +25,6 @@ func launchGame(target string) error {
 	if err := exec.Command("pgrep", "-x", "BrownDust II").Run(); err == nil {
 		return errGameAlreadyRunning
 	}
-	return exec.Command("open", target).Start()
+	args := append([]string{target, "--args"}, gameLaunchArguments()...)
+	return exec.Command("open", args...).Start()
 }

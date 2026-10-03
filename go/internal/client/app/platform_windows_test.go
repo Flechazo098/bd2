@@ -2,7 +2,10 @@
 
 package app
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestHiddenCommandNeverAllocatesVisibleConsole(t *testing.T) {
 	command := hiddenCommand("powershell.exe", "-NoProfile")
@@ -18,7 +21,7 @@ func TestHiddenCommandNeverAllocatesVisibleConsole(t *testing.T) {
 }
 
 func TestVisibleCommandDoesNotHideGUIWindow(t *testing.T) {
-	command := visibleCommand("Brown Dust II.exe")
+	command := visibleCommand("Brown Dust II.exe", gameLaunchArguments()...)
 	if command.SysProcAttr == nil {
 		t.Fatal("visible command has no Windows process attributes")
 	}
@@ -27,5 +30,13 @@ func TestVisibleCommandDoesNotHideGUIWindow(t *testing.T) {
 	}
 	if command.SysProcAttr.CreationFlags&createNoWindow == 0 {
 		t.Fatalf("visible command creation flags %#x omit CREATE_NO_WINDOW", command.SysProcAttr.CreationFlags)
+	}
+	want := []string{
+		"Brown Dust II.exe",
+		"-screen-fullscreen", "1",
+		"-window-mode", "borderless",
+	}
+	if !reflect.DeepEqual(command.Args, want) {
+		t.Fatalf("visible game command args = %#v, want %#v", command.Args, want)
 	}
 }

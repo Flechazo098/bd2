@@ -20,6 +20,7 @@ var (
 	enumWindowsProc              = platformUser32DLL.NewProc("EnumWindows")
 	getWindowThreadProcessIDProc = platformUser32DLL.NewProc("GetWindowThreadProcessId")
 	isWindowVisibleProc          = platformUser32DLL.NewProc("IsWindowVisible")
+	isIconicProc                 = platformUser32DLL.NewProc("IsIconic")
 	showWindowAsyncProc          = platformUser32DLL.NewProc("ShowWindowAsync")
 	setForegroundWindowProc      = platformUser32DLL.NewProc("SetForegroundWindow")
 )
@@ -76,7 +77,7 @@ func launchGame(target string) error {
 		}
 		return errGameAlreadyRunning
 	}
-	command := visibleCommand(target)
+	command := visibleCommand(target, gameLaunchArguments()...)
 	command.Dir = filepath.Dir(target)
 	if err := command.Start(); err != nil {
 		return err
@@ -114,8 +115,11 @@ func activateProcessWindow(processID uint32, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for {
 		if window := topLevelWindowForProcess(processID); window != 0 {
-			const swRestore = 9
-			showWindowAsyncProc.Call(window, swRestore)
+			iconic, _, _ := isIconicProc.Call(window)
+			if iconic != 0 {
+				const swRestore = 9
+				showWindowAsyncProc.Call(window, swRestore)
+			}
 			setForegroundWindowProc.Call(window)
 			return true
 		}
