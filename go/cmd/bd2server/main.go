@@ -95,7 +95,7 @@ func serve(args []string) (serveErr error) {
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
 	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
-	devToolsConfig := fs.String("dev-tools-config", "", "optional local development-tool settings JSON")
+	devToolsConfig := fs.String("dev-tools-config", "", "development-tool settings JSON (defaults to DATA_DIR/dev-tools.json)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -166,6 +166,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve server data directory: %w", err)
 	}
+	*devToolsConfig = resolveDevelopmentSettingsPath(*dataDir, *devToolsConfig)
 	gameData := filepath.Join(*dataDir, "resources", "GameData")
 	if *stateFile == "" {
 		*stateFile = filepath.Join(*dataDir, "state", "state.db")
@@ -360,9 +361,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load inventory slot state: %w", err)
 	}
-	if *devToolsConfig != "" {
-		inventorySlots.AttachDevelopmentSettings(filepath.Clean(*devToolsConfig))
-	}
+	inventorySlots.AttachDevelopmentSettings(*devToolsConfig)
 	if err := login.AttachInventorySlots(inventorySlots); err != nil {
 		return fmt.Errorf("attach inventory slots to login: %w", err)
 	}
