@@ -1,0 +1,18 @@
+<Project>
+  <PropertyGroup>
+    <BD2PackageVersion>0.2.1</BD2PackageVersion>
+    <Version Condition="'$(Version)' == ''">$(BD2PackageVersion)</Version>
+    <Authors>Flechazo</Authors>
+    <RepositoryUrl>https://github.com/Flechazo098/bd2</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/Flechazo098/bd2</PackageProjectUrl>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
+</Project>

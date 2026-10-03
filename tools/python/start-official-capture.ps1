@@ -43,11 +43,13 @@ $exe = Join-Path $GameDir 'BrownDust II.exe'
 $pluginDir = Join-Path $GameDir 'BepInEx\plugins'
 $localRes = Join-Path $pluginDir 'PluginLocalRes.dll'
 $capturePlugin = Join-Path $pluginDir 'BD2CaptureEnvironment.dll'
+$gameNamesLibrary = Join-Path $pluginDir 'BD2.GameNames.dll'
 $identityPlugin = Join-Path $pluginDir 'BD2LocalIdentity.dll'
 $loginUIPlugin = Join-Path $pluginDir 'BD2LoginUI.dll'
 $doorstop = Join-Path $GameDir 'doorstop_config.ini'
 $isolatedData = Join-Path $GameDir 'IsolatedUserData'
 $stagedCapturePlugin = Join-Path $PSScriptRoot '..\..\plugins\CaptureEnvironment\bin\Release\netstandard2.1\BD2CaptureEnvironment.dll'
+$stagedGameNamesLibrary = Join-Path (Split-Path -Parent $stagedCapturePlugin) 'BD2.GameNames.dll'
 $stagedLocalResConfig = Join-Path $PSScriptRoot '..\..\plugins\CaptureEnvironment\bd2.localres.cfg'
 $localResConfig = Join-Path $GameDir 'BepInEx\config\bd2.localres.cfg'
 
@@ -62,6 +64,11 @@ foreach ($requiredDirectory in @($GameDir, $ResourceRoot, $SharedDataDir)) {
 }
 
 if (Test-Path -LiteralPath $stagedCapturePlugin -PathType Leaf) {
+    if (-not (Test-Path -LiteralPath $stagedGameNamesLibrary -PathType Leaf)) {
+        throw "Capture build is missing its shared runtime: $stagedGameNamesLibrary"
+    }
+    New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null
+    Copy-Item -LiteralPath $stagedGameNamesLibrary -Destination $gameNamesLibrary -Force
     $installedHash = if (Test-Path -LiteralPath $capturePlugin -PathType Leaf) {
         (Get-FileHash -LiteralPath $capturePlugin -Algorithm SHA256).Hash
     }
@@ -73,7 +80,7 @@ if (Test-Path -LiteralPath $stagedCapturePlugin -PathType Leaf) {
     }
 }
 
-foreach ($required in @($exe, $doorstop, $localRes, $capturePlugin)) {
+foreach ($required in @($exe, $doorstop, $localRes, $capturePlugin, $gameNamesLibrary)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required file is missing: $required"
     }

@@ -17,6 +17,7 @@ $clientPluginDir = Join-Path $clientPackage 'plugins'
 $versionConfig = Join-Path $root 'versions.json'
 $authenticationConfig = Join-Path $root 'authentication.json'
 $resourceConfig = Join-Path $root 'resources.json'
+$gameConfig = Join-Path $root 'game.json'
 
 try {
     $releaseVersions = Get-Content -LiteralPath $versionConfig -Raw | ConvertFrom-Json -ErrorAction Stop
@@ -91,20 +92,31 @@ $clientPlugins = @(
     @{ Name = 'LoginUI'; Project = Join-Path $root 'plugins\LoginUI\LoginUI.csproj'; Output = Join-Path $root 'plugins\LoginUI\bin\Release\netstandard2.1\BD2LoginUI.dll'; FileName = 'BD2LoginUI.dll' }
 )
 foreach ($plugin in $clientPlugins) {
-    dotnet build $plugin.Project -c Release "-p:GameDir=$GameDir" --nologo
+    $pluginBuildArgs = @('build', $plugin.Project, '-c', 'Release', "-p:GameDir=$GameDir", '--nologo')
+    dotnet @pluginBuildArgs
     if ($LASTEXITCODE -ne 0) { throw "$($plugin.Name) build failed with exit code $LASTEXITCODE" }
     if (-not (Test-Path -LiteralPath $plugin.Output -PathType Leaf)) { throw "$($plugin.Name) build output is missing" }
     Copy-Item -LiteralPath $plugin.Output -Destination (Join-Path $clientPluginDir $plugin.FileName) -Force
+    $sharedRuntime = Join-Path (Split-Path -Parent $plugin.Output) 'BD2.GameNames.dll'
+    if (-not (Test-Path -LiteralPath $sharedRuntime -PathType Leaf)) { throw "Shared game names runtime is missing: $sharedRuntime" }
+    $packagedRuntime = Join-Path $clientPluginDir 'BD2.GameNames.dll'
+    if ((Test-Path -LiteralPath $packagedRuntime) -and
+        (Get-FileHash -LiteralPath $packagedRuntime).Hash -ne (Get-FileHash -LiteralPath $sharedRuntime).Hash) {
+        throw 'Client plugins were built with different BD2.GameNames libraries.'
+    }
+    Copy-Item -LiteralPath $sharedRuntime -Destination $packagedRuntime -Force
 }
 
 Copy-Item -LiteralPath (Join-Path $goRoot 'seed') -Destination $serverGoDir -Recurse -Force
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $serverPackage 'versions.json') -Force
 Copy-Item -LiteralPath $authenticationConfig -Destination (Join-Path $serverPackage 'authentication.json') -Force
 Copy-Item -LiteralPath $resourceConfig -Destination (Join-Path $serverPackage 'resources.json') -Force
+Copy-Item -LiteralPath $gameConfig -Destination (Join-Path $serverPackage 'game.json') -Force
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $clientPackage 'versions.json') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RELEASE.md') -Destination (Join-Path $serverPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'AUTHENTICATION.md') -Destination (Join-Path $serverPackage 'AUTHENTICATION.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RESOURCES.md') -Destination (Join-Path $serverPackage 'RESOURCES.md') -Force
+Copy-Item -LiteralPath (Join-Path $root 'GAME_CONFIGURATION.md') -Destination (Join-Path $serverPackage 'GAME_CONFIGURATION.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'docs\CLIENT.md') -Destination (Join-Path $clientPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $serverPackage 'LICENSE') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $clientPackage 'LICENSE') -Force
