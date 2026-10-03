@@ -18,6 +18,7 @@ public sealed class Plugin : BaseUnityPlugin
     public const string Version = Bd2Build.Versions.Plugin;
     private static ManualLogSource Log;
     private static ClientRouting Routing;
+    private static MethodInfo SwitchToFullScreenMethod;
     private static int ShutdownHooksInstalled;
 
     internal static void LogWarning(string message)
@@ -59,6 +60,8 @@ public sealed class Plugin : BaseUnityPlugin
 
             Type introUI = FindType("IntroUI");
             InstallClientRouting(harmony, introUI);
+            TryInstall("startup fullscreen", () => InstallStartupFullscreen(harmony, appManager));
+            TryInstall("performance overlay suppression", () => InstallPerformanceOverlaySuppression(harmony));
             TryInstall("maintenance timeout guard", () => InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => InstallAgeGatePersistence(harmony));
             TryInstall("local purchase bypass", () => InstallLocalPurchaseBypass(harmony));
@@ -98,6 +101,135 @@ public sealed class Plugin : BaseUnityPlugin
     {
         __result = false;
         return false;
+    }
+
+    private static void InstallStartupFullscreen(Harmony harmony, Type appManager)
+    {
+        MethodInfo initializeResolution = appManager?.GetMethod(
+            "ὪὣὬὤὪὥὣὨὤὦὧ",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            Type.EmptyTypes,
+            null);
+        SwitchToFullScreenMethod = appManager?.GetMethod(
+            "SwitchToFullScreen",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            new[] { typeof(bool) },
+            null);
+        if (initializeResolution == null || SwitchToFullScreenMethod == null)
+        {
+            throw new MissingMethodException("AppManager fullscreen methods were not found (client version mismatch)");
+        }
+        harmony.Patch(
+            initializeResolution,
+            postfix: new HarmonyMethod(typeof(Plugin), nameof(InitializeResolutionPostfix)));
+        Log?.LogInfo("Native startup fullscreen patch installed");
+    }
+
+    private static void InitializeResolutionPostfix(object __instance)
+    {
+        try
+        {
+            // Use the game's own FullScreenWindow path so the behaviour is
+            // identical on Windows and macOS. This runs once during startup;
+            // later user-initiated switches to windowed mode remain intact.
+            SwitchToFullScreenMethod?.Invoke(__instance, new object[] { false });
+        }
+        catch (Exception ex)
+        {
+            Log?.LogError("Could not apply native startup fullscreen: " + ex);
+        }
+    }
+
+    private static void InstallPerformanceOverlaySuppression(Harmony harmony)
+    {
+        Type fpsCheck = FindType("FPS_Check");
+        MethodInfo start = fpsCheck?.GetMethod(
+            "StartFPS",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            Type.EmptyTypes,
+            null);
+        MethodInfo render = fpsCheck?.GetMethod(
+            "ὬὡὡὬὢὭὦὣὥὬὯ",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            Type.EmptyTypes,
+            null);
+        MethodInfo onEnable = fpsCheck?.GetMethod(
+            "OnEnable",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            null,
+            Type.EmptyTypes,
+            null);
+        MethodInfo onInitialize = fpsCheck?.GetMethod(
+            "OnInitialize",
+            BindingFlags.Instance | BindingFlags.Public,
+            null,
+            Type.EmptyTypes,
+            null);
+        if (start == null || render == null || onEnable == null || onInitialize == null)
+        {
+            throw new MissingMethodException("FPS_Check overlay methods were not found (client version mismatch)");
+        }
+
+        HarmonyMethod skip = new HarmonyMethod(typeof(Plugin), nameof(SkipPerformanceOverlay));
+        HarmonyMethod hide = new HarmonyMethod(typeof(Plugin), nameof(HidePerformanceOverlayPostfix));
+        harmony.Patch(start, prefix: skip);
+        harmony.Patch(render, prefix: skip);
+        harmony.Patch(onEnable, postfix: hide);
+        harmony.Patch(onInitialize, postfix: hide);
+        Log?.LogInfo("FPS_Check performance overlay disabled");
+    }
+
+    private static bool SkipPerformanceOverlay(object __instance)
+    {
+        HidePerformanceOverlay(__instance);
+        return false;
+    }
+
+    private static void HidePerformanceOverlayPostfix(object __instance)
+    {
+        HidePerformanceOverlay(__instance);
+    }
+
+    private static void HidePerformanceOverlay(object instance)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+        try
+        {
+            MethodInfo disposeRecorders = instance.GetType().GetMethod(
+                "DisposeRecorders",
+                BindingFlags.Instance | BindingFlags.Public,
+                null,
+                Type.EmptyTypes,
+                null);
+            disposeRecorders?.Invoke(instance, null);
+
+            FieldInfo textField = instance.GetType().GetField(
+                "_text",
+                BindingFlags.Instance | BindingFlags.Public);
+            object text = textField?.GetValue(instance);
+            PropertyInfo textProperty = text?.GetType().GetProperty(
+                "text",
+                BindingFlags.Instance | BindingFlags.Public);
+            if (textProperty?.CanWrite == true)
+            {
+                textProperty.SetValue(text, string.Empty);
+            }
+            if (text is Component component && component != null)
+            {
+                component.gameObject.SetActive(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log?.LogError("Could not suppress FPS_Check overlay: " + ex);
+        }
     }
 
     private static void InstallClientRouting(Harmony harmony, Type introUI)
