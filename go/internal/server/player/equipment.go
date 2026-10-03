@@ -670,7 +670,12 @@ func (s *EquipmentInventory) mainOptionChange(request []byte) (int, []byte, bool
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if s.optionReroll == nil {
 		return 0, nil, true, errors.New("player: equipment option design unavailable")
 	}
@@ -709,6 +714,10 @@ func (s *EquipmentInventory) mainOptionChange(request []byte) (int, []byte, bool
 	if pendingDirty {
 		s.pendingReroll = pending
 	}
+	// Character health reads account equipment through pictorial ownership.
+	// Release the equipment lock before resolving the equipped character.
+	s.mu.Unlock()
+	locked = false
 	var response []byte
 	if character, ok := s.equippedCharacter(current); ok {
 		response = wire.AppendBytes(response, 1, CharacterWire(character))
