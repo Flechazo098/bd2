@@ -440,7 +440,19 @@ func serve(args []string) (serveErr error) {
 	if err := ownedEquipment.AttachOptionReroll(equipmentOptionReroll, wallet, ownedItems); err != nil {
 		return fmt.Errorf("attach equipment option reroll GameData: %w", err)
 	}
-	collection, err := player.OpenCollectionStore(stateRepository, starter.Costumes)
+	worldService, err := world.Load(filepath.Clean(*worldSeed), gameData, *gameDataVersion,
+		stateRepository, progressState, starter, ownedEquipment, ownedItems, wallet)
+	if err != nil {
+		return fmt.Errorf("load world state: %w", err)
+	}
+	// Restore all earned seed ownership before validating persisted upgrades.
+	// A quest costume is not a collection entry; attaching it after opening
+	// collection would reject its otherwise valid burst ledger on restart.
+	baseCostumes := append([]player.Costume(nil), starter.Costumes...)
+	if reward, earned := worldService.EarnedQuestCostume(); earned {
+		baseCostumes = append(baseCostumes, reward)
+	}
+	collection, err := player.OpenCollectionStore(stateRepository, baseCostumes)
 	if err != nil {
 		return fmt.Errorf("load owned collection: %w", err)
 	}
@@ -478,21 +490,11 @@ func serve(args []string) (serveErr error) {
 	gachaService.AttachPreviewMission(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 111})
 	})
-	worldService, err := world.Load(filepath.Clean(*worldSeed), gameData, *gameDataVersion,
-		stateRepository, progressState, starter, ownedEquipment, ownedItems, wallet)
-	if err != nil {
-		return fmt.Errorf("load world state: %w", err)
-	}
 	if err := collection.BindBaseCharacters(worldService.CharacterService().RawAll()); err != nil {
 		return fmt.Errorf("bind base collection characters: %w", err)
 	}
 	if err := mailService.AttachCostumeRewards(collection, limitedCostumes); err != nil {
 		return fmt.Errorf("attach limited costume mail rewards: %w", err)
-	}
-	if reward, earned := worldService.EarnedQuestCostume(); earned {
-		if err := collection.AttachRewardCostume(reward); err != nil {
-			return fmt.Errorf("attach earned quest costume: %w", err)
-		}
 	}
 	if err := worldService.AttachCollection(collection); err != nil {
 		return fmt.Errorf("attach gacha collection state: %w", err)
