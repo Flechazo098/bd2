@@ -1,9 +1,11 @@
 package player
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/wire"
@@ -224,6 +226,54 @@ func TestEquipmentMainOptionChangeRejectsForgedChoice(t *testing.T) {
 	}
 	if after := fixture.equipment.All()[0]; !reflect.DeepEqual(after, before) {
 		t.Fatalf("forged main option changed equipment: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestEquipmentMainOptionChangeEquippedCharacterHealthReadsEquipment(t *testing.T) {
+	fixture := newEquipmentOptionRerollFixture(t)
+	const characterIndex = 920000001
+	characters := &CharacterStore{characters: []Character{{InvenIndex: characterIndex, ID: 50, Level: 1}}}
+	if err := characters.AttachMaxHealth(func(Character) (uint64, error) {
+		// The production max-health provider obtains pictorial equipment via All.
+		if got := fixture.equipment.All()[0].MainOption[0].ID; got != 9 {
+			return 0, fmt.Errorf("health provider observed stale main option %d", got)
+		}
+		return 123, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fixture.equipment.characters = characters
+	fixture.equipment.owned.Equipment[0].UseChar = characterIndex
+	request := wire.AppendVarint(nil, 1, 60)
+	request = wire.AppendVarint(request, 2, fixture.original.InvenIndex)
+	request = wire.AppendVarint(request, 3, 100)
+	request = wire.AppendVarint(request, 4, 9)
+	type result struct {
+		code    int
+		body    []byte
+		handled bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		code, body, handled, err := fixture.equipment.Handle("/EquipMainOptChange", request)
+		done <- result{code, body, handled, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil || !got.handled || got.code != 537 {
+			t.Fatalf("change result=%+v", got)
+		}
+		character, found, err := wire.Bytes(got.body, 1)
+		if err != nil || !found || len(character) == 0 {
+			t.Fatalf("equipped character response missing: found=%v err=%v", found, err)
+		}
+		hp, found, err := wire.Varint(character, 3)
+		if err != nil || !found || hp != 123 {
+			t.Fatalf("updated health=%d found=%v err=%v", hp, found, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("equipped main option change deadlocked while resolving character health")
 	}
 }
 
