@@ -23,12 +23,12 @@
 4. 确认健康检查成功：
 
    ```bash
-   curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+   curl --fail --silent --show-error http://127.0.0.1:8080/readyz
    ```
 
 5. 让玩家使用独立的 `bd2client.exe` 选择游戏目录、填写服务器地址、选择 CDN，并安装 `BD2LocalIdentity.dll` 与 `BD2LoginUI.dll`。客户端工具说明见 `README.md`（客户端包）或仓库的 `docs/CLIENT.md`。
 
-`versions.json` 是服务端和客户端插件共用的版本选择，必须与各自可执行文件保持在同一目录。服务端从包内 `go/seed` 读取种子，不依赖当前工作目录。需要临时测试另一组版本时可传 `serve --version-config <文件>`。玩家存档位于 `data\state\state.db`；服务端以 Go 迁移器按相邻版本升级，并在同一个 SQLite 事务内完成迁移和最终校验，失败时不会留下部分升级。
+`versions.json` 是服务端和客户端插件共用的版本选择，必须与各自可执行文件保持在同一目录。`game_version` 锁定官方游戏兼容版本；`client_version` 与 `server_version` 分别标识客户端工具和纯服务端发布版本，并以 `游戏版本+组件.X.Y.Z` 组合。服务端从包内 `go/seed` 读取种子，不依赖当前工作目录。需要临时测试另一组版本时可传 `serve --version-config <文件>`。玩家存档位于 `data\state\state.db`；服务端以 Go 迁移器按相邻版本升级，并在同一个 SQLite 事务内完成迁移和最终校验，失败时不会留下部分升级。
 
 `authentication.json` 和 `resources.json` 必须与 `bd2server.exe` 保持在同一目录。默认 `local` 认证模式继续自动本地登录；公网或联机服可以启用 OAuth，并把资源策略设为官方 CDN 或统一的服务器资源源。服主自建与反代使用相同的 `server` 模式；玩家本地资源目录仅由 `bd2client.exe` 配置。逐步配置方法见发布包内的 [服主第三方登录配置指南](AUTHENTICATION.md) 和 [服主资源与 CDN 配置指南](RESOURCES.md)。
 

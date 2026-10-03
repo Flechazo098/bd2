@@ -53,7 +53,8 @@ func (g compensation) validate() error {
 		return errors.New("mail: invalid compensation identity, content, time or rewards")
 	}
 	for _, reward := range g.rewards {
-		if reward.Count == 0 || reward.Count > math.MaxInt32 || reward.ID > math.MaxInt32 || (!currencyRewardTypes[reward.Type] && !supportedItemDBInfoReward(reward)) ||
+		costumeReward := reward.Type == 11 && reward.ID != 0 && reward.Count <= 6
+		if reward.Count == 0 || reward.Count > math.MaxInt32 || reward.ID > math.MaxInt32 || (!currencyRewardTypes[reward.Type] && !supportedItemDBInfoReward(reward) && !costumeReward) ||
 			(currencyRewardTypes[reward.Type] && reward.ID != 0) {
 			return fmt.Errorf("mail: compensation %q has unsupported reward type=%d id=%d count=%d", g.identity, reward.Type, reward.ID, reward.Count)
 		}

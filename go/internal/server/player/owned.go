@@ -475,6 +475,9 @@ func ItemWire(item Item) []byte {
 			b = wire.AppendVarint(b, f.n, f.v)
 		}
 	}
+	if item.ExpiryTime != 0 {
+		b = wire.AppendVarint(b, 8, item.ExpiryTime)
+	}
 	if item.SortID != 0 {
 		b = wire.AppendVarint(b, 9, item.SortID)
 	}

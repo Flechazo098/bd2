@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var (
 	ErrUnauthorized = errors.New("auth: unauthorized")
@@ -84,15 +84,37 @@ func Open(path string, masterKey []byte) (*Store, error) {
 	var version int
 	err = tx.QueryRow(`SELECT CAST(value AS INTEGER) FROM metadata WHERE key='schema_version'`).Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
-		if _, err = tx.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',?)`, schemaVersion); err != nil {
+		if _, err = tx.Exec(`INSERT INTO metadata(key,value) VALUES('schema_version',1)`); err != nil {
 			return nil, err
 		}
-		version = schemaVersion
+		version = 1
 	} else if err != nil {
 		return nil, err
 	}
-	if version != schemaVersion {
+	if version < 1 || version > schemaVersion {
 		return nil, fmt.Errorf("auth: schema version %d, want %d", version, schemaVersion)
+	}
+	for version < schemaVersion {
+		switch version {
+		case 1:
+			if _, err = tx.Exec(`CREATE TABLE refresh_attempts (
+				family_id TEXT NOT NULL REFERENCES families(id),
+				attempt_hash BLOB NOT NULL,
+				request_token_hash BLOB NOT NULL,
+				result_cipher BLOB NOT NULL,
+				created_at INTEGER NOT NULL,
+				expires_at INTEGER NOT NULL,
+				PRIMARY KEY(family_id,attempt_hash)
+			) WITHOUT ROWID`); err != nil {
+				return nil, fmt.Errorf("auth: migrate schema 1->2: %w", err)
+			}
+			version = 2
+		default:
+			return nil, fmt.Errorf("auth: missing adjacent migration %d->%d", version, version+1)
+		}
+		if _, err = tx.Exec(`UPDATE metadata SET value=? WHERE key='schema_version'`, version); err != nil {
+			return nil, fmt.Errorf("auth: record schema version %d: %w", version, err)
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err

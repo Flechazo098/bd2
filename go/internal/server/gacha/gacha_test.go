@@ -895,6 +895,81 @@ func TestGachaMultiBuyCurrent23510CostumeAndEquipmentPools(t *testing.T) {
 	}
 }
 
+func TestEquipmentPointExchangeUsesGameDataAndIsIdempotent(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..", "data", "resources", "GameData")
+	const version = "20260923193640"
+	if _, err := os.Stat(filepath.Join(root, version, "release", "common-dbdata.bin")); os.IsNotExist(err) {
+		t.Skip("installed 2.35.10 GameData archive is unavailable")
+	}
+	infinite, err := gamedata.LoadInfiniteGacha(root, version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regular, err := gamedata.LoadRegularCostumeGachaGroups(root, version, []uint64{71}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipmentCatalog, err := gamedata.LoadEquipmentGachaGroups(root, version, []uint64{208})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, found := equipmentCatalog.Group(208)
+	if !found || group.PickUpExchangeCost != 200 || group.PickUpItemID != 943213 {
+		t.Fatalf("equipment group 208=%+v found=%v", group, found)
+	}
+	storage := stateio.NewMemory()
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{FreeJewelry: 1234})
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipment, err := player.OpenEquipmentInventory(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := collection.GrantEquipmentPurchase("seed-equipment-points", 200, player.GachaPurchase{
+		Group: gamedata.GachaGroupDesign{ID: 208, PointCount: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(infinite, regular, collection, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.AttachEquipmentGacha(equipmentCatalog, equipment)
+	service.BeginSession("equipment-exchange-login")
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 77), 2, 208)
+	code, response, handled, err := service.Handle("/GachaPointExchange", request)
+	if err != nil || !handled || code != 147 {
+		t.Fatalf("equipment exchange code=%d handled=%v err=%v", code, handled, err)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found || countFields(bundle, 4) != 1 {
+		t.Fatalf("equipment exchange bundle=%x found=%v err=%v", bundle, found, err)
+	}
+	entries := equipment.All()
+	if len(entries) != 1 || entries[0].ID != 943213 || len(entries[0].Rank) != 3 || entries[0].InvenIndex == 0 {
+		t.Fatalf("equipment exchange entry=%+v", entries)
+	}
+	if user := collection.GachaUser(208); user.Point != 0 || user.ExchangeItemCount != 1 || user.TotalBuyCount != 0 {
+		t.Fatalf("equipment exchange user=%+v", user)
+	}
+	if got := wallet.Snapshot().FreeJewelry; got != 1234 {
+		t.Fatalf("equipment exchange changed wallet=%d", got)
+	}
+	_, replay, _, err := service.Handle("/GachaPointExchange", request)
+	if err != nil || !bytes.Equal(response, replay) || len(equipment.All()) != 1 {
+		t.Fatalf("equipment exchange replay changed result: equipment=%d err=%v", len(equipment.All()), err)
+	}
+	invalid := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 78), 2, 208), 3, 943213)
+	if _, _, _, err := service.Handle("/GachaPointExchange", invalid); err == nil || len(equipment.All()) != 1 {
+		t.Fatalf("equipment exchange accepted invalid selection: equipment=%d err=%v", len(equipment.All()), err)
+	}
+}
+
 func TestCompletedStepUpPersistsAndRemainsVisible(t *testing.T) {
 	const stepUpGroupID = 29
 	stepUpGachaIDs := []uint64{8100118, 8100119, 8100120, 8100121}

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"bd2server/internal/server/gamedata"
 )
 
 // ScheduleSeed contains server-owned, versioned dynamic gacha facts. GameData
@@ -16,6 +18,43 @@ type ScheduleSeed struct {
 	ClientVersion string           `json:"client_version"`
 	Schedules     []ScheduleWindow `json:"schedules"`
 	StepUps       []ScheduleWindow `json:"step_ups"`
+}
+
+// ActivePickupCostumes returns only explicitly featured costume IDs from
+// schedule windows active at the supplied Unix millisecond. The client uses
+// the half-open interval [start,end); unopened and expired GameData groups are
+// never treated as current UP banners.
+func ActivePickupCostumes(catalog *gamedata.RegularGachaCatalog, seed *ScheduleSeed, now uint64) map[uint64]bool {
+	result := map[uint64]bool{}
+	if catalog == nil || seed == nil {
+		return result
+	}
+	active := func(window ScheduleWindow) bool {
+		return window.StartTime <= now && now < window.EndTime
+	}
+	for _, window := range seed.Schedules {
+		if !active(window) {
+			continue
+		}
+		if group, ok := catalog.Group(window.GroupID); ok && group.GachaType == 1 && group.PickUpCostumeID != 0 {
+			result[group.PickUpCostumeID] = true
+		}
+	}
+	for _, window := range seed.StepUps {
+		if !active(window) {
+			continue
+		}
+		stepUp, ok := catalog.StepUp(window.GroupID)
+		if !ok {
+			continue
+		}
+		for _, step := range stepUp.Steps {
+			if group, ok := catalog.Group(step.GroupID); ok && group.GachaType == 1 && group.PickUpCostumeID != 0 {
+				result[group.PickUpCostumeID] = true
+			}
+		}
+	}
+	return result
 }
 
 type ScheduleWindow struct {

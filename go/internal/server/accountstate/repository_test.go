@@ -215,9 +215,48 @@ func TestOperationCommitAndCleanRollback(t *testing.T) {
 	requireState(t, r, "deck", []byte("committed"), 1)
 }
 
+func TestSecondRepositoryIsRejectedUntilWriterCloses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second, err := Open(path); !errors.Is(err, ErrWriterLocked) {
+		if second != nil {
+			_ = second.Close()
+		}
+		t.Fatalf("second Open error=%v, want ErrWriterLocked", err)
+	}
+	var epoch int64
+	if err := first.db.QueryRow(`SELECT CAST(value AS INTEGER) FROM metadata WHERE key = 'writer_epoch'`).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
+	if epoch != first.writerEpoch {
+		t.Fatalf("rejected Open advanced writer epoch to %d, want %d", epoch, first.writerEpoch)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open after writer Close: %v", err)
+	}
+	defer second.Close()
+}
+
+func TestWriterEpochStillFencesStaleRepositoryBeforeMutation(t *testing.T) {
+	r, _ := openTestRepository(t)
+	if _, err := r.db.Exec(`UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'writer_epoch'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BeginOperation(); !errors.Is(err, ErrFenced) {
+		t.Fatalf("stale writer error=%v, want ErrFenced", err)
+	}
+}
+
 func TestSchemaVersionRejected(t *testing.T) {
 	r, path := openTestRepository(t)
-	if _, err := r.db.Exec(`UPDATE metadata SET value = '3' WHERE key = 'schema_version'`); err != nil {
+	if _, err := r.db.Exec(`UPDATE metadata SET value = '4' WHERE key = 'schema_version'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Close(); err != nil {

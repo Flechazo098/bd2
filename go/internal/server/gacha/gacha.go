@@ -942,6 +942,11 @@ func (s *Service) pointExchange(request []byte, seq uint64) (int, []byte, bool, 
 	if err != nil {
 		return 147, nil, true, errors.New("gacha: invalid point exchange selection")
 	}
+	if s.equipmentCatalog != nil {
+		if group, ok := s.equipmentCatalog.Group(groupID); ok {
+			return s.pointExchangeEquipment(group, selectedItemID, seq)
+		}
+	}
 	group, ok := s.regular.Group(groupID)
 	if !ok || group.GachaType != 1 || group.PickUpExchangeCost == 0 {
 		return 147, nil, true, fmt.Errorf("gacha: group %d does not support costume point exchange", groupID)
@@ -969,6 +974,57 @@ func (s *Service) pointExchange(request []byte, seq uint64) (int, []byte, bool, 
 		return 147, nil, true, err
 	}
 	return 147, wire.AppendBytes(nil, 1, s.rewardBundle(grant)), true, nil
+}
+
+func (s *Service) pointExchangeEquipment(group gamedata.EquipmentGachaGroup, selectedItemID, seq uint64) (int, []byte, bool, error) {
+	if s.equipmentInventory == nil {
+		return 147, nil, true, errors.New("gacha: equipment inventory not attached")
+	}
+	if group.ID == 0 || group.PickUpExchangeCost == 0 || group.PickUpItemID == 0 {
+		return 147, nil, true, fmt.Errorf("gacha: group %d does not support equipment point exchange", group.ID)
+	}
+	// Non-selection equipment banners send the proto3 default zero. Refuse a
+	// client-supplied item ID so the request cannot exchange points for an
+	// arbitrary equipment design.
+	if selectedItemID != 0 {
+		return 147, nil, true, fmt.Errorf("gacha: equipment group %d does not support pickup selection", group.ID)
+	}
+	identity := fmt.Sprintf("gacha-point-equipment:%s:%d:%d:seq:%d", s.loginIdentity(), group.ID, group.PickUpItemID, seq)
+	equipmentIdentity := identity + ":equip"
+	if _, already := s.collection.Grant(identity); already {
+		entry, found := s.equipmentInventory.Granted(equipmentIdentity)
+		if !found {
+			return 147, nil, true, fmt.Errorf("gacha: equipment exchange retry %s is missing its instance", identity)
+		}
+		bundle := wire.AppendBytes(nil, 4, player.EquipmentWire(entry))
+		return 147, wire.AppendBytes(nil, 1, bundle), true, nil
+	}
+	if s.collection.GachaUser(group.ID).Point < group.PickUpExchangeCost {
+		return 147, nil, true, errors.New("gacha: insufficient equipment pickup exchange point")
+	}
+	main, sub, private, err := s.equipmentCatalog.RollOptions(group.PickUpItemID)
+	if err != nil {
+		return 147, nil, true, err
+	}
+	entry := player.Equipment{ID: group.PickUpItemID, Rank: []uint64{0, 0, 0}}
+	for _, option := range main {
+		entry.MainOption = append(entry.MainOption, player.EquipmentOption{GroupID: option.GroupID, ID: option.ID})
+	}
+	for _, option := range sub {
+		entry.SubOption = append(entry.SubOption, player.EquipmentOption{GroupID: option.GroupID, ID: option.ID})
+	}
+	if private != nil {
+		entry.PrivateOption = &player.EquipmentOption{GroupID: private.GroupID, ID: private.ID}
+	}
+	saved, err := s.equipmentInventory.GrantGeneratedOnce(equipmentIdentity, entry)
+	if err != nil {
+		return 147, nil, true, err
+	}
+	if _, err := s.collection.GrantGachaPointEquipment(identity, group.ID, group.PickUpExchangeCost); err != nil {
+		return 147, nil, true, err
+	}
+	bundle := wire.AppendBytes(nil, 4, player.EquipmentWire(saved))
+	return 147, wire.AppendBytes(nil, 1, bundle), true, nil
 }
 
 func (s *Service) loginIdentity() string {

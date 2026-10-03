@@ -52,6 +52,8 @@ type Response struct {
 
 type InitialState struct {
 	Platform               string               `json:"platform"`
+	ClientVersion          string               `json:"client_version"`
+	GameVersion            string               `json:"game_version"`
 	LogPath                string               `json:"log_path"`
 	GameDirectory          string               `json:"game_directory"`
 	ServerOrigin           string               `json:"server_origin"`
@@ -118,7 +120,7 @@ func (s *Studio) log() *slog.Logger {
 func (s *Studio) Initialize() InitialState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	state := InitialState{Platform: runtime.GOOS, LogPath: s.options.LogPath, GameDirectory: s.options.InitialGameDir, ServerOrigin: "http://127.0.0.1:8080", CDNMode: clientconfig.CDNOfficial}
+	state := InitialState{Platform: runtime.GOOS, ClientVersion: s.options.Versions.ClientVersion, GameVersion: s.options.Versions.GameVersion, LogPath: s.options.LogPath, GameDirectory: s.options.InitialGameDir, ServerOrigin: "http://127.0.0.1:8080", CDNMode: clientconfig.CDNOfficial}
 	if state.GameDirectory == "" {
 		return state
 	}
@@ -318,7 +320,7 @@ func (s *Studio) Launch(input Request) (Response, error) {
 			}
 			return Response{}, fmt.Errorf("launch Brown Dust II: %w", err)
 		}
-		s.log().Info("game launch requested", "platform", installation.Kind, "client_version", status.ClientVersion)
+		s.log().Info("game launch requested", "platform", installation.Kind, "client_version", s.options.Versions.ClientVersion, "game_version", status.ClientVersion)
 		return success("Brown Dust II started", nil), nil
 	})
 }

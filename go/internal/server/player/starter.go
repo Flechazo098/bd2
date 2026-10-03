@@ -21,6 +21,7 @@ type Item struct {
 	Count         uint64     `json:"count"`
 	KeepFlag      uint64     `json:"keep_flag,omitempty"`
 	TimeValue     uint64     `json:"time_value,omitempty"`
+	ExpiryTime    uint64     `json:"expiry_time,omitempty"`
 	Pictorialbook *Pictorial `json:"pictorialbook,omitempty"`
 	SortID        uint64     `json:"sort_id,omitempty"`
 	UseCount      uint64     `json:"use_count,omitempty"`

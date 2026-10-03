@@ -23,6 +23,13 @@ import (
 
 const packetCode = 131
 const openPacketCode = 132
+const historyPacketCode = 138
+
+const (
+	mailHistoryPeriod             = 30 * 24 * time.Hour
+	mailHistoryPageMax            = 100
+	starterLimitedCostumeIdentity = "starter:limited-costumes:not-current-pickup:v1"
+)
 
 // itemDBInfoTypes are ElementType values whose successful mail claim is
 // represented by ItemDBInfo in RewardDBInfoBundle.  They are deliberately
@@ -64,17 +71,21 @@ var currencyRewardTypes = map[uint64]bool{
 // localized/template-driven mail form).  Reward fields are parallel arrays:
 // type, table ID, and amount respectively.
 type MailDBInfo struct {
-	MailID       uint64   `json:"mail_id"`
-	MailType     uint64   `json:"mail_type,omitempty"`
-	TemplateID   uint64   `json:"template_id,omitempty"`
-	Sender       string   `json:"sender,omitempty"`
-	Title        string   `json:"title,omitempty"`
-	Body         string   `json:"body,omitempty"`
-	ExpiresAt    uint64   `json:"expires_at"`
-	RewardTypes  []uint64 `json:"reward_types,omitempty"`
-	RewardIDs    []uint64 `json:"reward_ids,omitempty"`
-	RewardCounts []uint64 `json:"reward_counts,omitempty"`
-	SentAt       uint64   `json:"sent_at"`
+	MailID            uint64   `json:"mail_id"`
+	MailType          uint64   `json:"mail_type,omitempty"`
+	TemplateID        uint64   `json:"template_id,omitempty"`
+	Sender            string   `json:"sender,omitempty"`
+	Title             string   `json:"title,omitempty"`
+	Body              string   `json:"body,omitempty"`
+	ExpiresAt         uint64   `json:"expires_at"`
+	RewardTypes       []uint64 `json:"reward_types,omitempty"`
+	RewardIDs         []uint64 `json:"reward_ids,omitempty"`
+	RewardCounts      []uint64 `json:"reward_counts,omitempty"`
+	IsOpen            bool     `json:"is_open,omitempty"`
+	OpenTime          uint64   `json:"open_time,omitempty"`
+	SentAt            uint64   `json:"sent_at"`
+	HistoryDeleteTime uint64   `json:"history_delete_time,omitempty"`
+	IsCash            bool     `json:"is_cash,omitempty"`
 }
 
 type Starter struct {
@@ -160,7 +171,20 @@ func (m MailDBInfo) encode() []byte {
 	if len(m.RewardCounts) != 0 {
 		result = wire.AppendBytes(result, 10, packed(m.RewardCounts))
 	}
-	return wire.AppendVarint(result, 13, m.SentAt)
+	if m.IsOpen {
+		result = wire.AppendVarint(result, 11, 1)
+	}
+	if m.OpenTime != 0 {
+		result = wire.AppendVarint(result, 12, m.OpenTime)
+	}
+	result = wire.AppendVarint(result, 13, m.SentAt)
+	if m.HistoryDeleteTime != 0 {
+		result = wire.AppendVarint(result, 14, m.HistoryDeleteTime)
+	}
+	if m.IsCash {
+		result = wire.AppendVarint(result, 15, 1)
+	}
+	return result
 }
 
 func (s *Starter) Handle(path string, request []byte) (int, []byte, bool, error) {
@@ -209,8 +233,9 @@ type stateSnapshot struct {
 	NextDynamicMailID uint64   `json:"next_dynamic_mail_id"`
 }
 
-// Service owns mailbox visibility and idempotent reward delivery. Starter is
-// immutable source data; only opened IDs are persisted in the player state.
+// Service owns mailbox visibility, claim history, and idempotent reward
+// delivery. Starter is immutable source data; mutable rows live in the player
+// state alongside the bounded core snapshot.
 type Service struct {
 	mu             sync.Mutex
 	Starter        *Starter
@@ -220,9 +245,25 @@ type Service struct {
 	storage        stateio.AtomicEntryStore
 	inventory      *player.Inventory
 	wallet         *player.Wallet
+	collection     *player.CollectionStore
+	costumeDesign  player.CostumeDesignSource
 	state          stateSnapshot
 	dynamic        map[uint64]MailDBInfo
 	issued         map[string]uint64
+	history        map[uint64]MailDBInfo
+	now            func() time.Time
+}
+
+// AttachCostumeRewards enables ElementType 11 mail attachments. The catalog is
+// GameData-backed and the collection ledger makes repeated MailOpen calls safe.
+func (s *Service) AttachCostumeRewards(collection *player.CollectionStore, design player.CostumeDesignSource) error {
+	if s == nil || collection == nil || design == nil {
+		return errors.New("mail: invalid costume reward configuration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.collection, s.costumeDesign = collection, design
+	return nil
 }
 
 type fileStamp struct {
@@ -243,13 +284,13 @@ func OpenService(storage stateio.Store, starter *Starter, inventory *player.Inve
 	}
 	s := &Service{Starter: starter, storage: entries, inventory: inventory, wallet: wallet,
 		state:   stateSnapshot{Version: versionconfig.State(), NextDynamicMailID: starter.MaxMailID + 1},
-		dynamic: map[uint64]MailDBInfo{}, issued: map[string]uint64{}}
+		dynamic: map[uint64]MailDBInfo{}, issued: map[string]uint64{}, history: map[uint64]MailDBInfo{}, now: time.Now}
 	b, err := storage.Load("mail")
 	if err != nil {
 		return nil, fmt.Errorf("mail: load state: %w", err)
 	}
 	if b == nil {
-		if err := stateio.RequireNoEntries(entries, "mail", "dynamic", "issued"); err != nil {
+		if err := stateio.RequireNoEntries(entries, "mail", "dynamic", "issued", "history"); err != nil {
 			return nil, fmt.Errorf("mail: invalid storage: %w", err)
 		}
 		return s, nil
@@ -285,6 +326,25 @@ func OpenService(storage stateio.Store, starter *Starter, inventory *player.Inve
 			return nil, fmt.Errorf("mail: issued entry %q references missing mail %d", identity, id)
 		}
 		s.issued[identity] = id
+	}
+	if id, exists := s.issued[starterLimitedCostumeIdentity]; exists {
+		if err := validateStarterLimitedCostumeMail(s.dynamic[id], nil); err != nil {
+			return nil, fmt.Errorf("mail: invalid persisted starter limited-costume gift: %w", err)
+		}
+	}
+	rawHistory, err := entries.ListEntries("mail", "history")
+	if err != nil {
+		return nil, err
+	}
+	for key, payload := range rawHistory {
+		id, parseErr := strconv.ParseUint(key, 10, 64)
+		var entry MailDBInfo
+		if parseErr != nil || id == 0 || json.Unmarshal(payload, &entry) != nil || entry.MailID != id ||
+			!entry.IsOpen || entry.OpenTime == 0 || entry.HistoryDeleteTime <= entry.OpenTime ||
+			len(entry.RewardTypes) != len(entry.RewardIDs) || len(entry.RewardTypes) != len(entry.RewardCounts) {
+			return nil, fmt.Errorf("mail: invalid history entry %q", key)
+		}
+		s.history[id] = entry
 	}
 	// A watched development seed is allowed to append immutable static mails
 	// between runs. Move the dynamic allocator above that range as long as none
@@ -342,7 +402,7 @@ func (s *Service) AttachSeedPath(path string) error {
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/MailInfo" && path != "/MailOpen" {
+	if path != "/MailInfo" && path != "/MailOpen" && path != "/MailHistoryInfo" {
 		return 0, nil, false, nil
 	}
 	if s == nil || s.Starter == nil || s.inventory == nil || s.wallet == nil {
@@ -366,6 +426,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, err
 		}
 		return packetCode, s.info(), true, nil
+	}
+	if path == "/MailHistoryInfo" {
+		response, err := s.historyInfo(request)
+		return historyPacketCode, response, true, err
 	}
 	response, err := s.open(request)
 	return openPacketCode, response, true, err
@@ -483,10 +547,14 @@ func (s *Service) open(request []byte) ([]byte, error) {
 
 	var bundle []byte
 	next := stateSnapshot{Version: s.state.Version, Opened: append([]uint64(nil), s.state.Opened...), NextDynamicMailID: s.state.NextDynamicMailID}
+	openedAt := s.now().UTC()
+	changes := make([]stateio.EntryMutation, 0, len(selected))
+	newHistory := make([]MailDBInfo, 0, len(selected))
 	for _, entry := range selected {
 		identity := fmt.Sprintf("mail:%d", entry.MailID)
 		rewards := make([]gamedata.Reward, len(entry.RewardTypes))
 		var items []gamedata.BattleReward
+		var costumeIDs []uint64
 		for i := range entry.RewardTypes {
 			reward := gamedata.Reward{Type: entry.RewardTypes[i], ID: entry.RewardIDs[i], Count: entry.RewardCounts[i]}
 			rewards[i] = reward
@@ -495,6 +563,13 @@ func (s *Service) open(request []byte) ([]byte, error) {
 				currency := wire.AppendVarint(nil, 3, reward.Type)
 				currency = wire.AppendVarint(currency, 4, reward.Count)
 				bundle = wire.AppendBytes(bundle, 1, currency)
+			case reward.Type == 11:
+				if s.collection == nil || s.costumeDesign == nil || reward.ID == 0 || reward.Count == 0 || reward.Count > 6 {
+					return nil, errors.New("mail: costume reward service unavailable or reward invalid")
+				}
+				for copy := uint64(0); copy < reward.Count; copy++ {
+					costumeIDs = append(costumeIDs, reward.ID)
+				}
 			case reward.Type == 28:
 				// DataManager recognizes this type, but RewardDBInfoBundle
 				// carries MyRoomTrophyDBInfo in a separate field.  Encoding it as
@@ -527,15 +602,150 @@ func (s *Service) open(request []byte) ([]byte, error) {
 			view = wire.AppendVarint(view, 4, item.Count)
 			bundle = wire.AppendBytes(bundle, 6, view)
 		}
+		if len(costumeIDs) != 0 {
+			grant, err := s.collection.GrantCostumes(identity+":costumes", costumeIDs, s.costumeDesign)
+			if err != nil {
+				return nil, err
+			}
+			var mileage uint64
+			for _, exchange := range grant.Exchanges {
+				if exchange.ExchangeItemType != 20 || ^uint64(0)-mileage < exchange.ExchangeCount {
+					return nil, errors.New("mail: unsupported costume overflow exchange")
+				}
+				mileage += exchange.ExchangeCount
+			}
+			if mileage != 0 {
+				if _, err := s.wallet.GrantMileageOnce(identity+":costume-overflow", mileage); err != nil {
+					return nil, err
+				}
+			}
+			bundle = appendCollectionRewardBundle(bundle, s.collection, grant)
+		}
 		if !containsID(next.Opened, entry.MailID) {
 			next.Opened = append(next.Opened, entry.MailID)
 		}
+		if _, exists := s.history[entry.MailID]; !exists {
+			history := entry
+			history.IsOpen = true
+			history.OpenTime = uint64(openedAt.UnixMilli())
+			history.HistoryDeleteTime = uint64(openedAt.Add(mailHistoryPeriod).UnixMilli())
+			payload, err := json.Marshal(history)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, stateio.EntryMutation{Bucket: "history", Key: strconv.FormatUint(entry.MailID, 10), Payload: payload})
+			newHistory = append(newHistory, history)
+		}
 	}
 	sort.Slice(next.Opened, func(i, j int) bool { return next.Opened[i] < next.Opened[j] })
-	if err := s.commit(next); err != nil {
+	if err := s.commitWithEntries(next, changes); err != nil {
 		return nil, err
 	}
+	for _, entry := range newHistory {
+		s.history[entry.MailID] = entry
+	}
 	return wire.AppendBytes(nil, 1, bundle), nil
+}
+
+func appendCollectionRewardBundle(bundle []byte, collection *player.CollectionStore, grant player.CollectionGrant) []byte {
+	newCharacters := make(map[uint64]player.Character, len(grant.CharacterIndices))
+	for _, index := range grant.CharacterIndices {
+		if character, found := collection.CharacterByIndex(index); found {
+			newCharacters[character.ConnectPotentialCostume] = character
+			bundle = wire.AppendBytes(bundle, 2, player.CharacterWire(character))
+		}
+	}
+	for _, index := range grant.CostumeIndices {
+		if costume, found := collection.CostumeByIndex(index); found {
+			bundle = wire.AppendBytes(bundle, 3, player.CostumeWire(costume))
+		}
+	}
+	for position, costumeID := range grant.ViewCostumeIDs {
+		view := wire.AppendVarint(nil, 2, costumeID)
+		view = wire.AppendVarint(view, 3, 11)
+		view = wire.AppendVarint(view, 4, 1)
+		bundle = wire.AppendBytes(bundle, 6, view)
+		if character, found := newCharacters[costumeID]; found {
+			charView := wire.AppendVarint(nil, 2, character.ID)
+			charView = wire.AppendVarint(charView, 3, 6)
+			charView = wire.AppendVarint(charView, 4, 1)
+			if position != 0 {
+				charView = wire.AppendVarint(charView, 6, uint64(position))
+			}
+			bundle = wire.AppendBytes(bundle, 6, charView)
+		}
+	}
+	for _, upgrade := range grant.Upgrades {
+		info := wire.AppendVarint(nil, 1, upgrade.InvenIndex)
+		info = wire.AppendVarint(info, 2, 11)
+		info = wire.AppendVarint(info, 3, upgrade.CostumeID)
+		if upgrade.Before != 0 {
+			info = wire.AppendVarint(info, 4, upgrade.Before)
+		}
+		info = wire.AppendVarint(info, 5, upgrade.After)
+		if upgrade.SortID != 0 {
+			info = wire.AppendVarint(info, 6, upgrade.SortID)
+		}
+		bundle = wire.AppendBytes(bundle, 9, info)
+	}
+	var mileage uint64
+	for _, exchange := range grant.Exchanges {
+		info := wire.AppendVarint(nil, 1, exchange.OriginalItemType)
+		info = wire.AppendVarint(info, 2, exchange.OriginalItemID)
+		info = wire.AppendVarint(info, 3, exchange.OriginalCount)
+		info = wire.AppendVarint(info, 4, exchange.ExchangeItemType)
+		if exchange.ExchangeItemID != 0 {
+			info = wire.AppendVarint(info, 5, exchange.ExchangeItemID)
+		}
+		info = wire.AppendVarint(info, 6, exchange.ExchangeCount)
+		if exchange.SortID != 0 {
+			info = wire.AppendVarint(info, 7, exchange.SortID)
+		}
+		bundle = wire.AppendBytes(bundle, 8, info)
+		mileage += exchange.ExchangeCount
+	}
+	if mileage != 0 {
+		repaid := wire.AppendVarint(nil, 2, 20)
+		repaid = wire.AppendVarint(repaid, 3, mileage)
+		bundle = wire.AppendBytes(bundle, 10, repaid)
+	}
+	return bundle
+}
+
+func (s *Service) historyInfo(request []byte) ([]byte, error) {
+	start, _, err := wire.Varint(request, 2)
+	if err != nil {
+		return nil, errors.New("mail: invalid history start index")
+	}
+	count, present, err := wire.Varint(request, 3)
+	if err != nil || !present || count == 0 {
+		return nil, errors.New("mail: invalid history select count")
+	}
+	if count > mailHistoryPageMax {
+		count = mailHistoryPageMax
+	}
+	now := uint64(s.now().UTC().UnixMilli())
+	ids := make([]uint64, 0, len(s.history))
+	for id, entry := range s.history {
+		if entry.HistoryDeleteTime > now {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] })
+	total := len(ids)
+	var result []byte
+	selected := uint64(0)
+	for _, id := range ids {
+		if start != 0 && id >= start {
+			continue
+		}
+		if selected >= count {
+			break
+		}
+		result = wire.AppendBytes(result, 1, s.history[id].encode())
+		selected++
+	}
+	return wire.AppendVarint(result, 2, uint64(total)), nil
 }
 
 func requestMailIDs(request []byte) ([]uint64, error) {
@@ -578,6 +788,21 @@ func (s *Service) commit(next stateSnapshot) error {
 	return s.persist(next)
 }
 
+func (s *Service) commitWithEntries(next stateSnapshot, changes []stateio.EntryMutation) error {
+	if len(changes) == 0 {
+		return s.commit(next)
+	}
+	b, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	if err := s.storage.SaveWithEntries("mail", b, changes); err != nil {
+		return fmt.Errorf("mail: persist state and history: %w", err)
+	}
+	s.state = next
+	return nil
+}
+
 func (s *Service) persist(next stateSnapshot) error {
 	b, err := json.Marshal(next)
 	if err != nil {
@@ -601,6 +826,67 @@ func (s *Service) EnqueueCompensation(identity, title, body string, rewards []ga
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.enqueueCompensations([]compensation{grant})
+}
+
+// EnsureStarterLimitedCostumes issues the new-player limited-costume gift at
+// most once for this account. The durable issued-identity row is written in the
+// same transaction as the mail, so retries and restarts return without
+// allocating another mail ID. Six copies mean one acquisition plus five
+// duplicate upgrades, producing enhancement +5 when claimed.
+func (s *Service) EnsureStarterLimitedCostumes(costumeIDs []uint64, sentAt time.Time) error {
+	if s == nil {
+		return errors.New("mail: unavailable starter limited-costume service")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, issued := s.issued[starterLimitedCostumeIdentity]; issued {
+		return validateStarterLimitedCostumeMail(s.dynamic[id], s.costumeDesign)
+	}
+	if len(costumeIDs) == 0 || s.costumeDesign == nil {
+		return errors.New("mail: starter limited-costume gift is empty or unavailable")
+	}
+	seen := make(map[uint64]bool, len(costumeIDs))
+	rewards := make([]gamedata.Reward, 0, len(costumeIDs))
+	for _, costumeID := range costumeIDs {
+		design, ok := s.costumeDesign.Character(costumeID)
+		if costumeID == 0 || seen[costumeID] || !ok || design.CostumeMaxLevel != 5 {
+			return fmt.Errorf("mail: invalid starter limited costume %d", costumeID)
+		}
+		seen[costumeID] = true
+		rewards = append(rewards, gamedata.Reward{Type: 11, ID: costumeID, Count: 6})
+	}
+	grant := compensation{
+		identity: starterLimitedCostumeIdentity,
+		title:    "New Player Limited Costumes",
+		body:     "Limited costumes not featured in the current pickup banners. Each costume is enhanced to +5 when claimed.",
+		rewards:  rewards,
+		sentAt:   sentAt,
+	}
+	if err := grant.validate(); err != nil {
+		return err
+	}
+	return s.enqueueCompensations([]compensation{grant})
+}
+
+func validateStarterLimitedCostumeMail(entry MailDBInfo, design player.CostumeDesignSource) error {
+	if entry.MailID == 0 || len(entry.RewardTypes) == 0 || len(entry.RewardTypes) != len(entry.RewardIDs) || len(entry.RewardTypes) != len(entry.RewardCounts) {
+		return errors.New("invalid starter gift reward arrays")
+	}
+	seen := make(map[uint64]bool, len(entry.RewardTypes))
+	for i, typ := range entry.RewardTypes {
+		id := entry.RewardIDs[i]
+		if typ != 11 || id == 0 || entry.RewardCounts[i] != 6 || seen[id] {
+			return errors.New("starter gift must contain unique six-copy costumes")
+		}
+		seen[id] = true
+		if design != nil {
+			costume, ok := design.Character(id)
+			if !ok || costume.CostumeMaxLevel != 5 {
+				return fmt.Errorf("starter gift costume %d is unavailable or not enhancement +5", id)
+			}
+		}
+	}
+	return nil
 }
 
 // enqueueCompensations shares the EnqueueCompensation allocator and durable

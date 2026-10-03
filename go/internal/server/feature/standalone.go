@@ -27,7 +27,6 @@ var standaloneDefaults = map[string]int{
 	"/HuntingGroundInfoList": 387,
 	"/FriendRecommend":       211,
 	"/SupporterStatus":       438,
-	"/MailHistoryInfo":       138,
 	"/SupporterBattleInfo":   439,
 	"/InnOpen":               109,
 }

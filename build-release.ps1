@@ -14,11 +14,17 @@ $clientPackage = Join-Path $packageParent 'bd2client'
 $serverGoDir = Join-Path $serverPackage 'go'
 $serverStateDir = Join-Path $serverPackage 'data\state'
 $clientPluginDir = Join-Path $clientPackage 'plugins'
-$serverArchive = Join-Path $buildRoot 'bd2server-windows-x64.zip'
-$clientArchive = Join-Path $buildRoot 'bd2client-windows-x64.zip'
 $versionConfig = Join-Path $root 'versions.json'
 $authenticationConfig = Join-Path $root 'authentication.json'
 $resourceConfig = Join-Path $root 'resources.json'
+
+try {
+    $releaseVersions = Get-Content -LiteralPath $versionConfig -Raw | ConvertFrom-Json -ErrorAction Stop
+} catch {
+    throw "Could not read release versions at ${versionConfig}: $($_.Exception.Message)"
+}
+$serverArchive = Join-Path $buildRoot ("bd2server-{0}-windows-x64.zip" -f $releaseVersions.server_version)
+$clientArchive = Join-Path $buildRoot ("bd2client-{0}-windows-x64.zip" -f $releaseVersions.client_version)
 
 if ([string]::IsNullOrWhiteSpace($GameDir)) {
     $developmentConfigPath = Join-Path $goRoot 'config.json'

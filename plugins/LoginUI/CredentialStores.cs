@@ -11,24 +11,41 @@ namespace Bd2LoginUI;
 internal sealed class MemoryAccessTokenStore
 {
     private string value;
+    private string origin;
+    private string provider;
+    private long expiresAt;
 
     public string Get()
     {
         return value ?? string.Empty;
     }
 
-    public void Set(string token)
+    public void Set(string token, string tokenOrigin, string tokenProvider, long expiresInSeconds)
     {
-        if (string.IsNullOrEmpty(token))
+        if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(tokenOrigin) ||
+            string.IsNullOrEmpty(tokenProvider) || expiresInSeconds <= 0)
         {
-            throw new ArgumentException("access token is empty", nameof(token));
+            throw new ArgumentException("access token metadata is incomplete", nameof(token));
         }
         value = token;
+        origin = tokenOrigin;
+        provider = tokenProvider;
+        expiresAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expiresInSeconds;
+    }
+
+    public bool IsUsable(string tokenOrigin, long safetyWindowSeconds = 30)
+    {
+        return !string.IsNullOrEmpty(value) && origin == tokenOrigin &&
+               !string.IsNullOrEmpty(provider) &&
+               expiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds() + safetyWindowSeconds;
     }
 
     public void Clear()
     {
         value = null;
+        origin = null;
+        provider = null;
+        expiresAt = 0;
     }
 }
 
@@ -49,6 +66,8 @@ internal sealed class RefreshCredential
     public string provider;
     public string refresh_token;
     public long expires_at;
+    public string pending_attempt_id;
+    public string pending_refresh_token;
 }
 
 internal static class PlatformRefreshCredentialStore

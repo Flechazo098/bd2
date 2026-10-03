@@ -64,6 +64,7 @@ func runClient(args []string, options clientRunOptions) error {
 		logger.Error("client release version manifest is invalid", "error", err)
 		return err
 	}
+	logger.Info("client release loaded", "client_version", versions.ClientVersion, "game_version", versions.GameVersion)
 	if *gameDir == "" {
 		preferences, preferenceErr := clientconfig.LoadPreferences()
 		if preferenceErr != nil {

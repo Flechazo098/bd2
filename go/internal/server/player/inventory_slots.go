@@ -103,6 +103,9 @@ func (s *InventorySlots) AttachDevelopmentSettings(path string) {
 func (s *InventorySlots) BeginSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id == "" || id == s.sessionID {
+		return
+	}
 	s.sessionID = id
 	s.replies = map[string]inventorySlotReply{}
 }

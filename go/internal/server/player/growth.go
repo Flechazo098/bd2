@@ -2,9 +2,12 @@ package player
 
 import (
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"bd2server/internal/server/gamedata"
@@ -36,12 +39,14 @@ type CharacterStore struct {
 	promoteGrowth   func(Character, []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error)
 	talentGrowth    *gamedata.TalentGrowthDesign
 	sessionID       string
-	talentReplies   map[string]talentUpgradeReply
+	talentReplies   map[string]map[string]talentUpgradeReply
+	talentApplied   map[string]talentUpgradeReply
 }
 
 type talentUpgradeReply struct {
-	code int
-	body []byte
+	Digest string `json:"digest"`
+	Code   int    `json:"code"`
+	Body   []byte `json:"body,omitempty"`
 }
 
 func (s *CharacterStore) AttachWallet(wallet *Wallet) error {
@@ -70,8 +75,24 @@ func (s *CharacterStore) AttachTalentGrowth(design *gamedata.TalentGrowthDesign)
 func (s *CharacterStore) BeginSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id == "" || id == s.sessionID {
+		return
+	}
 	s.sessionID = id
-	s.talentReplies = make(map[string]talentUpgradeReply)
+	if s.talentReplies == nil {
+		s.talentReplies = make(map[string]map[string]talentUpgradeReply)
+	}
+	if s.talentReplies[id] == nil {
+		if len(s.talentReplies) >= 1024 {
+			for oldID := range s.talentReplies {
+				if oldID != id {
+					delete(s.talentReplies, oldID)
+					break
+				}
+			}
+		}
+		s.talentReplies[id] = make(map[string]talentUpgradeReply)
+	}
 }
 
 // AttachMaxHealth makes growth and post-battle revival consume the same
@@ -104,7 +125,7 @@ func OpenCharacterStore(store stateio.Store, seed []Character, inventory *Invent
 	if !ok {
 		return nil, errors.New("player: character store requires atomic entries")
 	}
-	s := &CharacterStore{store: entries, inventory: inventory, characters: append([]Character(nil), seed...), persisted: make(map[uint64]bool), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion, talentReplies: make(map[string]talentUpgradeReply)}
+	s := &CharacterStore{store: entries, inventory: inventory, characters: append([]Character(nil), seed...), persisted: make(map[uint64]bool), gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion, talentReplies: make(map[string]map[string]talentUpgradeReply), talentApplied: make(map[string]talentUpgradeReply)}
 	s.grow = func(character Character, materials []gamedata.GrowthMaterial) (uint64, uint64, []gamedata.GrowthMaterial, error) {
 		return gamedata.CharacterGrowth(s.gameDataRoot, s.gameDataVersion, int(character.ID), character.Level, character.Exp, materials)
 	}
@@ -122,6 +143,13 @@ func OpenCharacterStore(store stateio.Store, seed []Character, inventory *Invent
 		}
 		if len(orphaned) != 0 {
 			return nil, errors.New("player: character entries exist without core")
+		}
+		applied, err := entries.ListEntries("characters", "talent_upgrades")
+		if err != nil {
+			return nil, err
+		}
+		if len(applied) != 0 {
+			return nil, errors.New("player: talent upgrade entries exist without character core")
 		}
 		return s, validateCharacters(s.characters)
 	}
@@ -142,10 +170,38 @@ func OpenCharacterStore(store stateio.Store, seed []Character, inventory *Invent
 			return nil, fmt.Errorf("player: current character state omits seeded inventory index %d", character.InvenIndex)
 		}
 	}
+	if err := s.loadTalentUpgradeLedger(entries); err != nil {
+		return nil, err
+	}
 	if err := validateCharacters(s.characters); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *CharacterStore) loadTalentUpgradeLedger(entries stateio.AtomicEntryStore) error {
+	rows, err := entries.ListEntries("characters", "talent_upgrades")
+	if err != nil {
+		return err
+	}
+	for key, payload := range rows {
+		parts := strings.Split(key, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("player: invalid talent upgrade ledger key %q", key)
+		}
+		index, indexErr := strconv.ParseUint(parts[0], 10, 64)
+		level, levelErr := strconv.ParseUint(parts[1], 10, 64)
+		var reply talentUpgradeReply
+		if indexErr != nil || levelErr != nil || index == 0 || level < 2 || json.Unmarshal(payload, &reply) != nil ||
+			reply.Code != talentSkillUpgradePacketCode || len(reply.Digest) != 64 {
+			return fmt.Errorf("player: invalid talent upgrade ledger entry %q", key)
+		}
+		if _, err := hex.DecodeString(reply.Digest); err != nil {
+			return fmt.Errorf("player: invalid talent upgrade digest %q", key)
+		}
+		s.talentApplied[key] = reply
+	}
+	return nil
 }
 
 func (s *CharacterStore) EnsurePersisted() error {

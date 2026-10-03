@@ -14,7 +14,7 @@ import (
 
 func testVersions() clientconfig.ReleaseVersions {
 	return clientconfig.ReleaseVersions{
-		ClientVersion: "2.35.10", BundleVersion: "20260921135230", GameDataVersion: "20260923193640",
+		GameVersion: "2.35.10", ClientVersion: "2.35.10+client.0.1.0", ServerVersion: "2.35.10+server.0.1.0", BundleVersion: "20260921135230", GameDataVersion: "20260923193640",
 	}
 }
 

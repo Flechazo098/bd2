@@ -17,6 +17,15 @@ type migration struct {
 
 var schemaMigrations = []migration{
 	{from: 1, to: 2, up: migrateV1ToV2},
+	{from: 2, to: 3, up: migrateV2ToV3},
+}
+
+func migrateV2ToV3(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES('writer_epoch','0') ON CONFLICT(key) DO NOTHING`)
+	if err != nil {
+		return fmt.Errorf("add writer epoch: %w", err)
+	}
+	return nil
 }
 
 // initialize creates schema v1 for a new database, applies every adjacent Go

@@ -1,12 +1,16 @@
 package player
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
 
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
 
@@ -14,23 +18,43 @@ const talentSkillUpgradePacketCode = 44
 
 func (s *CharacterStore) talentSkillUpgrade(request []byte) (int, []byte, bool, error) {
 	seq, found, err := wire.Varint(request, 1)
-	if err != nil || !found || seq == 0 {
+	if err != nil || !found || seq == 0 || seq > math.MaxInt32 {
 		return 0, nil, true, errors.New("player: TalentSkillUpgrade missing sequence")
 	}
 	index, found, err := wire.Varint(request, 2)
-	if err != nil || !found || index == 0 {
+	if err != nil || !found || index == 0 || index > math.MaxInt64 {
 		return 0, nil, true, errors.New("player: TalentSkillUpgrade missing character")
 	}
 	materials, err := equipmentRequestItems(request, 3, "TalentSkillUpgrade")
 	if err != nil {
 		return 0, nil, true, err
 	}
+	for _, material := range materials {
+		if material.InvenIndex > math.MaxInt64 || material.ID > math.MaxInt32 || material.Type > math.MaxInt32 || material.Count > math.MaxInt32 ||
+			material.KeepFlag > math.MaxInt32 || material.TimeValue > math.MaxInt64 || material.ExpiryTime > math.MaxInt64 ||
+			material.SortID > math.MaxInt32 || material.UseCount > math.MaxInt32 {
+			return 0, nil, true, errors.New("player: TalentSkillUpgrade material exceeds protocol range")
+		}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cacheKey := "talent-upgrade:" + s.sessionID + ":seq:" + strconv.FormatUint(seq, 10)
-	if reply, ok := s.talentReplies[cacheKey]; ok {
-		return reply.code, append([]byte(nil), reply.body...), true, nil
+	digestBytes := sha256.Sum256(request)
+	digest := hex.EncodeToString(digestBytes[:])
+	sessionID := s.sessionID
+	if sessionID == "" {
+		sessionID = "__direct__"
+	}
+	if s.talentReplies[sessionID] == nil {
+		s.talentReplies[sessionID] = make(map[string]talentUpgradeReply)
+	}
+	replies := s.talentReplies[sessionID]
+	cacheKey := "seq:" + strconv.FormatUint(seq, 10)
+	if reply, ok := replies[cacheKey]; ok {
+		if reply.Digest != digest {
+			return 0, nil, true, errors.New("player: TalentSkillUpgrade sequence reused with different request")
+		}
+		return reply.Code, append([]byte(nil), reply.Body...), true, nil
 	}
 	if s.talentGrowth == nil || s.wallet == nil || s.inventory == nil {
 		return 0, nil, true, errors.New("player: talent upgrade unavailable")
@@ -50,6 +74,11 @@ func (s *CharacterStore) talentSkillUpgrade(request []byte) (int, []byte, bool, 
 	}
 	if position < 0 && !fromCollection {
 		return 0, nil, true, fmt.Errorf("player: unknown talent character inventory index %d", index)
+	}
+	previousLedgerKey := strconv.FormatUint(index, 10) + ":" + strconv.FormatUint(current.TalentLevel, 10)
+	if reply, ok := s.talentApplied[previousLedgerKey]; ok && reply.Digest == digest {
+		replies[cacheKey] = reply
+		return reply.Code, append([]byte(nil), reply.Body...), true, nil
 	}
 	rule, err := s.talentGrowth.UpgradeRule(current.ID, current.TalentLevel)
 	if err != nil {
@@ -74,12 +103,16 @@ func (s *CharacterStore) talentSkillUpgrade(request []byte) (int, []byte, bool, 
 
 	previousID := current.ID
 	current.TalentLevel++
+	ledgerKey := strconv.FormatUint(index, 10) + ":" + strconv.FormatUint(current.TalentLevel, 10)
+	if _, exists := s.talentApplied[ledgerKey]; exists {
+		return 0, nil, true, fmt.Errorf("player: talent upgrade ledger already contains target %s", ledgerKey)
+	}
 	if fromCollection {
 		if err := s.collection.CanUpdateCharacter(previousID, current); err != nil {
 			return 0, nil, true, fmt.Errorf("player: validate collection talent upgrade: %w", err)
 		}
 	}
-	identity := cacheKey + ":character:" + strconv.FormatUint(index, 10) + ":level:" + strconv.FormatUint(rule.CurrentLevel, 10)
+	identity := "talent-upgrade:" + sessionID + ":" + cacheKey + ":character:" + strconv.FormatUint(index, 10) + ":level:" + strconv.FormatUint(rule.CurrentLevel, 10)
 	if gold != 0 {
 		if _, err := s.wallet.SpendGoldOnce(identity, gold); err != nil {
 			return 0, nil, true, fmt.Errorf("player: consume talent upgrade gold: %w", err)
@@ -90,21 +123,31 @@ func (s *CharacterStore) talentSkillUpgrade(request []byte) (int, []byte, bool, 
 			return 0, nil, true, fmt.Errorf("player: consume talent upgrade items: %w", err)
 		}
 	}
+	reply := talentUpgradeReply{Digest: digest, Code: talentSkillUpgradePacketCode}
+	ledgerPayload, err := json.Marshal(reply)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	ledgerChange := stateio.EntryMutation{Bucket: "talent_upgrades", Key: ledgerKey, Payload: ledgerPayload}
 	if fromCollection {
 		if err := s.collection.UpdateCharacter(previousID, current); err != nil {
 			return 0, nil, true, fmt.Errorf("player: persist collection talent upgrade: %w", err)
 		}
+		if err := s.store.SaveWithEntries("characters", nil, []stateio.EntryMutation{ledgerChange}); err != nil {
+			return 0, nil, true, fmt.Errorf("player: persist talent upgrade replay ledger: %w", err)
+		}
 	} else {
 		next := append([]Character(nil), s.characters...)
 		next[position] = current
-		if err := s.persist(next); err != nil {
+		if err := s.persistWithChanges(next, []stateio.EntryMutation{ledgerChange}); err != nil {
 			return 0, nil, true, fmt.Errorf("player: persist talent upgrade: %w", err)
 		}
 		s.characters = next
 	}
 	// TalentSkillUpgradeResponse.item_info is an optional grant list. Current
 	// GameData defines no refund, so the correct protobuf response is empty.
-	s.talentReplies[cacheKey] = talentUpgradeReply{code: talentSkillUpgradePacketCode}
+	s.talentApplied[ledgerKey] = reply
+	replies[cacheKey] = reply
 	return talentSkillUpgradePacketCode, nil, true, nil
 }
 

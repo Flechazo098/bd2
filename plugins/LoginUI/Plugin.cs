@@ -41,14 +41,26 @@ public sealed class Plugin : BaseUnityPlugin
     private static MemoryAccessTokenStore AccessTokens;
     private static IRefreshCredentialStore RefreshCredentials;
     private static int SessionRecoveryInProgress;
+    private static Plugin Owner;
+    private static bool EstablishedGameSession;
+    private static GameObject RecoveryOverlay;
+    private static Text RecoveryText;
+    private static MethodInfo EnterGame;
+    private static string ServerInstanceID;
+    private static int RecoveryRestartScheduled;
+    private static int RecoveryEnterScheduled;
+    private static int RecoveryGeneration;
+    private static int RuntimeProbeFailures;
 
     private void Awake()
     {
         try
         {
             Log = Logger;
+            Owner = this;
             AccessTokens = new MemoryAccessTokenStore();
             RefreshCredentials = PlatformRefreshCredentialStore.Create();
+			StartCoroutine(RuntimeMonitor());
             DiscordSymbol = LoadSprite(SymbolResource, "BD2 Discord Symbol");
             DiscordWordmark = LoadSprite(WordmarkResource, "BD2 Discord Wordmark");
 
@@ -70,6 +82,7 @@ public sealed class Plugin : BaseUnityPlugin
                 new[] { typeof(bool) },
                 null);
             SetIntroState = FindSetIntroState(introUI);
+            EnterGame = introUI.GetMethod("Enter", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             OpenPCLoginPopup = FindOpenPCLoginPopup();
             MethodInfo accessTokenGetter = FindAccessTokenGetter();
             MethodInfo clearPCLocalData = FindClearPCLocalData();
@@ -90,7 +103,7 @@ public sealed class Plugin : BaseUnityPlugin
                 BindingFlags.Instance | BindingFlags.NonPublic);
             if (SendMaintenance == null || SetIntroState == null || OpenPCLoginPopup == null ||
                 accessTokenGetter == null || clearPCLocalData == null || disposeWebRequest == null ||
-                clientNetworkError == null || exponentialBackOff == null)
+                clientNetworkError == null || exponentialBackOff == null || EnterGame == null)
             {
                 throw new MissingMethodException("IntroUI authentication transition methods were not found (client version mismatch)");
             }
@@ -114,7 +127,10 @@ public sealed class Plugin : BaseUnityPlugin
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressNetworkErrorDuringRecovery)));
             harmony.Patch(
                 exponentialBackOff,
-                prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressNetworkErrorDuringRecovery)));
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(ExponentialBackoffPrefix)));
+            harmony.Patch(
+                SetIntroState,
+                postfix: new HarmonyMethod(typeof(Plugin), nameof(SetIntroStatePostfix)));
             Logger.LogInfo("Server-authoritative Discord and Google login UI patch installed");
         }
         catch (Exception ex)
@@ -148,15 +164,28 @@ public sealed class Plugin : BaseUnityPlugin
             if (requestUri.AbsolutePath.Equals("/game/LoginUser", StringComparison.Ordinal) &&
                 request.responseCode >= 200 && request.responseCode < 300)
             {
-                Interlocked.Exchange(ref SessionRecoveryInProgress, 0);
+                EstablishedGameSession = true;
+                SetRecoveryMessage("正在同步玩家数据……\nSynchronizing player data…");
                 return;
             }
-            if (request.responseCode != 401 ||
-                !string.Equals(request.GetResponseHeader("X-BD2-Session-Expired"), "1", StringComparison.Ordinal))
+            bool accessExpired = requestUri.AbsolutePath.Equals("/game/LoginUser", StringComparison.Ordinal) &&
+                request.responseCode == 401 &&
+                string.Equals(request.GetResponseHeader("X-BD2-Access-Expired"), "1", StringComparison.Ordinal);
+            if (accessExpired)
+            {
+                AccessTokens.Clear();
+                BeginSessionRecovery("expired game access credential");
+                return;
+            }
+            bool sessionExpired = request.responseCode == 401 &&
+                string.Equals(request.GetResponseHeader("X-BD2-Session-Expired"), "1", StringComparison.Ordinal);
+            bool serverRestarting = request.responseCode == 503 &&
+                string.Equals(request.GetResponseHeader("X-BD2-Reconnect"), "1", StringComparison.Ordinal);
+            if (!sessionExpired && !serverRestarting)
             {
                 return;
             }
-            RecoverExpiredGameSession();
+            BeginSessionRecovery(serverRestarting ? "server restart" : "expired game session");
         }
         catch (Exception ex)
         {
@@ -178,35 +207,24 @@ public sealed class Plugin : BaseUnityPlugin
         return true;
     }
 
-    private static void RecoverExpiredGameSession()
+    private static void BeginSessionRecovery(string reason)
     {
-        if (Interlocked.CompareExchange(ref SessionRecoveryInProgress, 1, 0) != 0)
-        {
-            return;
-        }
         try
         {
-            object network = FindUnitySingleton("BDNetwork.NetworkManager");
-            object app = FindUnitySingleton("AppManager");
-            MethodInfo refresh = network?.GetType().GetMethod(
-                "Refresh",
-                BindingFlags.Instance | BindingFlags.Public,
-                null,
-                Type.EmptyTypes,
-                null);
-            MethodInfo restart = app?.GetType().GetMethod(
-                "AppReStart",
-                BindingFlags.Instance | BindingFlags.Public,
-                null,
-                Type.EmptyTypes,
-                null);
-            if (refresh == null || restart == null)
+            if (Owner == null || ServerRoot == null)
             {
-                throw new MissingMethodException("client game-session recovery methods were not found");
+                throw new InvalidOperationException("client recovery coordinator is unavailable");
             }
-            Log?.LogWarning("Game session expired; returning to login and creating a new session");
-            refresh.Invoke(network, null);
-            restart.Invoke(app, null);
+            if (Interlocked.CompareExchange(ref SessionRecoveryInProgress, 1, 0) == 0)
+            {
+                Log?.LogWarning("Starting automatic game-session recovery: " + reason);
+                ShowRecoveryOverlay("正在重新连接服务器……\nReconnecting to server…");
+            }
+            else
+            {
+                Log?.LogWarning("Restarting automatic game-session recovery: " + reason);
+            }
+            ScheduleRecoveryRestart();
         }
         catch
         {
@@ -215,9 +233,334 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
+    private static bool ExponentialBackoffPrefix(object __0)
+    {
+        if (ServerRoot == null || !IsConfiguredServerFailure(__0))
+        {
+            return true;
+        }
+        if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+        {
+            BeginSessionRecovery("transport failure during recovery");
+            return false;
+        }
+        if (!EstablishedGameSession)
+        {
+            return true;
+        }
+        BeginSessionRecovery("transport failure");
+        return false;
+    }
+
+    private static bool IsConfiguredServerFailure(object packetException)
+    {
+        if (packetException == null || ServerRoot == null)
+        {
+            return false;
+        }
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type exceptionType = packetException.GetType();
+        string url = exceptionType.GetProperty("Url", flags)?.GetValue(packetException, null) as string;
+        object packet = null;
+        foreach (PropertyInfo property in exceptionType.GetProperties(flags))
+        {
+            if (property.PropertyType.Name == "PacketData" && property.GetIndexParameters().Length == 0)
+            {
+                packet = property.GetValue(packetException, null);
+                break;
+            }
+        }
+        string requestServer = packet?.GetType().GetField("RequestServerURL", flags)?.GetValue(packet) as string;
+        foreach (string candidate in new[] { requestServer, url })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out Uri parsed))
+            {
+                parsed = new Uri(ServerRoot, candidate.TrimStart('/'));
+            }
+            if (SameOrigin(ServerRoot, parsed))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void ScheduleRecoveryRestart()
+    {
+        Interlocked.Increment(ref RecoveryGeneration);
+        AuthenticationLoadingOrigin = null;
+        LoginInProgress = false;
+        ContinueMaintenance = false;
+        EstablishedGameSession = false;
+        RuntimeProbeFailures = 0;
+        ServerInstanceID = null;
+        Interlocked.Exchange(ref RecoveryEnterScheduled, 0);
+        if (Interlocked.CompareExchange(ref RecoveryRestartScheduled, 1, 0) == 0)
+        {
+            Owner.StartCoroutine(StartLatestRecoveryGeneration());
+        }
+    }
+
+    private static IEnumerator StartLatestRecoveryGeneration()
+    {
+        int generation;
+        do
+        {
+            generation = Volatile.Read(ref RecoveryGeneration);
+            yield return new WaitForSecondsRealtime(0.25f);
+        }
+        while (generation != Volatile.Read(ref RecoveryGeneration));
+        Interlocked.Exchange(ref RecoveryRestartScheduled, 0);
+        if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+        {
+            Owner.StartCoroutine(WaitForServerAndRestart(generation));
+        }
+    }
+
+    private static IEnumerator WaitForServerAndRestart(int generation)
+    {
+        float delay = 0.5f;
+        while (Volatile.Read(ref SessionRecoveryInProgress) != 0 && generation == Volatile.Read(ref RecoveryGeneration))
+        {
+            SetRecoveryMessage("等待服务器启动……\nWaiting for server…");
+            using (UnityWebRequest request = UnityWebRequest.Get(new Uri(ServerRoot, "readyz")))
+            {
+                request.timeout = 6;
+                yield return request.SendWebRequest();
+                if (request.result == UnityWebRequest.Result.Success && request.responseCode == 200)
+                {
+                    break;
+                }
+            }
+            yield return new WaitForSecondsRealtime(delay);
+            delay = Math.Min(delay * 2f, 5f);
+        }
+        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || generation != Volatile.Read(ref RecoveryGeneration))
+        {
+            yield break;
+        }
+        SetRecoveryMessage("正在恢复登录会话……\nRestoring session…");
+        if (!RestartClientForRecovery())
+        {
+            FinishRecovery(false, "client restart methods are unavailable", generation);
+        }
+    }
+
+    private static bool RestartClientForRecovery()
+    {
+        object network = FindUnitySingleton("BDNetwork.NetworkManager");
+        object app = FindUnitySingleton("AppManager");
+        MethodInfo refresh = network?.GetType().GetMethod("Refresh", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+        MethodInfo restart = app?.GetType().GetMethod("AppReStart", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+        if (refresh == null || restart == null)
+        {
+            return false;
+        }
+        AuthenticationLoadingOrigin = null;
+        LoginInProgress = false;
+        ContinueMaintenance = false;
+        Interlocked.Exchange(ref RecoveryEnterScheduled, 0);
+        ServerInstanceID = null;
+        refresh.Invoke(network, null);
+        restart.Invoke(app, null);
+        return true;
+    }
+
+    private static IEnumerator RuntimeMonitor()
+    {
+        WaitForSecondsRealtime interval = new WaitForSecondsRealtime(5f);
+        while (true)
+        {
+            if (ServerRoot == null || !EstablishedGameSession || Volatile.Read(ref SessionRecoveryInProgress) != 0)
+            {
+                yield return interval;
+                continue;
+            }
+            using (UnityWebRequest request = UnityWebRequest.Get(new Uri(ServerRoot, "client/runtime")))
+            {
+                request.timeout = 6;
+                yield return request.SendWebRequest();
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    RuntimeProbeFailures++;
+                    if (RuntimeProbeFailures >= 3)
+                    {
+                        BeginSessionRecovery("runtime probe failed three consecutive times");
+                    }
+                }
+                else
+                {
+                    RuntimeProbeFailures = 0;
+                    RuntimeStatus status = null;
+                    try
+                    {
+                        status = JsonUtility.FromJson<RuntimeStatus>(request.downloadHandler.text);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log?.LogWarning("Server runtime response was invalid: " + ex.Message);
+                    }
+                    if (status != null && !string.IsNullOrEmpty(status.instance_id))
+                    {
+                        if (ServerInstanceID == null)
+                        {
+                            ServerInstanceID = status.instance_id;
+                        }
+                        else if (ServerInstanceID != status.instance_id || status.status == "draining")
+                        {
+                            ServerInstanceID = status.instance_id;
+                            BeginSessionRecovery(status.status == "draining" ? "server draining" : "server instance changed");
+                        }
+                    }
+                }
+            }
+            yield return interval;
+        }
+    }
+
     private static bool SuppressNetworkErrorDuringRecovery()
     {
         return Volatile.Read(ref SessionRecoveryInProgress) == 0;
+    }
+
+    private static void SetIntroStatePostfix(object __instance, object __0)
+    {
+        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || __0 == null || Convert.ToInt32(__0) != 9 || Owner == null)
+        {
+            return;
+        }
+        if (Interlocked.CompareExchange(ref RecoveryEnterScheduled, 1, 0) != 0)
+        {
+            return;
+        }
+        Owner.StartCoroutine(EnterAfterAuthoritativeLoad(__instance, Volatile.Read(ref RecoveryGeneration)));
+    }
+
+    private static IEnumerator EnterAfterAuthoritativeLoad(object introUI, int generation)
+    {
+        SetRecoveryMessage("正在返回安全场景……\nReturning to a safe scene…");
+        yield return null;
+        if (generation != Volatile.Read(ref RecoveryGeneration))
+        {
+            yield break;
+        }
+        try
+        {
+            EnterGame.Invoke(introUI, null);
+        }
+        catch (Exception ex)
+        {
+            BeginSessionRecovery("could not enter safe scene: " + ex.Message);
+            yield break;
+        }
+        float deadline = Time.realtimeSinceStartup + 30f;
+        bool fieldLoaded = false;
+        while (Time.realtimeSinceStartup < deadline && generation == Volatile.Read(ref RecoveryGeneration))
+        {
+            object field = FindUnitySingleton("GameFieldManager");
+            PropertyInfo loaded = field?.GetType().GetProperty("IsLoadedField", BindingFlags.Instance | BindingFlags.Public);
+            if (loaded != null && loaded.GetValue(field) is bool ready && ready)
+            {
+                fieldLoaded = true;
+                break;
+            }
+            if (IsPackCollectionActive())
+            {
+                fieldLoaded = true;
+                break;
+            }
+            yield return new WaitForSecondsRealtime(0.25f);
+        }
+        if (!fieldLoaded)
+        {
+            if (generation == Volatile.Read(ref RecoveryGeneration))
+            {
+                BeginSessionRecovery("safe scene load timed out");
+            }
+            yield break;
+        }
+        FinishRecovery(true, null, generation);
+    }
+
+    private static bool IsPackCollectionActive()
+    {
+        Type uiManager = FindType("UIManager");
+        MethodInfo getUI = uiManager?.GetMethod(
+            "GetUI",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            new[] { typeof(string) },
+            null);
+        Component collection = getUI?.Invoke(null, new object[] { "PackCollectionUI" }) as Component;
+        return collection != null && collection.gameObject != null && collection.gameObject.activeInHierarchy;
+    }
+
+    private static void ShowRecoveryOverlay(string message)
+    {
+        if (RecoveryOverlay == null)
+        {
+            RecoveryOverlay = new GameObject(
+                "BD2 Recovery Overlay",
+                typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster), typeof(Image));
+            UnityEngine.Object.DontDestroyOnLoad(RecoveryOverlay);
+            Canvas canvas = RecoveryOverlay.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = short.MaxValue;
+            Image background = RecoveryOverlay.GetComponent<Image>();
+            background.color = new Color(0.025f, 0.035f, 0.055f, 0.94f);
+            RectTransform root = RecoveryOverlay.GetComponent<RectTransform>();
+            root.anchorMin = Vector2.zero;
+            root.anchorMax = Vector2.one;
+            root.offsetMin = root.offsetMax = Vector2.zero;
+            GameObject label = new GameObject("Status", typeof(RectTransform), typeof(Text));
+            label.transform.SetParent(RecoveryOverlay.transform, false);
+            RecoveryText = label.GetComponent<Text>();
+            RecoveryText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            RecoveryText.fontSize = 28;
+            RecoveryText.alignment = TextAnchor.MiddleCenter;
+            RecoveryText.color = Color.white;
+            RectTransform rect = label.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0.15f, 0.35f);
+            rect.anchorMax = new Vector2(0.85f, 0.65f);
+            rect.offsetMin = rect.offsetMax = Vector2.zero;
+        }
+        RecoveryOverlay.SetActive(true);
+        SetRecoveryMessage(message);
+    }
+
+    private static void SetRecoveryMessage(string message)
+    {
+        if (RecoveryText != null)
+        {
+            RecoveryText.text = message;
+        }
+    }
+
+    private static void FinishRecovery(bool success, string error, int expectedGeneration = 0)
+    {
+        if (expectedGeneration != 0 && expectedGeneration != Volatile.Read(ref RecoveryGeneration))
+        {
+            return;
+        }
+        if (!success)
+        {
+            Log?.LogError("Automatic session recovery failed: " + error);
+        }
+        if (RecoveryOverlay != null)
+        {
+            UnityEngine.Object.Destroy(RecoveryOverlay);
+            RecoveryOverlay = null;
+            RecoveryText = null;
+        }
+        Interlocked.Increment(ref RecoveryGeneration);
+        Interlocked.Exchange(ref SessionRecoveryInProgress, 0);
+        Interlocked.Exchange(ref RecoveryRestartScheduled, 0);
+        Interlocked.Exchange(ref RecoveryEnterScheduled, 0);
+        Log?.LogInfo(success ? "Automatic session recovery completed" : "Automatic session recovery stopped");
     }
 
     private static bool AccessTokenPrefix(ref string __result)
@@ -234,6 +577,9 @@ public sealed class Plugin : BaseUnityPlugin
     private static void ClearPCLocalDataPostfix()
     {
         AccessTokens.Clear();
+        EstablishedGameSession = false;
+        RuntimeProbeFailures = 0;
+        ServerInstanceID = null;
         PlayerPrefs.DeleteKey("AccessToken");
         DeleteCurrentRefresh();
         PlayerPrefs.Save();
@@ -258,10 +604,19 @@ public sealed class Plugin : BaseUnityPlugin
                 AccessTokens.Clear();
                 Authentication = null;
                 LoginInProgress = false;
+                EstablishedGameSession = false;
+                RuntimeProbeFailures = 0;
+                ServerInstanceID = null;
                 ServerRoot = currentRoot;
                 PlayerPrefs.DeleteKey("AccessToken");
                 PlayerPrefs.Save();
             }
+			if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && Authentication != null &&
+				Authentication.mode == "oauth" && AccessTokens.IsUsable(NormalizedServerOrigin()))
+			{
+				ContinueWithMaintenance(__instance, true);
+				return false;
+			}
             if (Authentication != null)
             {
                 ApplyAuthenticationPolicy(__instance);
@@ -301,6 +656,10 @@ public sealed class Plugin : BaseUnityPlugin
             if (request.result != UnityWebRequest.Result.Success)
             {
                 Log?.LogError("Authentication policy request failed: " + request.error);
+                if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+                {
+                    BeginSessionRecovery("authentication policy request failed");
+                }
                 yield break;
             }
             try
@@ -314,6 +673,10 @@ public sealed class Plugin : BaseUnityPlugin
             catch (Exception ex)
             {
                 Log?.LogError("Server returned an invalid authentication policy: " + ex.Message);
+                if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+                {
+                    BeginSessionRecovery("authentication policy response was invalid");
+                }
             }
         }
     }
@@ -352,6 +715,23 @@ public sealed class Plugin : BaseUnityPlugin
         {
             return;
         }
+        if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+        {
+            if (AccessTokens.IsUsable(NormalizedServerOrigin()))
+            {
+                ContinueWithMaintenance(introUI, true);
+                return;
+            }
+            if (RefreshCredentials.IsSupported)
+            {
+                LoginInProgress = true;
+                StartIntroCoroutine(introUI, RefreshSession(introUI));
+                return;
+            }
+            FinishRecovery(false, "no usable credential is available");
+            ShowLoginPanel(introUI);
+            return;
+        }
         if (PlayerPrefs.GetInt("IsAutoLogin", 0) != 0 &&
             PlayerPrefs.GetInt("StandaloneAutoLogin", 0) != 0 &&
             CanAttemptAutomaticLogin())
@@ -369,6 +749,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         AccessTokens.Clear();
         LoginInProgress = false;
+        EstablishedGameSession = false;
         ConfigureLoginPanel(introUI);
         Type stateType = SetIntroState.GetParameters()[0].ParameterType;
         SetIntroState.Invoke(introUI, new[] { Enum.ToObject(stateType, 1) });
@@ -658,7 +1039,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         if (!RefreshCredentials.IsSupported)
         {
-            AccessTokens.Set(result.access_token);
+            AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
             result.access_token = null;
             result.refresh_token = null;
             PlayerPrefs.SetInt("IsAutoLogin", 0);
@@ -683,7 +1064,7 @@ public sealed class Plugin : BaseUnityPlugin
                     DeleteCurrentRefresh();
                     result.refresh_token = null;
                 }
-                AccessTokens.Set(result.access_token);
+                AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
                 result.access_token = null;
                 PlayerPrefs.SetInt("IsAutoLogin", autoLogin ? 1 : 0);
                 PlayerPrefs.DeleteKey("AccessToken");
@@ -695,7 +1076,8 @@ public sealed class Plugin : BaseUnityPlugin
                 result.access_token = null;
                 result.refresh_token = null;
                 Log?.LogError("Could not finish interactive login: " + ex.Message);
-                ClearSavedLogin();
+                AccessTokens.Clear();
+                LoginInProgress = false;
                 ShowLoginPanel(introUI);
             }
         };
@@ -714,80 +1096,160 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static IEnumerator RefreshSession(object introUI)
     {
-        RefreshCredential saved;
-        try
+        int generation = Volatile.Read(ref RecoveryGeneration);
+        RefreshCredential saved = null;
+        while (saved == null)
         {
-            saved = LoadRefresh();
+            if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && generation != Volatile.Read(ref RecoveryGeneration))
+            {
+                yield break;
+            }
+            InvalidDataException invalid = null;
+            Exception transient = null;
+            try
+            {
+                saved = PrepareRefreshAttempt();
+            }
+            catch (InvalidDataException ex)
+            {
+                invalid = ex;
+            }
+            catch (FileNotFoundException ex)
+            {
+                invalid = new InvalidDataException("saved automatic-login credential was not found", ex);
+            }
+            catch (Exception ex)
+            {
+                transient = ex;
+            }
+            if (invalid != null)
+            {
+                Log?.LogError("Saved automatic login is invalid: " + invalid.Message);
+                ClearSavedLogin();
+                if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+                {
+                    FinishRecovery(false, "saved automatic-login credential is invalid", generation);
+                }
+                ShowLoginPanel(introUI);
+                yield break;
+            }
+            if (transient != null)
+            {
+                Log?.LogWarning("Secure automatic-login storage is temporarily unavailable: " + transient.Message);
+                if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
+                {
+                    LoginInProgress = false;
+                    ShowLoginPanel(introUI);
+                    yield break;
+                }
+                yield return new WaitForSecondsRealtime(2f);
+            }
         }
-        catch (Exception ex)
-        {
-            Log?.LogError("Saved automatic login could not be decrypted: " + ex.Message);
-            ClearSavedLogin();
-            ShowLoginPanel(introUI);
-            yield break;
-        }
-        byte[] body = BuildRefreshRequest(saved.refresh_token);
+        string refreshToken = saved.pending_refresh_token;
+        string attemptID = saved.pending_attempt_id;
         saved.refresh_token = null;
-        using (UnityWebRequest request = JsonPost(new Uri(ServerRoot, "auth/session/refresh").AbsoluteUri, body))
+        saved.pending_refresh_token = null;
+        saved.pending_attempt_id = null;
+        float retryDelay = 1f;
+        while (true)
         {
-            yield return request.SendWebRequest();
-            Array.Clear(body, 0, body.Length);
-            if (request.responseCode == 401 || request.responseCode == 403)
+            byte[] body = BuildRefreshRequest(refreshToken, attemptID);
+            using (UnityWebRequest request = JsonPost(new Uri(ServerRoot, "auth/session/refresh").AbsoluteUri, body))
             {
-                ClearSavedLogin();
-                ShowLoginPanel(introUI);
-                yield break;
+                yield return request.SendWebRequest();
+                Array.Clear(body, 0, body.Length);
+                if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && generation != Volatile.Read(ref RecoveryGeneration))
+                {
+                    yield break;
+                }
+                bool credentialRejected = (request.responseCode == 401 || request.responseCode == 409) &&
+                    string.Equals(request.GetResponseHeader("X-BD2-Refresh-Invalid"), "1", StringComparison.Ordinal);
+                if (credentialRejected)
+                {
+                    refreshToken = null;
+                    attemptID = null;
+                    ClearSavedLogin();
+                    if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+                    {
+                        FinishRecovery(false, "saved automatic-login credential was rejected", generation);
+                    }
+                    ShowLoginPanel(introUI);
+                    yield break;
+                }
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    Log?.LogWarning("Automatic login temporarily unavailable; the same refresh attempt will be retried: " + request.error);
+                    if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
+                    {
+                        LoginInProgress = false;
+                        ShowLoginPanel(introUI);
+                        yield break;
+                    }
+                }
+                else
+                {
+                    TokenResult result = null;
+                    try
+                    {
+                        result = JsonUtility.FromJson<TokenResult>(request.downloadHandler.text);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log?.LogWarning("Automatic login returned an unreadable response; the same refresh attempt will be retried: " + ex.Message);
+                    }
+                    if (ValidRefreshResult(result) && ProviderEnabled(result.provider))
+                    {
+                        try
+                        {
+                            StoreRefresh(result);
+                            if (result.access_expires_in <= 30)
+                            {
+                                result.access_token = null;
+                                saved = PrepareRefreshAttempt();
+                                refreshToken = saved.pending_refresh_token;
+                                attemptID = saved.pending_attempt_id;
+                                saved.refresh_token = null;
+                                saved.pending_refresh_token = null;
+                                saved.pending_attempt_id = null;
+                                retryDelay = 1f;
+                                continue;
+                            }
+                            AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
+                            result.access_token = null;
+                            PlayerPrefs.DeleteKey("AccessToken");
+                            PlayerPrefs.Save();
+                            refreshToken = null;
+                            attemptID = null;
+                        }
+                        catch (Exception ex)
+                        {
+                            result.access_token = null;
+                            result.refresh_token = null;
+                            Log?.LogWarning("Could not persist the rotated automatic-login credential; the committed attempt will be retrieved again: " + ex.Message);
+                            if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
+                            {
+                                LoginInProgress = false;
+                                ShowLoginPanel(introUI);
+                                yield break;
+                            }
+                        }
+                        if (AccessTokens.IsUsable(NormalizedServerOrigin()))
+                        {
+                            ContinueWithMaintenance(introUI, true);
+                            yield break;
+                        }
+                    }
+                    Log?.LogWarning("Automatic login returned incomplete credentials; the same refresh attempt will be retried");
+                    if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
+                    {
+                        LoginInProgress = false;
+                        ShowLoginPanel(introUI);
+                        yield break;
+                    }
+                }
             }
-            if (request.result != UnityWebRequest.Result.Success)
-            {
-                // Refresh tokens are single-use. A transport failure can occur
-                // after the server committed rotation, so retrying the saved
-                // token could be interpreted as replay and revoke its family.
-                Log?.LogError("Automatic login temporarily unavailable: " + request.error);
-                ClearSavedLogin();
-                ShowLoginPanel(introUI);
-                yield break;
-            }
-            TokenResult result;
-            try
-            {
-                result = JsonUtility.FromJson<TokenResult>(request.downloadHandler.text);
-            }
-            catch (Exception ex)
-            {
-                Log?.LogError("Automatic login returned invalid credentials: " + ex.Message);
-                ClearSavedLogin();
-                ShowLoginPanel(introUI);
-                yield break;
-            }
-            if (!ValidTokenResult(result) || !ProviderEnabled(result.provider))
-            {
-                Log?.LogError("Automatic login returned incomplete credentials");
-                ClearSavedLogin();
-                ShowLoginPanel(introUI);
-                yield break;
-            }
-            // Persist the rotated refresh credential before exposing the new
-            // access credential. The old plaintext exists only in managed
-            // memory until the request body is cleared above.
-            try
-            {
-                StoreRefresh(result);
-                AccessTokens.Set(result.access_token);
-                result.access_token = null;
-                PlayerPrefs.DeleteKey("AccessToken");
-                PlayerPrefs.Save();
-            }
-            catch (Exception ex)
-            {
-                result.access_token = null;
-                result.refresh_token = null;
-                Log?.LogError("Could not persist the rotated automatic-login credential: " + ex.Message);
-                ClearSavedLogin();
-                ShowLoginPanel(introUI);
-                yield break;
-            }
-            ContinueWithMaintenance(introUI, true);
+            yield return new WaitForSecondsRealtime(retryDelay);
+            retryDelay = Math.Min(retryDelay * 2f, 5f);
         }
     }
 
@@ -838,8 +1300,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
         catch (Exception ex)
         {
-            Log?.LogError("Could not inspect the secure automatic-login credential: " + ex.Message);
-            ClearSavedLogin();
+            Log?.LogWarning("Could not inspect the secure automatic-login credential: " + ex.Message);
             return false;
         }
     }
@@ -849,7 +1310,7 @@ public sealed class Plugin : BaseUnityPlugin
         string origin = NormalizedServerOrigin();
         RefreshCredential credential = new RefreshCredential
         {
-            version = 1,
+            version = 2,
             origin = origin,
             provider = result.provider,
             refresh_token = result.refresh_token,
@@ -864,7 +1325,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         string origin = NormalizedServerOrigin();
         RefreshCredential credential = RefreshCredentials.Load(origin);
-        if (credential == null || credential.version != 1 || credential.origin != origin ||
+        if (credential == null || credential.version < 1 || credential.version > 2 || credential.origin != origin ||
             !ProviderEnabled(credential.provider) || string.IsNullOrEmpty(credential.refresh_token) ||
             credential.expires_at <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
         {
@@ -877,13 +1338,29 @@ public sealed class Plugin : BaseUnityPlugin
         return credential;
     }
 
-    private static byte[] BuildRefreshRequest(string token)
+    private static RefreshCredential PrepareRefreshAttempt()
     {
-        if (string.IsNullOrEmpty(token))
+        string origin = NormalizedServerOrigin();
+        RefreshCredential credential = LoadRefresh();
+        bool missingAttempt = string.IsNullOrEmpty(credential.pending_attempt_id) ||
+                              string.IsNullOrEmpty(credential.pending_refresh_token);
+        if (missingAttempt)
         {
-            throw new InvalidDataException("refresh token is empty");
+            credential.version = 2;
+            credential.pending_attempt_id = System.Guid.NewGuid().ToString("N");
+            credential.pending_refresh_token = credential.refresh_token;
+            RefreshCredentials.Save(origin, credential);
         }
-        foreach (char item in token)
+        return credential;
+    }
+
+    private static byte[] BuildRefreshRequest(string token, string attemptID)
+    {
+        if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(attemptID))
+        {
+            throw new InvalidDataException("refresh token or attempt ID is empty");
+        }
+        foreach (char item in token + attemptID)
         {
             bool safe = item >= 'a' && item <= 'z' || item >= 'A' && item <= 'Z' ||
                         item >= '0' && item <= '9' || item == '-' || item == '_';
@@ -892,7 +1369,7 @@ public sealed class Plugin : BaseUnityPlugin
                 throw new InvalidDataException("refresh token contains an unexpected character");
             }
         }
-        return Encoding.UTF8.GetBytes("{\"refresh_token\":\"" + token + "\"}");
+        return Encoding.UTF8.GetBytes("{\"refresh_token\":\"" + token + "\",\"attempt_id\":\"" + attemptID + "\"}");
     }
 
     private static void ClearSavedLogin()
@@ -925,6 +1402,13 @@ public sealed class Plugin : BaseUnityPlugin
     {
         return result != null && !string.IsNullOrEmpty(result.provider) &&
                !string.IsNullOrEmpty(result.access_token) && result.access_expires_in > 0 &&
+               !string.IsNullOrEmpty(result.refresh_token) && result.refresh_expires_in > 0;
+    }
+
+    private static bool ValidRefreshResult(TokenResult result)
+    {
+        return result != null && !string.IsNullOrEmpty(result.provider) &&
+               !string.IsNullOrEmpty(result.access_token) && result.access_expires_in >= 0 &&
                !string.IsNullOrEmpty(result.refresh_token) && result.refresh_expires_in > 0;
     }
 
@@ -1254,5 +1738,13 @@ public sealed class Plugin : BaseUnityPlugin
     {
         public string mode = null;
         public string[] providers = null;
+    }
+
+    [Serializable]
+    private sealed class RuntimeStatus
+    {
+        public string status = null;
+        public string instance_id = null;
+        public int retry_after_ms = 0;
     }
 }

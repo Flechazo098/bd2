@@ -58,6 +58,35 @@ func TestScheduleSeedStrictValidation(t *testing.T) {
 	}
 }
 
+func TestActivePickupCostumesUsesHalfOpenScheduleWindows(t *testing.T) {
+	character := gamedata.CharacterDesign{ID: 1, HP: 1, CostumeMaxLevel: 5}
+	catalog, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+		11: {ID: 11, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 101, Weight: 1}}},
+		12: {ID: 12, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 102, Weight: 1}}},
+	}, map[uint64]gamedata.CharacterDesign{101: character, 102: character})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range []gamedata.GachaGroupDesign{
+		{ID: 1, GachaType: 1, PointCount: 1, PickUpCostumeID: 101, OneTimeGachaID: 11},
+		{ID: 2, GachaType: 1, PointCount: 1, PickUpCostumeID: 102, OneTimeGachaID: 12},
+	} {
+		if err := catalog.AddGroupDesign(group, gamedata.GachaFixedDesign{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed := &ScheduleSeed{Schedules: []ScheduleWindow{
+		{GroupID: 1, StartTime: 100, EndTime: 200},
+		{GroupID: 2, StartTime: 200, EndTime: 300},
+	}}
+	if got := ActivePickupCostumes(catalog, seed, 100); !got[101] || got[102] || len(got) != 1 {
+		t.Fatalf("at start active=%v", got)
+	}
+	if got := ActivePickupCostumes(catalog, seed, 200); got[101] || !got[102] || len(got) != 1 {
+		t.Fatalf("at end active=%v", got)
+	}
+}
+
 func TestGachaInfoUsesInjectedScheduleAndEmptyAccountHasNoPreview(t *testing.T) {
 	seed, err := LoadScheduleSeed(filepath.Join("..", "..", "..", "seed", "v2_35_10", "gacha_schedule.json"), "2.35.10")
 	if err != nil {

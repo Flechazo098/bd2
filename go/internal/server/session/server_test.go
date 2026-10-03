@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -124,13 +125,14 @@ func TestBatchUsesOneAccountTransaction(t *testing.T) {
 	if _, err := server.DispatchRaw("/BatchRequest", []byte(body), "s="+reply.Cookie); err == nil {
 		t.Fatal("partially failing batch was accepted")
 	}
-	verified, err := accountstate.Open(statePath)
+	verified, err := sql.Open("sqlite", statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer verified.Close()
 	for name, want := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
-		got, err := verified.Load(name)
+		var got []byte
+		err := verified.QueryRow(`SELECT payload FROM domain_state WHERE name=?`, name).Scan(&got)
 		if err != nil || string(got) != want {
 			t.Fatalf("batch rollback %s=%q err=%v", name, got, err)
 		}
@@ -467,16 +469,18 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 			if test.fail && requestErr == nil || !test.fail && requestErr != nil {
 				t.Fatalf("request err=%v", requestErr)
 			}
-			reader := repository
-			if test.fail {
-				reader, err = accountstate.Open(statePath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer reader.Close()
-			}
 			for _, name := range []string{"wallet", "items"} {
-				got, err := reader.Load(name)
+				var got []byte
+				if test.fail {
+					reader, openErr := sql.Open("sqlite", statePath)
+					if openErr != nil {
+						t.Fatal(openErr)
+					}
+					err = reader.QueryRow(`SELECT payload FROM domain_state WHERE name=?`, name).Scan(&got)
+					reader.Close()
+				} else {
+					got, err = repository.Load(name)
+				}
 				if err != nil || string(got) != test.want+name {
 					t.Fatalf("%s=%q err=%v", name, got, err)
 				}

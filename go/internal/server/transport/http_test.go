@@ -12,9 +12,72 @@ import (
 
 	"bd2server/internal/server/authconfig"
 	"bd2server/internal/server/bootstrap"
+	"bd2server/internal/server/lifecycle"
 	"bd2server/internal/server/resourcepolicy"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
+
+func TestDrainingServerRejectsGameRequestsWithReconnectMarker(t *testing.T) {
+	gate := lifecycle.NewGate()
+	handler := HTTP{Availability: gate, InstanceID: "instance-a"}.Handler()
+	ready := httptest.NewRecorder()
+	handler.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusOK {
+		t.Fatalf("initial readiness=%d", ready.Code)
+	}
+	gate.Drain()
+	ready = httptest.NewRecorder()
+	handler.ServeHTTP(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusServiceUnavailable {
+		t.Fatalf("draining readiness=%d", ready.Code)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/game/MailInfo", strings.NewReader("encrypted")))
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("X-BD2-Reconnect") != "1" ||
+		response.Header().Get("X-BD2-Reconnect-Reason") != "rolling-restart" ||
+		response.Header().Get("Retry-After") != "1" || response.Header().Get("Connection") != "close" {
+		t.Fatalf("status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+	health := httptest.NewRecorder()
+	handler.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if health.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readiness alias during drain=%d", health.Code)
+	}
+	live := httptest.NewRecorder()
+	handler.ServeHTTP(live, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if live.Code != http.StatusOK {
+		t.Fatalf("liveness during drain=%d", live.Code)
+	}
+	runtime := httptest.NewRecorder()
+	handler.ServeHTTP(runtime, httptest.NewRequest(http.MethodGet, "/client/runtime", nil))
+	var status struct {
+		Status string `json:"status"`
+		ID     string `json:"instance_id"`
+	}
+	if err := json.Unmarshal(runtime.Body.Bytes(), &status); err != nil || status.Status != "draining" || status.ID != "instance-a" {
+		t.Fatalf("runtime=%+v err=%v", status, err)
+	}
+}
+
+func TestDrainingServerRejectsAuthenticationMutationBeforeHandler(t *testing.T) {
+	gate := lifecycle.NewGate()
+	called := false
+	handler := HTTP{
+		Availability: gate,
+		AuthenticationHandler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}.Handler()
+	gate.Drain()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/auth/session/refresh", strings.NewReader(`{}`)))
+	if called || response.Code != http.StatusServiceUnavailable ||
+		response.Header().Get("X-BD2-Reconnect") != "1" {
+		t.Fatalf("called=%v status=%d headers=%v", called, response.Code, response.Header())
+	}
+}
 
 func TestBootstrapRoundTrip(t *testing.T) {
 	cfg := bootstrap.Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: "test-client", BundleVer: "test-bundle"}
@@ -91,6 +154,17 @@ func TestExpiredGameSessionUsesDedicatedHTTPMarker(t *testing.T) {
 	}
 }
 
+func TestInvalidGameAccessCredentialUsesDedicatedHTTPMarker(t *testing.T) {
+	h := HTTP{Raw: failedRawDispatcher{err: ErrAccessCredentialInvalid}}.Handler()
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/game/LoginUser", strings.NewReader("encrypted")))
+	if response.Code != http.StatusUnauthorized || response.Header().Get("X-BD2-Access-Expired") != "1" ||
+		response.Header().Get("WWW-Authenticate") != `Bearer error="invalid_token"` ||
+		response.Header().Get("X-BD2-Session-Expired") != "" {
+		t.Fatalf("status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+}
+
 func TestDomainFailureDoesNotUseExpiredSessionMarker(t *testing.T) {
 	h := HTTP{Raw: failedRawDispatcher{err: errors.New("mail seed is invalid")}}.Handler()
 	response := httptest.NewRecorder()
@@ -98,6 +172,26 @@ func TestDomainFailureDoesNotUseExpiredSessionMarker(t *testing.T) {
 	if response.Code != http.StatusBadRequest || response.Header().Get("X-BD2-Session-Expired") != "" {
 		t.Fatalf("status=%d marker=%q body=%q", response.Code,
 			response.Header().Get("X-BD2-Session-Expired"), response.Body.String())
+	}
+}
+
+func TestFencedWriterRequestsReconnectInsteadOfDomainFailure(t *testing.T) {
+	h := HTTP{Raw: failedRawDispatcher{err: stateio.ErrWriterFenced}}.Handler()
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/game/MailInfo", strings.NewReader("encrypted")))
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("X-BD2-Reconnect") != "1" ||
+		response.Header().Get("X-BD2-Reconnect-Reason") != "fenced" {
+		t.Fatalf("status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+func TestUncertainStateTransactionRequestsProcessRecovery(t *testing.T) {
+	h := HTTP{Raw: failedRawDispatcher{err: stateio.ErrStateRecoveryRequired}}.Handler()
+	response := httptest.NewRecorder()
+	h.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "/game/MailInfo", strings.NewReader("encrypted")))
+	if response.Code != http.StatusServiceUnavailable || response.Header().Get("X-BD2-Reconnect") != "1" ||
+		response.Header().Get("X-BD2-Reconnect-Reason") != "state-recovery" {
+		t.Fatalf("status=%d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
 	}
 }
 
