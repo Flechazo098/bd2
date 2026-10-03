@@ -26,7 +26,7 @@ python .\tools\python\extract_client_proto.py `
   --output .\tmp\client-proto
 ```
 
-反混淆输出根下的 `.bd2-deobfuscate-manifest.json` 记录有效映射、冲突改名、未处理警告和替换统计。映射含命名空间或路径时，工具取末段并规范为一个合法标识符；发生同名时加入稳定后缀。该镜像用于阅读与检索，并不承诺可编译。
+反混淆输出根下的 `.bd2-deobfuscate-manifest.json` 记录有效映射、冲突改名、未处理警告和替换统计。映射含命名空间或路径时，工具取末段并规范为一个合法标识符；发生同名时加入稳定后缀。反编译器在源码里留下的派生局部名也会回推：`映射名 + 数字后缀` 按最长映射前缀还原，`camelCase(映射名)`（首段大写字母整体小写）按来源唯一的逆变换还原；两者计入 `derived_identifier_replacements`。注释与字面量始终保持原样（其中的名字须回查映射表）。该镜像用于阅读与检索，并不承诺可编译。
 
 Proto 输出根按 descriptor 原始文件名保存可读 `.proto`；`client-descriptors.pb` 是无损 `FileDescriptorSet`，用于保留文本渲染器暂未展开的复杂 options。`.bd2-proto-extract-manifest.json` 记录 package、依赖、源 Reflection、descriptor/.proto SHA-256 和渲染警告。
 
@@ -97,27 +97,26 @@ python .\tools\python\import_seed.py mail .\decoded\MailInfo.pb `
 
 无需 GameData 或第三方 Python 包的 `grant` 子命令可追加一封含多个附件的动态邮件。服务端使用 `--mail-grant-spool` 读取该 JSON，每次 `/MailInfo` 导入未发放的 identity；已发放 identity 在领取和重启后仍保持幂等。CLI 允许付费钻石 `2:0:数量`、免费钻石 `3:0:数量`、金币 `4:0:数量`、天赋神药 `12:0:数量`、金线 `20:0:数量`，以及当前 2.35.10 已核实的抽抽乐券 `8:1000:数量` 和 UR 专用装备抽抽乐券 `8:1104:数量`，每个附件数量均限制为 `1..2147483647`。例如 `python tools/python/dev_mail_grant.py grant --output data/dev/currency-grants.json --identity test-paid-and-tickets-1 --attachment 2:0:100000000 --attachment 8:1000:100000000 --attachment 8:1104:100000000 --attachment 4:0:1000000000`。两种券通过 `ItemDBInfo` 写入背包，钻石和金币直接叠加账户余额；发放前应检查同类券现有库存加附件后的总量仍在客户端 `int32` 范围内。
 
-启动工具时，`--mail-seed` 是只读的当前基础邮件种子；`--output` 是新生成的完整临时种子；`--settings-output` 保存与账号存档分离的开发选项。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
+启动工具时，`--output` 是 `version=1` 的动态邮件 grant spool；网页只追加带稳定 identity 的待发放请求，实际 `mail_id` 由服务端统一分配，因此不会与任务补偿等动态邮件撞号。`--settings-output` 保存与账号存档分离的开发选项。页面会在一次提交完成前禁用按钮，避免浏览器双击生成重复请求。工具启动后在浏览器打开 `http://127.0.0.1:8765/`：
 
 ```powershell
 python .\tools\python\dev_mail_grant.py serve `
   --game-data "E:\bd2\dl\GameData" `
   --game-data-version "20260923193640" `
-  --mail-seed .\go\seed\v2_35_10\mail.json `
-  --output .\data\dev\mail-grants.json `
+  --output .\data\dev\mail-grants-spool.json `
   --settings-output .\data\dev\dev-tools.json
 ```
 
-工具启动时立即原子写出规范化的完整 `--output`（尚未发放也一样），因此首次启用时可先启动工具、再让本地服务端监听这个输出文件。每次发放同样原子更新该文件。`bd2server` 的邮件服务会在下一次正常 `/MailInfo` 请求检查它：网页发放后重新打开或刷新游戏邮箱即可看到新邮件，**不需要每次重启服务器**。服务仅在启动时需要加入（或替换为）以下参数：
+工具首次提交及后续每次发放都会原子更新 `--output`。`bd2server` 的邮件服务会在下一次正常 `/MailInfo` 请求检查它：网页发放后重新打开或刷新游戏邮箱即可看到新邮件，**不需要每次重启服务器**。服务启动时加入：
 
 ```powershell
---mail-seed ".\data\dev\mail-grants.json"
+--mail-grant-spool ".\data\dev\mail-grants-spool.json"
 --dev-tools-config ".\data\dev\dev-tools.json"
 ```
 
 页面下方的“无限背包容量”不会写入账号状态，也不会使用任意巨大容量；它从当前 GameData 读取客户端安全上限（2.35.10 当前为普通道具 500、装备 2000）。切换后无需重启服务端，但客户端必须重新登录以重新取得 `UserDBInfo`。普通背包、普通仓库、装备背包和装备仓库的正式扩充接口仍按 `GameDefaultTable` 的逐格阶梯价格扣除金币并持久化；开发开关不覆盖或删除已购买容量。
 
-客户端 `MailDBInfo.ItemType`、`ItemId` 和 `ItemCount` 均为 `int32`，所以该工具把单附件数量限制为 `1..2147483647`；每封工具邮件固定只有一个附件。当前官方样本中单封最多观察到 5 个附件，但没有证据证明这是协议上限，因此工具不据此宣称或实施“5 件”上限。客户端邮箱 UI 按一次请求加载最多 100 封普通邮件，现有本地服务目前回传全部未开封邮件，故大量历史未领取邮件的实际 UI 表现尚待验证。现有本地 `/MailOpen` 对同一邮件 ID 的领取由 `data/state/mail.json` 的 `opened` 集合持久化，重试不会重复发奖；工具会在完整种子中分配唯一递增邮件 ID。
+客户端 `MailDBInfo.ItemType`、`ItemId` 和 `ItemCount` 均为 `int32`，所以该工具把单附件数量限制为 `1..2147483647`。当前官方样本中单封最多观察到 5 个附件，但没有证据证明这是协议上限，因此工具不据此宣称或实施“5 件”上限。服务端统一分配动态邮件 ID，并持久化 spool identity、领取状态和领取历史；同一邮件重试不会重复发奖。
 
 这不是“所有 GameData 表都可发放”的虚假承诺：角色（元素类型 6）、装备（10）、服装（11）和我的房间奖杯（28）在客户端 `RewardDBInfoBundle` 中分别必须使用 `CharDBInfo`、`EquipDBInfo`、`CostumeDBInfo`、`MyRoomTrophyDBInfo`，而当前本地邮件服务尚未连接相应领域存档，工具不会提供它们；直接伪装成 `ItemDBInfo` 会造成客户端状态错误。付费/普通货币之外的特殊货币亦不在当前本地钱包实现范围内。`ContentTicket`（19）仅为已核实的满月一次性专用券开放 `19:450030:1`：客户端 `CommonPacket.AddItemInfo` 将其交给 `AddContentTicketItem`，服务端按实例存入物品存档并沿用邮件领取去重；其他内容券 ID 和其他数量均拒绝。浏览器道具列表不开放内容券，`grant` 子命令可使用这一严格限定的附件。`LobbySettingItem`（25）仍未提供；`GetItemInfo` 的显示分支不足以证明可安全存储。若要补齐其余类型，需要先实现对应的服务端存储、去重及正确 reward-bundle 字段，不需要客户端 patch。
 

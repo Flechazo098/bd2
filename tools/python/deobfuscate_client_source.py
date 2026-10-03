@@ -193,6 +193,70 @@ def build_replacements(entries: Iterable[dict]) -> tuple[dict[str, str], list[di
     return replacements, report, warnings
 
 
+def camel_case(name: str) -> str:
+    """Lowercase the leading run of uppercase letters.
+
+    The decompiler names locals after their type, lowering the type's leading
+    uppercase run (``<>c__DisplayClass`` becomes ``c__DisplayClass``); the
+    result is a token the mapping never contains verbatim.
+    """
+    index = 0
+    while index < len(name) and name[index].isupper():
+        index += 1
+    return name[:index].lower() + name[index:] if index else name
+
+
+class ReplacementIndex:
+    """Exact mappings plus the decompiler-derived forms they can appear as.
+
+    Only tokens that contain a non-ASCII character are considered: every
+    mapping source is an obfuscated (non-ASCII) identifier, so ordinary code
+    tokens never reach the derived rules and pay nothing for them.
+    """
+
+    EXACT = "exact"
+    SUFFIXED = "suffixed"
+    CAMEL = "camel"
+
+    def __init__(self, replacements: dict[str, str]):
+        self.replacements = replacements
+        self.derived_names: dict[str, list[str]] = {}
+        for source in replacements:
+            key = camel_case(source)
+            if key != source:
+                self.derived_names.setdefault(key, []).append(source)
+
+    def _base_replacement(self, token: str) -> str | None:
+        """A mapped name's replacement, or its unambiguous camel-case form."""
+        replacement = self.replacements.get(token)
+        if replacement is not None:
+            return replacement
+        sources = self.derived_names.get(token)
+        if sources is not None and len(sources) == 1:
+            return camel_case(self.replacements[sources[0]])
+        return None
+
+    def resolve(self, token: str) -> tuple[str | None, str | None]:
+        """Return ``(replacement, kind)`` for one token, or ``(None, None)``."""
+        replacement = self._base_replacement(token)
+        if replacement is not None:
+            kind = self.EXACT if token in self.replacements else self.CAMEL
+            return replacement, kind
+        if token.isascii():
+            return None, None
+        # ``<base><digits>``: the decompiler disambiguated a local by appending
+        # a counter, where the base is a mapped name or its camel-case form.
+        # Take the longest base so mapped names ending in digits are not
+        # truncated.
+        for cut in range(len(token) - 1, 0, -1):
+            head, tail = token[:cut], token[cut:]
+            if tail.isdigit():
+                base = self._base_replacement(head)
+                if base is not None:
+                    return base + tail, self.SUFFIXED
+        return None, None
+
+
 def _consume_quoted(text: str, start: int, quote: str) -> int:
     """Return the index after a C# string/character/raw-string literal."""
     quotes = 0
@@ -216,39 +280,51 @@ def _consume_quoted(text: str, start: int, quote: str) -> int:
     return len(text)
 
 
-def replace_csharp_identifiers(text: str, replacements: dict[str, str]) -> tuple[str, int]:
-    """Replace code identifiers only; comments and literal payloads stay exact."""
+def replace_csharp_identifiers(
+        text: str, replacements: dict[str, str] | ReplacementIndex
+) -> tuple[str, int, int]:
+    """Replace code identifiers only; comments and literal payloads stay exact.
+
+    Returns ``(text, changed, derived)`` where ``derived`` counts the
+    replacements resolved through :class:`ReplacementIndex`'s suffix/camel
+    rules rather than an exact mapping source.
+    """
+    index = replacements if isinstance(replacements, ReplacementIndex) else ReplacementIndex(replacements)
     output: list[str] = []
-    index = changed = 0
+    position = changed = derived = 0
     length = len(text)
-    while index < length:
-        if text.startswith("//", index):
-            end = text.find("\n", index)
+    while position < length:
+        if text.startswith("//", position):
+            end = text.find("\n", position)
             end = length if end < 0 else end
-            output.append(text[index:end])
-            index = end
-        elif text.startswith("/*", index):
-            end = text.find("*/", index + 2)
+            output.append(text[position:end])
+            position = end
+        elif text.startswith("/*", position):
+            end = text.find("*/", position + 2)
             end = length if end < 0 else end + 2
-            output.append(text[index:end])
-            index = end
-        elif text[index] in "\"'":
-            end = _consume_quoted(text, index, text[index])
-            output.append(text[index:end])
-            index = end
-        elif is_identifier_start(text[index]):
-            end = index + 1
+            output.append(text[position:end])
+            position = end
+        elif text[position] in "\"'":
+            end = _consume_quoted(text, position, text[position])
+            output.append(text[position:end])
+            position = end
+        elif is_identifier_start(text[position]):
+            end = position + 1
             while end < length and is_identifier_continue(text[end]):
                 end += 1
-            token = text[index:end]
-            replacement = replacements.get(token, token)
+            token = text[position:end]
+            replacement, kind = index.resolve(token)
+            if replacement is None:
+                replacement = token
             output.append(replacement)
-            changed += replacement != token
-            index = end
+            if replacement != token:
+                changed += 1
+                derived += kind != ReplacementIndex.EXACT
+            position = end
         else:
-            output.append(text[index])
-            index += 1
-    return "".join(output), changed
+            output.append(text[position])
+            position += 1
+    return "".join(output), changed, derived
 
 
 def read_csharp(path: Path) -> tuple[str, str] | None:
@@ -297,6 +373,13 @@ def deobfuscate(source: Path, mapping: Path, output: Path) -> dict:
     entries, warnings = parse_mapping(mapping)
     replacements, mapping_report, replacement_warnings = build_replacements(entries)
     warnings.extend(replacement_warnings)
+    index = ReplacementIndex(replacements)
+    for key, sources in index.derived_names.items():
+        if len(sources) > 1:
+            warnings.append(
+                f"derived name {key!r}: ignored ambiguous camel-case sources "
+                f"({len(sources)} candidates)"
+            )
     stage = prepare_stage(output)
     files: list[dict] = []
     occupied: set[Path] = set()
@@ -316,9 +399,13 @@ def deobfuscate(source: Path, mapping: Path, output: Path) -> dict:
                     warnings.append(f"{relative}: copied without replacement (unsupported encoding)")
                 else:
                     text, encoding = decoded
-                    translated, changed = replace_csharp_identifiers(text, replacements)
+                    translated, changed, derived = replace_csharp_identifiers(text, index)
                     write_csharp(destination_path, translated, encoding)
-                    record.update({"action": "translated", "identifier_replacements": changed})
+                    record.update({
+                        "action": "translated",
+                        "identifier_replacements": changed,
+                        "derived_identifier_replacements": derived,
+                    })
             else:
                 shutil.copy2(input_path, destination_path)
                 record["action"] = "copied"
@@ -335,10 +422,15 @@ def deobfuscate(source: Path, mapping: Path, output: Path) -> dict:
                 "files": len(files),
                 "csharp_files": sum(item["source"].casefold().endswith(".cs") for item in files),
                 "identifier_replacements": sum(item.get("identifier_replacements", 0) for item in files),
+                "derived_identifier_replacements": sum(
+                    item.get("derived_identifier_replacements", 0) for item in files
+                ),
             },
             "limitations": [
                 "Only C# identifier tokens are changed; comments and literal contents are preserved.",
                 "Qualified mapping values become their terminal identifier component.",
+                "Decompiler-derived locals (mapped name plus a numeric suffix, or the "
+                "camel-cased mapped name) are resolved back through those two derived rules.",
                 "This is a searchable mirror, not a promise that the transformed source compiles.",
             ],
         }

@@ -8,7 +8,7 @@ by an explicitly configured local bd2server.
 Example:
   python tools/python/dev_mail_grant.py serve `
     --game-data E:\\bd2\\dl\\GameData --game-data-version 20260923193640 `
-    --mail-seed go\\seed\\v2_35_10\\mail.json --output data\\dev\\mail-grants.json
+    --output data\\dev\\mail-grants-spool.json
 
   python tools/python/dev_mail_grant.py grant `
     --output data\\dev\\currency-grants.json --identity test-grant-1 `
@@ -72,6 +72,7 @@ MAIL_CURRENCY_TYPES = frozenset({2, 3, 4, 12, 20})
 # ticket resources, rather than accepting arbitrary GameData item IDs.
 MAIL_DRAW_TICKET_IDS = frozenset({1000, 1104})
 MAIL_CONTENT_TICKET_ID = 450030
+MAIL_ITEM_TYPES = frozenset({5, 7, 8, 9, 13, 14, 17, 27, 29})
 
 
 def _varint(value: Any) -> int:
@@ -385,34 +386,6 @@ def load_items(root: Path, version: str) -> list[dict[str, Any]]:
         temporary.unlink(missing_ok=True)
 
 
-def load_seed(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise ValueError(f"无法读取邮件种子 {path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"邮件种子不是 JSON: {exc}") from exc
-    if value.get("version") != VERSION or not isinstance(value.get("mails"), list):
-        raise ValueError(f"邮件种子必须是 version={VERSION} 且含 mails 数组")
-    ids: set[int] = set()
-    for entry in value["mails"]:
-        mail_id = entry.get("mail_id")
-        if not isinstance(mail_id, int) or mail_id <= 0 or mail_id in ids:
-            raise ValueError("邮件种子含零、非整数或重复的 mail_id")
-        ids.add(mail_id)
-    return value
-
-
-def normalise_seed(seed: dict[str, Any]) -> dict[str, Any]:
-    """Make the server sentinel fields agree with the complete mail list."""
-    result = dict(seed)
-    result["version"] = VERSION
-    result["mails"] = list(seed["mails"])
-    result["mail_count"] = len(result["mails"]) + 1
-    result["max_mail_id"] = max((entry["mail_id"] for entry in result["mails"]), default=0)
-    return result
-
-
 def atomic_json(path: Path, value: dict[str, Any]) -> None:
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -490,8 +463,8 @@ def _validate_reward(value: Any) -> dict[str, int]:
     elif value["type"] == 19:
         if value["id"] != MAIL_CONTENT_TICKET_ID or type(value["count"]) is not int or value["count"] != 1:
             raise ValueError("内容券附件只允许满月甄选券 type19、id450030、count1")
-    elif value["type"] != 8 or value["id"] not in MAIL_DRAW_TICKET_IDS:
-        raise ValueError("附件只允许货币类型 2、3、4、12、20 的 id0，资源类型 8 的抽抽乐券 id1000、UR 专用装备抽抽乐券 id1104，或内容券 type19、id450030、count1")
+    elif value["type"] not in MAIL_ITEM_TYPES or value["id"] <= 0:
+        raise ValueError("物品附件必须使用已支持的 ItemDBInfo 类型和正数 id")
     if type(value["count"]) is not int or not 1 <= value["count"] <= MAX_INT32:
         raise ValueError(f"附件 count 必须是 1 到 {MAX_INT32} 的整数")
     return dict(value)
@@ -502,7 +475,12 @@ def attachment(value: str) -> dict[str, int]:
         parts = value.split(":")
         if len(parts) != 3:
             raise ValueError("附件格式必须是 TYPE:ID:COUNT")
-        return _validate_reward(dict(zip(("type", "id", "count"), map(int, parts))))
+        reward = _validate_reward(dict(zip(("type", "id", "count"), map(int, parts))))
+        if reward["type"] not in MAIL_CURRENCY_TYPES and not (
+            reward["type"] == 8 and reward["id"] in MAIL_DRAW_TICKET_IDS
+        ) and not (reward["type"] == 19 and reward["id"] == MAIL_CONTENT_TICKET_ID):
+            raise ValueError("命令行附件只开放已审计的货币、抽抽乐券和满月甄选券")
+        return reward
     except ValueError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
@@ -565,18 +543,13 @@ def grant(args: argparse.Namespace) -> int:
 
 
 class MailGrantStore:
-    def __init__(self, source: Path, output: Path, items: list[dict[str, Any]], expires_days: int):
-        self.source = source.resolve()
+    def __init__(self, output: Path, items: list[dict[str, Any]]):
         self.output = output.resolve()
         self.items = items
         self.item_keys = {(item["element_type"], item["id"]) for item in items}
-        self.expires_days = expires_days
         self.lock = threading.Lock()
-        self.seed = normalise_seed(load_seed(self.output if self.output.exists() else self.source))
-        # Write the complete baseline immediately. The game server can
-        # therefore begin watching --output before the first browser grant.
         if not self.output.exists():
-            atomic_json(self.output, self.seed)
+            atomic_json(self.output, {"version": 1, "grants": []})
 
     def grant(self, payload: Any) -> dict[str, Any]:
         with self.lock:
@@ -600,28 +573,19 @@ class MailGrantStore:
         if not title or len(title) > 500 or len(body) > 5000:
             raise ValueError("标题不能为空且不超过 500 字符；正文不超过 5000 字符")
 
-        current_ids = {entry["mail_id"] for entry in self.seed["mails"]}
-        mail_id = max(current_ids, default=13_000_000_000) + 1
-        # MailDBInfo's InvenIndex is int64 in the 2.35.10 client descriptor.
-        if mail_id > (1 << 63) - 1:
-            raise ValueError("没有可用的正 int64 邮件 ID")
         now = int(time.time() * 1000)
-        expires = now + self.expires_days * 24 * 60 * 60 * 1000
-        entry = {
-            "mail_id": mail_id,
-            "mail_type": 2,
+        entry = _validate_grant({
+            "identity": str(uuid.uuid4()),
             "title": title,
             "body": body,
-            "expires_at": expires,
-            "reward_types": [element_type],
-            "reward_ids": [item_id],
-            "reward_counts": [count],
             "sent_at": now,
-        }
-        next_seed = normalise_seed({**self.seed, "mails": [*self.seed["mails"], entry]})
-        atomic_json(self.output, next_seed)
-        self.seed = next_seed
-        return {"mail": entry, "output": str(self.output), "restart_required": False}
+            "rewards": [{"type": element_type, "id": item_id, "count": count}],
+        })
+        with grant_file_lock(self.output):
+            value = load_grants(self.output)
+            value["grants"].append(entry)
+            atomic_json(self.output, value)
+        return {"grant": entry, "output": str(self.output), "restart_required": False}
 
 
 class DevelopmentSettingsStore:
@@ -678,11 +642,11 @@ class DevelopmentSettingsStore:
 
 PAGE = """<!doctype html><meta charset=utf-8><title>BD2 开发工具</title>
 <style>body{font:14px system-ui;max-width:1060px;margin:2rem auto;padding:0 1rem}input,textarea,button{font:inherit;padding:.4rem}input{width:100%}input[type=checkbox]{width:auto;transform:scale(1.2);margin-right:.5rem}section{border-top:1px solid #ddd;margin-top:2rem;padding-top:1rem}table{border-collapse:collapse;width:100%;margin:0}th,td{border:1px solid #ccc;padding:.4rem;text-align:left}tr:hover{background:#f5f5f5}#status,#inventory-status{white-space:pre-wrap;margin:1rem 0}.small{color:#555}.pick{white-space:nowrap}#item-picker{margin:1rem 0;border:1px solid #ccc;border-radius:.35rem;padding:.55rem}#item-picker summary{cursor:pointer;font-weight:600}#item-picker[open] summary{margin-bottom:.75rem}.item-list{max-height:min(40vh,28rem);overflow:auto;border:1px solid #ccc;margin-top:1rem}.item-list thead th{position:sticky;top:0;background:#fff}.item-list table{min-width:760px}</style>
-<h1>BD2 开发工具</h1><section><h2>开发邮件发放</h2><p class=small>只列出可由当前邮件链路直接领取的安全物品和货币。固定内容随机箱已映射成真实内容物；其他随机箱与“遗失物品”等内部哨兵不会显示。货币直接叠加到钱包。提交会原子写入临时邮件种子；重新打开或刷新游戏邮箱即可热载，无需重启服务端。</p>
+<h1>BD2 开发工具</h1><section><h2>开发邮件发放</h2><p class=small>只列出可由当前邮件链路直接领取的安全物品和货币。固定内容随机箱已映射成真实内容物；其他随机箱与“遗失物品”等内部哨兵不会显示。货币直接叠加到钱包。提交会原子追加到动态邮件队列，由服务端唯一分配邮件 ID；重新打开或刷新游戏邮箱即可热载，无需重启服务端。</p>
 <details id=item-picker><summary>选择开发测试物品 <span id=count class=small></span></summary><label>搜索（ID、名称、类别、固定箱映射）<input id=q></label><div class=item-list><table><thead><tr><th>ID</th><th>类型</th><th>名称</th><th>类别/内容</th><th></th></tr></thead><tbody id=items></tbody></table></div></details>
-<h3>发放一个附件</h3><form id=form><label>物品 ID<input id=item_id required readonly></label><input id=element_type required readonly type=hidden><label>数量（1–2147483647）<input id=quantity type=number min=1 max=2147483647 value=1 required></label><label>邮件标题<input id=title value="开发测试物品" required maxlength=500></label><label>正文<textarea id=body maxlength=5000>由本地开发工具发放。</textarea></label><p><button>写入临时邮件种子</button></p></form><pre id=status></pre></section>
+<h3>发放一个附件</h3><form id=form><label>物品 ID<input id=item_id required readonly></label><input id=element_type required readonly type=hidden><label>数量（1–2147483647）<input id=quantity type=number min=1 max=2147483647 value=1 required></label><label>邮件标题<input id=title value="开发测试物品" required maxlength=500></label><label>正文<textarea id=body maxlength=5000>由本地开发工具发放。</textarea></label><p><button id=grant-submit>加入动态邮件队列</button></p></form><pre id=status></pre></section>
 <section><h2>背包容量</h2><label><input id=unlimited-inventory type=checkbox>无限背包容量</label><p id=inventory-limits class=small></p><p class=small>使用当前客户端 GameData 的安全上限，不写入账号存档。切换后无需重启服务端，但必须重新登录客户端才会生效。</p><pre id=inventory-status></pre></section>
-<script>let all=[];const $=id=>document.getElementById(id);function render(){let q=$('q').value.toLowerCase();let matches=all.filter(x=>(x.id+' '+x.element_type+' '+x.name+' '+x.category+' '+(x.aliases||[]).join(' ')+' '+(x.details||'')).toLowerCase().includes(q));let rows=matches.slice(0,500);$('count').textContent=`（匹配 ${matches.length} / ${all.length} 项；显示前 ${rows.length} 项）`; $('items').innerHTML=rows.map(x=>`<tr><td>${x.id}</td><td>${x.element_type}</td><td>${esc(x.name)}</td><td>${esc(x.category+(x.details?'：'+x.details:''))}</td><td class=pick><button onclick="pick(${x.element_type},${x.id})">选择</button></td></tr>`).join('')}function esc(s){let d=document.createElement('div');d.textContent=s;return d.innerHTML}function pick(t,id){$('item_id').value=id;$('element_type').value=t;$('item-picker').open=false;$('quantity').focus();$('form').scrollIntoView({block:'nearest',behavior:'smooth'})}function showSettings(x){$('unlimited-inventory').checked=x.inventory.unlimited;$('inventory-limits').textContent=`关闭时：道具 ${x.inventory.baseline.items}、装备 ${x.inventory.baseline.equipment}；开启时：道具 ${x.inventory.enabled_limits.items}、装备 ${x.inventory.enabled_limits.equipment}`}$('q').oninput=render;$('form').onsubmit=async e=>{e.preventDefault();let r=await fetch('/api/grants',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item_id:+$('item_id').value,element_type:+$('element_type').value,count:+$('quantity').value,title:$('title').value,body:$('body').value})});let x=await r.json();$('status').textContent=r.ok?`已写入邮件 #${x.mail.mail_id}。\n重新打开或刷新游戏邮箱即可看到并领取；服务端无需重启。\n货币会直接叠加，固定箱映射会直接发放内容物。\n热载文件：${x.output}`:x.error};$('unlimited-inventory').onchange=async e=>{let box=e.target,old=!box.checked;box.disabled=true;let r=await fetch('/api/settings/inventory',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({unlimited:box.checked})});let x=await r.json();box.disabled=false;if(r.ok){showSettings(x);$('inventory-status').textContent='设置已保存。无需重启服务端；请重新登录客户端后生效。'}else{box.checked=old;$('inventory-status').textContent=x.error}};Promise.all([fetch('/api/items').then(r=>r.json()),fetch('/api/settings').then(r=>r.json())]).then(([x,s])=>{all=x.items;render();showSettings(s)});</script>"""
+<script>let all=[],submitting=false;const $=id=>document.getElementById(id);function render(){let q=$('q').value.toLowerCase();let matches=all.filter(x=>(x.id+' '+x.element_type+' '+x.name+' '+x.category+' '+(x.aliases||[]).join(' ')+' '+(x.details||'')).toLowerCase().includes(q));let rows=matches.slice(0,500);$('count').textContent=`（匹配 ${matches.length} / ${all.length} 项；显示前 ${rows.length} 项）`; $('items').innerHTML=rows.map(x=>`<tr><td>${x.id}</td><td>${x.element_type}</td><td>${esc(x.name)}</td><td>${esc(x.category+(x.details?'：'+x.details:''))}</td><td class=pick><button onclick="pick(${x.element_type},${x.id})">选择</button></td></tr>`).join('')}function esc(s){let d=document.createElement('div');d.textContent=s;return d.innerHTML}function pick(t,id){$('item_id').value=id;$('element_type').value=t;$('item-picker').open=false;$('quantity').focus();$('form').scrollIntoView({block:'nearest',behavior:'smooth'})}function showSettings(x){$('unlimited-inventory').checked=x.inventory.unlimited;$('inventory-limits').textContent=`关闭时：道具 ${x.inventory.baseline.items}、装备 ${x.inventory.baseline.equipment}；开启时：道具 ${x.inventory.enabled_limits.items}、装备 ${x.inventory.enabled_limits.equipment}`}$('q').oninput=render;$('form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('grant-submit').disabled=true;let r=await fetch('/api/grants',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({item_id:+$('item_id').value,element_type:+$('element_type').value,count:+$('quantity').value,title:$('title').value,body:$('body').value})});let x=await r.json();$('status').textContent=r.ok?`已加入动态邮件队列，标识 ${x.grant.identity}。\n重新打开或刷新游戏邮箱即可看到并领取；服务端无需重启。\n货币会直接叠加，固定箱映射会直接发放内容物。\n队列文件：${x.output}`:x.error;submitting=false;$('grant-submit').disabled=false};$('unlimited-inventory').onchange=async e=>{let box=e.target,old=!box.checked;box.disabled=true;let r=await fetch('/api/settings/inventory',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({unlimited:box.checked})});let x=await r.json();box.disabled=false;if(r.ok){showSettings(x);$('inventory-status').textContent='设置已保存。无需重启服务端；请重新登录客户端后生效。'}else{box.checked=old;$('inventory-status').textContent=x.error}};Promise.all([fetch('/api/items').then(r=>r.json()),fetch('/api/settings').then(r=>r.json())]).then(([x,s])=>{all=x.items;render();showSettings(s)});</script>"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -741,19 +705,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(args: argparse.Namespace) -> int:
-    if args.expires_days < 1 or args.expires_days > 3650:
-        raise ValueError("--expires-days 必须是 1 到 3650")
     items = load_items(args.game_data, args.game_data_version)
-    store = MailGrantStore(args.mail_seed, args.output, items, args.expires_days)
+    store = MailGrantStore(args.output, items)
     settings = DevelopmentSettingsStore(args.settings_output, load_inventory_limits(args.game_data, args.game_data_version))
     Handler.store = store
     Handler.settings = settings
     server = ThreadingHTTPServer((args.listen_host, args.listen_port), Handler)
     print(f"已读取 {len(items)} 个可由 ItemDBInfo 领取的 GameData 物品。")
     print(f"浏览器打开：http://{args.listen_host}:{args.listen_port}/")
-    print(f"临时邮件种子：{store.output}")
+    print(f"动态邮件队列：{store.output}")
     print(f"开发工具配置：{settings.path}")
-    print("此服务不修改 data/state；bd2server 指向该 seed 后，每次 /MailInfo 自动热载。")
+    print("此服务不修改 data/state；bd2server 每次 /MailInfo 导入队列并唯一分配邮件 ID。")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -769,12 +731,10 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser("serve", help="start the loopback browser UI")
     command.add_argument("--game-data", type=Path, required=True, help="GameData root")
     command.add_argument("--game-data-version", required=True, help="validated GameData version")
-    command.add_argument("--mail-seed", type=Path, required=True, help="base mail seed; read only")
-    command.add_argument("--output", type=Path, required=True, help="generated development mail seed")
+    command.add_argument("--output", type=Path, required=True, help="version=1 dynamic mail grant spool")
     command.add_argument("--settings-output", type=Path, default=Path("data/dev/dev-tools.json"), help="development settings JSON")
     command.add_argument("--listen-host", default="127.0.0.1", help="loopback host (default: 127.0.0.1)")
     command.add_argument("--listen-port", default=8765, type=int, help="loopback port (default: 8765)")
-    command.add_argument("--expires-days", default=365, type=int, help="development mail validity (default: 365)")
     command.set_defaults(run=serve)
     command = commands.add_parser("grant", help="append one durable currency or draw ticket mail grant (standard library only)")
     command.add_argument("--output", type=Path, required=True, help="version=1 development mail grants JSON")

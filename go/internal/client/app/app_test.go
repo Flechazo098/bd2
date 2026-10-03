@@ -42,7 +42,7 @@ func TestEmbeddedStudioUsesNativeBindings(t *testing.T) {
 
 func TestStudioInitializeLoadsSavedSettings(t *testing.T) {
 	dir := makeTestClient(t)
-	studio := NewStudio(Options{InitialGameDir: dir, Versions: clientconfig.ReleaseVersions{ClientVersion: "2.35.10"}}, NativeHost{})
+	studio := NewStudio(Options{InitialGameDir: dir, Versions: clientconfig.ReleaseVersions{GameVersion: "2.35.10", ClientVersion: "2.35.10+client.0.1.0"}}, NativeHost{})
 	if state := studio.Initialize(); state.AutoOpen {
 		t.Fatal("missing settings enabled automatic workspace")
 	}
@@ -50,14 +50,14 @@ func TestStudioInitializeLoadsSavedSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := studio.Initialize()
-	if !state.AutoOpen || state.GameDirectory != dir || state.ServerOrigin != "https://play.example.com" {
+	if !state.AutoOpen || state.GameDirectory != dir || state.ServerOrigin != "https://play.example.com" || state.ClientVersion != "2.35.10+client.0.1.0" || state.GameVersion != "2.35.10" {
 		t.Fatalf("state=%+v", state)
 	}
 }
 
 func TestStudioSaveRemembersOnlyValidatedSettings(t *testing.T) {
 	dir := makeTestClient(t)
-	studio := NewStudio(Options{Versions: clientconfig.ReleaseVersions{ClientVersion: "2.35.10"}}, NativeHost{})
+	studio := NewStudio(Options{Versions: clientconfig.ReleaseVersions{GameVersion: "2.35.10"}}, NativeHost{})
 	var remembered string
 	studio.savePreferences = func(value string) error { remembered = value; return nil }
 	input := Request{GameDirectory: dir, ServerOrigin: "https://play.example.com", CDNMode: clientconfig.CDNOfficial}
@@ -116,7 +116,7 @@ func TestStudioInitializeDefaultsWithoutGameDirectory(t *testing.T) {
 func TestStudioBrowseUsesNativeDirectoryPicker(t *testing.T) {
 	dir := makeTestClient(t)
 	var title string
-	studio := NewStudio(Options{Versions: clientconfig.ReleaseVersions{ClientVersion: "2.35.10"}}, NativeHost{
+	studio := NewStudio(Options{Versions: clientconfig.ReleaseVersions{GameVersion: "2.35.10"}}, NativeHost{
 		BrowseDirectory: func(_ context.Context, requested string) (string, error) {
 			title = requested
 			return dir, nil

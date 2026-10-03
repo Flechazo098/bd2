@@ -11,7 +11,7 @@ import (
 func TestMaintenance(t *testing.T) {
 	req := wire.AppendVarint(nil, 1, 2)
 	req = wire.AppendVarint(req, 2, 8)
-	response, err := Maintenance(versionconfig.Client(), versionconfig.Bundle(), req)
+	response, err := Maintenance(versionconfig.Game(), versionconfig.Bundle(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestMaintenance(t *testing.T) {
 }
 
 func TestServerInfoNoOfficialEndpoints(t *testing.T) {
-	c := Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: versionconfig.Client(), BundleVer: versionconfig.Bundle()}
+	c := Config{BaseURL: "http://127.0.0.1:8080/game/", CDNURL: "http://127.0.0.1:8080/assets/ServerData", Version: versionconfig.Game(), BundleVer: versionconfig.Bundle()}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestServerInfoIncludesLocalGameData(t *testing.T) {
 	c := Config{
 		BaseURL: "http://127.0.0.1:8080/game/",
 		CDNURL:  "http://127.0.0.1:8080/assets/ServerData",
-		Version: versionconfig.Client(), BundleVer: versionconfig.Bundle(),
+		Version: versionconfig.Game(), BundleVer: versionconfig.Bundle(),
 		GameDataURL: "http://127.0.0.1:8080/assets/GameData",
 		GameDataVer: "20260921140855",
 	}

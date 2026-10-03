@@ -15,6 +15,7 @@ import (
 	"bd2server/internal/server/authconfig"
 	"bd2server/internal/server/bootstrap"
 	"bd2server/internal/server/resourcepolicy"
+	"bd2server/internal/server/stateio"
 )
 
 type Envelope struct {
@@ -52,12 +53,21 @@ type RawDispatcher interface {
 	DispatchRaw(path string, wireBody []byte, cookie string) (RawReply, error)
 }
 
+type Availability interface {
+	BeginRequest() (done func(), ok bool)
+	Ready() bool
+}
+
 type Bootstrap struct {
 	Config bootstrap.Config
 	Now    func() time.Time
 }
 
 var ErrNotImplemented = errors.New("packet not implemented")
+
+// ErrAccessCredentialInvalid distinguishes a rejected LoginUser bearer
+// credential from an expired per-process game-session cookie.
+var ErrAccessCredentialInvalid = errors.New("game access credential invalid")
 
 // ErrGameSessionExpired tells the HTTP adapter that a syntactically valid
 // game-session cookie no longer names a live session. A dedicated status and
@@ -97,6 +107,8 @@ type HTTP struct {
 	Authentication        authconfig.Config
 	AuthenticationHandler http.Handler
 	ResourcePolicy        resourcepolicy.Public
+	Availability          Availability
+	InstanceID            string
 }
 
 func (h HTTP) Handler() http.Handler {
@@ -105,16 +117,62 @@ func (h HTTP) Handler() http.Handler {
 	mux.HandleFunc("/game/StateCheckInfoJson", h.stateCheck)
 	mux.HandleFunc("/auth/config", h.authenticationConfig)
 	mux.HandleFunc("/client/resources", h.clientResources)
+	mux.HandleFunc("/client/runtime", h.clientRuntime)
 	if h.AuthenticationHandler != nil {
-		mux.Handle("/auth/", h.AuthenticationHandler)
+		mux.Handle("/auth/", h.withAvailability(h.AuthenticationHandler))
 	}
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/game/", h.game)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	ready := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if h.Availability != nil && !h.Availability.Ready() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ready\n"))
+	}
+	mux.HandleFunc("/readyz", ready)
+	mux.HandleFunc("/healthz", ready)
 	return mux
+}
+
+func (h HTTP) withAvailability(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.Availability == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		done, ok := h.Availability.BeginRequest()
+		if !ok {
+			h.reconnect(w, "rolling-restart")
+			return
+		}
+		defer done()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (h HTTP) clientRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	status := "ready"
+	if h.Availability != nil && !h.Availability.Ready() {
+		status = "draining"
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(struct {
+		Status       string `json:"status"`
+		InstanceID   string `json:"instance_id"`
+		RetryAfterMS int    `json:"retry_after_ms"`
+	}{Status: status, InstanceID: h.InstanceID, RetryAfterMS: 1000})
 }
 
 func (h HTTP) clientResources(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +244,14 @@ func (h HTTP) stateCheck(w http.ResponseWriter, r *http.Request) {
 
 func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	if h.Availability != nil {
+		done, ok := h.Availability.BeginRequest()
+		if !ok {
+			h.reconnect(w, "rolling-restart")
+			return
+		}
+		defer done()
+	}
 	if r.Method != http.MethodPut {
 		http.Error(w, "PUT required", http.StatusMethodNotAllowed)
 		return
@@ -214,11 +280,29 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 		}
 		reply, err := h.Raw.DispatchRaw(path, body, r.Header.Get("Cookie"))
 		if err != nil {
+			if errors.Is(err, stateio.ErrStateRecoveryRequired) {
+				h.logger().Error("account state requires process recovery", "path", path, "duration_ms", elapsedMilliseconds(started), "error", err)
+				h.reconnect(w, "state-recovery")
+				return
+			}
+			if errors.Is(err, stateio.ErrWriterFenced) {
+				h.logger().Warn("stale server instance fenced", "path", path, "duration_ms", elapsedMilliseconds(started))
+				h.reconnect(w, "fenced")
+				return
+			}
 			if errors.Is(err, ErrGameSessionExpired) {
 				h.logger().Info("game session expired", "path", path, "duration_ms", elapsedMilliseconds(started))
 				w.Header().Set("X-BD2-Session-Expired", "1")
 				w.Header().Set("Cache-Control", "no-store")
 				http.Error(w, "game session expired", http.StatusUnauthorized)
+				return
+			}
+			if errors.Is(err, ErrAccessCredentialInvalid) {
+				h.logger().Info("game access credential rejected", "path", path, "duration_ms", elapsedMilliseconds(started))
+				w.Header().Set("X-BD2-Access-Expired", "1")
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, "game access credential invalid", http.StatusUnauthorized)
 				return
 			}
 			h.logger().Warn("session packet rejected", "path", path, "duration_ms", elapsedMilliseconds(started), "error", err)
@@ -269,6 +353,15 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(answer); err != nil {
 		h.logger().Error("write response", "error", fmt.Errorf("%s: %w", path, err))
 	}
+}
+
+func (h HTTP) reconnect(w http.ResponseWriter, reason string) {
+	w.Header().Set("X-BD2-Reconnect", "1")
+	w.Header().Set("X-BD2-Reconnect-Reason", reason)
+	w.Header().Set("Retry-After", "1")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "close")
+	http.Error(w, "server restarting", http.StatusServiceUnavailable)
 }
 
 func elapsedMilliseconds(started time.Time) float64 {

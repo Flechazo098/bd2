@@ -219,17 +219,11 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
     def test_gold_currency_mail_uses_type_four_id_zero_and_requested_count(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "mail.json"
             output = root / "generated.json"
-            source.write_text(json.dumps({
-                "version": "2.35.10", "mails": [], "mail_count": 1, "max_mail_id": 0,
-            }), encoding="utf-8")
             gold = {"id": 0, "element_type": 4, "name": "金币"}
-            store = dev_mail_grant.MailGrantStore(source, output, [gold], 365)
+            store = dev_mail_grant.MailGrantStore(output, [gold])
             result = store.grant({"item_id": 0, "element_type": 4, "count": 123456789})
-            self.assertEqual(result["mail"]["reward_types"], [4])
-            self.assertEqual(result["mail"]["reward_ids"], [0])
-            self.assertEqual(result["mail"]["reward_counts"], [123456789])
+            self.assertEqual(result["grant"]["rewards"], [{"type": 4, "id": 0, "count": 123456789}])
 
     def test_packed_varints_accepts_repeated_and_packed_fields(self):
         self.assertEqual(dev_mail_grant.packed_varints({4: [3, b"\x80\x01\x02"]}, 4), [3, 128, 2])
@@ -278,39 +272,32 @@ class DevelopmentMailGrantToolTests(unittest.TestCase):
         self.assertIn("重新登录客户端后生效", dev_mail_grant.PAGE)
         self.assertIn("/api/settings/inventory", dev_mail_grant.PAGE)
 
-    def test_grant_writes_complete_seed_without_state_mutation(self):
+    def test_browser_grant_appends_spool_without_allocating_mail_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "source-mail.json"
-            output = root / "generated-mail.json"
-            source.write_text(json.dumps({
-                "version": "2.35.10",
-                "mails": [{
-                    "mail_id": 100, "mail_type": 2, "title": "base", "body": "base",
-                    "expires_at": 200, "reward_types": [8], "reward_ids": [7],
-                    "reward_counts": [1], "sent_at": 100,
-                }],
-                "mail_count": 2, "max_mail_id": 100,
-            }), encoding="utf-8")
-            original_source = source.read_text(encoding="utf-8")
-            store = dev_mail_grant.MailGrantStore(source, output, [{
+            output = root / "mail-grants-spool.json"
+            store = dev_mail_grant.MailGrantStore(output, [{
                 "id": 9, "element_type": 8, "name": "slime",
-            }], 365)
+            }])
             self.assertTrue(output.is_file())
-            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["mail_count"], 2)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"version": 1, "grants": []})
             result = store.grant({"item_id": 9, "element_type": 8, "count": 123, "title": "test", "body": "body"})
             written = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(source.read_text(encoding="utf-8"), original_source)
-            self.assertEqual(written["mail_count"], 3)
-            self.assertEqual(written["max_mail_id"], 101)
-            self.assertEqual(written["mails"][-1]["reward_types"], [8])
-            self.assertEqual(written["mails"][-1]["reward_ids"], [9])
-            self.assertEqual(written["mails"][-1]["reward_counts"], [123])
+            self.assertEqual(written["version"], 1)
+            self.assertEqual(len(written["grants"]), 1)
+            self.assertEqual(written["grants"][0]["rewards"], [{"type": 8, "id": 9, "count": 123}])
+            self.assertNotIn("mail_id", written["grants"][0])
+            self.assertEqual(result["grant"], written["grants"][0])
             self.assertFalse(result["restart_required"])
             with self.assertRaises(ValueError):
                 store.grant({"item_id": 999, "element_type": 8, "count": 1})
             with self.assertRaises(ValueError):
                 store.grant({"item_id": 9, "element_type": 8, "count": dev_mail_grant.MAX_INT32 + 1})
+
+    def test_browser_form_blocks_duplicate_submit_until_response(self):
+        self.assertIn("if(submitting)return", dev_mail_grant.PAGE)
+        self.assertIn("$('grant-submit').disabled=true", dev_mail_grant.PAGE)
+        self.assertIn("x.grant.identity", dev_mail_grant.PAGE)
 
 
 class ClientSourceToolTests(unittest.TestCase):

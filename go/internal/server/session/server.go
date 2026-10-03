@@ -134,7 +134,7 @@ func (s *Server) DispatchRaw(path string, body []byte, cookie string) (transport
 		if s.auth != nil {
 			accountID, err = s.auth.AuthenticateLogin(request)
 			if err != nil {
-				return transport.RawReply{}, fmt.Errorf("LoginUser authentication: %w", err)
+				return transport.RawReply{}, fmt.Errorf("%w: %v", transport.ErrAccessCredentialInvalid, err)
 			}
 			if accountID == "" {
 				return transport.RawReply{}, errors.New("LoginUser authentication returned an empty account ID")

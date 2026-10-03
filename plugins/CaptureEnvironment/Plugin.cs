@@ -24,7 +24,7 @@ public sealed class Plugin : BaseUnityPlugin
     private const int MaxBodyBytes = 16 * 1024 * 1024;
     private const int MaxQueuedRecords = 256;
     private const int WriterShutdownSeconds = 30;
-    private const string PlayerPrefsPrefix = "BD2OfficialCapture:" + Bd2Build.Versions.Client + ":";
+    private const string PlayerPrefsPrefix = "BD2OfficialCapture:" + Bd2Build.Versions.Game + ":";
     private static readonly object CorrelationLock = new object();
     private static readonly object FailureFileLock = new object();
     private static readonly Dictionary<string, Queue<PendingRequest>> PendingRequests =
@@ -563,7 +563,7 @@ public sealed class Plugin : BaseUnityPlugin
     private static void WriteMetadata()
     {
         File.WriteAllText(Path.Combine(CaptureDirectory, "README.txt"),
-            "BD2 " + Bd2Build.Versions.Client + " official API capture.\r\n" +
+            "BD2 " + Bd2Build.Versions.Game + " official API capture.\r\n" +
             "All NetworkManager plaintext protobuf requests and responses are recorded.\r\n" +
             "capture.jsonl is machine-readable; capture.log is the aligned human-readable index.\r\n" +
             "If INCOMPLETE.txt exists, the writer rejected or could not flush part of the capture.\r\n" +

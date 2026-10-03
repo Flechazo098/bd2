@@ -130,6 +130,270 @@ func TestMailOpenGrantsItemsAndCurrencyAndPersists(t *testing.T) {
 	}
 }
 
+func TestMailHistoryPersistsPagesAndKeepsFirstOpenTime(t *testing.T) {
+	seed := &Starter{Version: "2.35.10", MailCount: 4, MaxMailID: 13, Mails: []MailDBInfo{
+		{MailID: 11, MailType: 2, Title: "first", ExpiresAt: 100, SentAt: 10, RewardTypes: []uint64{4}, RewardIDs: []uint64{0}, RewardCounts: []uint64{1}},
+		{MailID: 12, MailType: 2, Title: "second", ExpiresAt: 200, SentAt: 20, RewardTypes: []uint64{4}, RewardIDs: []uint64{0}, RewardCounts: []uint64{2}},
+		{MailID: 13, MailType: 2, Title: "third", ExpiresAt: 300, SentAt: 30, RewardTypes: []uint64{4}, RewardIDs: []uint64{0}, RewardCounts: []uint64{3}},
+	}}
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openedAt := time.Date(2026, 10, 3, 5, 6, 7, 8_000_000, time.UTC)
+	service.now = func() time.Time { return openedAt }
+	open := wire.AppendVarint(nil, 1, 1)
+	open = wire.AppendBytes(open, 2, packed([]uint64{11, 12, 13}))
+	if _, _, _, err := service.Handle("/MailOpen", open); err != nil {
+		t.Fatal(err)
+	}
+
+	request := wire.AppendVarint(nil, 1, 2)
+	request = wire.AppendVarint(request, 2, 0)
+	request = wire.AppendVarint(request, 3, 2)
+	code, response, handled, err := service.Handle("/MailHistoryInfo", request)
+	if err != nil || !handled || code != historyPacketCode {
+		t.Fatalf("code=%d handled=%v err=%v", code, handled, err)
+	}
+	entries := historyEntries(t, response)
+	if len(entries) != 2 || historyID(t, entries[0]) != 13 || historyID(t, entries[1]) != 12 {
+		t.Fatalf("first page IDs=%v", historyIDs(t, entries))
+	}
+	total, found, err := wire.Varint(response, 2)
+	if err != nil || !found || total != 3 {
+		t.Fatalf("total=%d found=%v err=%v", total, found, err)
+	}
+	if isOpen, found, _ := wire.Varint(entries[0], 11); !found || isOpen != 1 {
+		t.Fatalf("history is_open=%d found=%v", isOpen, found)
+	}
+	if got, found, _ := wire.Varint(entries[0], 12); !found || got != uint64(openedAt.UnixMilli()) {
+		t.Fatalf("open_time=%d found=%v", got, found)
+	}
+	if got, found, _ := wire.Varint(entries[0], 14); !found || got != uint64(openedAt.Add(mailHistoryPeriod).UnixMilli()) {
+		t.Fatalf("history_delete_time=%d found=%v", got, found)
+	}
+
+	next := wire.AppendVarint(nil, 1, 3)
+	next = wire.AppendVarint(next, 2, 12)
+	next = wire.AppendVarint(next, 3, 2)
+	_, response, _, err = service.Handle("/MailHistoryInfo", next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries = historyEntries(t, response)
+	if len(entries) != 1 || historyID(t, entries[0]) != 11 {
+		t.Fatalf("second page IDs=%v", historyIDs(t, entries))
+	}
+
+	service.now = func() time.Time { return openedAt.Add(24 * time.Hour) }
+	if _, _, _, err := service.Handle("/MailOpen", wire.AppendVarint(wire.AppendVarint(nil, 1, 4), 2, 13)); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.now = service.now
+	_, response, _, err = reopened.Handle("/MailHistoryInfo", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries = historyEntries(t, response)
+	if got, _, _ := wire.Varint(entries[0], 12); got != uint64(openedAt.UnixMilli()) {
+		t.Fatalf("retry changed first open time to %d", got)
+	}
+
+	reopened.now = func() time.Time { return openedAt.Add(mailHistoryPeriod) }
+	_, response, _, err = reopened.Handle("/MailHistoryInfo", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entries := historyEntries(t, response); len(entries) != 0 {
+		t.Fatalf("expired history remains: %v", historyIDs(t, entries))
+	}
+	if total, _, _ := wire.Varint(response, 2); total != 0 {
+		t.Fatalf("expired total=%d", total)
+	}
+}
+
+func TestMailHistoryRejectsInvalidPagination(t *testing.T) {
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, &Starter{Version: "2.35.10", MailCount: 1, MaxMailID: 10}, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(nil, 1, 1)
+	if _, _, handled, err := service.Handle("/MailHistoryInfo", request); !handled || err == nil {
+		t.Fatalf("handled=%v err=%v", handled, err)
+	}
+}
+
+type mailCostumeDesign map[uint64]gamedata.CharacterDesign
+
+func (d mailCostumeDesign) Character(costumeID uint64) (gamedata.CharacterDesign, bool) {
+	value, ok := d[costumeID]
+	return value, ok
+}
+
+func TestMailCostumeRewardCreatesEnhancementFiveIdempotently(t *testing.T) {
+	seed := &Starter{Version: "2.35.10", MailCount: 2, MaxMailID: 11, Mails: []MailDBInfo{{
+		MailID: 11, MailType: 2, ExpiresAt: 100, SentAt: 10,
+		RewardTypes: []uint64{11}, RewardIDs: []uint64{206}, RewardCounts: []uint64{6},
+	}}}
+	storage := stateio.NewMemory()
+	inv, err := player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := collection.BindBaseCharacters(nil); err != nil {
+		t.Fatal(err)
+	}
+	service, err := OpenService(storage, seed, inv, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AttachCostumeRewards(collection, mailCostumeDesign{206: {
+		ID: 20, HP: 100, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 10,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 11)
+	_, response, _, err := service.Handle("/MailOpen", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := collection.Costumes(); len(got) != 1 || got[0].ID != 206 || got[0].Level != 5 {
+		t.Fatalf("costumes=%+v", got)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("bundle: found=%v err=%v", found, err)
+	}
+	var characters, costumes, upgrades int
+	if err := wire.Walk(bundle, func(field wire.Field) error {
+		switch field.Number {
+		case 2:
+			characters++
+		case 3:
+			costumes++
+		case 9:
+			upgrades++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if characters != 1 || costumes != 1 || upgrades != 5 {
+		t.Fatalf("characters=%d costumes=%d upgrades=%d", characters, costumes, upgrades)
+	}
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	if got := collection.Costumes(); len(got) != 1 || got[0].Level != 5 {
+		t.Fatalf("retry costumes=%+v", got)
+	}
+}
+
+func TestEnsureStarterLimitedCostumesIsDurablyIdempotent(t *testing.T) {
+	storage := stateio.NewMemory()
+	service, _, _ := spoolTestService(t, storage)
+	design := mailCostumeDesign{
+		206: {ID: 20, HP: 100, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 10},
+		306: {ID: 30, HP: 100, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 10},
+	}
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.AttachCostumeRewards(collection, design); err != nil {
+		t.Fatal(err)
+	}
+	firstTime := time.Date(2026, 10, 3, 8, 0, 0, 0, time.UTC)
+	if err := service.EnsureStarterLimitedCostumes([]uint64{206}, firstTime); err != nil {
+		t.Fatal(err)
+	}
+	firstID := service.issued[starterLimitedCostumeIdentity]
+	if firstID == 0 || len(service.dynamic) != 1 {
+		t.Fatalf("first issue: id=%d dynamic=%v", firstID, service.dynamic)
+	}
+	// A retry after the schedule changed must preserve the originally frozen
+	// mail rather than allocating a second ID or replacing its attachments.
+	if err := service.EnsureStarterLimitedCostumes([]uint64{306}, firstTime.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if service.issued[starterLimitedCostumeIdentity] != firstID || len(service.dynamic) != 1 || service.dynamic[firstID].RewardIDs[0] != 206 {
+		t.Fatalf("in-process retry changed gift: issued=%v dynamic=%v", service.issued, service.dynamic)
+	}
+
+	reopened, _, _ := spoolTestService(t, storage)
+	if err := reopened.AttachCostumeRewards(collection, design); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.EnsureStarterLimitedCostumes([]uint64{306}, firstTime.Add(48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if reopened.issued[starterLimitedCostumeIdentity] != firstID || len(reopened.dynamic) != 1 || reopened.dynamic[firstID].RewardIDs[0] != 206 {
+		t.Fatalf("restart retry changed gift: issued=%v dynamic=%v", reopened.issued, reopened.dynamic)
+	}
+}
+
+func historyEntries(t *testing.T, response []byte) [][]byte {
+	t.Helper()
+	var entries [][]byte
+	if err := wire.Walk(response, func(field wire.Field) error {
+		if field.Number == 1 {
+			entries = append(entries, append([]byte(nil), field.Value...))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
+
+func historyID(t *testing.T, entry []byte) uint64 {
+	t.Helper()
+	id, found, err := wire.Varint(entry, 1)
+	if err != nil || !found {
+		t.Fatalf("history ID: found=%v err=%v", found, err)
+	}
+	return id
+}
+
+func historyIDs(t *testing.T, entries [][]byte) []uint64 {
+	t.Helper()
+	ids := make([]uint64, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, historyID(t, entry))
+	}
+	return ids
+}
+
 func TestStarterContentTicketOnlyAllowsAuditedSingleUseReward(t *testing.T) {
 	for _, reward := range []struct {
 		id, count uint64
