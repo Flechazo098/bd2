@@ -14,6 +14,7 @@ internal static class LoginRuntime
     internal static ManualLogSource Log;
     internal static MethodInfo SetIntroState;
     internal static MethodInfo SendMaintenance;
+    internal static MethodInfo CancelMaintenanceTimeout;
     internal static Uri ServerRoot;
     internal static MethodInfo OpenPCLoginPopup;
     internal static MethodInfo EnterGame;

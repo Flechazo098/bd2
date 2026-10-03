@@ -78,7 +78,7 @@ internal sealed class SecureGameRelay : IDisposable
             {
                 try { using (client) await Serve(client).ConfigureAwait(false); }
                 catch (Exception ex) when (ex is IOException || ex is SocketException || ex is OperationCanceledException || ex is InvalidDataException)
-                { /* Close failed transport: the game's existing ConnectionError recovery handles it. */ }
+                { log?.LogWarning("Native game relay connection failed: " + ex.GetType().Name); }
                 catch (Exception ex) { log?.LogWarning("Native game transport failed: " + ex.GetType().Name); }
                 finally { slots.Release(); }
             });
@@ -108,6 +108,8 @@ internal sealed class SecureGameRelay : IDisposable
             throw new InvalidDataException("Invalid relay request");
         if (!Uri.TryCreate(local, start[1], out Uri target) || !TryResolve(target, out Uri remote))
             throw new InvalidDataException("Invalid relay target");
+        bool maintenance = remote.AbsolutePath.Equals("/game/MaintenanceInfo", StringComparison.Ordinal);
+        if (maintenance) log?.LogInfo("Game relay received MaintenanceInfo request");
         Dictionary<string, string> headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int length = 0;
         bool lengthSeen = false;
@@ -139,6 +141,9 @@ internal sealed class SecureGameRelay : IDisposable
             }
             response = await PlatformControlHttp.Send(remote, start[0], body, null, 4, lifetime.Token,
                 lifetime.Token, 64 * 1024 * 1024, headers).ConfigureAwait(false);
+            if (maintenance || response.StatusCode == 0)
+                log?.LogInfo("Game relay upstream result: path=" + remote.AbsolutePath + " status=" + response.StatusCode +
+                    " error=" + (response.Error ?? "none"));
             if (response.StatusCode == 0 || response.Data == null) throw new IOException("Native game transport unavailable");
             StringBuilder output = new StringBuilder("HTTP/1.1 ").Append(response.StatusCode.ToString(CultureInfo.InvariantCulture)).Append(" Response\r\nConnection: close\r\nCache-Control: no-store\r\n");
             foreach (KeyValuePair<string, string> item in response.Headers)

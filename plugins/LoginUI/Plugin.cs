@@ -31,6 +31,9 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_PROXYSERVER")) &&
+                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_NOPROXY")))
+                Logger.LogInfo("Game loopback transport uses launch-time Unity proxy bypass");
             AppDomain.CurrentDomain.ProcessExit += (_, _) => DisposeGameRelay();
             Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             EnsureRecoveryHost();
@@ -49,6 +52,8 @@ public sealed class Plugin : BaseUnityPlugin
                 throw new MissingMethodException("IntroUI.Awake() was not found (client version mismatch)");
             }
             SendMaintenance = Game.Method<IntroUI>(ui => ui.SendMaintenanceInfo(false));
+            CancelMaintenanceTimeout = introUI.GetGameMethod(
+                "CancelMaintenanceTimeout", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             SetIntroState = introUI.GetGameMethod("SetIntroState", BindingFlags.Instance | BindingFlags.NonPublic);
             EnterGame = introUI.GetGameMethod(
                 "Enter",
@@ -72,7 +77,7 @@ public sealed class Plugin : BaseUnityPlugin
             MethodInfo exponentialBackOff = networkManager?.GetGameMethod(
                 "ExponetialBackOff",
                 BindingFlags.Instance | BindingFlags.NonPublic);
-            if (SendMaintenance == null || SetIntroState == null || OpenPCLoginPopup == null ||
+            if (SendMaintenance == null || CancelMaintenanceTimeout == null || CancelMaintenanceTimeout.ReturnType != typeof(void) || SetIntroState == null || OpenPCLoginPopup == null ||
                 accessTokenGetter == null || clearPCLocalData == null || disposeWebRequest == null ||
                 clientNetworkError == null || exponentialBackOff == null || EnterGame == null)
             {

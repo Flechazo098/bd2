@@ -228,6 +228,9 @@ internal static class LoginController
 
     private static void ShowLoginPanel(object introUI)
     {
+        // The official manual-login branch cancels the 10-second startup watchdog.
+        // Browser authentication waits for the user and must not retain that timer.
+        CancelMaintenanceTimeout.Invoke(introUI, null);
         AccessTokens.Clear();
         LoginInProgress = false;
         EstablishedGameSession = false;
@@ -269,12 +272,15 @@ internal static class LoginController
 
     private static IEnumerator DeviceLogin(object introUI, string provider)
     {
-        string endpoint = new Uri(ServerRoot, "auth/device").AbsoluteUri;
+        int generation = Volatile.Read(ref RecoveryGeneration);
+        Uri origin = ServerRoot;
+        string endpoint = new Uri(origin, "auth/device").AbsoluteUri;
         byte[] body = Encoding.UTF8.GetBytes(JsonUtility.ToJson(new DeviceRequest { provider = provider }));
         {
             ControlProbeResult request = null;
             yield return AuthRequest(introUI, new Uri(endpoint), UnityWebRequest.kHttpVerbPOST, body, null, result => request = result);
             if (request == null) yield break;
+            if (!IsCurrentLogin(generation, origin)) { request.Body = null; yield break; }
             if (!request.Success)
             {
                 LoginInProgress = false;
@@ -299,24 +305,24 @@ internal static class LoginController
                 yield break;
             }
             Application.OpenURL(start.start_url);
-            yield return PollDevice(introUI, start);
+            yield return PollDevice(introUI, start, generation, origin);
         }
     }
 
-    private static IEnumerator PollDevice(object introUI, DeviceStart start)
+    private static IEnumerator PollDevice(object introUI, DeviceStart start, int generation, Uri origin)
     {
-        int generation = Volatile.Read(ref RecoveryGeneration);
         int delay = Math.Max(1, start.poll_interval);
         float deadline = Time.realtimeSinceStartup + Math.Max(30, start.expires_in);
-        string endpoint = new Uri(ServerRoot, "auth/device/" + Uri.EscapeDataString(start.transaction_id) + "/poll").AbsoluteUri;
+        string endpoint = new Uri(origin, "auth/device/" + Uri.EscapeDataString(start.transaction_id) + "/poll").AbsoluteUri;
         while (Time.realtimeSinceStartup < deadline)
         {
             yield return new WaitForSecondsRealtime(delay);
-            if (generation != Volatile.Read(ref RecoveryGeneration)) yield break;
+            if (!IsCurrentLogin(generation, origin)) { start.device_secret = null; yield break; }
             {
                 ControlProbeResult request = null;
                 yield return AuthRequest(introUI, new Uri(endpoint), UnityWebRequest.kHttpVerbPOST, Array.Empty<byte>(), "Device " + start.device_secret, result => request = result);
                 if (request == null) yield break;
+                if (!IsCurrentLogin(generation, origin)) { request.Body = null; start.device_secret = null; yield break; }
                 if (request.StatusCode == 202)
                 {
                     continue;
@@ -345,7 +351,7 @@ internal static class LoginController
                     Log?.LogError("Login transaction returned incomplete credentials");
                     yield break;
                 }
-                CompleteInteractiveLogin(introUI, result);
+                CompleteInteractiveLogin(introUI, result, generation, origin);
                 yield break;
             }
         }
@@ -353,8 +359,17 @@ internal static class LoginController
         Log?.LogError("Login transaction expired");
     }
 
-    private static void CompleteInteractiveLogin(object introUI, TokenResult result)
+    private static bool IsCurrentLogin(int generation, Uri origin) =>
+        generation == Volatile.Read(ref RecoveryGeneration) && origin != null && ServerRoot != null && SameOrigin(origin, ServerRoot);
+
+    private static void CompleteInteractiveLogin(object introUI, TokenResult result, int generation, Uri origin)
     {
+        if (!IsCurrentLogin(generation, origin))
+        {
+            result.access_token = null;
+            result.refresh_token = null;
+            return;
+        }
         if (!RefreshCredentials.IsSupported)
         {
             AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
@@ -370,6 +385,12 @@ internal static class LoginController
         }
         Action confirmed = delegate
         {
+            if (!IsCurrentLogin(generation, origin))
+            {
+                result.access_token = null;
+                result.refresh_token = null;
+                return;
+            }
             try
             {
                 bool autoLogin = PlayerPrefs.GetInt("StandaloneAutoLogin", 0) != 0;
@@ -483,6 +504,8 @@ internal static class LoginController
                 bool credentialRejected = (request.StatusCode == 401 || request.StatusCode == 409) && request.RefreshInvalid;
                 if (credentialRejected)
                 {
+                    Log?.LogWarning("Automatic-login credential rejected: HTTP=" + request.StatusCode +
+                        ", refreshInvalid=" + request.RefreshInvalid + ", classification=invalid-credential");
                     refreshToken = null;
                     attemptID = null;
                     ClearSavedLogin();
@@ -576,6 +599,7 @@ internal static class LoginController
         try
         {
             ContinueMaintenance = true;
+            Log?.LogInfo("Authenticated login is requesting maintenance information: automatic=" + automatic);
             SendMaintenance.Invoke(introUI, new object[] { automatic });
         }
         finally
