@@ -16,7 +16,7 @@ var collectionEntryBuckets = [...]string{
 	"characters", "costumes", "grants", "gacha_applied", "gacha_users",
 	"gacha_fixed", "step_up_progress", "gacha_point_exchanges",
 	"gacha_selections", "gacha_selection_changes", "costume_potential",
-	"costume_burst_levels", "costume_burst_upgrades", "char_awake",
+	"costume_burst_levels", "costume_burst_upgrades", "char_awake", "friendships",
 }
 
 func rejectInlineCollectionEntries(raw []byte) error {
@@ -56,6 +56,9 @@ func loadEntryMap[T any](store stateio.EntryStore, bucket string) (map[string]T,
 
 func loadCollectionEntries(store stateio.EntryStore, data *collectionSnapshot) error {
 	var err error
+	if data.Friendships, err = loadEntryMap[FriendshipEntry](store, "friendships"); err != nil {
+		return err
+	}
 	if data.Characters, err = loadIndexedEntries[Character](store, "characters", func(c Character) uint64 { return c.InvenIndex }); err != nil {
 		return err
 	}
@@ -123,6 +126,7 @@ func loadIndexedEntries[T any](store stateio.EntryStore, bucket string, index fu
 }
 
 func collectionCore(in collectionSnapshot) collectionSnapshot {
+	in.Friendships = nil
 	in.Characters = nil
 	in.Costumes = nil
 	in.Grants = nil
@@ -197,6 +201,9 @@ func diffIndexedEntries[T any](bucket string, before, after []T, index func(T) u
 
 func diffCollectionEntries(before, after collectionSnapshot) ([]stateio.EntryMutation, error) {
 	changes := make([]stateio.EntryMutation, 0)
+	if err := diffEntryMap("friendships", before.Friendships, after.Friendships, &changes); err != nil {
+		return nil, err
+	}
 	for _, item := range []struct {
 		bucket    string
 		old, next map[string]bool

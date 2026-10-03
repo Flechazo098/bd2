@@ -37,6 +37,7 @@ type LoginSeed struct {
 	presetSlots    PresetSlotProvider
 	inventorySlots InventorySlotProvider
 	firstGacha     FirstGachaProvider
+	friendshipAP   FriendshipAPProvider
 }
 
 // FirstGachaProvider reads the mutable account flag for every login, including
@@ -89,6 +90,20 @@ type PresetSlotProvider interface {
 // the immutable account seed is never rewritten.
 type InventorySlotProvider interface {
 	UserInventorySlots() (items, storage, equipment, equipmentStorage uint64, err error)
+}
+
+// FriendshipAPProvider supplies the account's remaining daily counseling
+// points; LoginUser must not restore points from its immutable seed.
+type FriendshipAPProvider interface {
+	FriendshipAP() (uint64, error)
+}
+
+func (s *LoginSeed) AttachFriendshipAP(provider FriendshipAPProvider) error {
+	if provider == nil {
+		return errors.New("account: nil friendship AP provider")
+	}
+	s.friendshipAP = provider
+	return nil
 }
 
 func (s *LoginSeed) AttachCurrencies(provider CurrencyProvider) error {
@@ -390,6 +405,18 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 			if user, _, err = wire.ReplaceVarint(user, field, value); err != nil {
 				return nil, fmt.Errorf("account: replace inventory slot field %d: %w", field, err)
 			}
+		}
+	}
+	if s.friendshipAP != nil {
+		remaining, err := s.friendshipAP.FriendshipAP()
+		if err != nil {
+			return nil, fmt.Errorf("account: friendship AP: %w", err)
+		}
+		if user, _, err = wire.ReplaceVarint(user, 69, remaining); err != nil {
+			return nil, err
+		}
+		if user, _, err = wire.ReplaceVarint(user, 70, 0); err != nil {
+			return nil, err
 		}
 	}
 	user = wire.AppendBytes(user, 3, sessionKey)

@@ -65,6 +65,7 @@ type EquipmentInventory struct {
 	craft         *gamedata.EquipmentCraftDesign
 	smelting      *gamedata.EquipmentSmeltingDesign
 	optionReroll  *gamedata.EquipmentOptionRerollDesign
+	statDesign    *gamedata.EquipmentStatDesign
 	wallet        *Wallet
 	inventory     *Inventory
 	sessionID     string

@@ -141,6 +141,7 @@ type collectionSnapshot struct {
 	CostumeBurstLevels    map[string]uint64                    `json:"-"`
 	CostumeBurstUpgrades  map[string]CostumeBurstUpgradeRecord `json:"-"`
 	CharAwake             map[string]CharAwakeProgress         `json:"char_awake,omitempty"`
+	Friendships           map[string]FriendshipEntry           `json:"-"`
 	GachaSelections       map[string][]GachaSelection          `json:"gacha_selections,omitempty"`
 	GachaSelectionChanges map[string]uint64                    `json:"gacha_selection_changes,omitempty"`
 	StepUpProgress        map[string]uint64                    `json:"step_up_progress,omitempty"`
@@ -178,6 +179,7 @@ func OpenCollectionStore(store stateio.Store, base []Costume) (*CollectionStore,
 		CostumePotential:   map[string][]uint64{},
 		CostumeBurstLevels: map[string]uint64{}, CostumeBurstUpgrades: map[string]CostumeBurstUpgradeRecord{},
 		CharAwake:      map[string]CharAwakeProgress{},
+		Friendships:    map[string]FriendshipEntry{},
 		StepUpProgress: map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
 	}}
@@ -213,6 +215,9 @@ func OpenCollectionStore(store stateio.Store, base []Costume) (*CollectionStore,
 		return nil, errors.New("player: collection save requires char_awake; migrate the development save")
 	}
 	if err := s.validateCostumeBurstStorage(); err != nil {
+		return nil, err
+	}
+	if err := validateFriendshipEntries(s.data.Friendships); err != nil {
 		return nil, err
 	}
 	for key, progress := range s.data.CharAwake {
@@ -1184,6 +1189,7 @@ func cloneGrant(grant CollectionGrant) CollectionGrant {
 
 func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	out := in
+	out.Friendships = cloneFriendshipEntries(in.Friendships)
 	out.LatestPreview = append([]uint64(nil), in.LatestPreview...)
 	out.Characters = append([]Character(nil), in.Characters...)
 	out.Costumes = append([]Costume(nil), in.Costumes...)

@@ -37,7 +37,6 @@ var emptyResponses = map[string]int{
 	"/FishingCollectionInfo":           465,
 	"/FishingTrapInfo":                 457,
 	"/FriendInfoList":                  204,
-	"/FriendshipInfo":                  612,
 	"/FriendshipSpecialEpisodeInfo":    623,
 	"/GuildInitInfo":                   332,
 	"/IdCardPresetInfo":                450,

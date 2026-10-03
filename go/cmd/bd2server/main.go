@@ -511,6 +511,14 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load pictorial GameData: %w", err)
 	}
 	pictorialService := &pictorial.Service{Design: pictorialDesign, Owned: worldService}
+	equipmentStatDesign, err := gamedata.LoadEquipmentStatDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load equipment stat GameData: %w", err)
+	}
+	if err := ownedEquipment.AttachStatDesign(equipmentStatDesign); err != nil {
+		return err
+	}
+	pictorialService.EquipmentContributions = ownedEquipment.StatContributions
 	charAwakeDesign, err := gamedata.LoadCharAwakeDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load character awakening GameData: %w", err)
@@ -537,6 +545,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	pictorialService.PotentialContributions = costumePotentialService.Contributions
 	costumeBurstDesign, err := gamedata.LoadCostumeBurstDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load costume burst GameData: %w", err)
@@ -545,7 +554,49 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	friendshipDesign, err := gamedata.LoadFriendshipDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load friendship GameData: %w", err)
+	}
+	friendshipService, err := player.NewFriendshipService(&friendshipDesign, charAwakeDesign, costumePotentialDesign, collection, ownedItems, wallet)
+	if err != nil {
+		return fmt.Errorf("load friendship state: %w", err)
+	}
+	if err := login.AttachFriendshipAP(friendshipService); err != nil {
+		return err
+	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
+	characters := worldService.CharacterService()
+	battleService.AttachCommittedHealth(func(health map[uint64]uint64) error {
+		for index, hp := range health {
+			maximum, err := characters.MaxHealth(index)
+			if err != nil {
+				return fmt.Errorf("invalid completed battle health for character %d: %w", index, err)
+			}
+			if hp > maximum {
+				// Battle-only HP buffs are not persisted into field health.
+				// This is our settlement policy, not an inferred provider rule.
+				health[index] = maximum
+			}
+		}
+		for index, hp := range health {
+			if err := characters.SetCurrentHealth(index, hp); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	foodDesign, err := gamedata.LoadFoodDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load food GameData: %w", err)
+	}
+	foodService, err := player.OpenFoodService(stateRepository, foodDesign, ownedItems, characters)
+	if err != nil {
+		return fmt.Errorf("load food state: %w", err)
+	}
+	if err := foodService.AttachContext(worldService.CurrentPackID, battleService.Active); err != nil {
+		return err
+	}
 	battleService.AttachTutorialWin(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 113})
 	})
@@ -565,6 +616,8 @@ func serve(args []string) (serveErr error) {
 		charAwakeService,
 		costumePotentialService,
 		costumeBurstService,
+		friendshipService,
+		foodService,
 		starter,
 		mailService,
 		gachaService,
