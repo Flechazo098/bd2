@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../PackageMetadata.props" />
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>BD2.GameNames</AssemblyName>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Deterministic>true</Deterministic>
+    <DebugType>none</DebugType>
+    <PathMap>$(BaseIntermediateOutputPath)=/_/BD2.GameNames/obj,$(MSBuildProjectDirectory)=/_/BD2.GameNames</PathMap>
+    <PackageId>BD2.GameNames</PackageId>
+    <Description>Readable game-name resolution, reflection helpers and compatibility validation for Brown Dust II plugins. Includes a version-locked names table.</Description>
+    <PackageTags>BD2;BrownDust;Unity;BepInEx;Harmony;modding</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <GameNamesTable Condition="'$(GameNamesTable)' == ''">$(MSBuildThisFileDirectory)Mappings/names.json</GameNamesTable>
+  </PropertyGroup>
+  <Target Name="RequireNameTable" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(GameNamesTable).gz')" Text="Build a plugin with GameSdk.targets, or pass GameNamesTable pointing to generated names.json." />
+  </Target>
+  <ItemGroup>
+    <Compile Include="Game.cs;GameMemberKind.cs;NameTable.cs" />
+    <EmbeddedResource Include="$(GameNamesTable).gz" LogicalName="BD2.GameNames.names.json.gz" />
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+</Project>

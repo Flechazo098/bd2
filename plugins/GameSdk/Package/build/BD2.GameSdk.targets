@@ -1,0 +1,34 @@
+<Project>
+  <PropertyGroup Condition="'$(BD2GameSdkEnabled)' == 'true'">
+    <!-- SDK-style class libraries otherwise omit NuGet runtime assemblies from bin. -->
+    <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
+    <BD2ManagedDir Condition="'$(BD2ManagedDir)' == ''">$(GameDir)/BrownDust II_Data/Managed</BD2ManagedDir>
+    <BD2BepInExDir Condition="'$(BD2BepInExDir)' == ''">$(GameDir)/BepInEx</BD2BepInExDir>
+    <BD2SdkDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(IntermediateOutputPath)bd2-game-sdk'))</BD2SdkDir>
+    <BD2SdkTool>$(BD2GameSdkPackageRoot)tools/net8.0/GameSdk.dll</BD2SdkTool>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(BD2GameSdkEnabled)' == 'true'">
+    <Compile Include="$(BD2SdkDir)/GameSdkIdentity.g.cs" />
+    <Reference Include="Assembly-CSharp.Readable">
+      <HintPath>$(BD2SdkDir)/ref/Assembly-CSharp.Readable.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx" Condition="'$(BD2AddBepInExReferences)' != 'false'"><HintPath>$(BD2BepInExDir)/core/BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony" Condition="'$(BD2AddBepInExReferences)' != 'false'"><HintPath>$(BD2BepInExDir)/core/0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine" Condition="'$(BD2AddUnityReferences)' != 'false'"><HintPath>$(BD2ManagedDir)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule" Condition="'$(BD2AddUnityReferences)' != 'false'"><HintPath>$(BD2ManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Import Project="$(BD2SdkDir)/GameSourceNavigation.props" Condition="Exists('$(BD2SdkDir)/GameSourceNavigation.props') and '$(BD2GameSdkEnabled)' == 'true'" />
+  <Target Name="PrepareBD2GameSdk" BeforeTargets="ResolveAssemblyReferences;CoreCompile"
+          Condition="'$(BD2GameSdkEnabled)' == 'true' and '$(IsCrossTargetingBuild)' != 'true'">
+    <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == '/BrownDust II_Data/Managed'" Text="BD2.GameSdk: set GameDir in Directory.Build.props or pass -p:GameDir=&lt;game-directory&gt;." />
+    <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="BD2.GameSdk: Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
+    <Error Condition="'$(BD2AddBepInExReferences)' != 'false' and !Exists('$(BD2BepInExDir)/core/BepInEx.dll')" Text="BD2.GameSdk: install BepInEx or set BD2BepInExDir. Custom hosts can disable BD2AddBepInExReferences." />
+    <Exec EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot;" />
+  </Target>
+  <Target Name="ReobfuscateBD2Plugin" AfterTargets="Build"
+          Condition="'$(BD2GameSdkEnabled)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true'">
+    <Exec Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SdkDir)/names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(TargetPath)&quot; &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)/core&quot;" />
+    <Delete Files="$(TargetDir)$(TargetName).pdb" />
+  </Target>
+</Project>

@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <BD2LocalGameDir>E:\Games\BrownDustII</BD2LocalGameDir>
+    <!-- Optional separate installation for CaptureEnvironment. -->
+    <BD2CaptureGameDir>E:\Games\BrownDustII-Capture</BD2CaptureGameDir>
+    <!-- Optional shared navigation cache; omit to use the SDK default. -->
+    <!-- <BD2GameSdkCache>D:\Caches\BD2.GameSdk</BD2GameSdkCache> -->
+  </PropertyGroup>
+</Project>

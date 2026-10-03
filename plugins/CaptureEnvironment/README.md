@@ -2,6 +2,19 @@
 
 This BepInEx plugin is only for the separately extracted official client selected by the repository-root `versions.json`.
 
+The SDK embeds the version-locked names table. Build with the game directory; the build generates the readable reference assembly and reobfuscates the plugin automatically:
+
+```powershell
+dotnet build plugins/CaptureEnvironment/CaptureEnvironment.csproj -c Release `
+  '-p:GameDir=<official-client-directory>'
+```
+
+Deploy the runtime `BD2CaptureEnvironment.dll` together with the adjacent
+`BD2.GameNames.dll`. The launcher copies both from the staged build and requires
+both to exist. The shared library validates the plugin/table version and game
+binary before game patches are installed. See [the GameSdk guide](../GameSdk/README.md)
+for the compiler/runtime name contract; the readable shell stays in `obj`.
+
 - redirects `Application.persistentDataPath` to `<game>/IsolatedUserData`;
 - prefixes game `PlayerPrefs` keys with a namespace derived from the configured client version;
 - keeps account/profile/Neo/Intro and the installed GameData working set in

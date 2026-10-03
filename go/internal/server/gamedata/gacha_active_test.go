@@ -3,7 +3,28 @@ package gamedata
 import (
 	"os"
 	"testing"
+
+	"bd2server/internal/server/wire"
 )
+
+func TestPermanentEquipmentGroupRequiresPityAndPoints(t *testing.T) {
+	// Content-ticket groups have both products too; those alone do not make
+	// a group an ordinary permanent equipment draw.
+	content := wire.AppendVarint(nil, 17, 2)
+	content = wire.AppendVarint(content, 24, 70100001)
+	content = wire.AppendVarint(content, 33, 71000001)
+	if isPermanentEquipmentGachaGroup(content) {
+		t.Fatal("content-ticket group classified as ordinary equipment")
+	}
+	ordinary := wire.AppendVarint(content, 10, 1)
+	ordinary = wire.AppendVarint(ordinary, 27, 1)
+	if !isPermanentEquipmentGachaGroup(ordinary) {
+		t.Fatal("permanent equipment group with shared pity and points omitted")
+	}
+	if isPermanentEquipmentGachaGroup(wire.AppendVarint(ordinary, 16, 1)) {
+		t.Fatal("equipment selection group classified as ordinary equipment")
+	}
+}
 
 func TestSingleSidedCostumeFixedThresholdsDoNotTriggerZeroSide(t *testing.T) {
 	pool := []WeightedCostume{
@@ -162,9 +183,24 @@ func TestActiveGachaAgainstInstalledVersion23510(t *testing.T) {
 			t.Errorf("step-up %d=%+v ok=%v", groupID, stepUp, ok)
 		}
 	}
-	for _, id := range []uint64{20100082, 21000082, 20100034, 21000034, 20100070, 21000070, 20100083, 21000083} {
+	for _, id := range []uint64{200, 201, 20100082, 21000082, 20100034, 21000034, 20100070, 21000070, 20100083, 21000083} {
 		if _, ok := equipment.Gacha(id); !ok {
 			t.Errorf("equipment gacha %d missing", id)
+		}
+	}
+	permanentEquipment, ok := equipment.Group(10002)
+	if !ok || permanentEquipment.OneTimeGachaID != 200 || permanentEquipment.TenTimeGachaID != 201 || permanentEquipment.FixedID != 1 || permanentEquipment.PointCount != 1 {
+		t.Fatalf("permanent equipment group=%+v ok=%v", permanentEquipment, ok)
+	}
+	for _, id := range []uint64{200, 201} {
+		product, _ := equipment.Gacha(id)
+		if product.TicketOnly || product.PriceType != 3 || product.Price != uint64(product.Count)*200 || len(product.TicketIDs) != 1 || product.TicketIDs[0] != 1000 || len(product.Pool) != 8 {
+			t.Fatalf("permanent equipment product %d=%+v", id, product)
+		}
+	}
+	for _, groupID := range []uint64{1003, 1004, 1005, 1006} {
+		if _, ok := equipment.Group(groupID); ok {
+			t.Errorf("content-ticket equipment group %d became ordinary permanent draw", groupID)
 		}
 	}
 }

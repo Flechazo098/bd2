@@ -32,4 +32,6 @@
 
 `authentication.json` 和 `resources.json` 必须与 `bd2server.exe` 保持在同一目录。默认 `local` 认证模式继续自动本地登录；公网或联机服可以启用 OAuth，并把资源策略设为官方 CDN 或统一的服务器资源源。服主自建与反代使用相同的 `server` 模式；玩家本地资源目录仅由 `bd2client.exe` 配置。逐步配置方法见发布包内的 [服主第三方登录配置指南](AUTHENTICATION.md) 和 [服主资源与 CDN 配置指南](RESOURCES.md)。
 
+游戏规则使用同目录的 `game.json`，修改后重启服务端生效。默认关闭联动 UR 专武扩展；需要将 14 种联动角色专武加入 UR 必得装备券池时，按 [服务端游戏规则配置](GAME_CONFIGURATION.md) 设置。升级时保留已修改的文件；旧安装缺少文件时使用默认规则。
+
 OAuth access token 只在客户端内存中；Windows refresh credential 使用当前用户 DPAPI 加密后写入 PlayerPrefs 注册表，macOS 使用 Keychain Services。服务端 `auth.db` 只保存 token、device secret、OAuth state 及 provider subject 的 HMAC，临时可恢复材料使用 AES-256-GCM。

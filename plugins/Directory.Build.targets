@@ -1,0 +1,9 @@
+<Project>
+  <!-- Framework/configuration/output paths are available only after the project. -->
+  <PropertyGroup Condition="'$(BD2PluginVersionKey)' != ''">
+    <BD2SdkDir Condition="'$(BD2SdkDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(IntermediateOutputPath)$(BD2SdkIntermediateFolder)'))</BD2SdkDir>
+    <BD2GeneratedVersionSource Condition="'$(BD2GeneratedVersionSource)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(IntermediateOutputPath)Bd2Versions.g.cs'))</BD2GeneratedVersionSource>
+  </PropertyGroup>
+  <Import Project="$(BD2PluginsDir)VersionSource.targets" Condition="'$(BD2PluginVersionKey)' != ''" />
+  <Import Project="$(BD2PluginsDir)GameSdk.targets" Condition="'$(BD2PluginVersionKey)' != ''" />
+</Project>

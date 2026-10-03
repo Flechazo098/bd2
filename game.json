@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "gacha": {
+    "include_collaboration_ur_weapons": false
+  }
+}

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ExamplePlugin</AssemblyName>
+    <!-- GameDir belongs in local Directory.Build.props or on the command line. -->
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BD2.GameSdk" Version="0.2.1-game.2.35.10" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

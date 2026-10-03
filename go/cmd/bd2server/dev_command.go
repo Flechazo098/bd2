@@ -25,6 +25,7 @@ func runDevelopmentCommand(args []string) (bool, error) {
 	serveArgs = appendDefaultFlag(serveArgs, "--version-config", filepath.Join(root, "versions.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--authentication-config", filepath.Join(root, "authentication.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--resource-config", filepath.Join(root, "resources.json"))
+	serveArgs = appendDefaultFlag(serveArgs, "--game-config", filepath.Join(root, "game.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--data-dir", filepath.Join(root, "data"))
 	serveArgs = appendDefaultFlag(serveArgs, "--state", filepath.Join(root, "data", "state", "state.db"))
 	return true, serve(serveArgs)

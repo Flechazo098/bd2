@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../../PackageMetadata.props" />
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>BD2.GameSdk</PackageId>
+    <Description>Build integration for Brown Dust II plugins: readable game references, complete decompiled source navigation with embedded Portable PDB, and reobfuscation. Requires .NET 8 SDK and a matching local game installation.</Description>
+    <PackageTags>BD2;BrownDust;Unity;BepInEx;MSBuild;modding</PackageTags>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- IDE restore must work before any local NuGet package has been produced. -->
+    <ProjectReference Include="../../GameNames/GameNames.csproj" Condition="'$(BD2Packaging)' != 'true'" />
+    <PackageReference Include="BD2.GameNames" Version="[$(Version)]" Condition="'$(BD2Packaging)' == 'true'" />
+    <None Include="../README.md" Pack="true" PackagePath="README.md" />
+    <None Include="../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
+    <None Include="build/*" Pack="true" PackagePath="build/" />
+    <None Include="_._" Pack="true" PackagePath="lib/netstandard2.0/" />
+    <None Include="$(BD2ToolPublishDir)/**/*" Exclude="$(BD2ToolPublishDir)/**/*.exe;$(BD2ToolPublishDir)/**/*.pdb" Condition="'$(BD2ToolPublishDir)' != ''" Pack="true" PackagePath="tools/net8.0/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <Target Name="RequirePackageInputs" BeforeTargets="GenerateNuspec">
+    <Error Condition="'$(BD2Packaging)' != 'true'" Text="Pack with ../Pack.ps1; BD2Packaging=true is required for the version-locked runtime dependency." />
+    <Error Condition="!Exists('$(BD2ToolPublishDir)/GameSdk.dll')" Text="Pack with ../Pack.ps1: published tool missing." />
+  </Target>
+</Project>

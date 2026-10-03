@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <BD2GameSdkEnabled Condition="'$(BD2GameSdkEnabled)' == ''">true</BD2GameSdkEnabled>
+    <BD2GameSdkPackageRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../'))</BD2GameSdkPackageRoot>
+    <BD2GameSdkCache Condition="'$(BD2GameSdkCache)' == ''">$(BD2_GAME_SDK_CACHE)</BD2GameSdkCache>
+  </PropertyGroup>
+</Project>

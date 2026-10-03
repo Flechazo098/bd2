@@ -11,6 +11,7 @@ import (
 	"bd2server/internal/server/authconfig"
 	"bd2server/internal/server/deck"
 	"bd2server/internal/server/gacha"
+	"bd2server/internal/server/gameconfig"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
@@ -28,6 +29,7 @@ func preflight(args []string) error {
 	versionPath := fs.String("version-config", "", "repository versions.json override")
 	authPath := fs.String("authentication-config", "", "authentication.json override")
 	resourcePath := fs.String("resource-config", "", "resources.json override")
+	gamePath := fs.String("game-config", "", "game.json server gameplay configuration override")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -39,6 +41,16 @@ func preflight(args []string) error {
 		return err
 	}
 	versionconfig.Use(versions)
+	if *gamePath == "" {
+		*gamePath, err = gameconfig.BesideExecutable()
+		if err != nil {
+			return err
+		}
+	}
+	gameRules, err := gameconfig.Load(*gamePath)
+	if err != nil {
+		return err
+	}
 	if *authPath == "" {
 		*authPath, err = authconfig.BesideExecutable()
 		if err != nil {
@@ -106,13 +118,22 @@ func preflight(args []string) error {
 	for _, window := range schedule.StepUps {
 		steps = append(steps, window.GroupID)
 	}
-	if _, _, err := gamedata.LoadActiveGachaForSchedules(gameData, versions.GameDataVersion, groups, steps); err != nil {
+	_, equipment, err := gamedata.LoadActiveGachaForSchedules(gameData, versions.GameDataVersion, groups, steps)
+	if err != nil {
 		return err
+	}
+	if gameRules.Gacha.IncludeCollaborationURWeapons {
+		if err := equipment.IncludeCollaborationURWeapons(gameData, versions.GameDataVersion); err != nil {
+			return fmt.Errorf("preflight collaboration UR weapon game rule: %w", err)
+		}
 	}
 	if _, err := gamedata.LoadFirstGacha(gameData, versions.GameDataVersion); err != nil {
 		return err
 	}
 	if _, err := gamedata.LoadLimitedCostumes(gameData, versions.GameDataVersion); err != nil {
+		return err
+	}
+	if _, err := gamedata.LoadCostumeBurstDesign(gameData, versions.GameDataVersion); err != nil {
 		return err
 	}
 	return nil

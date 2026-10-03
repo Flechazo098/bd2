@@ -1,17 +1,21 @@
 package player
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/versionconfig"
+	"bd2server/internal/server/wire"
 )
 
 type CostumeUpgrade struct {
@@ -106,32 +110,46 @@ type CharAwakeProgress struct {
 	IsAwake       bool      `json:"is_awake"`
 }
 
+// CostumeBurstUpgradeRecord is the durable result of one costume burst level
+// transition. Digest identifies the exact protobuf request whose successful
+// response is stored in Body, allowing a committed request to be replayed
+// after a process restart without charging its materials again.
+type CostumeBurstUpgradeRecord struct {
+	CostumeID uint64 `json:"costume_id"`
+	Level     uint64 `json:"level"`
+	Digest    string `json:"digest"`
+	Code      int    `json:"code"`
+	Body      []byte `json:"body"`
+}
+
 // FirstGachaCompletedIdentity is the persisted account flag represented in
 // the existing collection grant ledger. It is written atomically with the
 // official GachaSubType=3 first-pick transaction.
 const FirstGachaCompletedIdentity = "account:first-gacha-completed"
 
 type collectionSnapshot struct {
-	Version               string                        `json:"version"`
-	NextCharacterIndex    uint64                        `json:"next_character_index"`
-	NextCostumeIndex      uint64                        `json:"next_costume_index"`
-	LatestPreview         []uint64                      `json:"latest_preview"`
-	PreviewEventIndex     uint64                        `json:"preview_event_index"`
-	PreviewLocked         bool                          `json:"preview_locked"`
-	Characters            []Character                   `json:"characters,omitempty"`
-	Costumes              []Costume                     `json:"costumes,omitempty"`
-	BaseCostumeLevels     map[string]uint64             `json:"base_costume_levels"`
-	CostumePotential      map[string][]uint64           `json:"costume_potential,omitempty"`
-	CharAwake             map[string]CharAwakeProgress  `json:"char_awake,omitempty"`
-	GachaSelections       map[string][]GachaSelection   `json:"gacha_selections,omitempty"`
-	GachaSelectionChanges map[string]uint64             `json:"gacha_selection_changes,omitempty"`
-	StepUpProgress        map[string]uint64             `json:"step_up_progress,omitempty"`
-	GachaUsers            map[string]GachaUserState     `json:"gacha_users,omitempty"`
-	GachaFixed            map[string]GachaFixedState    `json:"gacha_fixed,omitempty"`
-	GachaApplied          map[string]bool               `json:"gacha_applied,omitempty"`
-	GachaPointExchange    map[string]GachaPointExchange `json:"gacha_point_exchanges,omitempty"`
-	GachaCountCorrected   bool                          `json:"gacha_count_corrected"`
-	Grants                map[string]CollectionGrant    `json:"grants,omitempty"`
+	Version               string                               `json:"version"`
+	NextCharacterIndex    uint64                               `json:"next_character_index"`
+	NextCostumeIndex      uint64                               `json:"next_costume_index"`
+	LatestPreview         []uint64                             `json:"latest_preview"`
+	PreviewEventIndex     uint64                               `json:"preview_event_index"`
+	PreviewLocked         bool                                 `json:"preview_locked"`
+	Characters            []Character                          `json:"characters,omitempty"`
+	Costumes              []Costume                            `json:"costumes,omitempty"`
+	BaseCostumeLevels     map[string]uint64                    `json:"base_costume_levels"`
+	CostumePotential      map[string][]uint64                  `json:"costume_potential,omitempty"`
+	CostumeBurstLevels    map[string]uint64                    `json:"-"`
+	CostumeBurstUpgrades  map[string]CostumeBurstUpgradeRecord `json:"-"`
+	CharAwake             map[string]CharAwakeProgress         `json:"char_awake,omitempty"`
+	GachaSelections       map[string][]GachaSelection          `json:"gacha_selections,omitempty"`
+	GachaSelectionChanges map[string]uint64                    `json:"gacha_selection_changes,omitempty"`
+	StepUpProgress        map[string]uint64                    `json:"step_up_progress,omitempty"`
+	GachaUsers            map[string]GachaUserState            `json:"gacha_users,omitempty"`
+	GachaFixed            map[string]GachaFixedState           `json:"gacha_fixed,omitempty"`
+	GachaApplied          map[string]bool                      `json:"gacha_applied,omitempty"`
+	GachaPointExchange    map[string]GachaPointExchange        `json:"gacha_point_exchanges,omitempty"`
+	GachaCountCorrected   bool                                 `json:"gacha_count_corrected"`
+	Grants                map[string]CollectionGrant           `json:"grants,omitempty"`
 }
 
 // CollectionStore owns non-stackable character/costume rewards as one atomic
@@ -157,9 +175,10 @@ func OpenCollectionStore(store stateio.Store, base []Costume) (*CollectionStore,
 	s := &CollectionStore{store: entries, base: append([]Costume(nil), base...), data: collectionSnapshot{
 		Version: versionconfig.State(), NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
 		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{}, GachaSelectionChanges: map[string]uint64{},
-		CostumePotential: map[string][]uint64{},
-		CharAwake:        map[string]CharAwakeProgress{},
-		StepUpProgress:   map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
+		CostumePotential:   map[string][]uint64{},
+		CostumeBurstLevels: map[string]uint64{}, CostumeBurstUpgrades: map[string]CostumeBurstUpgradeRecord{},
+		CharAwake:      map[string]CharAwakeProgress{},
+		StepUpProgress: map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
 	}}
 	b, err := store.Load("collection")
@@ -192,6 +211,9 @@ func OpenCollectionStore(store stateio.Store, base []Costume) (*CollectionStore,
 	}
 	if s.data.CharAwake == nil {
 		return nil, errors.New("player: collection save requires char_awake; migrate the development save")
+	}
+	if err := s.validateCostumeBurstStorage(); err != nil {
+		return nil, err
 	}
 	for key, progress := range s.data.CharAwake {
 		uniqueID, parseErr := strconv.ParseUint(key, 10, 64)
@@ -811,18 +833,189 @@ func (s *CollectionStore) UpdateCharacter(oldID uint64, character Character) err
 func (s *CollectionStore) Costumes() []Costume {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.costumesLocked()
+}
+
+func (s *CollectionStore) costumesLocked() []Costume {
 	result := append([]Costume(nil), s.base...)
 	for i := range result {
-		if level := s.data.BaseCostumeLevels[strconv.FormatUint(result[i].InvenIndex, 10)]; level > result[i].Level {
+		key := strconv.FormatUint(result[i].InvenIndex, 10)
+		if level := s.data.BaseCostumeLevels[key]; level > result[i].Level {
 			result[i].Level = level
 		}
-		result[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[strconv.FormatUint(result[i].InvenIndex, 10)]...)
+		if level, found := s.data.CostumeBurstLevels[key]; found {
+			result[i].BurstLevel = level
+		}
+		result[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[key]...)
 	}
 	collection := append([]Costume(nil), s.data.Costumes...)
 	for i := range collection {
-		collection[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[strconv.FormatUint(collection[i].InvenIndex, 10)]...)
+		key := strconv.FormatUint(collection[i].InvenIndex, 10)
+		if level, found := s.data.CostumeBurstLevels[key]; found {
+			collection[i].BurstLevel = level
+		}
+		collection[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[key]...)
 	}
 	return append(result, collection...)
+}
+
+// CostumeByID finds the single owned costume with the logical CostumeTable ID.
+// A duplicate logical ID is invalid ownership state and is deliberately not
+// resolved by choosing an arbitrary inventory instance.
+func (s *CollectionStore) CostumeByID(id uint64) (Costume, bool) {
+	if id == 0 {
+		return Costume{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var result Costume
+	found := false
+	for _, costume := range s.costumesLocked() {
+		if costume.ID != id {
+			continue
+		}
+		if found {
+			return Costume{}, false
+		}
+		result, found = costume, true
+	}
+	return result, found
+}
+
+// CostumeBurstReplay returns an owned copy of the durable response recorded
+// for one inventory instance and target burst level.
+func (s *CollectionStore) CostumeBurstReplay(invenIndex, target uint64) (CostumeBurstUpgradeRecord, bool) {
+	if invenIndex == 0 || target == 0 {
+		return CostumeBurstUpgradeRecord{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, found := s.data.CostumeBurstUpgrades[costumeBurstUpgradeKey(invenIndex, target)]
+	record.Body = append([]byte(nil), record.Body...)
+	return record, found
+}
+
+// ApplyCostumeBurst atomically advances one owned costume and stores the exact
+// successful reply. expectedCurrent is a compare-and-swap guard against a
+// stale request overwriting a newer level.
+func (s *CollectionStore) ApplyCostumeBurst(invenIndex, expectedCurrent, target uint64, record CostumeBurstUpgradeRecord) error {
+	if invenIndex == 0 || expectedCurrent == math.MaxUint64 || target != expectedCurrent+1 {
+		return errors.New("player: invalid costume burst transition")
+	}
+	if record.Level != target || record.CostumeID == 0 {
+		return errors.New("player: inconsistent costume burst record")
+	}
+	if err := validateCostumeBurstRecord(record); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	costume, found := s.costumeByIndexLocked(invenIndex)
+	if !found {
+		return fmt.Errorf("player: costume %d not found", invenIndex)
+	}
+	if costume.ID != record.CostumeID {
+		return errors.New("player: costume burst record design mismatch")
+	}
+	if costume.BurstLevel != expectedCurrent {
+		return errors.New("player: stale costume burst level")
+	}
+	ledgerKey := costumeBurstUpgradeKey(invenIndex, target)
+	if _, exists := s.data.CostumeBurstUpgrades[ledgerKey]; exists {
+		return errors.New("player: costume burst transition already recorded")
+	}
+	next := cloneCollection(s.data)
+	next.CostumeBurstLevels[strconv.FormatUint(invenIndex, 10)] = target
+	record.Body = append([]byte(nil), record.Body...)
+	next.CostumeBurstUpgrades[ledgerKey] = record
+	return s.commit(next)
+}
+
+func (s *CollectionStore) costumeByIndexLocked(index uint64) (Costume, bool) {
+	for _, costume := range s.costumesLocked() {
+		if costume.InvenIndex == index {
+			return costume, true
+		}
+	}
+	return Costume{}, false
+}
+
+func costumeBurstUpgradeKey(invenIndex, target uint64) string {
+	return strconv.FormatUint(invenIndex, 10) + ":" + strconv.FormatUint(target, 10)
+}
+
+func parseCostumeBurstUpgradeKey(key string) (uint64, uint64, bool) {
+	left, right, found := strings.Cut(key, ":")
+	if !found || strings.Contains(right, ":") {
+		return 0, 0, false
+	}
+	index, indexErr := strconv.ParseUint(left, 10, 64)
+	level, levelErr := strconv.ParseUint(right, 10, 64)
+	return index, level, indexErr == nil && levelErr == nil && index != 0 && level != 0 && key == costumeBurstUpgradeKey(index, level)
+}
+
+func validateCostumeBurstRecord(record CostumeBurstUpgradeRecord) error {
+	if record.CostumeID == 0 || record.Level == 0 || record.Code != 578 || len(record.Digest) != costumeBurstDigestHexSize {
+		return errors.New("player: invalid costume burst upgrade record")
+	}
+	if _, err := hex.DecodeString(record.Digest); err != nil {
+		return errors.New("player: invalid costume burst upgrade digest")
+	}
+	level, found, err := wire.Varint(record.Body, 1)
+	if err != nil || !found || level != record.Level {
+		return errors.New("player: invalid costume burst upgrade response")
+	}
+	fieldCount := 0
+	if err := wire.Walk(record.Body, func(field wire.Field) error {
+		if field.Number != 1 || field.Type != 0 {
+			return errors.New("unexpected costume burst response field")
+		}
+		fieldCount++
+		return nil
+	}); err != nil || fieldCount != 1 {
+		return errors.New("player: invalid costume burst upgrade response")
+	}
+	return nil
+}
+
+const costumeBurstDigestHexSize = 64
+
+func (s *CollectionStore) validateCostumeBurstStorage() error {
+	if s.data.CostumeBurstLevels == nil || s.data.CostumeBurstUpgrades == nil {
+		return errors.New("player: collection save requires costume burst ledgers")
+	}
+	owned := make(map[uint64]Costume, len(s.base)+len(s.data.Costumes))
+	for _, costume := range append(append([]Costume(nil), s.base...), s.data.Costumes...) {
+		if costume.InvenIndex == 0 || costume.ID == 0 {
+			return errors.New("player: invalid costume burst ownership")
+		}
+		if _, exists := owned[costume.InvenIndex]; exists {
+			return errors.New("player: duplicate costume burst inventory index")
+		}
+		owned[costume.InvenIndex] = costume
+	}
+	for key, level := range s.data.CostumeBurstLevels {
+		index, err := strconv.ParseUint(key, 10, 64)
+		costume, found := owned[index]
+		if err != nil || index == 0 || key != strconv.FormatUint(index, 10) || level == 0 || !found || level < costume.BurstLevel {
+			return fmt.Errorf("player: invalid costume burst level entry %q", key)
+		}
+	}
+	for key, record := range s.data.CostumeBurstUpgrades {
+		index, level, valid := parseCostumeBurstUpgradeKey(key)
+		costume, found := owned[index]
+		current := costume.BurstLevel
+		if overlay, exists := s.data.CostumeBurstLevels[strconv.FormatUint(index, 10)]; exists {
+			current = overlay
+		}
+		if !valid || !found || record.CostumeID != costume.ID || record.Level != level || level > current {
+			return fmt.Errorf("player: invalid costume burst upgrade entry %q", key)
+		}
+		if err := validateCostumeBurstRecord(record); err != nil {
+			return fmt.Errorf("player: invalid costume burst upgrade entry %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
 func (s *CollectionStore) ValidateCostumePotentialActivation(costumeIndex uint64, nodes []uint64) error {
@@ -948,12 +1141,9 @@ func (s *CollectionStore) CharacterByIndex(index uint64) (Character, bool) {
 }
 
 func (s *CollectionStore) CostumeByIndex(index uint64) (Costume, bool) {
-	for _, costume := range s.Costumes() {
-		if costume.InvenIndex == index {
-			return costume, true
-		}
-	}
-	return Costume{}, false
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.costumeByIndexLocked(index)
 }
 
 func findCostume(costumes []Costume, id uint64) (int, bool) {
@@ -1004,6 +1194,15 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	out.CostumePotential = make(map[string][]uint64, len(in.CostumePotential))
 	for k, v := range in.CostumePotential {
 		out.CostumePotential[k] = append([]uint64(nil), v...)
+	}
+	out.CostumeBurstLevels = make(map[string]uint64, len(in.CostumeBurstLevels))
+	for k, v := range in.CostumeBurstLevels {
+		out.CostumeBurstLevels[k] = v
+	}
+	out.CostumeBurstUpgrades = make(map[string]CostumeBurstUpgradeRecord, len(in.CostumeBurstUpgrades))
+	for k, v := range in.CostumeBurstUpgrades {
+		v.Body = append([]byte(nil), v.Body...)
+		out.CostumeBurstUpgrades[k] = v
 	}
 	out.CharAwake = make(map[string]CharAwakeProgress, len(in.CharAwake))
 	for k, v := range in.CharAwake {
