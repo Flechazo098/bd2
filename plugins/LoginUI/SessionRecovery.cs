@@ -225,6 +225,39 @@ internal static class SessionRecovery
     {
         try
         {
+            try
+            {
+                const BindingFlags diagnosticFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                object packet = __0?.GetType().GetGameProperty("PacketData", diagnosticFlags)?.GetValue(__0, null);
+                string path = packet?.GetType().GetGameProperty("SendPath", diagnosticFlags)?.GetValue(packet, null) as string;
+                if (path == "MaintenanceInfo")
+                {
+                    string server = packet?.GetType().GetGameField("RequestServerURL", diagnosticFlags)?.GetValue(packet) as string;
+                    string endpoint = Uri.TryCreate(server, UriKind.Absolute, out Uri parsed) ? parsed.GetLeftPart(UriPartial.Authority) + parsed.AbsolutePath : "invalid";
+                    string message = __0?.GetType().GetGameProperty("Message", diagnosticFlags)?.GetValue(__0, null) as string ?? string.Empty;
+                    string category = message.IndexOf("tim", StringComparison.OrdinalIgnoreCase) >= 0 ? "Timeout" :
+                        message.IndexOf("cert", StringComparison.OrdinalIgnoreCase) >= 0 || message.IndexOf("TLS", StringComparison.OrdinalIgnoreCase) >= 0 || message.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0 ? "TLS" : "Other";
+                    Log?.LogDebug("Maintenance backoff: endpoint=" + endpoint + ", category=" + category + ", observedRequests=" + GameRequests.Count);
+                    foreach (WeakReference<UnityWebRequest> reference in GameRequests)
+                    {
+                        if (!reference.TryGetTarget(out UnityWebRequest request) || !request.isDone) continue;
+                        if (!TryGetOwnedRequestUri(request.url, out Uri original) || original.AbsolutePath != "/game/MaintenanceInfo") continue;
+                        string error = request.error ?? string.Empty;
+                        string safeError = error.IndexOf("Insecure", StringComparison.OrdinalIgnoreCase) >= 0 ? "InsecureConnectionBlocked" :
+                            error.IndexOf("connect", StringComparison.OrdinalIgnoreCase) >= 0 ? "ConnectionFailure" :
+                            error.IndexOf("tim", StringComparison.OrdinalIgnoreCase) >= 0 ? "Timeout" :
+                            error.IndexOf("HTTP", StringComparison.OrdinalIgnoreCase) >= 0 ? "HttpFailure" :
+                            error.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0 || error.IndexOf("cert", StringComparison.OrdinalIgnoreCase) >= 0 ? "TlsFailure" : "Unclassified";
+                        Log?.LogWarning("Maintenance completed transport: result=" + request.result + ", status=" + request.responseCode +
+                            ", error=" + safeError + ", errorLength=" + error.Length);
+                    }
+                }
+
+            }
+            catch (Exception ex)
+            {
+                Log?.LogDebug("Maintenance transport diagnostic unavailable: " + ex.GetType().Name);
+            }
             if (ServerRoot == null || !IsConfiguredServerFailure(__0) || !IsTransportFailure(__0))
             {
                 return true;
@@ -443,8 +476,10 @@ internal static class SessionRecovery
         }
     }
 
-    internal static bool SuppressNetworkErrorDuringRecovery()
+    internal static bool SuppressNetworkErrorDuringRecovery(object __0, object __1)
     {
+        Log?.LogWarning("Client network error: type=" + __0 + ", code=" + __1 +
+            ", recovering=" + (Volatile.Read(ref SessionRecoveryInProgress) != 0));
         return Volatile.Read(ref SessionRecoveryInProgress) == 0;
     }
 
