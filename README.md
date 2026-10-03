@@ -6,10 +6,11 @@
 
 ## 开发构建
 
+外部 PowerShell 终端从 `go` 目录执行 `. .\env.ps1`，将当前终端的 Go 缓存设为 `go/.cache/go-build`，不修改用户级 Go 配置。VS Code 可在工作区 `terminal.integrated.env.windows` 和 `go.toolsEnvVars` 中配置同一路径，让本项目的新终端自动生效。
+
 ```powershell
 # Go
 Push-Location .\go
-$env:GOCACHE = (Join-Path $PWD '.cache\go-build')
 go test ./...
 go build .\cmd\bd2server
 go build .\cmd\bd2client
@@ -19,16 +20,16 @@ Pop-Location
 开发时在两个终端中分别从 `go` 目录运行：
 
 ```powershell
-$env:GOCACHE = (Join-Path $PWD '.cache\go-build')
 go run .\cmd\bd2server --dev run
 ```
 
 ```powershell
-$env:GOCACHE = (Join-Path $PWD '.cache\go-build')
 go run .\cmd\bd2client --dev run
 ```
 
 服务端开发入口会自动使用仓库根目录的版本、认证、资源、数据和存档配置；客户端开发入口会直接使用仓库版本清单和插件产物，并从本机开发配置读取游戏目录，随后用 SDK 内嵌的当前版本名字表增量构建两个客户端插件，无需提供官方映射文件。首次开发前创建该配置：
+
+客户端窗口在插件准备完成后打开。首次生成完整游戏源码或 SDK/游戏更新后可能等待数分钟，终端会实时显示构建和反编译进度；后续启动复用共享缓存。
 
 ```powershell
 Copy-Item .\go\config.example.json .\go\config.json

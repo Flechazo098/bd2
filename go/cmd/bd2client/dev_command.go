@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -177,6 +178,7 @@ func buildDevelopmentPlugins(root, gameDir string) error {
 		filepath.Join(root, "plugins", "LoginUI", "LoginUI.csproj"),
 	}
 	for _, project := range projects {
+		fmt.Fprintf(os.Stderr, "bd2client: preparing development plugin %s; first-time game source generation may take several minutes\n", filepath.Base(project))
 		command := exec.Command(
 			"dotnet", "build", project, "-c", "Release",
 			"-p:GameDir="+filepath.Clean(gameDir),
@@ -185,9 +187,15 @@ func buildDevelopmentPlugins(root, gameDir string) error {
 			"--nologo",
 		)
 		command.Dir = root
-		output, err := command.CombinedOutput()
+		// SDK preparation can decompile the entire game before the window opens.
+		// Stream progress immediately, while retaining diagnostics for failures.
+		var output bytes.Buffer
+		writer := io.MultiWriter(os.Stderr, &output)
+		command.Stdout = writer
+		command.Stderr = writer
+		err := command.Run()
 		if err != nil {
-			message := strings.TrimSpace(string(output))
+			message := strings.TrimSpace(output.String())
 			if message == "" {
 				message = err.Error()
 			}
