@@ -2,12 +2,81 @@ package player
 
 import (
 	"encoding/binary"
+	"math"
 	"path/filepath"
 	"testing"
 
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
+
+func TestCostumePotentialContributionsIncludePublicAndConnectedNodes(t *testing.T) {
+	storage := stateio.NewMemory()
+	collection, err := OpenCollectionStore(storage, []Costume{{InvenIndex: 1, ID: 100}, {InvenIndex: 2, ID: 200}, {InvenIndex: 3, ID: 300}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []uint64{1, 2, 3} {
+		if err := collection.ActivateCostumePotential(index, []uint64{1, 2, 3}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	design := &gamedata.CostumePotentialDesign{CharacterUnique: map[uint64]uint64{91: 9, 101: 10}, CostumeUnique: map[uint64]uint64{100: 9, 200: 9, 300: 10}, Nodes: map[uint64]map[uint64]gamedata.CostumePotentialNode{
+		100: {1: {ID: 1, NodeType: 2, StatType: 1, StatValue: 7}, 2: {ID: 2, NodeType: 1, StatType: 2, StatValue: .085}, 3: {ID: 3, NodeType: 4}},
+		200: {1: {ID: 1, NodeType: 2, StatType: 2, StatValue: .015}, 2: {ID: 2, NodeType: 1, StatType: 1, StatValue: 20}, 3: {ID: 3, NodeType: 2, StatType: 3, StatValue: 3}},
+		300: {1: {ID: 1, NodeType: 2, StatType: 1, StatValue: 1000}, 2: {ID: 2, NodeType: 1, StatType: 1, StatValue: 1000}, 3: {ID: 3, NodeType: 4}},
+	}}
+	service := &CostumePotentialService{design: design, collection: collection}
+	character := Character{ID: 91, ConnectPotentialCostume: 100}
+	contributions, err := service.Contributions(character)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := gamedata.AggregateStats(gamedata.BaseStats{Health: 100, Attack: 10}, contributions)
+	if stats.Health != 117 || stats.Attack != 13 {
+		t.Fatalf("public plus connected stats=%+v contributions=%+v", stats, contributions)
+	}
+	character.ConnectPotentialCostume = 200
+	contributions, err = service.Contributions(character)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats = gamedata.AggregateStats(gamedata.BaseStats{Health: 100}, contributions)
+	if stats.Health != 128 {
+		t.Fatalf("connection switch health=%f", stats.Health)
+	}
+	character.ConnectPotentialCostume = 0
+	contributions, err = service.Contributions(character)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats = gamedata.AggregateStats(gamedata.BaseStats{Health: 100}, contributions)
+	if stats.Health != 108 {
+		t.Fatalf("unconnected public health=%f", stats.Health)
+	}
+	character.ConnectPotentialCostume = 300
+	if _, err := service.Contributions(character); err == nil {
+		t.Fatal("connected another character's costume")
+	}
+	character.ConnectPotentialCostume = 100
+	reopened, err := OpenCollectionStore(storage, []Costume{{InvenIndex: 1, ID: 100}, {InvenIndex: 2, ID: 200}, {InvenIndex: 3, ID: 300}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.collection = reopened
+	contributions, err = service.Contributions(character)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats := gamedata.AggregateStats(gamedata.BaseStats{Health: 100}, contributions); stats.Health != 117 {
+		t.Fatalf("restart contribution health=%f", stats.Health)
+	}
+	design.Nodes[100][1] = gamedata.CostumePotentialNode{ID: 1, NodeType: 2, StatType: 1, StatValue: math.NaN()}
+	if _, err := service.Contributions(character); err == nil {
+		t.Fatal("nonfinite stat accepted")
+	}
+}
 
 func TestCostumeNodeActivationSupportsSingleAndOneClickSets(t *testing.T) {
 	dir := t.TempDir()

@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 )
@@ -11,6 +12,9 @@ type CostumePotentialCost struct{ Type, ID, Count uint64 }
 
 type CostumePotentialNode struct {
 	ID             uint64
+	NodeType       uint64
+	StatType       uint64
+	StatValue      float64
 	ConditionGrade uint64
 	Prerequisites  []uint64
 	Costs          []CostumePotentialCost
@@ -68,6 +72,22 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		grade, _ := packedInts(proto, 17)
 		conditions, _ := packedInts(proto, 18)
 		node := CostumePotentialNode{ID: id, Prerequisites: append([]uint64(nil), conditions...)}
+		nodeTypes, nodeTypeErr := packedInts(proto, 27)
+		statTypes, statTypeErr := packedInts(proto, 29)
+		statValue, _, statValueErr := fixed64Double(proto, 30)
+		if nodeTypeErr != nil || statTypeErr != nil || statValueErr != nil || len(nodeTypes) != 1 || len(statTypes) > 1 || math.IsNaN(statValue) || math.IsInf(statValue, 0) || statValue < 0 {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: invalid costume potential stats %d/%d", groupID, id)
+		}
+		node.NodeType = nodeTypes[0]
+		node.StatValue = statValue
+		if len(statTypes) == 1 {
+			node.StatType = statTypes[0]
+		}
+		if (node.NodeType == 1 || node.NodeType == 2) && (node.StatType == 0 || node.StatType > 20) {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: unsupported costume potential stat %d/%d option %d", groupID, id, node.StatType)
+		}
 		if len(grade) == 1 {
 			node.ConditionGrade = grade[0]
 		} else if len(grade) > 1 {

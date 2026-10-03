@@ -8,8 +8,8 @@ import (
 )
 
 func TestHandleAuditedEmptyResponses(t *testing.T) {
-	if got := len(EmptyPacketCodes()); got != 32 {
-		t.Fatalf("audited empty-response registry has %d paths, want 32", got)
+	if got := len(EmptyPacketCodes()); got != 31 {
+		t.Fatalf("audited empty-response registry has %d paths, want 31", got)
 	}
 	for path, wantCode := range EmptyPacketCodes() {
 		t.Run(path, func(t *testing.T) {
@@ -28,7 +28,7 @@ func TestHandleRejectsUnknownAndInvalidRequests(t *testing.T) {
 	if _, _, ok, err := Handle("/CharAwakeInfo", wire.AppendVarint(nil, 1, 1)); ok || err != nil {
 		t.Fatalf("stateful CharAwakeInfo must not be handled by feature defaults: ok=%v err=%v", ok, err)
 	}
-	for _, path := range []string{"/PresetInfo", "/DeckCostumeSettingInfo"} {
+	for _, path := range []string{"/PresetInfo", "/DeckCostumeSettingInfo", "/FriendshipInfo"} {
 		if _, _, ok, err := Handle(path, wire.AppendVarint(nil, 1, 1)); ok || err != nil {
 			t.Fatalf("stateful %s must not be handled by feature defaults: ok=%v err=%v", path, ok, err)
 		}

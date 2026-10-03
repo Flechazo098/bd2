@@ -251,41 +251,26 @@ func EquipmentOptionContribution(root, version string, option EquipmentOption) (
 	if err := db.QueryRow("SELECT ProtoBuf FROM EquipmentOptionTable WHERE GroupId=? AND id=?", option.GroupID, option.ID).Scan(&proto); err != nil {
 		return StatContribution{}, fmt.Errorf("gamedata: equipment option %d/%d: %w", option.GroupID, option.ID, err)
 	}
-	defaultValue, _, err := fixed64Double(proto, 1)
+	var rule EquipmentStatRule
+	rule.Default, _, err = fixed64Double(proto, 1)
 	if err != nil {
 		return StatContribution{}, err
 	}
-	growthValue, _, err := fixed64Double(proto, 4)
+	rule.Growth, _, err = fixed64Double(proto, 4)
 	if err != nil {
 		return StatContribution{}, err
 	}
-	levels, err := fixed32Floats(proto, 6)
+	rule.Levels, err = fixed32Floats(proto, 6)
 	if err != nil {
 		return StatContribution{}, err
 	}
-	if len(levels) != 0 && option.Level >= len(levels) {
-		return StatContribution{}, fmt.Errorf("gamedata: equipment level %d outside option curve", option.Level)
-	}
-	levelValue := 0.0
-	if len(levels) != 0 {
-		levelValue = levels[option.Level]
-	}
-	rankValue := 0.0
-	for i, field := range []int{7, 8, 9} {
-		values, err := fixed32Floats(proto, field)
+	for i := range rule.Ranks {
+		rule.Ranks[i], err = fixed32Floats(proto, 7+i)
 		if err != nil {
 			return StatContribution{}, err
 		}
-		rank := option.Rank[i]
-		if rank == 0 {
-			continue
-		}
-		if rank < 1 || rank > len(values) {
-			return StatContribution{}, fmt.Errorf("gamedata: invalid equipment rank %d", rank)
-		}
-		rankValue += values[rank-1]
 	}
-	return optionContribution(option.ID, defaultValue+growthValue*(levelValue+rankValue))
+	return equipmentStatContribution(rule, option, false)
 }
 
 func optionContribution(id uint64, value float64) (StatContribution, error) {
@@ -295,8 +280,8 @@ func optionContribution(id uint64, value float64) (StatContribution, error) {
 		digits = 4
 	}
 	factor := math.Pow10(digits)
-	value = math.Round(value*factor) / factor
-	contribution := StatContribution{}
+	value = math.Trunc(value*factor) / factor
+	contribution := StatContribution{Option: id}
 	switch id {
 	case 1, 2:
 		contribution.Stat = StatHealth
@@ -312,7 +297,7 @@ func optionContribution(id uint64, value float64) (StatContribution, error) {
 		return StatContribution{}, fmt.Errorf("gamedata: unsupported equipment stat option %d", id)
 	}
 	if percentage {
-		contribution.Percent = value / 100
+		contribution.Percent = value
 	} else {
 		contribution.Flat = value
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 
 	"bd2server/internal/server/gamedata"
@@ -25,6 +26,7 @@ type Service struct {
 	loadRewards     func(string, string, int, uint64) ([]gamedata.BattleReward, error)
 	buffs           func() ([]gamedata.PictorialBuffStat, error)
 	onTutorialWin   func() error
+	commitHealth    func(map[uint64]uint64) error
 }
 
 type battleState struct {
@@ -64,6 +66,20 @@ func (s *Service) BeginSession(id string) {
 }
 
 func (s *Service) AttachTutorialWin(callback func() error) { s.onTutorialWin = callback }
+
+// AttachCommittedHealth persists only completed battle results. Round state
+// remains transient, so reconnect rolls back an unfinished battle.
+// The callback may normalize values to field HP; the response uses those
+// committed values rather than echoing battle-only HP buffs.
+func (s *Service) AttachCommittedHealth(callback func(map[uint64]uint64) error) {
+	s.commitHealth = callback
+}
+
+func (s *Service) Active() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateLocked().entered
+}
 
 func NewService(gameDataRoot, gameDataVersion string, inventory *player.Inventory, currentPack func() (int, error)) *Service {
 	return &Service{
@@ -210,14 +226,57 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: invalid result")
 		}
 		response := wire.AppendVarint(nil, 1, result)
+		var resultCharacters [][]byte
+		finishedHealth := make(map[uint64]uint64)
+		participants := make(map[uint64]bool)
+		if s.commitHealth != nil {
+			for _, character := range state.initialBlue {
+				index, _, err := wire.Varint(character, 2)
+				if err != nil {
+					return 0, nil, true, err
+				}
+				if index != 0 {
+					participants[index] = true
+				}
+			}
+		}
 		err = wire.Walk(request, func(field wire.Field) error {
 			if field.Number == 3 && field.Type == 2 {
-				response = wire.AppendBytes(response, 3, field.Value)
+				if s.commitHealth != nil {
+					index, present, err := wire.Varint(field.Value, 1)
+					if err != nil || !present || !participants[index] {
+						return errors.New("battle: result character was not a battle participant")
+					}
+					if _, duplicate := finishedHealth[index]; duplicate {
+						return errors.New("battle: duplicate result character")
+					}
+					hp, _, err := wire.Varint(field.Value, 3)
+					if err != nil || hp > math.MaxInt64 {
+						return errors.New("battle: invalid result health")
+					}
+					finishedHealth[index] = hp
+				}
+				resultCharacters = append(resultCharacters, field.Value)
 			}
 			return nil
 		})
 		if err != nil {
 			return 0, nil, true, err
+		}
+		if s.commitHealth != nil && len(finishedHealth) != 0 {
+			if err := s.commitHealth(finishedHealth); err != nil {
+				return 0, nil, true, fmt.Errorf("battle: persist completed character health: %w", err)
+			}
+		}
+		for _, character := range resultCharacters {
+			if s.commitHealth != nil {
+				index, _, _ := wire.Varint(character, 1)
+				character, _, err = wire.ReplaceVarint(character, 3, finishedHealth[index])
+				if err != nil {
+					return 0, nil, true, err
+				}
+			}
+			response = wire.AppendBytes(response, 3, character)
 		}
 		rewardBundle := false
 		if result == 1 && s.inventory != nil && state.monster != 0 && s.gameDataRoot != "" {

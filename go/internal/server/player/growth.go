@@ -233,6 +233,11 @@ func (s *CharacterStore) All() []Character {
 			}
 		}
 	}
+	for i := range characters {
+		if hp, err := s.currentHealthAtMaximum(characters[i].InvenIndex, characters[i].HP); err == nil {
+			characters[i].HP = hp
+		}
+	}
 	return characters
 }
 
@@ -260,6 +265,9 @@ func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
 					character.HP = hp
 				}
 			}
+			if hp, err := s.currentHealthAtMaximum(character.InvenIndex, character.HP); err == nil {
+				character.HP = hp
+			}
 			return character, true
 		}
 	}
@@ -269,6 +277,11 @@ func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
 		character, found := collection.FindCharacter(inventoryIndex)
 		if found && s.maxHealth != nil {
 			if hp, err := s.maxHealth(character); err == nil {
+				character.HP = hp
+			}
+		}
+		if found {
+			if hp, err := s.currentHealthAtMaximum(character.InvenIndex, character.HP); err == nil {
 				character.HP = hp
 			}
 		}
@@ -383,6 +396,9 @@ func (s *CharacterStore) Handle(path string, request []byte) (int, []byte, bool,
 		}
 		s.characters = next
 	}
+	if err := s.resetCurrentHealth(current.InvenIndex); err != nil {
+		return 0, nil, true, err
+	}
 	response := wire.AppendBytes(nil, 1, CharacterWire(current))
 	var bundle []byte
 	for _, item := range returned {
@@ -475,6 +491,9 @@ func (s *CharacterStore) promoteCharacter(current Character, position int, fromC
 		}
 		s.characters = next
 	}
+	if err := s.resetCurrentHealth(current.InvenIndex); err != nil {
+		return 0, nil, true, err
+	}
 	response := wire.AppendBytes(nil, 1, CharacterWire(current))
 	var bundle []byte
 	for _, item := range returned {
@@ -530,7 +549,17 @@ func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error)
 		if !found {
 			return 0, nil, true, fmt.Errorf("player: CharImmortal unknown character %d", index)
 		}
+		maximum, err := s.MaxHealth(index)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		character.HP = maximum
 		response = wire.AppendBytes(response, 1, CharacterWire(character))
+	}
+	for _, index := range indices {
+		if err := s.resetCurrentHealth(index); err != nil {
+			return 0, nil, true, err
+		}
 	}
 	return 96, response, true, nil
 }
