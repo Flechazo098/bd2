@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,7 @@ func launchGame(target string) error {
 	}
 	command := visibleCommand(target, gameLaunchArguments()...)
 	command.Dir = filepath.Dir(target)
+	command.Env = gameProxyEnvironment(os.Environ(), systemGameProxy())
 	if err := command.Start(); err != nil {
 		return err
 	}
