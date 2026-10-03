@@ -917,17 +917,17 @@ func LoadActiveGachaForSchedules(root, version string, scheduleGroupIDs, stepUpG
 	return LoadActiveGacha(root, version, costume, equipment, stepUpGroupIDs)
 }
 
-// permanentGachaGroupIDs returns static selection groups. ScheduleType=0
+// permanentGachaGroupIDs returns static selection and ordinary equipment groups. ScheduleType=0
 // groups are deliberately absent from the dynamic schedule response; the
-// selection metadata is what distinguishes permanent 12PICK-style banners
-// from standalone content-ticket banners handled by other flows.
+// selection or shared pity/point metadata distinguishes these banners from
+// content-ticket banners handled by other flows.
 func permanentGachaGroupIDs(root, version string) ([]uint64, error) {
 	db, closeDB, err := openStatDatabase(root, version)
 	if err != nil {
 		return nil, err
 	}
 	defer closeDB()
-	rows, err := db.Query("SELECT id,ProtoBuf FROM GachaGroupTable WHERE scheduleType=0 AND gachaType=1 ORDER BY id")
+	rows, err := db.Query("SELECT id,ProtoBuf FROM GachaGroupTable WHERE scheduleType=0 AND gachaType IN (1,2) ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: list permanent gacha groups: %w", err)
 	}
@@ -941,7 +941,10 @@ func permanentGachaGroupIDs(root, version string) ([]uint64, error) {
 		}
 		subTypes, _ := packedInts(raw, 16)
 		selectCounts, _ := packedInts(raw, 29)
-		if len(subTypes) == 1 && subTypes[0] == 1 && len(selectCounts) == 1 && selectCounts[0] != 0 {
+		types, _ := packedInts(raw, 17)
+		if len(types) == 1 && types[0] == 1 && len(subTypes) == 1 && subTypes[0] == 1 && len(selectCounts) == 1 && selectCounts[0] != 0 {
+			result = append(result, id)
+		} else if isPermanentEquipmentGachaGroup(raw) {
 			result = append(result, id)
 		}
 	}
@@ -949,6 +952,22 @@ func permanentGachaGroupIDs(root, version string) ([]uint64, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+func isPermanentEquipmentGachaGroup(raw []byte) bool {
+	types, _ := packedInts(raw, 17)
+	subTypes, _ := packedInts(raw, 16)
+	selectCounts, _ := packedInts(raw, 29)
+	fixed, _ := packedInts(raw, 10)
+	points, _ := packedInts(raw, 27)
+	one, _ := packedInts(raw, 24)
+	ten, _ := packedInts(raw, 33)
+	// Static content-ticket groups also have one/ten IDs, but have neither
+	// shared pity nor draw points. They must not enter the ordinary catalog.
+	// LoadEquipmentGachaGroups validates the referenced products and pools.
+	return len(types) == 1 && types[0] == 2 && (len(subTypes) == 0 || len(subTypes) == 1 && subTypes[0] == 0) && len(selectCounts) == 0 &&
+		len(fixed) == 1 && fixed[0] != 0 && len(points) == 1 && points[0] != 0 &&
+		len(one) == 1 && one[0] != 0 && len(ten) == 1 && ten[0] != 0
 }
 
 // ClassifyActiveGachaGroups reads static type metadata for groups already

@@ -23,6 +23,7 @@ type Spec struct {
 var (
 	LocalIdentity = Spec{fileName: "BD2LocalIdentity.dll"}
 	LoginUI       = Spec{fileName: "BD2LoginUI.dll"}
+	GameNames     = Spec{fileName: "BD2.GameNames.dll"}
 )
 
 func (s Spec) FileName() string { return s.fileName }
@@ -54,8 +55,8 @@ func ResolvePackaged(spec Spec, explicit string) (string, error) {
 }
 
 // Install verifies that the user installed BepInEx, then atomically stages the
-// packaged plugin into its plugins directory. It never installs or downloads
-// BepInEx itself.
+// packaged plugin and its adjacent shared game-names runtime into its plugins
+// directory. It never installs or downloads BepInEx itself.
 func Install(spec Spec, gameDir, source string) (Result, error) {
 	if err := spec.validate(); err != nil {
 		return Result{}, err
@@ -80,7 +81,33 @@ func Install(spec Spec, gameDir, source string) (Result, error) {
 	if len(sourceData) == 0 {
 		return Result{}, fmt.Errorf("clientplugin: packaged %s is empty", spec.fileName)
 	}
-	pluginDir := installation.Plugins
+	// Read both artifacts before touching the installation. The runtime table
+	// library is shipped beside every plugin, including explicit development paths.
+	var runtimeData []byte
+	if spec == LocalIdentity || spec == LoginUI {
+		runtimeSource := filepath.Join(filepath.Dir(source), GameNames.fileName)
+		runtimeData, err = os.ReadFile(runtimeSource)
+		if err != nil {
+			return Result{}, fmt.Errorf("clientplugin: read shared runtime %s: %w", runtimeSource, err)
+		}
+		if len(runtimeData) == 0 {
+			return Result{}, fmt.Errorf("clientplugin: packaged %s is empty", GameNames.fileName)
+		}
+	}
+	changed := false
+	if runtimeData != nil {
+		runtimeResult, err := installData(GameNames, installation.Plugins, runtimeData)
+		if err != nil {
+			return Result{}, err
+		}
+		changed = runtimeResult.Changed
+	}
+	result, err := installData(spec, installation.Plugins, sourceData)
+	result.Changed = result.Changed || changed
+	return result, err
+}
+
+func installData(spec Spec, pluginDir string, sourceData []byte) (Result, error) {
 	destination := filepath.Join(pluginDir, spec.fileName)
 	if installed, err := os.ReadFile(destination); err == nil {
 		if bytes.Equal(hash(installed), hash(sourceData)) {

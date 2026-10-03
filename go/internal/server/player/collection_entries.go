@@ -15,7 +15,8 @@ const collectionDomain = "collection"
 var collectionEntryBuckets = [...]string{
 	"characters", "costumes", "grants", "gacha_applied", "gacha_users",
 	"gacha_fixed", "step_up_progress", "gacha_point_exchanges",
-	"gacha_selections", "gacha_selection_changes", "costume_potential", "char_awake",
+	"gacha_selections", "gacha_selection_changes", "costume_potential",
+	"costume_burst_levels", "costume_burst_upgrades", "char_awake",
 }
 
 func rejectInlineCollectionEntries(raw []byte) error {
@@ -88,6 +89,12 @@ func loadCollectionEntries(store stateio.EntryStore, data *collectionSnapshot) e
 	if data.CostumePotential, err = loadEntryMap[[]uint64](store, "costume_potential"); err != nil {
 		return err
 	}
+	if data.CostumeBurstLevels, err = loadEntryMap[uint64](store, "costume_burst_levels"); err != nil {
+		return err
+	}
+	if data.CostumeBurstUpgrades, err = loadEntryMap[CostumeBurstUpgradeRecord](store, "costume_burst_upgrades"); err != nil {
+		return err
+	}
 	if data.CharAwake, err = loadEntryMap[CharAwakeProgress](store, "char_awake"); err != nil {
 		return err
 	}
@@ -127,6 +134,8 @@ func collectionCore(in collectionSnapshot) collectionSnapshot {
 	in.GachaSelections = nil
 	in.GachaSelectionChanges = nil
 	in.CostumePotential = nil
+	in.CostumeBurstLevels = nil
+	in.CostumeBurstUpgrades = nil
 	in.CharAwake = nil
 	return in
 }
@@ -224,6 +233,12 @@ func diffCollectionEntries(before, after collectionSnapshot) ([]stateio.EntryMut
 		return nil, err
 	}
 	if err := diffEntryMap("costume_potential", before.CostumePotential, after.CostumePotential, &changes); err != nil {
+		return nil, err
+	}
+	if err := diffEntryMap("costume_burst_levels", before.CostumeBurstLevels, after.CostumeBurstLevels, &changes); err != nil {
+		return nil, err
+	}
+	if err := diffEntryMap("costume_burst_upgrades", before.CostumeBurstUpgrades, after.CostumeBurstUpgrades, &changes); err != nil {
 		return nil, err
 	}
 	if err := diffEntryMap("char_awake", before.CharAwake, after.CharAwake, &changes); err != nil {

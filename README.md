@@ -28,7 +28,7 @@ $env:GOCACHE = (Join-Path $PWD '.cache\go-build')
 go run .\cmd\bd2client --dev run
 ```
 
-服务端开发入口会自动使用仓库根目录的版本、认证、资源、数据和存档配置；客户端开发入口会直接使用仓库版本清单和插件产物，并从本机开发配置读取游戏目录，随后增量构建两个客户端插件。首次开发前创建该配置：
+服务端开发入口会自动使用仓库根目录的版本、认证、资源、数据和存档配置；客户端开发入口会直接使用仓库版本清单和插件产物，并从本机开发配置读取游戏目录，随后用 SDK 内嵌的当前版本名字表增量构建两个客户端插件，无需提供官方映射文件。首次开发前创建该配置：
 
 ```powershell
 Copy-Item .\go\config.example.json .\go\config.json
@@ -44,7 +44,7 @@ Copy-Item .\go\config.example.json .\go\config.json
 .\build-release.ps1
 ```
 
-脚本在 Windows 本机构建版本化归档，例如 `.build\bd2server-2.35.10+server.0.1.0-windows-x64.zip` 和 `.build\bd2client-2.35.10+client.0.1.0-windows-x64.zip`。纯服务端包只包含 `bd2server.exe`、seed、认证/资源策略和服务端数据目录；客户端包只包含 `bd2client.exe`、客户端插件和版本文件。
+脚本在 Windows 本机构建版本化归档，例如 `.build\bd2server-2.35.10+server.0.1.0-windows-x64.zip` 和 `.build\bd2client-2.35.10+client.0.1.0-windows-x64.zip`。纯服务端包只包含 `bd2server.exe`、seed、认证/资源策略、游戏规则配置和服务端数据目录；客户端包只包含 `bd2client.exe`、客户端插件和版本文件。
 
 macOS 客户端使用系统 Cocoa / WKWebView，需要 macOS 原生构建环境。本地 Windows 发布脚本不会交叉编译或生成 macOS 发布包；找到 macOS 测试者或准备公开发布时，再通过 GitHub Actions 的 macOS runner 完成原生构建、测试及 `.app` 打包。签名和公证也应在该流程中配置。
 
@@ -61,7 +61,7 @@ BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows
 - 选择并验证 Brown Dust II 安装目录。
 - 填写服务器 origin 和端口，自动写入游戏目录下的 `BepInEx/config/bd2.client.json`。
 - 应用带原文件备份的客户端入口补丁。
-- 检查 BepInEx 后安装或更新 `BD2LocalIdentity.dll` 与 `BD2LoginUI.dll`。
+- 检查 BepInEx 后安装或更新 `BD2LocalIdentity.dll`、`BD2LoginUI.dll` 及其共享运行时 `BD2.GameNames.dll`。
 - 选择官方 CDN、服务器资源源或本地已下载资源。
 
 服主同步官方资源、自建静态 CDN 或配置缓存反代的步骤见 [资源与 CDN 配置指南](RESOURCES.md)。
@@ -76,6 +76,8 @@ BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows
 
 
 认证策略由 `bd2server.exe` 同目录的 `authentication.json` 权威决定。`mode=local`（默认）不依赖第三方登录，单人本地服保持不动，联机服可设为 `oauth` 来让玩家通过 Discord/Google 登录。
+
+游戏规则统一使用服务端同目录的 `game.json`，修改后重启生效；开发入口读取仓库根目录的文件。联动 UR 专武是否加入 UR 必得装备券池及升级保留配置的方法见 [服务端游戏规则配置](GAME_CONFIGURATION.md)。
 
 ### 启动客户端
 

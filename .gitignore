@@ -8,6 +8,9 @@
 .env.*
 !.env.example
 go/config.json
+plugins/**/Directory.Build.props
+!plugins/Directory.Build.props
+plugins/Directory.Build.local.props
 
 # Project notes and local/runtime data are intentionally outside source control
 docs/

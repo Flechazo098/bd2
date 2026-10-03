@@ -1,4 +1,8 @@
 using System;
+using System.Reflection;
+using BD2.GameNames;
+using static BD2.GameNames.Game;
+using HarmonyLib;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -11,6 +15,49 @@ namespace Bd2LocalIdentity;
 
 internal sealed class ClientRouting : IDisposable
 {
+    private static ClientRouting installedRouting;
+    private static ManualLogSource routingLog;
+
+    internal void Install(Harmony harmony)
+    {
+        installedRouting = this;
+        routingLog = log;
+        MethodInfo load = Game.Method(() => BDNetwork.ServerURLInfo.Load());
+        MethodInfo sendMaintenance = Game.Method<IntroUI>(ui => ui.SendMaintenanceInfo(false));
+        MethodInfo makeCDNInfo = Game.Method(() => BDNetwork.CommonPacket.MakeCDNInfo(null));
+        if (load == null || sendMaintenance == null || makeCDNInfo == null)
+        {
+            throw new MissingMethodException("2.35.10 server/resource routing methods were not found");
+        }
+        harmony.Patch(load, postfix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));
+        harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));
+        harmony.Patch(makeCDNInfo, postfix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyResourcesHook)));
+        routingLog?.LogInfo("Server origin and native CdnInfo routing patches installed");
+    }
+
+    private static void ApplyServerOriginHook()
+    {
+        ClientRouting routing = installedRouting;
+        if (routing == null)
+        {
+            routingLog?.LogError("Client routing is unavailable while applying the server origin");
+            return;
+        }
+        routing.ApplyServerOrigin();
+    }
+
+    private static void ApplyResourcesHook()
+    {
+        ClientRouting routing = installedRouting;
+        if (routing == null)
+        {
+            routingLog?.LogError("Client routing is unavailable while applying resources");
+            return;
+        }
+        routing.ApplyResources();
+    }
+
+
     private const string ConfigFileName = "bd2.client.json";
     private const string OfficialServerData = "https://bd2-cdn.akamaized.net/ServerData";
     private const string OfficialGameData = "https://bd2-cdn.akamaized.net/GameData";
@@ -90,44 +137,24 @@ internal sealed class ClientRouting : IDisposable
 
     public void Dispose()
     {
+        if (ReferenceEquals(installedRouting, this)) installedRouting = null;
         localResourceServer?.Dispose();
     }
 
     internal void ApplyServerOrigin()
     {
-        Type serverURLInfo = Plugin.FindType("ὫὡὩὤὣὨὯὭὥὠὩ") ?? Plugin.FindType("BDNetwork.ServerURLInfo");
-        var setUriDirectly = serverURLInfo?.GetMethod(
-            "ὬὠὢὮὪὮὭὫὮὡὥ",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public,
-            null,
-            new[] { typeof(Uri) },
-            null) ?? serverURLInfo?.GetMethod(
-            "SetUriDirectly",
-            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public,
-            null,
-            new[] { typeof(Uri) },
-            null);
-        if (setUriDirectly == null)
-        {
-            throw new MissingMethodException("BDNetwork.ServerURLInfo.SetUriDirectly(Uri) was not found");
-        }
         Uri gameEndpoint = new Uri(new Uri(config.server_origin + "/"), "game/");
-        setUriDirectly.Invoke(null, new object[] { gameEndpoint });
+        BDNetwork.ServerURLInfo.SetUriDirectly(gameEndpoint);
         log.LogInfo("Client server origin applied: " + config.server_origin);
     }
 
     internal void ApplyResources()
     {
-        Type cdnInfo = Plugin.FindType("BDNetwork.CdnInfo");
-        if (cdnInfo == null)
-        {
-            throw new TypeLoadException("BDNetwork.CdnInfo was not found");
-        }
-        SetStaticString(cdnInfo, "Info", resources.server_data_url);
-        SetStaticString(cdnInfo, "Version", resources.bundle_version);
-        SetStaticString(cdnInfo, "SoundVersion", resources.bundle_version);
-        SetStaticString(cdnInfo, "GameDataInfo", resources.game_data_url);
-        SetStaticString(cdnInfo, "GameDataVersion", resources.game_data_version);
+        BDNetwork.CdnInfo.Info = resources.server_data_url;
+        BDNetwork.CdnInfo.Version = resources.bundle_version;
+        BDNetwork.CdnInfo.SoundVersion = resources.bundle_version;
+        BDNetwork.CdnInfo.GameDataInfo = resources.game_data_url;
+        BDNetwork.CdnInfo.GameDataVersion = resources.game_data_version;
         log.LogInfo("Client resources applied: mode=" + resources.mode +
             " server_data=" + resources.server_data_url +
             " game_data=" + resources.game_data_url +
@@ -368,16 +395,6 @@ internal sealed class ClientRouting : IDisposable
             throw new InvalidDataException(name + " must be a string when present");
         }
         return (string)token;
-    }
-
-    private static void SetStaticString(Type type, string propertyName, string value)
-    {
-        var property = type.GetProperty(propertyName, System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
-        if (property?.PropertyType != typeof(string) || property.GetSetMethod() == null)
-        {
-            throw new MissingMemberException(type.FullName + "." + propertyName + " was not found");
-        }
-        property.SetValue(null, value, null);
     }
 
     private sealed class ClientConfig

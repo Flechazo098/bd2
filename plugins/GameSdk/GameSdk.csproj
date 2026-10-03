@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../PackageMetadata.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <Compile Include="../GameNames/NameTable.cs" Link="NameTable.cs" />
+    <Compile Remove="samples/**/*.cs;Package/**/*.cs" />
+    <EmbeddedResource Include="../GameNames/Mappings/names.json.gz" LogicalName="BD2.GameNames.names.json.gz" />
+  </ItemGroup>
+</Project>

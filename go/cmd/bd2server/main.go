@@ -24,6 +24,7 @@ import (
 	"bd2server/internal/server/deck"
 	"bd2server/internal/server/feature"
 	"bd2server/internal/server/gacha"
+	"bd2server/internal/server/gameconfig"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/lifecycle"
 	"bd2server/internal/server/mail"
@@ -80,6 +81,7 @@ func serve(args []string) (serveErr error) {
 	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
 	authConfigPath := fs.String("authentication-config", "", "authentication.json override for development")
 	resourceConfigPath := fs.String("resource-config", "", "resources.json override for development")
+	gameConfigPath := fs.String("game-config", "", "game.json server gameplay configuration override")
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
 	dataDir := fs.String("data-dir", "", "server data directory (defaults beside the executable)")
 	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (defaults to versions.json)")
@@ -118,6 +120,16 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	versionconfig.Use(versions)
+	if *gameConfigPath == "" {
+		*gameConfigPath, err = gameconfig.BesideExecutable()
+		if err != nil {
+			return err
+		}
+	}
+	gameRules, err := gameconfig.Load(*gameConfigPath)
+	if err != nil {
+		return err
+	}
 	if *authConfigPath == "" {
 		*authConfigPath, err = authconfig.BesideExecutable()
 		if err != nil {
@@ -220,6 +232,13 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load active gacha GameData: %w", err)
 	}
+	if gameRules.Gacha.IncludeCollaborationURWeapons {
+		if err := equipmentGacha.IncludeCollaborationURWeapons(gameData, *gameDataVersion); err != nil {
+			return fmt.Errorf("apply collaboration UR weapon game rule: %w", err)
+		}
+	}
+	slog.Info("server gameplay rules loaded", "config", *gameConfigPath,
+		"include_collaboration_ur_weapons", gameRules.Gacha.IncludeCollaborationURWeapons)
 	limitedCostumes, err := gamedata.LoadLimitedCostumes(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load limited costume GameData: %w", err)
@@ -519,6 +538,14 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	costumeBurstDesign, err := gamedata.LoadCostumeBurstDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load costume burst GameData: %w", err)
+	}
+	costumeBurstService, err := player.NewCostumeBurstService(costumeBurstDesign, collection, ownedItems, wallet)
+	if err != nil {
+		return err
+	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
 	battleService.AttachTutorialWin(func() error {
 		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 113})
@@ -538,6 +565,7 @@ func serve(args []string) (serveErr error) {
 		inventorySlots,
 		charAwakeService,
 		costumePotentialService,
+		costumeBurstService,
 		starter,
 		mailService,
 		gachaService,
