@@ -65,6 +65,10 @@ func loadCharacterEntries(store stateio.AtomicEntryStore, core []byte) (characte
 }
 
 func (s *CharacterStore) persist(next []Character) error {
+	return s.persistWithChanges(next, nil)
+}
+
+func (s *CharacterStore) persistWithChanges(next []Character, additional []stateio.EntryMutation) error {
 	if err := validateCharacters(next); err != nil {
 		return err
 	}
@@ -74,7 +78,8 @@ func (s *CharacterStore) persist(next []Character) error {
 	}
 	current := make(map[uint64]bool, len(next))
 	order := make([]uint64, 0, len(next))
-	changes := make([]stateio.EntryMutation, 0)
+	changes := make([]stateio.EntryMutation, 0, len(additional)+len(next))
+	changes = append(changes, additional...)
 	for _, character := range next {
 		index := character.InvenIndex
 		current[index] = true

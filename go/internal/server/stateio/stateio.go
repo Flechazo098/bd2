@@ -2,9 +2,13 @@
 package stateio
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 )
+
+var ErrWriterFenced = errors.New("state writer fenced by a newer server instance")
+var ErrStateRecoveryRequired = errors.New("state transaction outcome requires process restart")
 
 func RequireNoEntries(store EntryStore, domain string, buckets ...string) error {
 	for _, bucket := range buckets {

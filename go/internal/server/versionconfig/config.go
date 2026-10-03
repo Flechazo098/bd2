@@ -1,5 +1,5 @@
-// Package versionconfig loads the repository-wide client, seed, and
-// resource version selection. The same versions.json also drives plugin builds.
+// Package versionconfig loads repository-wide game compatibility, component
+// release, seed, and resource versions. The same versions.json drives plugins.
 package versionconfig
 
 import (
@@ -18,6 +18,7 @@ const FileName = "versions.json"
 
 var (
 	semanticVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	releaseVersion  = regexp.MustCompile(`^([0-9]+\.[0-9]+\.[0-9]+)\+(client|server)\.([0-9]+\.[0-9]+\.[0-9]+)$`)
 	resourceVersion = regexp.MustCompile(`^[0-9]{14}$`)
 	currentMu       sync.RWMutex
 	current         *Config
@@ -26,7 +27,9 @@ var (
 // Config is the single version selection shared by the server and plugins.
 // SourcePath is populated by Load and is not part of the JSON document.
 type Config struct {
+	GameVersion     string         `json:"game_version"`
 	ClientVersion   string         `json:"client_version"`
+	ServerVersion   string         `json:"server_version"`
 	GameDataVersion string         `json:"game_data_version"`
 	BundleVersion   string         `json:"bundle_version"`
 	SeedDirectory   string         `json:"seed_directory"`
@@ -70,14 +73,15 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-func Client() string   { return Current().ClientVersion }
-func State() string    { return Current().ClientVersion }
+func Game() string     { return Current().GameVersion }
+func Server() string   { return Current().ServerVersion }
+func State() string    { return Current().GameVersion }
 func GameData() string { return Current().GameDataVersion }
 func Bundle() string   { return Current().BundleVersion }
 
 func (c Config) Validate() error {
 	for name, value := range map[string]string{
-		"client_version":              c.ClientVersion,
+		"game_version":                c.GameVersion,
 		"plugins.local_identity":      c.Plugins.LocalIdentity,
 		"plugins.capture_environment": c.Plugins.CaptureEnvironment,
 		"plugins.login_ui":            c.Plugins.LoginUI,
@@ -85,6 +89,12 @@ func (c Config) Validate() error {
 		if !semanticVersion.MatchString(value) {
 			return fmt.Errorf("%s must be a numeric three-part version", name)
 		}
+	}
+	if err := validateReleaseVersion("client_version", c.ClientVersion, c.GameVersion, "client"); err != nil {
+		return err
+	}
+	if err := validateReleaseVersion("server_version", c.ServerVersion, c.GameVersion, "server"); err != nil {
+		return err
 	}
 	for name, value := range map[string]string{
 		"game_data_version": c.GameDataVersion, "bundle_version": c.BundleVersion,
@@ -99,6 +109,14 @@ func (c Config) Validate() error {
 	clean := filepath.Clean(filepath.FromSlash(c.SeedDirectory))
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return errors.New("seed_directory must stay below the version file")
+	}
+	return nil
+}
+
+func validateReleaseVersion(name, value, game, component string) error {
+	match := releaseVersion.FindStringSubmatch(value)
+	if len(match) != 4 || match[1] != game || match[2] != component {
+		return fmt.Errorf("%s must be %s+%s.X.Y.Z", name, game, component)
 	}
 	return nil
 }

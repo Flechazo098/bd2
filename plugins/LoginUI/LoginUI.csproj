@@ -49,6 +49,10 @@
       <HintPath>$(BD2ManagedDir)\UnityEngine.UIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\Discord-Symbol.png" LogicalName="Bd2LoginUI.Assets.Discord-Symbol.png" />

@@ -133,6 +133,9 @@ func (s *EquipmentInventory) AttachOptionReroll(design *gamedata.EquipmentOption
 func (s *EquipmentInventory) BeginSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id == "" || id == s.sessionID {
+		return
+	}
 	s.sessionID = id
 	s.smeltCache = make(map[string]smeltingReply)
 }
@@ -789,7 +792,7 @@ func (s *EquipmentInventory) upgradeOnce(request []byte) (int, []byte, bool, err
 			return errors.New("player: EquipUpgrade invalid material")
 		}
 		var item Item
-		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 9: &item.SortID, 10: &item.UseCount}); err != nil {
+		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 8: &item.ExpiryTime, 9: &item.SortID, 10: &item.UseCount}); err != nil {
 			return err
 		}
 		if item.Type == 0 || item.Count == 0 || (item.Type == 4 && (item.ID != 0 || item.InvenIndex != 0)) || (item.Type != 4 && (item.ID == 0 || item.InvenIndex == 0)) {
@@ -1199,7 +1202,7 @@ func equipmentRequestItems(request []byte, number int, operation string) ([]Item
 			return fmt.Errorf("player: %s invalid material", operation)
 		}
 		var item Item
-		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 9: &item.SortID, 10: &item.UseCount}); err != nil {
+		if err := decodeVarints(field.Value, map[int]*uint64{1: &item.InvenIndex, 2: &item.ID, 3: &item.Type, 4: &item.Count, 5: &item.KeepFlag, 6: &item.TimeValue, 8: &item.ExpiryTime, 9: &item.SortID, 10: &item.UseCount}); err != nil {
 			return err
 		}
 		if item.Type == 0 || item.Count == 0 || (item.Type == 4 && (item.ID != 0 || item.InvenIndex != 0)) || (item.Type != 4 && (item.ID == 0 || item.InvenIndex == 0)) {

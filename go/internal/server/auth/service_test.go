@@ -147,7 +147,7 @@ func TestRefreshRotationReplayRevokesFamily(t *testing.T) {
 	service, store := testService(t)
 	first := completeAndPoll(t, service, store, "refresh-device", "discord", "https://discord.com", "123456789")
 	handler := service.Handler()
-	response := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": first.RefreshToken})
+	response := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": first.RefreshToken, "attempt_id": "rotation-attempt-0001"})
 	if response.Code != http.StatusOK {
 		t.Fatalf("refresh status=%d body=%q", response.Code, response.Body.String())
 	}
@@ -165,14 +165,14 @@ func TestRefreshRotationReplayRevokesFamily(t *testing.T) {
 		t.Fatalf("new access token rejected: %v", err)
 	}
 
-	replay := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": first.RefreshToken})
+	replay := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": first.RefreshToken, "attempt_id": "replay-attempt-000002"})
 	if replay.Code != http.StatusUnauthorized {
 		t.Fatalf("replay status=%d body=%q", replay.Code, replay.Body.String())
 	}
 	if _, err := service.ValidateAccess(rotated.AccessToken); err == nil {
 		t.Fatal("refresh replay did not revoke the token family")
 	}
-	next := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": rotated.RefreshToken})
+	next := postJSON(handler, "/auth/session/refresh", map[string]string{"refresh_token": rotated.RefreshToken, "attempt_id": "after-replay-attempt-3"})
 	if next.Code != http.StatusUnauthorized {
 		t.Fatalf("family refresh after replay status=%d", next.Code)
 	}
@@ -191,9 +191,89 @@ func TestRevokeInvalidatesAccessAndRefreshFamily(t *testing.T) {
 	if _, err := service.ValidateAccess(tokens.AccessToken); err == nil {
 		t.Fatal("revoked access token remained valid")
 	}
-	refresh := postJSON(service.Handler(), "/auth/session/refresh", map[string]string{"refresh_token": tokens.RefreshToken})
+	refresh := postJSON(service.Handler(), "/auth/session/refresh", map[string]string{"refresh_token": tokens.RefreshToken, "attempt_id": "revoked-attempt-0001"})
 	if refresh.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked refresh status=%d", refresh.Code)
+	}
+}
+
+func TestRefreshRetryWithSameAttemptReturnsCommittedRotation(t *testing.T) {
+	service, store := testService(t)
+	first := completeAndPoll(t, service, store, "refresh-retry-device", "discord", "https://discord.com", "123456789")
+	handler := service.Handler()
+	request := map[string]string{"refresh_token": first.RefreshToken, "attempt_id": "stable-attempt-000001"}
+	response := postJSON(handler, "/auth/session/refresh", request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("first refresh status=%d body=%q", response.Code, response.Body.String())
+	}
+	var rotated deviceResult
+	if err := json.Unmarshal(response.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	retry := postJSON(handler, "/auth/session/refresh", request)
+	if retry.Code != http.StatusOK {
+		t.Fatalf("retry status=%d body=%q", retry.Code, retry.Body.String())
+	}
+	var replayed deviceResult
+	if err := json.Unmarshal(retry.Body.Bytes(), &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Provider != rotated.Provider || replayed.AccessToken != rotated.AccessToken || replayed.RefreshToken != rotated.RefreshToken {
+		t.Fatalf("retry returned a different rotation: first=%+v retry=%+v", rotated, replayed)
+	}
+	if _, err := service.ValidateAccess(rotated.AccessToken); err != nil {
+		t.Fatalf("idempotent retry revoked the family: %v", err)
+	}
+	var sealed []byte
+	if err := store.db.QueryRow(`SELECT result_cipher FROM refresh_attempts`).Scan(&sealed); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(sealed, []byte(rotated.AccessToken)) || bytes.Contains(sealed, []byte(rotated.RefreshToken)) {
+		t.Fatal("refresh attempt result was stored outside AES-GCM ciphertext")
+	}
+}
+
+func TestRefreshRequiresStableAttemptID(t *testing.T) {
+	service, store := testService(t)
+	tokens := completeAndPoll(t, service, store, "refresh-attempt-required", "discord", "https://discord.com", "123456789")
+	response := postJSON(service.Handler(), "/auth/session/refresh", map[string]string{"refresh_token": tokens.RefreshToken})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("missing attempt status=%d body=%q", response.Code, response.Body.String())
+	}
+	if _, err := service.ValidateAccess(tokens.AccessToken); err != nil {
+		t.Fatalf("malformed refresh request changed credential family: %v", err)
+	}
+}
+
+func TestRefreshCommittedAttemptReplaysAfterRequestTokenExpiry(t *testing.T) {
+	service, store := testService(t)
+	first := completeAndPoll(t, service, store, "refresh-expiry-device", "discord", "https://discord.com", "123456789")
+	request := map[string]string{"refresh_token": first.RefreshToken, "attempt_id": "expiry-replay-attempt-01"}
+	response := postJSON(service.Handler(), "/auth/session/refresh", request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("first refresh status=%d body=%q", response.Code, response.Body.String())
+	}
+	var rotated deviceResult
+	if err := json.Unmarshal(response.Body.Bytes(), &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE refresh_tokens SET expires_at=? WHERE token_hash=?`, testNowUnix-1, store.digest("refresh-token", first.RefreshToken)); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return time.Unix(testNowUnix+int64((16*time.Minute).Seconds()), 0) }
+	replay := postJSON(service.Handler(), "/auth/session/refresh", request)
+	if replay.Code != http.StatusOK {
+		t.Fatalf("expired request token replay status=%d body=%q", replay.Code, replay.Body.String())
+	}
+	var replayed deviceResult
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if replayed.AccessToken != rotated.AccessToken || replayed.RefreshToken != rotated.RefreshToken {
+		t.Fatalf("replay changed committed rotation: first=%+v replay=%+v", rotated, replayed)
+	}
+	if replayed.AccessExpiresIn != 0 {
+		t.Fatalf("expired replay access TTL=%d, want 0", replayed.AccessExpiresIn)
 	}
 }
 

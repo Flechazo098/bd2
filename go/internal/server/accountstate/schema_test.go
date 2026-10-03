@@ -68,7 +68,34 @@ func TestMigrationV1ToV2IsRepeatSafe(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesV1ToV2(t *testing.T) {
+func TestMigrationV2ToV3IsRepeatSafe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	createV1Database(t, path, "", "")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := migrateV1ToV2(context.Background(), tx); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := migrateV2ToV3(context.Background(), tx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var epoch string
+	if err := tx.QueryRow(`SELECT value FROM metadata WHERE key='writer_epoch'`).Scan(&epoch); err != nil || epoch != "0" {
+		t.Fatalf("writer epoch=%q err=%v", epoch, err)
+	}
+}
+
+func TestOpenMigratesV1ToCurrent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	createV1Database(t, path, "", "")
 	r, err := Open(path)
@@ -77,7 +104,7 @@ func TestOpenMigratesV1ToV2(t *testing.T) {
 	}
 	defer r.Close()
 	version, err := r.SchemaVersion()
-	if err != nil || version != 2 {
+	if err != nil || version != schemaVersion {
 		t.Fatalf("schema version %d, error %v", version, err)
 	}
 }

@@ -44,7 +44,7 @@ Copy-Item .\go\config.example.json .\go\config.json
 .\build-release.ps1
 ```
 
-脚本在 Windows 本机构建，分别生成 `.build\bd2server-windows-x64.zip` 和 `.build\bd2client-windows-x64.zip`。纯服务端包只包含 `bd2server.exe`、seed、认证/资源策略和服务端数据目录；客户端包只包含 `bd2client.exe`、客户端插件和版本文件。
+脚本在 Windows 本机构建版本化归档，例如 `.build\bd2server-2.35.10+server.0.1.0-windows-x64.zip` 和 `.build\bd2client-2.35.10+client.0.1.0-windows-x64.zip`。纯服务端包只包含 `bd2server.exe`、seed、认证/资源策略和服务端数据目录；客户端包只包含 `bd2client.exe`、客户端插件和版本文件。
 
 macOS 客户端使用系统 Cocoa / WKWebView，需要 macOS 原生构建环境。本地 Windows 发布脚本不会交叉编译或生成 macOS 发布包；找到 macOS 测试者或准备公开发布时，再通过 GitHub Actions 的 macOS runner 完成原生构建、测试及 `.app` 打包。签名和公证也应在该流程中配置。
 

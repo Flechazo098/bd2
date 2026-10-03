@@ -31,7 +31,10 @@ type EquipmentGacha struct {
 	Pool             []WeightedEquipment
 	TicketOnly       bool
 }
-type EquipmentGachaGroup struct{ ID, FixedID, PointCount, OneTimeGachaID, TenTimeGachaID uint64 }
+type EquipmentGachaGroup struct {
+	ID, FixedID, PointCount, OneTimeGachaID, TenTimeGachaID uint64
+	PickUpExchangeCost, PickUpItemID                        uint64
+}
 type EquipmentFixedDesign struct {
 	ID, SRCount, URCount uint64
 	Reset                bool
@@ -89,8 +92,22 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		ten, _ := packedInts(raw, 33)
 		fixed, _ := packedInts(raw, 10)
 		points, _ := packedInts(raw, 27)
-		if len(one) != 1 || len(ten) != 1 || len(fixed) != 1 || fixed[0] != 1 || len(points) != 1 || points[0] != 1 {
+		gachaTypes, _ := packedInts(raw, 17)
+		pickupEnabled, _ := packedInts(raw, 20)
+		pickupCosts, _ := packedInts(raw, 25)
+		pickupItems, _ := packedInts(raw, 26)
+		if len(one) != 1 || len(ten) != 1 || len(fixed) != 1 || fixed[0] != 1 || len(points) != 1 || points[0] != 1 ||
+			len(gachaTypes) != 1 || gachaTypes[0] != 2 || len(pickupEnabled) > 1 || len(pickupCosts) > 1 || len(pickupItems) > 1 {
 			return nil, fmt.Errorf("gamedata: equipment group %d malformed", groupID)
+		}
+		pickupCost, pickupItem := uint64(0), uint64(0)
+		if len(pickupEnabled) == 1 && pickupEnabled[0] == 1 {
+			if len(pickupCosts) != 1 || pickupCosts[0] == 0 || len(pickupItems) != 1 || pickupItems[0] == 0 {
+				return nil, fmt.Errorf("gamedata: equipment group %d has malformed pickup exchange", groupID)
+			}
+			pickupCost, pickupItem = pickupCosts[0], pickupItems[0]
+		} else if len(pickupEnabled) != 0 || len(pickupCosts) != 0 || len(pickupItems) != 0 {
+			return nil, fmt.Errorf("gamedata: equipment group %d has inconsistent pickup exchange", groupID)
 		}
 		// The absence of SelectCount/GachaSubType is deliberate evidence that
 		// this live group is not an equipment 12PICK configuration.
@@ -99,7 +116,10 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 				return nil, fmt.Errorf("gamedata: equipment group %d unexpectedly has selection field %d=%v", groupID, field, v)
 			}
 		}
-		group := EquipmentGachaGroup{ID: groupID, FixedID: fixed[0], PointCount: points[0], OneTimeGachaID: one[0], TenTimeGachaID: ten[0]}
+		group := EquipmentGachaGroup{
+			ID: groupID, FixedID: fixed[0], PointCount: points[0], OneTimeGachaID: one[0], TenTimeGachaID: ten[0],
+			PickUpExchangeCost: pickupCost, PickUpItemID: pickupItem,
+		}
 		c.groups[groupID] = group
 		for _, id := range []uint64{one[0], ten[0]} {
 			g, err := loadEquipmentGacha(db, id)
@@ -112,6 +132,11 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 				if err := c.loadEquipmentTree(db, item); err != nil {
 					return nil, err
 				}
+			}
+		}
+		if group.PickUpItemID != 0 {
+			if err := c.loadEquipmentTree(db, WeightedEquipment{ID: group.PickUpItemID}); err != nil {
+				return nil, fmt.Errorf("gamedata: equipment group %d pickup: %w", groupID, err)
 			}
 		}
 	}

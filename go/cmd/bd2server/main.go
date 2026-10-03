@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,6 +25,7 @@ import (
 	"bd2server/internal/server/feature"
 	"bd2server/internal/server/gacha"
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/lifecycle"
 	"bd2server/internal/server/mail"
 	"bd2server/internal/server/missions"
 	"bd2server/internal/server/pictorial"
@@ -57,6 +61,8 @@ func main() {
 		err = stateCommand(os.Args[2:])
 	case "resources":
 		err = resourcesCommand(os.Args[2:])
+	case "preflight":
+		err = preflight(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -173,7 +179,7 @@ func serve(args []string) (serveErr error) {
 	cfg := bootstrap.Config{
 		BaseURL:     base,
 		CDNURL:      publicResources.ServerDataURL,
-		Version:     versions.ClientVersion,
+		Version:     versions.GameVersion,
 		BundleVer:   versions.BundleVersion,
 		GameDataURL: publicResources.GameDataURL,
 		GameDataVer: *gameDataVersion,
@@ -196,10 +202,10 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter player: %w", err)
 	}
-	if login.Version != versions.ClientVersion || starter.Version != versions.ClientVersion {
-		return fmt.Errorf("client version %s requires matching account and player seeds (got %s and %s)", versions.ClientVersion, login.Version, starter.Version)
+	if login.Version != versions.GameVersion || starter.Version != versions.GameVersion {
+		return fmt.Errorf("game version %s requires matching account and player seeds (got %s and %s)", versions.GameVersion, login.Version, starter.Version)
 	}
-	gachaSchedule, err := gacha.LoadScheduleSeed(filepath.Clean(*gachaScheduleSeed), versions.ClientVersion)
+	gachaSchedule, err := gacha.LoadScheduleSeed(filepath.Clean(*gachaScheduleSeed), versions.GameVersion)
 	if err != nil {
 		return fmt.Errorf("load gacha schedule: %w", err)
 	}
@@ -213,6 +219,10 @@ func serve(args []string) (serveErr error) {
 	regularGacha, equipmentGacha, err := gamedata.LoadActiveGachaForSchedules(gameData, *gameDataVersion, scheduleGroupIDs, stepUpGroupIDs)
 	if err != nil {
 		return fmt.Errorf("load active gacha GameData: %w", err)
+	}
+	limitedCostumes, err := gamedata.LoadLimitedCostumes(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load limited costume GameData: %w", err)
 	}
 	firstGacha, err := gamedata.LoadFirstGacha(gameData, *gameDataVersion)
 	if err != nil {
@@ -236,11 +246,14 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	accountDomains := []string{"characters", "collection", "deck", "equipment", "items", "mail", "missions", "progress", "wallet"}
-	if !stateRepository.IsNew() {
-		if err := stateRepository.RequireDomains(accountDomains...); err != nil {
-			return fmt.Errorf("reject incomplete account database: %w", err)
-		}
+	initializationState, err := stateRepository.InitializationState(accountDomains...)
+	if err != nil {
+		return fmt.Errorf("reject incomplete account database: %w", err)
 	}
+	if initializationState == accountstate.InitializationCorrupt {
+		return errors.New("reject incomplete account database: corrupt initialization state")
+	}
+	initializeAccount := initializationState == accountstate.InitializationPending
 	startupTransaction, err := stateRepository.BeginOperation()
 	if err != nil {
 		return fmt.Errorf("begin startup state transaction: %w", err)
@@ -455,6 +468,9 @@ func serve(args []string) (serveErr error) {
 	if err := collection.BindBaseCharacters(worldService.CharacterService().RawAll()); err != nil {
 		return fmt.Errorf("bind base collection characters: %w", err)
 	}
+	if err := mailService.AttachCostumeRewards(collection, limitedCostumes); err != nil {
+		return fmt.Errorf("attach limited costume mail rewards: %w", err)
+	}
 	if reward, earned := worldService.EarnedQuestCostume(); earned {
 		if err := collection.AttachRewardCostume(reward); err != nil {
 			return fmt.Errorf("attach earned quest costume: %w", err)
@@ -539,12 +555,22 @@ func serve(args []string) (serveErr error) {
 			return err
 		}
 	}
-	if stateRepository.IsNew() {
+	featured := gacha.ActivePickupCostumes(regularGacha, gachaSchedule, uint64(time.Now().UTC().UnixMilli()))
+	limitedIDs := limitedCostumes.Excluding(featured)
+	if len(limitedIDs) != 0 {
+		if err := mailService.EnsureStarterLimitedCostumes(limitedIDs, time.Now().UTC()); err != nil {
+			return fmt.Errorf("ensure account limited-costume entitlement: %w", err)
+		}
+	}
+	if initializeAccount {
 		if err := ensureAccountStateInitialized(
 			progressState, deckStateStore, ownedItems, ownedEquipment,
 			worldService.CharacterService(), collection, wallet, inventorySlots, mailService, missionService,
 		); err != nil {
 			return fmt.Errorf("initialize complete account state generation: %w", err)
+		}
+		if err := stateRepository.MarkInitializationComplete(); err != nil {
+			return fmt.Errorf("mark account initialization complete: %w", err)
 		}
 	}
 	problems, err := stateRepository.Validate()
@@ -569,9 +595,15 @@ func serve(args []string) (serveErr error) {
 	if authService != nil {
 		authHandler = authService.Handler()
 	}
+	availability := lifecycle.NewGate()
+	instanceBytes := make([]byte, 16)
+	if _, err := rand.Read(instanceBytes); err != nil {
+		return fmt.Errorf("create server instance identity: %w", err)
+	}
+	instanceID := hex.EncodeToString(instanceBytes)
 	handler := transport.HTTP{
 		Dispatcher: dispatcher, Raw: game, Authentication: authentication,
-		AuthenticationHandler: authHandler, ResourcePolicy: publicResources,
+		AuthenticationHandler: authHandler, ResourcePolicy: publicResources, Availability: availability, InstanceID: instanceID,
 	}.Handler()
 	server := &http.Server{
 		Addr:              *listen,
@@ -581,8 +613,61 @@ func serve(args []string) (serveErr error) {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	slog.Info("BD2 server listening", "address", *listen, "client", cfg.Version, "bundle", cfg.BundleVer, "resourceMode", publicResources.Mode, "gameData", verifiedGameData.ArchivePath, "gameDataEntries", verifiedGameData.EntryCount, "accountSeed", *accountSeed)
-	return server.ListenAndServe()
+	slog.Info("BD2 server listening", "address", *listen, "instance_id", instanceID, "server_version", versions.ServerVersion, "game_version", cfg.Version, "bundle", cfg.BundleVer, "resourceMode", publicResources.Mode, "gameData", verifiedGameData.ArchivePath, "gameDataEntries", verifiedGameData.EntryCount, "accountSeed", *accountSeed)
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- server.ListenAndServe() }()
+	stateFailure := make(chan error, 1)
+	stopStateMonitor := make(chan struct{})
+	defer close(stopStateMonitor)
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := stateRepository.Check(); err != nil {
+					select {
+					case stateFailure <- err:
+					default:
+					}
+					return
+				}
+			case <-stopStateMonitor:
+				return
+			}
+		}
+	}()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, lifecycle.ShutdownSignals()...)
+	defer signal.Stop(signals)
+	var shutdownErr error
+	select {
+	case err := <-serveResult:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case received := <-signals:
+		slog.Info("BD2 server draining", "signal", received.String())
+	case err := <-stateFailure:
+		shutdownErr = err
+		slog.Error("BD2 server state failed closed; draining for process recovery", "error", err)
+	}
+	availability.Drain()
+	drainContext, cancelDrain := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancelDrain()
+	if err := availability.Wait(drainContext); err != nil {
+		slog.Warn("BD2 request drain timed out", "error", err)
+	}
+	if err := server.Shutdown(drainContext); err != nil {
+		_ = server.Close()
+		return fmt.Errorf("shutdown drained server: %w", err)
+	}
+	if err := <-serveResult; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	slog.Info("BD2 server stopped after drain")
+	return shutdownErr
 }
 
 type accountStateInitializer interface {
@@ -641,6 +726,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `bd2server - BrownDust II server
 
 Usage:
+	bd2server preflight [--data-dir DIR] [--version-config FILE]
 	bd2server serve [--data-dir DIR] [--version-config FILE] [options]
 	bd2server resources fetch --output DIR [--version-config FILE]
 	bd2server state check [options]

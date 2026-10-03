@@ -73,6 +73,9 @@ func (s *Store) AttachPresetRuntime(wallet *player.Wallet, characters *player.Ch
 func (s *Store) BeginSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if id == "" || id == s.sessionID {
+		return
+	}
 	s.sessionID = id
 	s.replies = map[string]deckReply{}
 }

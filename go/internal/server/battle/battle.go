@@ -16,13 +16,8 @@ import (
 
 type Service struct {
 	mu              sync.Mutex
-	entered         bool
-	index           uint64
-	round           uint64
-	monster         uint64
-	deck            uint64
-	pack            int
-	initialBlue     [][]byte
+	states          map[string]*battleState
+	activeSession   string
 	gameDataRoot    string
 	gameDataVersion string
 	inventory       *player.Inventory
@@ -32,12 +27,49 @@ type Service struct {
 	onTutorialWin   func() error
 }
 
+type battleState struct {
+	entered     bool
+	index       uint64
+	round       uint64
+	monster     uint64
+	deck        uint64
+	pack        int
+	initialBlue [][]byte
+}
+
+// BeginSession discards an unfinished battle when LoginUser creates a new
+// game session. Persistent rewards are written only by a successful BattleEnd
+// request transaction, so reconnect returns to the last pre-battle commit.
+func (s *Service) BeginSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == "" {
+		return
+	}
+	if s.states == nil {
+		s.states = make(map[string]*battleState)
+	}
+	if s.states[id] == nil {
+		if len(s.states) >= 1024 {
+			for key := range s.states {
+				if key != id {
+					delete(s.states, key)
+					break
+				}
+			}
+		}
+		s.states[id] = &battleState{}
+	}
+	s.activeSession = id
+}
+
 func (s *Service) AttachTutorialWin(callback func() error) { s.onTutorialWin = callback }
 
 func NewService(gameDataRoot, gameDataVersion string, inventory *player.Inventory, currentPack func() (int, error)) *Service {
 	return &Service{
 		gameDataRoot: gameDataRoot, gameDataVersion: gameDataVersion,
 		inventory: inventory, currentPack: currentPack, loadRewards: gamedata.BattleDeckRewards,
+		states: make(map[string]*battleState),
 	}
 }
 
@@ -62,9 +94,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	state := s.stateLocked()
 	switch path {
 	case "/BattleVerifyState":
-		if !s.entered {
+		if !state.entered {
 			return 0, nil, true, errors.New("battle: verify before enter")
 		}
 		// Packet code 142 follows BattleVerify(141). State 3 is the protocol's
@@ -109,42 +142,42 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		// The local engine is the normal deterministic engine.
 		response = wire.AppendVarint(response, 6, 1)
-		s.entered, s.index, s.round, s.initialBlue = true, 0, 0, nil
-		s.monster, s.deck, s.pack = monster, deck, packID
+		state.entered, state.index, state.round, state.initialBlue = true, 0, 0, nil
+		state.monster, state.deck, state.pack = monster, deck, packID
 		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
 	case "/BattleRetry":
-		if !s.entered {
+		if !state.entered {
 			return 0, nil, true, errors.New("battle: retry before enter")
 		}
 		index, found, err := wire.Varint(request, 2)
 		if err != nil || !found || index == 0 {
 			return 0, nil, true, errors.New("battle: retry missing battle index")
 		}
-		if len(s.initialBlue) == 0 {
+		if len(state.initialBlue) == 0 {
 			return 0, nil, true, errors.New("battle: retry before initial battle state")
 		}
 		var response []byte
-		for _, character := range s.initialBlue {
+		for _, character := range state.initialBlue {
 			response = wire.AppendBytes(response, 2, character)
 		}
 		response = wire.AppendVarint(response, 3, index)
-		s.index, s.round = index, 0
+		state.index, state.round = index, 0
 		return 58, response, true, nil
 	case "/BattleStart":
-		if !s.entered {
+		if !state.entered {
 			return 0, nil, true, errors.New("battle: start before enter")
 		}
 		index, found, err := wire.Varint(request, 2)
 		if err != nil || !found || index == 0 {
 			return 0, nil, true, errors.New("battle: invalid battle index")
 		}
-		if s.index != 0 && index != s.index {
-			return 0, nil, true, fmt.Errorf("battle: index changed from %d to %d", s.index, index)
+		if state.index != 0 && index != state.index {
+			return 0, nil, true, fmt.Errorf("battle: index changed from %d to %d", state.index, index)
 		}
-		s.index, s.round = index, s.round+1
-		if s.round == 1 {
-			s.initialBlue = nil
+		state.index, state.round = index, state.round+1
+		if state.round == 1 {
+			state.initialBlue = nil
 		}
 		var response []byte
 		err = wire.Walk(request, func(field wire.Field) error {
@@ -155,8 +188,8 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				response = wire.AppendBytes(response, 1, field.Value)
 			} else if field.Number == 5 {
 				response = wire.AppendBytes(response, 2, field.Value)
-				if s.round == 1 {
-					s.initialBlue = append(s.initialBlue, append([]byte(nil), field.Value...))
+				if state.round == 1 {
+					state.initialBlue = append(state.initialBlue, append([]byte(nil), field.Value...))
 				}
 			}
 			return nil
@@ -165,11 +198,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, err
 		}
 		// Stable per-battle/round seed; reproducible across retries.
-		seed := index*7919 + s.round*104729
+		seed := index*7919 + state.round*104729
 		response = wire.AppendVarint(response, 3, seed)
 		return 14, response, true, nil
 	case "/BattleEnd":
-		if !s.entered {
+		if !state.entered {
 			return 0, nil, true, errors.New("battle: end before enter")
 		}
 		result, found, err := wire.Varint(request, 2)
@@ -187,19 +220,19 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, err
 		}
 		rewardBundle := false
-		if result == 1 && s.inventory != nil && s.monster != 0 && s.gameDataRoot != "" {
-			if s.pack <= 0 {
+		if result == 1 && s.inventory != nil && state.monster != 0 && s.gameDataRoot != "" {
+			if state.pack <= 0 {
 				return 0, nil, true, errors.New("battle: victory has no locked pack")
 			}
 			loader := s.loadRewards
 			if loader == nil {
 				loader = gamedata.BattleDeckRewards
 			}
-			rewards, rewardErr := loader(s.gameDataRoot, s.gameDataVersion, s.pack, s.deck)
+			rewards, rewardErr := loader(s.gameDataRoot, s.gameDataVersion, state.pack, state.deck)
 			if rewardErr != nil {
-				return 0, nil, true, fmt.Errorf("battle: pack %d monster %d deck %d rewards: %w", s.pack, s.monster, s.deck, rewardErr)
+				return 0, nil, true, fmt.Errorf("battle: pack %d monster %d deck %d rewards: %w", state.pack, state.monster, state.deck, rewardErr)
 			}
-			items, grantErr := s.inventory.GrantOnce(fmt.Sprintf("pack%d:monster%d:deck%d", s.pack, s.monster, s.deck), rewards)
+			items, grantErr := s.inventory.GrantOnce(fmt.Sprintf("pack%d:monster%d:deck%d", state.pack, state.monster, state.deck), rewards)
 			if grantErr != nil {
 				return 0, nil, true, grantErr
 			}
@@ -223,11 +256,27 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 			response = wire.AppendBytes(response, field, nil)
 		}
-		s.entered, s.deck, s.pack, s.initialBlue = false, 0, 0, nil
+		state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
 		return 15, response, true, nil
 	case "/BattleExit":
-		s.entered, s.index, s.round, s.deck, s.pack, s.initialBlue = false, 0, 0, 0, 0, nil
+		state.entered, state.index, state.round, state.deck, state.pack, state.initialBlue = false, 0, 0, 0, 0, nil
 		return 388, nil, true, nil
 	}
 	panic("unreachable")
+}
+
+func (s *Service) stateLocked() *battleState {
+	if s.states == nil {
+		s.states = make(map[string]*battleState)
+	}
+	key := s.activeSession
+	if key == "" {
+		key = "__direct_test__"
+	}
+	state := s.states[key]
+	if state == nil {
+		state = &battleState{}
+		s.states[key] = state
+	}
+	return state
 }

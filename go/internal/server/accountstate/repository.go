@@ -18,21 +18,27 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var ErrClosed = errors.New("accountstate: transaction already finished")
+var ErrFenced = stateio.ErrWriterFenced
+var ErrWriterLocked = errors.New("accountstate: state database is already owned by another writer")
 
 // Repository owns one SQLite connection. A request or a complete batch holds
 // that connection from Begin until Commit or Rollback, serializing writers.
 type Repository struct {
-	db  *sql.DB
-	new bool
+	db          *sql.DB
+	new         bool
+	writerEpoch int64
+	writerLock  *writerLock
 
-	mu       sync.Mutex
-	failed   error
-	opMu     sync.Mutex
-	activeMu sync.RWMutex
-	active   *Tx
+	mu        sync.Mutex
+	failed    error
+	opMu      sync.Mutex
+	activeMu  sync.RWMutex
+	active    *Tx
+	closeOnce sync.Once
+	closeErr  error
 }
 
 var _ stateio.TransactionalStore = (*Repository)(nil)
@@ -44,13 +50,22 @@ func Open(path string) (_ *Repository, err error) {
 		return nil, errors.New("accountstate: path must end in state.db")
 	}
 	path = filepath.Clean(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("accountstate: create state directory: %w", err)
+	}
+	writerLock, err := acquireWriterLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, writerLock.release())
+		}
+	}()
 	_, statErr := os.Stat(path)
 	fresh := errors.Is(statErr, os.ErrNotExist)
 	if statErr != nil && !fresh {
 		return nil, fmt.Errorf("accountstate: inspect database: %w", statErr)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("accountstate: create state directory: %w", err)
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -80,7 +95,35 @@ func Open(path string) (_ *Repository, err error) {
 	if _, err = db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
 		return nil, fmt.Errorf("accountstate: set busy timeout: %w", err)
 	}
-	return &Repository{db: db, new: fresh}, nil
+	epoch, err := claimWriterEpoch(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	return &Repository{db: db, new: fresh, writerEpoch: epoch, writerLock: writerLock}, nil
+}
+
+func claimWriterEpoch(ctx context.Context, db *sql.DB) (int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("accountstate: begin writer claim: %w", err)
+	}
+	defer tx.Rollback()
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='writer_epoch'`).Scan(&raw); err != nil {
+		return 0, fmt.Errorf("accountstate: read writer epoch: %w", err)
+	}
+	current, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || current < 0 || current == int64(^uint64(0)>>1) {
+		return 0, fmt.Errorf("accountstate: invalid writer epoch %q", raw)
+	}
+	next := current + 1
+	if _, err := tx.ExecContext(ctx, `UPDATE metadata SET value=? WHERE key='writer_epoch'`, strconv.FormatInt(next, 10)); err != nil {
+		return 0, fmt.Errorf("accountstate: advance writer epoch: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("accountstate: commit writer claim: %w", err)
+	}
+	return next, nil
 }
 
 // SchemaVersion returns the on-disk version after all startup migrations.
@@ -134,6 +177,16 @@ func (r *Repository) Begin(ctx context.Context) (*Tx, error) {
 	if err != nil {
 		return nil, fmt.Errorf("accountstate: begin transaction: %w", err)
 	}
+	var rawEpoch string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='writer_epoch'`).Scan(&rawEpoch); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("accountstate: verify writer epoch: %w", err)
+	}
+	epoch, parseErr := strconv.ParseInt(rawEpoch, 10, 64)
+	if parseErr != nil || epoch != r.writerEpoch {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("%w: process=%d database=%q", ErrFenced, r.writerEpoch, rawEpoch)
+	}
 	if err := r.Check(); err != nil {
 		_ = tx.Rollback()
 		return nil, err
@@ -153,12 +206,18 @@ func (r *Repository) fail(err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.failed == nil {
-		r.failed = fmt.Errorf("accountstate: transaction outcome uncertain; reopen database: %w", err)
+		r.failed = fmt.Errorf("%w: accountstate transaction outcome uncertain; reopen database: %v", stateio.ErrStateRecoveryRequired, err)
 	}
 }
 
-// Close releases the SQLite connection. All transactions must be finished first.
-func (r *Repository) Close() error { return r.db.Close() }
+// Close releases the SQLite connection and then the cross-process writer lock.
+// All transactions must be finished first.
+func (r *Repository) Close() error {
+	r.closeOnce.Do(func() {
+		r.closeErr = errors.Join(r.db.Close(), r.writerLock.release())
+	})
+	return r.closeErr
+}
 
 // LoadContext reads a domain outside a request transaction.
 func (r *Repository) LoadContext(ctx context.Context, name string) ([]byte, int64, bool, error) {

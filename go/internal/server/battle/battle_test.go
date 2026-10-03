@@ -1,6 +1,7 @@
 package battle
 
 import (
+	"fmt"
 	"testing"
 
 	"bd2server/internal/server/gamedata"
@@ -161,5 +162,58 @@ func TestBattleVictoryLocksPackAtEnterForRewardsAndIdentity(t *testing.T) {
 	}
 	if got := inventory.GrantedItems("pack21:monster7:deck9"); len(got) != 0 {
 		t.Fatalf("reward leaked into pack21 identity: %+v", got)
+	}
+}
+
+func TestNewGameSessionDiscardsUnfinishedBattleWithoutRewards(t *testing.T) {
+	s := NewService("", "", nil, nil)
+	s.BeginSession("session-a")
+	enter := wire.AppendVarint(request(1), 4, 10)
+	enter = wire.AppendVarint(enter, 5, 1)
+	if _, _, _, err := s.Handle("/BattleEnter", enter); err != nil {
+		t.Fatal(err)
+	}
+	start := wire.AppendVarint(request(2), 2, 99)
+	start = wire.AppendBytes(start, 5, wire.AppendVarint(nil, 1, 123))
+	if _, _, _, err := s.Handle("/BattleStart", start); err != nil {
+		t.Fatal(err)
+	}
+	s.BeginSession("session-b")
+	end := wire.AppendVarint(request(3), 2, 1)
+	if _, _, _, err := s.Handle("/BattleEnd", end); err == nil {
+		t.Fatal("new session resumed unfinished battle")
+	}
+}
+
+func TestBattleStateIsIsolatedPerGameSession(t *testing.T) {
+	s := NewService("", "", nil, nil)
+	enter := wire.AppendVarint(request(1), 4, 10)
+	enter = wire.AppendVarint(enter, 5, 1)
+	s.BeginSession("session-a")
+	if _, _, _, err := s.Handle("/BattleEnter", enter); err != nil {
+		t.Fatal(err)
+	}
+	s.BeginSession("session-b")
+	end := wire.AppendVarint(request(2), 2, 1)
+	if _, _, _, err := s.Handle("/BattleEnd", end); err == nil {
+		t.Fatal("session-b observed session-a battle")
+	}
+	s.BeginSession("session-a")
+	if _, _, _, err := s.Handle("/BattleEnd", end); err != nil {
+		t.Fatalf("session-a lost its own battle: %v", err)
+	}
+}
+
+func TestRepeatedCurrentSessionSelectionDoesNotEvictOtherBattles(t *testing.T) {
+	service := NewService("", "", nil, nil)
+	for index := 0; index < 1024; index++ {
+		service.BeginSession(fmt.Sprintf("session-%d", index))
+	}
+	service.BeginSession("session-1023")
+	if len(service.states) != 1024 {
+		t.Fatalf("reselecting current session changed cache size: %d", len(service.states))
+	}
+	if service.states["session-1023"] == nil {
+		t.Fatal("reselecting current session evicted its battle state")
 	}
 }

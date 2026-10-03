@@ -69,8 +69,8 @@ func Inspect(gameDir string, versions clientconfig.ReleaseVersions) (GameStatus,
 	if err != nil {
 		return status, err
 	}
-	if status.ClientVersion != versions.ClientVersion {
-		return status, fmt.Errorf("unsupported Brown Dust II client version %s; this bd2client release requires %s", status.ClientVersion, versions.ClientVersion)
+	if status.ClientVersion != versions.GameVersion {
+		return status, fmt.Errorf("unsupported Brown Dust II client version %s; this bd2client release requires %s", status.ClientVersion, versions.GameVersion)
 	}
 	if verified, verifyErr := introdb.VerifyClient(installation.Root); verifyErr == nil {
 		status.PatchedURL = verified.URL

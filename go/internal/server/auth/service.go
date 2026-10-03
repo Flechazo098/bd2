@@ -50,6 +50,14 @@ type deviceResult struct {
 	RefreshExpiresIn int64  `json:"refresh_expires_in"`
 }
 
+type refreshAttemptResult struct {
+	Provider         string `json:"provider"`
+	AccessToken      string `json:"access_token"`
+	AccessExpiresAt  int64  `json:"access_expires_at"`
+	RefreshToken     string `json:"refresh_token"`
+	RefreshExpiresAt int64  `json:"refresh_expires_at"`
+}
+
 func New(config authconfig.Runtime, store *Store) (*Service, error) {
 	if config.Mode != "oauth" || store == nil {
 		return nil, errors.New("auth: OAuth service requires oauth configuration and store")
@@ -731,6 +739,7 @@ func cleanupExpired(tx *sql.Tx, now int64) error {
 	}{
 		{`DELETE FROM devices WHERE expires_at<=?`, []any{now}},
 		{`DELETE FROM access_tokens WHERE expires_at<=? OR family_id IN (SELECT id FROM families WHERE expires_at<=?)`, []any{now, now}},
+		{`DELETE FROM refresh_attempts WHERE expires_at<=? OR family_id IN (SELECT id FROM families WHERE expires_at<=?)`, []any{now, now}},
 		// Used refresh rows remain until their family expires so their reuse can
 		// still revoke every credential in that family.
 		{`DELETE FROM refresh_tokens WHERE family_id IN (SELECT id FROM families WHERE expires_at<=?)`, []any{now}},
@@ -747,23 +756,67 @@ func cleanupExpired(tx *sql.Tx, now int64) error {
 func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		RefreshToken string `json:"refresh_token"`
+		AttemptID    string `json:"attempt_id"`
 	}
-	if !decodeJSON(w, r, &request) || request.RefreshToken == "" {
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if request.RefreshToken == "" || !validRefreshAttemptID(request.AttemptID) {
+		http.Error(w, "refresh_token and valid attempt_id required", http.StatusBadRequest)
 		return
 	}
 	now := s.store.now()
+	requestTokenHash := s.store.digest("refresh-token", request.RefreshToken)
+	attemptHash := s.store.digest("refresh-attempt", request.AttemptID)
 	tx, err := s.store.db.Begin()
 	if err != nil {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
 	defer tx.Rollback()
+	if err := cleanupExpired(tx, now.Unix()); err != nil {
+		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+		return
+	}
 	var familyID, accountID, provider, accountStatus string
 	var tokenExpires, familyExpires int64
 	var usedAt, revokedAt sql.NullInt64
-	err = tx.QueryRow(`SELECT r.family_id,f.account_id,f.provider,a.status,r.expires_at,f.expires_at,r.used_at,COALESCE(r.revoked_at,f.revoked_at) FROM refresh_tokens r JOIN families f ON f.id=r.family_id JOIN accounts a ON a.id=f.account_id WHERE r.token_hash=?`, s.store.digest("refresh-token", request.RefreshToken)).Scan(&familyID, &accountID, &provider, &accountStatus, &tokenExpires, &familyExpires, &usedAt, &revokedAt)
-	if err != nil || revokedAt.Valid || accountStatus != "active" || now.Unix() >= tokenExpires || now.Unix() >= familyExpires {
+	err = tx.QueryRow(`SELECT r.family_id,f.account_id,f.provider,a.status,r.expires_at,f.expires_at,r.used_at,COALESCE(r.revoked_at,f.revoked_at) FROM refresh_tokens r JOIN families f ON f.id=r.family_id JOIN accounts a ON a.id=f.account_id WHERE r.token_hash=?`, requestTokenHash).Scan(&familyID, &accountID, &provider, &accountStatus, &tokenExpires, &familyExpires, &usedAt, &revokedAt)
+	if err != nil || revokedAt.Valid || accountStatus != "active" || now.Unix() >= familyExpires {
+		w.Header().Set("X-BD2-Refresh-Invalid", "1")
 		http.Error(w, "refresh token invalid", http.StatusUnauthorized)
+		return
+	}
+	var savedRequestHash, resultCipher []byte
+	err = tx.QueryRow(`SELECT request_token_hash,result_cipher FROM refresh_attempts WHERE family_id=? AND attempt_hash=?`, familyID, attemptHash).Scan(&savedRequestHash, &resultCipher)
+	if err == nil {
+		if subtle.ConstantTimeCompare(savedRequestHash, requestTokenHash) != 1 {
+			w.Header().Set("X-BD2-Refresh-Invalid", "1")
+			http.Error(w, "refresh attempt_id already belongs to another request", http.StatusConflict)
+			return
+		}
+		plain, openErr := s.store.open(refreshAttemptSealID(familyID, attemptHash), "result", resultCipher)
+		if openErr != nil {
+			http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+			return
+		}
+		var saved refreshAttemptResult
+		decodeErr := json.Unmarshal(plain, &saved)
+		clear(plain)
+		if decodeErr != nil || saved.Provider == "" || saved.AccessToken == "" || saved.RefreshToken == "" {
+			http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, saved.deviceResult(now.Unix()))
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+		return
+	}
+	if now.Unix() >= tokenExpires {
+		w.Header().Set("X-BD2-Refresh-Invalid", "1")
+		http.Error(w, "refresh token expired", http.StatusUnauthorized)
 		return
 	}
 	if usedAt.Valid {
@@ -775,6 +828,7 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("X-BD2-Refresh-Invalid", "1")
 		http.Error(w, "refresh token replayed", http.StatusUnauthorized)
 		return
 	}
@@ -788,12 +842,13 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
-	updated, err := tx.Exec(`UPDATE refresh_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL AND revoked_at IS NULL`, now.Unix(), s.store.digest("refresh-token", request.RefreshToken))
+	updated, err := tx.Exec(`UPDATE refresh_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL AND revoked_at IS NULL`, now.Unix(), requestTokenHash)
 	if err != nil {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
 	if count, err := rowsAffected(updated); err != nil || count != 1 {
+		w.Header().Set("X-BD2-Refresh-Invalid", "1")
 		http.Error(w, "refresh token invalid", http.StatusUnauthorized)
 		return
 	}
@@ -810,11 +865,67 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
+	result := refreshAttemptResult{
+		Provider: provider, AccessToken: newAccess, AccessExpiresAt: now.Add(s.config.AccessTTL).Unix(),
+		RefreshToken: newRefresh, RefreshExpiresAt: refreshExpiry,
+	}
+	plain, err := json.Marshal(result)
+	if err != nil {
+		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+		return
+	}
+	resultCipher, err = s.store.seal(refreshAttemptSealID(familyID, attemptHash), "result", plain)
+	clear(plain)
+	if err != nil {
+		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+		return
+	}
+	if _, err = tx.Exec(`INSERT INTO refresh_attempts(family_id,attempt_hash,request_token_hash,result_cipher,created_at,expires_at) VALUES(?,?,?,?,?,?)`, familyID, attemptHash, requestTokenHash, resultCipher, now.Unix(), refreshExpiry); err != nil {
+		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
+		return
+	}
 	if err = tx.Commit(); err != nil {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, deviceResult{Provider: provider, AccessToken: newAccess, AccessExpiresIn: int64(s.config.AccessTTL.Seconds()), RefreshToken: newRefresh, RefreshExpiresIn: refreshExpiry - now.Unix()})
+	writeJSON(w, http.StatusOK, result.deviceResult(now.Unix()))
+}
+
+func validRefreshAttemptID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for _, item := range value {
+		if item < 'a' || item > 'z' {
+			if item < 'A' || item > 'Z' {
+				if item < '0' || item > '9' {
+					if item != '-' && item != '_' {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
+}
+
+func refreshAttemptSealID(familyID string, attemptHash []byte) string {
+	return familyID + ":" + base64.RawURLEncoding.EncodeToString(attemptHash)
+}
+
+func (r refreshAttemptResult) deviceResult(now int64) deviceResult {
+	accessTTL := r.AccessExpiresAt - now
+	if accessTTL < 0 {
+		accessTTL = 0
+	}
+	refreshTTL := r.RefreshExpiresAt - now
+	if refreshTTL < 0 {
+		refreshTTL = 0
+	}
+	return deviceResult{
+		Provider: r.Provider, AccessToken: r.AccessToken, AccessExpiresIn: accessTTL,
+		RefreshToken: r.RefreshToken, RefreshExpiresIn: refreshTTL,
+	}
 }
 
 func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {

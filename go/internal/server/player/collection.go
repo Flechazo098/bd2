@@ -469,6 +469,21 @@ func (s *CollectionStore) GrantRegular(identity string, costumeIDs []uint64, des
 	if identity == "" || len(costumeIDs) == 0 || design == nil {
 		return CollectionGrant{}, errors.New("player: invalid regular gacha grant")
 	}
+	return s.GrantCostumes(identity, costumeIDs, design)
+}
+
+type CostumeDesignSource interface {
+	Character(costumeID uint64) (gamedata.CharacterDesign, bool)
+}
+
+// GrantCostumes grants a deterministic costume-copy sequence from any
+// GameData-backed reward catalog. It is shared by gacha and new-player mail;
+// the identity makes retry return the original characters, costumes and
+// upgrade records without applying the copies twice.
+func (s *CollectionStore) GrantCostumes(identity string, costumeIDs []uint64, design CostumeDesignSource) (CollectionGrant, error) {
+	if identity == "" || len(costumeIDs) == 0 || design == nil {
+		return CollectionGrant{}, errors.New("player: invalid costume reward grant")
+	}
 	return s.grantCostumes(identity, costumeIDs, design.Character, nil)
 }
 
@@ -514,6 +529,41 @@ func (s *CollectionStore) GrantGachaPointCostume(identity string, group gamedata
 		next.GachaPointExchange[identity] = GachaPointExchange{GroupID: group.ID, Count: group.PickUpExchangeCost}
 		return nil
 	})
+}
+
+// GrantGachaPointEquipment records an equipment pickup exchange in the same
+// collection ledger used by costume pickup exchanges. The equipment instance
+// itself belongs to EquipmentInventory; the request transaction makes both
+// domain writes atomic.
+func (s *CollectionStore) GrantGachaPointEquipment(identity string, groupID, exchangeCost uint64) (CollectionGrant, error) {
+	if identity == "" || groupID == 0 || exchangeCost == 0 {
+		return CollectionGrant{}, errors.New("player: invalid gacha point equipment exchange")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if grant, ok := s.data.Grants[identity]; ok {
+		return cloneGrant(grant), nil
+	}
+	next := cloneCollection(s.data)
+	key := strconv.FormatUint(groupID, 10)
+	user, ok := next.GachaUsers[key]
+	if !ok || user.Point < exchangeCost {
+		return CollectionGrant{}, errors.New("player: insufficient gacha point")
+	}
+	if user.ExchangeItemCount == ^uint64(0) {
+		return CollectionGrant{}, errors.New("player: gacha item exchange count overflow")
+	}
+	user.GroupID = groupID
+	user.Point -= exchangeCost
+	user.ExchangeItemCount++
+	next.GachaUsers[key] = user
+	next.GachaPointExchange[identity] = GachaPointExchange{GroupID: groupID, Count: exchangeCost}
+	grant := CollectionGrant{}
+	next.Grants[identity] = grant
+	if err := s.commit(next); err != nil {
+		return CollectionGrant{}, err
+	}
+	return grant, nil
 }
 
 func (s *CollectionStore) GrantRegularPurchase(identity string, costumeIDs []uint64, design *gamedata.RegularGachaCatalog, purchase GachaPurchase) (CollectionGrant, error) {
