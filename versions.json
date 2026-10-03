@@ -4,7 +4,7 @@
   "bundle_version": "20260921135230",
   "seed_directory": "go/seed/v2_35_10",
   "plugins": {
-    "local_identity": "0.6.0",
+    "local_identity": "0.6.1",
     "capture_environment": "0.2.0",
     "login_ui": "0.1.4"
   }
