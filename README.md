@@ -6,8 +6,6 @@
 
 ## 开发构建
 
-外部 PowerShell 终端从 `go` 目录执行 `. .\env.ps1`，将当前终端的 Go 缓存设为 `go/.cache/go-build`，不修改用户级 Go 配置。VS Code 可在工作区 `terminal.integrated.env.windows` 和 `go.toolsEnvVars` 中配置同一路径，让本项目的新终端自动生效。
-
 ```powershell
 # Go
 Push-Location .\go
