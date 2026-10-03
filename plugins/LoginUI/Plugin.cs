@@ -82,7 +82,17 @@ public sealed class Plugin : BaseUnityPlugin
                 new[] { typeof(bool) },
                 null);
             SetIntroState = FindSetIntroState(introUI);
-            EnterGame = introUI.GetMethod("Enter", BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            EnterGame = introUI.GetMethod(
+                "ὤὣὦὤὪὩὯὢὢὠὭ",
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                Type.EmptyTypes,
+                null) ?? introUI.GetMethod(
+                "Enter",
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                Type.EmptyTypes,
+                null);
             OpenPCLoginPopup = FindOpenPCLoginPopup();
             MethodInfo accessTokenGetter = FindAccessTokenGetter();
             MethodInfo clearPCLocalData = FindClearPCLocalData();
@@ -488,7 +498,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static bool IsPackCollectionActive()
     {
-        Type uiManager = FindType("UIManager");
+        Type uiManager = FindType("ὩὭὨὪὨὨὮὣὪὣὥ") ?? FindType("UIManager");
         MethodInfo getUI = uiManager?.GetMethod(
             "GetUI",
             BindingFlags.Static | BindingFlags.Public,
