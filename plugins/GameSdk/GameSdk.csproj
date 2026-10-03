@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- The navigation cache hashes this DLL. Unrelated repository commits
+         must not change it through informational-version metadata. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
