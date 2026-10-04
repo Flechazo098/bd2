@@ -52,6 +52,7 @@ func TestResolveRecruitNPCBlocksActiveQuestRangesAfterEarlierRecruitChapter(t *t
 	s.activePack = 22
 	s.packs = map[int]map[int]gamedata.QuestDesign{21: s.quests, 22: {1: {ID: 1}, 2: {ID: 2}}}
 	s.transitions = map[int]gamedata.PackTransition{21: {PackID: 21, NextPackID: 22}}
+	attachTestStoryCatalog(s)
 	for _, id := range []int{1, 2, 3} {
 		if err := s.state.ClearQuest(id, 21); err != nil {
 			t.Fatal(err)

@@ -676,6 +676,9 @@ func serve(args []string) (serveErr error) {
 		); err != nil {
 			return fmt.Errorf("initialize complete account state generation: %w", err)
 		}
+		if err := worldService.EnsureInitialPackPurchase(); err != nil {
+			return fmt.Errorf("grant initial pack purchase rewards: %w", err)
+		}
 		if err := stateRepository.MarkInitializationComplete(); err != nil {
 			return fmt.Errorf("mark account initialization complete: %w", err)
 		}

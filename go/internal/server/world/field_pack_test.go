@@ -127,6 +127,7 @@ func TestLastPlayedStoryPackRestoresItsExactPosition(t *testing.T) {
 	s := testService()
 	s.packs = map[int]map[int]gamedata.QuestDesign{21: s.quests, 22: {1: {ID: 1}}}
 	s.transitions = map[int]gamedata.PackTransition{21: {PackID: 21, NextPackID: 22}}
+	attachTestStoryCatalog(s)
 	for quest := range s.quests {
 		if err := s.state.ClearQuest(quest, 21); err != nil {
 			t.Fatal(err)

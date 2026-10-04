@@ -13,8 +13,11 @@ import (
 // Reward slot zero is normal story difficulty; later slots are separate
 // difficulty tiers and must never be added to the same clear.
 type QuestDesign struct {
-	ID      int
-	Rewards [5][]Reward
+	ID           int
+	Type         int
+	PriorQuestID int
+	NextQuestID  int
+	Rewards      [5][]Reward
 }
 
 func LoadQuestDesign(root, version string, packID int) (map[int]QuestDesign, error) {
@@ -62,6 +65,15 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 			continue
 		}
 		entry := QuestDesign{ID: id}
+		for field, dst := range map[int]*int{63: &entry.Type, 37: &entry.PriorQuestID, 35: &entry.NextQuestID} {
+			values, err := packedInts(proto, field)
+			if err != nil || len(values) > 1 || (len(values) == 1 && values[0] > uint64(^uint32(0)>>1)) {
+				return nil, fmt.Errorf("gamedata: invalid quest %d field%d", id, field)
+			}
+			if len(values) == 1 {
+				*dst = int(values[0])
+			}
+		}
 		for slot := 0; slot < len(entry.Rewards); slot++ {
 			types, err := packedInts(proto, 56+slot)
 			if err != nil {

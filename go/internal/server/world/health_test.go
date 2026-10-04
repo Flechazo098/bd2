@@ -41,6 +41,7 @@ func TestTutorialCharInfoRestoresFieldHealthWithoutExposingStoryRoster(t *testin
 				t.Fatal(err)
 			}
 			s := &Service{seed: Seed{PackID: 21, BattleUnlockQuestID: 26}, state: progress.NewStore(), starter: starter, characters: characters}
+			attachTestStoryCatalog(s)
 			code, response, handled, err := s.Handle("/CharInfo", wire.AppendVarint(nil, 1, 1))
 			if err != nil || code != 9 || !handled {
 				t.Fatalf("code=%d handled=%v err=%v", code, handled, err)
@@ -105,6 +106,7 @@ func TestPackInfoStoryCharactersUsePersistedDeadAndInjuredHP(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{seed: Seed{PackID: 21, BattleUnlockQuestID: 26, RewardCharacter: all[0], StoryCharacters: all[1:]}, state: state, starter: starter, characters: characters}
+	attachTestStoryCatalog(s)
 	response, err := s.packInfoFor(21)
 	if err != nil {
 		t.Fatal(err)

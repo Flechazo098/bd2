@@ -3,6 +3,7 @@ package world
 import (
 	"bytes"
 	"encoding/binary"
+	"sort"
 	"testing"
 
 	"bd2server/internal/server/deck"
@@ -13,8 +14,44 @@ import (
 	"bd2server/internal/server/wire"
 )
 
+// Legacy regression fixtures define their own linear IDs. Production uses
+// GameData links; this helper gives those small test fixtures explicit links.
+func attachTestStoryCatalog(s *Service) {
+	packs := s.packs
+	if packs == nil {
+		packs = map[int]map[int]gamedata.QuestDesign{s.seed.PackID: s.quests}
+	}
+	s.storyCatalog = &gamedata.StoryCatalog{Packs: map[int]gamedata.StoryPack{}}
+	for id, quests := range packs {
+		var ids []int
+		for qid := range quests {
+			ids = append(ids, qid)
+		}
+		sort.Ints(ids)
+		for i, qid := range ids {
+			q := quests[qid]
+			q.Type = 0
+			if i > 0 {
+				q.PriorQuestID = ids[i-1]
+			}
+			if i+1 < len(ids) {
+				q.NextQuestID = ids[i+1]
+			}
+			quests[qid] = q
+		}
+		s.storyCatalog.Packs[id] = gamedata.StoryPack{ID: id, Quests: quests, MainQuestIDs: ids}
+	}
+	if s.transition.NextPackID != 0 {
+		if _, exists := s.storyCatalog.Packs[s.transition.NextPackID]; !exists {
+			s.storyCatalog.Packs[s.transition.NextPackID] = gamedata.StoryPack{ID: s.transition.NextPackID}
+		}
+	}
+}
+
 func testService() *Service {
-	return &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: progress.NewStore(), starter: &player.Starter{Version: "2.35.10"}, quests: map[int]gamedata.QuestDesign{1: {ID: 1}, 2: {ID: 2}, 3: {ID: 3}}}
+	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: progress.NewStore(), starter: &player.Starter{Version: "2.35.10"}, quests: map[int]gamedata.QuestDesign{1: {ID: 1}, 2: {ID: 2}, 3: {ID: 3}}}
+	attachTestStoryCatalog(s)
+	return s
 }
 
 func TestQuest29EchoesCurrentStoryDeck(t *testing.T) {
@@ -47,6 +84,7 @@ func TestQuest29EchoesCurrentStoryDeck(t *testing.T) {
 	}
 	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
 		starter: &player.Starter{Version: "2.35.10"}, quests: quests, decks: decks}
+	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 2)
 	request = wire.AppendVarint(request, 2, 29)
 	request = wire.AppendVarint(request, 3, 21)
@@ -164,6 +202,7 @@ func TestFinalQuestClearIncludesEmptyNextQuestInfo(t *testing.T) {
 		quests:     map[int]gamedata.QuestDesign{38: {ID: 38}},
 		transition: gamedata.PackTransition{PackID: 21, NextPackID: 22},
 	}
+	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)
 	request = wire.AppendVarint(request, 2, 38)
 	request = wire.AppendVarint(request, 3, 21)
@@ -208,6 +247,7 @@ func TestPackInfoRestoresCompletedPackAndUnlockedNextPack(t *testing.T) {
 	}
 	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21}, state: state,
 		quests: map[int]gamedata.QuestDesign{1: {ID: 1}, 2: {ID: 2}}, transition: gamedata.PackTransition{PackID: 21, NextPackID: 22}}
+	attachTestStoryCatalog(s)
 	code, response, handled, err := s.Handle("/PackInfo", wire.AppendVarint(nil, 1, 1))
 	if err != nil || !handled || code != 4 {
 		t.Fatalf("PackInfo code=%d handled=%v err=%v", code, handled, err)
@@ -248,6 +288,7 @@ func TestPack22InitializesWithIndependentQuestIdentity(t *testing.T) {
 			22: {PackID: 22},
 		},
 	}
+	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)
 	request = wire.AppendVarint(request, 2, 22)
 	code, response, handled, err := s.Handle("/PackInGameInfo", request)
@@ -312,6 +353,7 @@ func TestQuest28GrantsEquipmentInRewardBundle(t *testing.T) {
 	quests[28] = entry
 	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
 		starter: starter, equipment: equipment, inventory: inventory, quests: quests}
+	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)
 	request = wire.AppendVarint(request, 2, 28)
 	request = wire.AppendVarint(request, 3, 21)
@@ -358,6 +400,7 @@ func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
 	}
 	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
 		starter: &player.Starter{Version: "2.35.10"}, wallet: wallet, quests: quests}
+	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)
 	request = wire.AppendVarint(request, 2, 27)
 	request = wire.AppendVarint(request, 3, 21)
@@ -394,6 +437,7 @@ func TestPackInfoUsesPersistedCharacterLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{seed: Seed{PackID: 21, BattleUnlockQuestID: 26, RewardCharacter: player.Character{InvenIndex: 77, ID: 350, Level: 1}}, state: state, starter: starter, characters: characters}
+	attachTestStoryCatalog(s)
 	response, err := s.packInfo()
 	if err != nil {
 		t.Fatal(err)
