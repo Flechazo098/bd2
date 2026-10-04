@@ -136,6 +136,7 @@ func TestBattleVictoryLocksPackAtEnterForRewardsAndIdentity(t *testing.T) {
 	})
 	var loadedPack int
 	var loadedDeck uint64
+	s.loadPhases = func(string, string, int, uint64, uint64) ([]gamedata.BattlePhase, error) { return nil, nil }
 	s.loadRewards = func(_, _ string, packID int, deckID uint64) ([]gamedata.BattleReward, error) {
 		loadedPack, loadedDeck = packID, deckID
 		return []gamedata.BattleReward{{Type: 8, ID: 8, Count: 3}}, nil

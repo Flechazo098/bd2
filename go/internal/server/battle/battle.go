@@ -24,19 +24,25 @@ type Service struct {
 	inventory       *player.Inventory
 	currentPack     func() (int, error)
 	loadRewards     func(string, string, int, uint64) ([]gamedata.BattleReward, error)
+	loadPhases      func(string, string, int, uint64, uint64) ([]gamedata.BattlePhase, error)
 	buffs           func() ([]gamedata.PictorialBuffStat, error)
 	onTutorialWin   func() error
 	commitHealth    func(map[uint64]uint64) error
 }
 
 type battleState struct {
-	entered     bool
-	index       uint64
-	round       uint64
-	monster     uint64
-	deck        uint64
-	pack        int
-	initialBlue [][]byte
+	entered      bool
+	index        uint64
+	round        uint64
+	monster      uint64
+	deck         uint64
+	pack         int
+	initialBlue  [][]byte
+	phases       []gamedata.BattlePhase
+	phase        int
+	phaseStarted bool
+	phaseSeq     uint64
+	phaseReply   []byte
 }
 
 // BeginSession discards an unfinished battle when LoginUser creates a new
@@ -102,7 +108,7 @@ func checkSeq(request []byte) error {
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/BattleEnter" && path != "/BattleStart" && path != "/BattleRetry" && path != "/BattleVerifyState" && path != "/BattleEnd" && path != "/BattleExit" {
+	if path != "/BattleEnter" && path != "/BattleStart" && path != "/BattleRetry" && path != "/BattleVerifyState" && path != "/BattleEnd" && path != "/BattleExit" && path != "/BattlePhaseChange" {
 		return 0, nil, false, nil
 	}
 	if err := checkSeq(request); err != nil {
@@ -112,6 +118,36 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	defer s.mu.Unlock()
 	state := s.stateLocked()
 	switch path {
+	case "/BattlePhaseChange":
+		if !state.entered {
+			return 0, nil, true, errors.New("battle: phase change before enter")
+		}
+		seq, _, _ := wire.Varint(request, 1)
+		if seq == state.phaseSeq && state.phaseReply != nil {
+			return 632, append([]byte(nil), state.phaseReply...), true, nil
+		}
+		if seq <= state.phaseSeq {
+			return 0, nil, true, errors.New("battle: stale phase change sequence")
+		}
+		if len(state.phases) == 0 || state.phase+1 >= len(state.phases) {
+			return 0, nil, true, errors.New("battle: no next phase")
+		}
+		if !state.phaseStarted {
+			return 0, nil, true, errors.New("battle: phase change before current phase start")
+		}
+		next := state.phases[state.phase+1]
+		response := wire.AppendVarint(nil, 1, next.GroupID)
+		response = wire.AppendVarint(response, 2, next.ID)
+		response = wire.AppendVarint(response, 8, next.DeckID)
+		// The local engine does not simulate combat. With verification disabled
+		// and no battle_result the client explicitly preserves its blue team;
+		// fabricating a verified result would overwrite HP, SP and action state.
+		// Dynamic official turn/SP values are not available in this request.
+		state.phase++
+		state.index, state.deck, state.phaseStarted = next.DeckID, next.DeckID, false
+		state.phaseSeq, state.phaseReply = seq, append([]byte(nil), response...)
+		slog.Info("team trace: battle phase changed", "pack", state.pack, "monster", state.monster, "group", next.GroupID, "phase", next.ID, "enemyDeck", next.DeckID)
+		return 632, response, true, nil
 	case "/BattleVerifyState":
 		if !state.entered {
 			return 0, nil, true, errors.New("battle: verify before enter")
@@ -141,6 +177,20 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: current pack resolver is unavailable")
 		}
 		monster, _, _ := wire.Varint(request, 3)
+		var phases []gamedata.BattlePhase
+		if s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0) {
+			loader := s.loadPhases
+			if loader == nil {
+				loader = gamedata.BattleDeckPhases
+			}
+			phases, err = loader(s.gameDataRoot, s.gameDataVersion, packID, monster, deck)
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: load phases: %w", err)
+			}
+			if len(phases) != 0 && phases[0].DeckID != deck {
+				return 0, nil, true, errors.New("battle: enter must select first phase deck")
+			}
+		}
 		response := wire.AppendVarint(nil, 2, deck)
 		if s.buffs != nil {
 			buffs, err := s.buffs()
@@ -160,6 +210,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		response = wire.AppendVarint(response, 6, 1)
 		state.entered, state.index, state.round, state.initialBlue = true, 0, 0, nil
 		state.monster, state.deck, state.pack = monster, deck, packID
+		state.phases, state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = phases, 0, false, 0, nil
 		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
 	case "/BattleRetry":
@@ -173,12 +224,24 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if len(state.initialBlue) == 0 {
 			return 0, nil, true, errors.New("battle: retry before initial battle state")
 		}
+		if len(state.phases) != 0 {
+			// Retry requests carry the current deck; the response must restore
+			// the first phase's deck, as PhaseBattleManager.ApplyRetryResponse does.
+			if index != state.index {
+				return 0, nil, true, errors.New("battle: retry index does not match current phase")
+			}
+			index = state.phases[0].DeckID
+		}
 		var response []byte
 		for _, character := range state.initialBlue {
 			response = wire.AppendBytes(response, 2, character)
 		}
 		response = wire.AppendVarint(response, 3, index)
 		state.index, state.round = index, 0
+		if len(state.phases) != 0 {
+			state.deck = state.phases[0].DeckID
+		}
+		state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = 0, false, 0, nil
 		return 58, response, true, nil
 	case "/BattleStart":
 		if !state.entered {
@@ -191,10 +254,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if state.index != 0 && index != state.index {
 			return 0, nil, true, fmt.Errorf("battle: index changed from %d to %d", state.index, index)
 		}
-		state.index, state.round = index, state.round+1
-		if state.round == 1 {
-			state.initialBlue = nil
+		if len(state.phases) != 0 && index != state.phases[state.phase].DeckID {
+			return 0, nil, true, errors.New("battle: start index does not match current phase")
 		}
+		nextRound := state.round + 1
+		var initialBlue [][]byte
 		var response []byte
 		err = wire.Walk(request, func(field wire.Field) error {
 			if field.Type != 2 {
@@ -204,14 +268,18 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				response = wire.AppendBytes(response, 1, field.Value)
 			} else if field.Number == 5 {
 				response = wire.AppendBytes(response, 2, field.Value)
-				if state.round == 1 {
-					state.initialBlue = append(state.initialBlue, append([]byte(nil), field.Value...))
+				if nextRound == 1 {
+					initialBlue = append(initialBlue, append([]byte(nil), field.Value...))
 				}
 			}
 			return nil
 		})
 		if err != nil {
 			return 0, nil, true, err
+		}
+		state.index, state.round, state.phaseStarted = index, nextRound, true
+		if nextRound == 1 {
+			state.initialBlue = initialBlue
 		}
 		// Stable per-battle/round seed; reproducible across retries.
 		seed := index*7919 + state.round*104729
@@ -224,6 +292,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		result, found, err := wire.Varint(request, 2)
 		if err != nil || !found || result == 0 {
 			return 0, nil, true, errors.New("battle: invalid result")
+		}
+		if result == 1 && len(state.phases) != 0 && (state.phase != len(state.phases)-1 || !state.phaseStarted) {
+			return 0, nil, true, errors.New("battle: victory before final phase start")
 		}
 		response := wire.AppendVarint(nil, 1, result)
 		var resultCharacters [][]byte
