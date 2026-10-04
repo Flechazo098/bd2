@@ -26,6 +26,9 @@ func (s *Service) ClaimedAchievementIDs() map[gamedata.AchievementKey]bool {
 func (s *Service) AchievementExperience() (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.achievementExperienceLocked()
+}
+func (s *Service) achievementExperienceLocked() (uint64, error) {
 	var total uint64
 	known := map[string]bool{}
 	for key := range s.design.Achievements {

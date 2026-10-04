@@ -3229,47 +3229,6 @@
         }
       ]
     },
-    "/MonsterHuntUserInfo": {
-      "packet_code": 196,
-      "fields": [
-        {
-          "number": 1,
-          "type": 2,
-          "fields": [
-            {
-              "number": 1,
-              "type": 0,
-              "varint": 78
-            },
-            {
-              "number": 2,
-              "type": 0,
-              "varint": 73
-            },
-            {
-              "number": 3,
-              "type": 0,
-              "varint": 1
-            },
-            {
-              "number": 4,
-              "type": 0,
-              "varint": 5500
-            },
-            {
-              "number": 6,
-              "type": 0,
-              "varint": 5500
-            },
-            {
-              "number": 7,
-              "type": 0,
-              "varint": 1789835605000
-            }
-          ]
-        }
-      ]
-    },
     "/PassInfo": {
       "packet_code": 124,
       "fields": [

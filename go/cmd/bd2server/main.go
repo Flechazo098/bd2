@@ -26,9 +26,11 @@ import (
 	"bd2server/internal/server/gacha"
 	"bd2server/internal/server/gameconfig"
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/hunting"
 	"bd2server/internal/server/lifecycle"
 	"bd2server/internal/server/mail"
 	"bd2server/internal/server/missions"
+	"bd2server/internal/server/monsterhunt"
 	"bd2server/internal/server/pictorial"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/progress"
@@ -37,6 +39,7 @@ import (
 	"bd2server/internal/server/resourcepolicy"
 	"bd2server/internal/server/schedule"
 	"bd2server/internal/server/session"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/transport"
 	"bd2server/internal/server/versionconfig"
 	"bd2server/internal/server/wire"
@@ -44,6 +47,10 @@ import (
 )
 
 func main() {
+	if err := configureLogging(os.Stderr, "", ""); err != nil {
+		fmt.Fprintln(os.Stderr, "logging configuration failed:", err)
+		os.Exit(2)
+	}
 	if handled, err := runDevelopmentCommand(os.Args[1:]); handled {
 		if err != nil {
 			slog.Error("development command failed", "error", err)
@@ -79,6 +86,8 @@ func main() {
 
 func serve(args []string) (serveErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	logLevel := fs.String("log-level", "", "log threshold: trace, debug, info, warn, error (default BD2_LOG_LEVEL or info)")
+	logColor := fs.String("log-color", "", "level colors: auto, always, never (default BD2_LOG_COLOR or auto)")
 	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
 	authConfigPath := fs.String("authentication-config", "", "authentication.json override for development")
 	resourceConfigPath := fs.String("resource-config", "", "resources.json override for development")
@@ -99,6 +108,9 @@ func serve(args []string) (serveErr error) {
 	seasonScheduleSeed := fs.String("schedule-seed", "", "versioned server content calendar")
 	devToolsConfig := fs.String("dev-tools-config", "", "development-tool settings JSON (defaults to DATA_DIR/dev-tools.json)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := configureLogging(os.Stderr, *logLevel, *logColor); err != nil {
 		return err
 	}
 	var versions versionconfig.Config
@@ -419,6 +431,16 @@ func serve(args []string) (serveErr error) {
 	if err := missionService.AttachWallet(wallet); err != nil {
 		return fmt.Errorf("attach mission wallet: %w", err)
 	}
+	levelDesign, err := gamedata.LoadAchievementLevelDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load user level rewards: %w", err)
+	}
+	if err := missionService.AttachUserLevelRewards(levelDesign); err != nil {
+		return fmt.Errorf("attach user level rewards: %w", err)
+	}
+	if err := login.AttachLevelReward(missionService); err != nil {
+		return fmt.Errorf("attach persisted user level reward: %w", err)
+	}
 	if err := missionService.AttachMail(mailService); err != nil {
 		return fmt.Errorf("attach mission compensation mailbox: %w", err)
 	}
@@ -624,11 +646,36 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load master title: %w", err)
 	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
+	freeHuntingAP, bonusHuntingAP, err := login.SeedHuntingAP()
+	if err != nil {
+		return fmt.Errorf("read initial hunting AP: %w", err)
+	}
+	gameplayStore := stateio.EntrySnapshotStore{Entries: stateRepository, Domain: "missions", Bucket: "gameplay"}
+	huntingService, err := hunting.Open(gameplayStore, gameData, *gameDataVersion, ownedItems, wallet,
+		worldService.CurrentPackID, freeHuntingAP, bonusHuntingAP)
+	if err != nil {
+		return fmt.Errorf("load hunting state: %w", err)
+	}
+	if err := login.AttachHuntingAP(huntingService); err != nil {
+		return fmt.Errorf("attach persisted hunting AP: %w", err)
+	}
+	battleService.AttachHunting(huntingService)
 	battleService.AttachCurrentDifficulty(worldService.CurrentQuestDifficulty)
 	if err := worldService.AttachBattleActive(battleService.Active); err != nil {
 		return fmt.Errorf("attach world battle guard: %w", err)
 	}
 	characters := worldService.CharacterService()
+	monsterHuntService, err := monsterhunt.Open(gameplayStore, gameData, *gameDataVersion, serverConfig, ownedItems, wallet)
+	if err != nil {
+		return fmt.Errorf("load monster hunt state: %w", err)
+	}
+	if err := monsterHuntService.AttachPresetRuntime(characters, ownedEquipment, collection); err != nil {
+		return fmt.Errorf("attach monster hunt preset ownership: %w", err)
+	}
+	if err := login.AttachMonsterHuntSlots(monsterHuntService); err != nil {
+		return fmt.Errorf("attach monster hunt preset slots: %w", err)
+	}
+	battleService.AttachMonsterHunt(monsterHuntService)
 	recruitDesign, err := gamedata.LoadRecruitDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load recruitment GameData: %w", err)
@@ -705,6 +752,8 @@ func serve(args []string) (serveErr error) {
 	}
 	game, err := session.NewServerWithProgress(login, progressState,
 		battleService,
+		huntingService,
+		monsterHuntService,
 		worldService,
 		worldService.CharacterService(),
 		progressState,
@@ -923,5 +972,7 @@ Usage:
 	bd2server resources fetch --output DIR [--version-config FILE]
 	bd2server state check [options]
 
-The server binds to loopback by default.`+developmentUsage())
+The server binds to loopback by default.
+Logging: --log-level trace|debug|info|warn|error; --log-color auto|always|never.
+BD2_LOG_LEVEL and BD2_LOG_COLOR set defaults for all commands.`+developmentUsage())
 }

@@ -29,18 +29,64 @@ var (
 // deliberately absent. ResponseFields contains the remaining top-level
 // protobuf fields (such as client-notification state), never an HTTP envelope.
 type LoginSeed struct {
-	Version        string
-	PacketCode     int
-	UserInfo       []byte
-	ResponseFields []byte
-	currencies     CurrencyProvider
-	purchaseCounts PurchaseCountProvider
-	presetSlots    PresetSlotProvider
-	inventorySlots InventorySlotProvider
-	firstGacha     FirstGachaProvider
-	friendshipAP   FriendshipAPProvider
-	lastPlayedPack LastPlayedPackProvider
-	achievementExp AchievementExperienceProvider
+	Version          string
+	PacketCode       int
+	UserInfo         []byte
+	ResponseFields   []byte
+	currencies       CurrencyProvider
+	purchaseCounts   PurchaseCountProvider
+	presetSlots      PresetSlotProvider
+	inventorySlots   InventorySlotProvider
+	firstGacha       FirstGachaProvider
+	friendshipAP     FriendshipAPProvider
+	lastPlayedPack   LastPlayedPackProvider
+	achievementExp   AchievementExperienceProvider
+	levelReward      LevelRewardProvider
+	huntingAP        HuntingAPProvider
+	monsterHuntSlots PresetSlotProvider
+}
+
+func (s *LoginSeed) AttachMonsterHuntSlots(provider PresetSlotProvider) error {
+	if provider == nil {
+		return errors.New("account: missing monster hunt preset provider")
+	}
+	s.monsterHuntSlots = provider
+	return nil
+}
+
+type HuntingAPProvider interface {
+	HuntingAP() (free, bonus uint64, err error)
+}
+
+func (s *LoginSeed) AttachHuntingAP(provider HuntingAPProvider) error {
+	if provider == nil {
+		return errors.New("account: missing hunting AP provider")
+	}
+	s.huntingAP = provider
+	return nil
+}
+
+func (s *LoginSeed) SeedHuntingAP() (free, bonus uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, err
+	}
+	if free, _, err = wire.Varint(s.UserInfo, 20); err != nil {
+		return 0, 0, err
+	}
+	bonus, _, err = wire.Varint(s.UserInfo, 21)
+	return
+}
+
+type LevelRewardProvider interface {
+	LevelRewardCount() (uint64, error)
+}
+
+func (s *LoginSeed) AttachLevelReward(provider LevelRewardProvider) error {
+	if provider == nil {
+		return errors.New("account: missing level reward provider")
+	}
+	s.levelReward = provider
+	return nil
 }
 
 type AchievementExperienceProvider interface {
@@ -368,6 +414,43 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.monsterHuntSlots != nil {
+		count := s.monsterHuntSlots.PresetSlotCount()
+		if count > math.MaxInt32 {
+			return nil, errors.New("account: monster hunt preset slots exceed protocol range")
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 52, count); err != nil {
+			return nil, err
+		}
+	}
+	if s.huntingAP != nil {
+		free, bonus, err := s.huntingAP.HuntingAP()
+		if err != nil {
+			return nil, fmt.Errorf("account: hunting AP: %w", err)
+		}
+		if free > math.MaxInt32 || bonus > math.MaxInt32 {
+			return nil, errors.New("account: hunting AP exceeds protocol range")
+		}
+		if user, _, err = wire.ReplaceVarint(user, 20, free); err != nil {
+			return nil, err
+		}
+		if user, _, err = wire.ReplaceVarint(user, 21, bonus); err != nil {
+			return nil, err
+		}
+	}
+	if s.levelReward != nil {
+		claimed, err := s.levelReward.LevelRewardCount()
+		if err != nil {
+			return nil, fmt.Errorf("account: level reward: %w", err)
+		}
+		if claimed > math.MaxInt32 {
+			return nil, errors.New("account: level reward exceeds protocol range")
+		}
+		if user, _, err = wire.ReplaceVarint(user, 13, claimed); err != nil {
+			return nil, err
+		}
+	}
 	if s.achievementExp != nil {
 		experience, err := s.achievementExp.AchievementExperience()
 		if err != nil {
