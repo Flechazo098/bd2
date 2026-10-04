@@ -35,6 +35,9 @@ func (s *Service) ConfigureStartPack(packID int, initialize bool) error {
 		}
 	}
 	entry := s.state.StartPackID()
+	if entry != packID {
+		return fmt.Errorf("world: account starting chapter %d differs from locked server chapter %d", entry, packID)
+	}
 	if _, ok := s.storyCatalog.Packs[entry]; !ok {
 		return fmt.Errorf("world: invalid persisted starting chapter %d", entry)
 	}

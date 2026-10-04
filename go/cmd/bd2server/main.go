@@ -289,6 +289,10 @@ func serve(args []string) (serveErr error) {
 			serveErr = errors.Join(serveErr, rollbackErr)
 		}
 	}()
+	startingPackID, err := stateRepository.LockStartingPack(gameRules.Story.StartPackID, initializeAccount)
+	if err != nil {
+		return fmt.Errorf("server starting chapter policy: %w", err)
+	}
 	serverConfig, err := readonly.Load(filepath.Clean(*readonlySeed))
 	if err != nil {
 		return fmt.Errorf("load readonly server configuration: %w", err)
@@ -447,7 +451,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load world state: %w", err)
 	}
-	if err := worldService.ConfigureStartPack(gameRules.Story.StartPackID, initializeAccount); err != nil {
+	if err := worldService.ConfigureStartPack(startingPackID, initializeAccount); err != nil {
 		return fmt.Errorf("configure account starting chapter: %w", err)
 	}
 	if err := login.AttachLastPlayedPack(worldService); err != nil {
