@@ -19,7 +19,18 @@ internal static class Program
             switch (args.FirstOrDefault())
             {
                 case "prepare" when args.Length == 5: Prepare(args[1], args[2], args[3], args[4]); break;
-                case "prepare-embedded" when args.Length is 3 or 4: PrepareEmbedded(args[1], args[2], args.Length == 4 ? args[3] : null); break;
+                case "prepare-embedded" when args.Length is >= 3 and <= 6:
+                    var prepareOptions = args.Skip(3).ToList();
+                    string expectedGameVersion = null;
+                    int versionOption = prepareOptions.IndexOf("--game-version");
+                    if (versionOption >= 0)
+                    {
+                        if (versionOption + 1 >= prepareOptions.Count) throw new ArgumentException("--game-version requires a version");
+                        expectedGameVersion = prepareOptions[versionOption + 1];
+                        prepareOptions.RemoveRange(versionOption, 2);
+                    }
+                    if (prepareOptions.Count > 1) throw new ArgumentException("Invalid prepare-embedded options");
+                    PrepareEmbedded(args[1], args[2], prepareOptions.FirstOrDefault(), expectedGameVersion); break;
                 case "export-names" when args.Length == 2: ExportNames(args[1]); break;
                 case "names" when args.Length == 5: GenerateNames(args[1], args[2], args[3], args[4]); break;
                 case "shell" when args.Length == 4: GenerateShell(args[1], args[2], args[3]); break;
@@ -64,85 +75,88 @@ internal static class Program
         gzip.CopyTo(destination);
     }
 
-    internal static void PrepareEmbedded(string assembly, string output, string versions = null)
+    internal static string ResolveSdkDirectory(string directory)
     {
-        byte[] compressed = EmbeddedNames();
+        string pointer = Path.Combine(directory, "shared-sdk.txt");
+        return File.Exists(pointer) ? File.ReadAllText(pointer).Trim() : Path.GetFullPath(directory);
+    }
+
+    internal static void PrepareEmbedded(string assembly, string output, string versions = null, string expectedGameVersion = null) =>
+        PrepareShared(EmbeddedNames(), assembly, output, versions, expectedGameVersion);
+
+    internal static void PreparePackage(string compressedTable, string assembly, string output) =>
+        PrepareShared(File.ReadAllBytes(compressedTable), assembly, output, null, null);
+
+    private static void PrepareShared(byte[] compressed, string assembly, string output, string versions, string expectedGameVersion)
+    {
+        output = Path.GetFullPath(output);
         Directory.CreateDirectory(output);
-        // IDE loads and command-line builds may prepare the same obj directory.
-        // Serialize the whole transaction, including the exported table and props.
         using var outputLock = AcquireCacheLock(Path.Combine(output, "prepare.lock"), "Waiting for this project's game SDK preparation to finish...");
-        string tablePath = Path.Combine(output, "names.json"), compressedPath = tablePath + ".gz";
-        // Keep the cache copy exact; the only authoritative source is the embedded resource.
-        if (!File.Exists(compressedPath) || !File.ReadAllBytes(compressedPath).SequenceEqual(compressed))
-            File.WriteAllBytes(compressedPath, compressed);
-        PreparePackage(compressedPath, assembly, output);
+        NameTable table;
+        using (var gzip = new GZipStream(new MemoryStream(compressed), CompressionMode.Decompress))
+            table = JsonSerializer.Deserialize<NameTable>(gzip, Json);
+        string gameVersion = table.game_version;
+        if (string.IsNullOrWhiteSpace(gameVersion) || gameVersion.Any(c => !(char.IsLetterOrDigit(c) || c is '.' or '-' or '_')))
+            throw new InvalidDataException("Invalid game_version in names table");
+        if (expectedGameVersion != null && expectedGameVersion != gameVersion)
+            throw new InvalidDataException($"Plugin requires game {expectedGameVersion}, but SDK names target game {gameVersion}. Install the matching SDK package.");
+        if (Hash(assembly) != table.assembly_sha256)
+            throw new InvalidDataException("Game DLL does not match SDK names for game " + gameVersion);
         if (versions != null)
         {
             using var config = JsonDocument.Parse(File.ReadAllText(versions));
             string expected = config.RootElement.GetProperty("game_version").GetString();
-            string actual = ReadTable(tablePath).game_version;
-            if (expected != actual) throw new InvalidDataException($"Repository game_version {expected} does not match SDK embedded names {actual}; update the SDK names table for this version");
+            if (expected != gameVersion) throw new InvalidDataException($"Repository game_version {expected} does not match SDK embedded names {gameVersion}");
         }
-    }
-    internal static void PreparePackage(string compressedTable, string assembly, string output)
-    {
-        Directory.CreateDirectory(output);
-        string tablePath = Path.Combine(output, "names.json"), shellPath = Path.Combine(output, ShellName + ".dll");
-        string identityPath = Path.Combine(output, "GameSdkIdentity.g.cs"), readyPath = Path.Combine(output, "package-ready.txt");
-        string pdbPath = Path.Combine(output, "lib", ShellName + ".pdb"), navigationPath = Path.Combine(output, "navigation.json");
-        string inputs = Hash(compressedTable) + "|" + GeneratorStamp() + "|" + DependencyStamp(assembly);
-        string[] required = { tablePath, shellPath, identityPath, pdbPath, navigationPath,
-            Path.Combine(output, "ref", ShellName + ".dll"), Path.Combine(output, "ref", ShellName + ".xml"),
-            Path.Combine(output, "lib", ShellName + ".dll"), Path.Combine(output, "lib", ShellName + ".xml") };
-        string Outputs() => string.Join("|", required.Select(Hash));
-        if (File.Exists(readyPath) && required.All(File.Exists) &&
-            File.ReadAllText(readyPath) == inputs + "|" + Outputs())
-        {
-            WriteNavigationItems(output);
-            return;
-        }
-        File.Delete(readyPath);
-        using (var gzip = new GZipStream(File.OpenRead(compressedTable), CompressionMode.Decompress))
-        using (var destination = File.Create(tablePath)) gzip.CopyTo(destination);
-        GenerateCachedShell(tablePath, assembly, shellPath);
-        WriteIdentity(tablePath, identityPath);
-        WriteNavigationItems(output);
-        File.WriteAllText(readyPath, inputs + "|" + Outputs());
-    }
-
-    private static void GenerateCachedShell(string tablePath, string assembly, string destination)
-    {
         string cacheRoot = Environment.GetEnvironmentVariable("BD2_GAME_SDK_CACHE");
         if (string.IsNullOrEmpty(cacheRoot)) cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BD2", "GameSdk", "navigation");
-        // Changes to any managed dependency can affect decompilation and semantic references.
-        string dependencyDirectory = Path.GetDirectoryName(Path.GetFullPath(assembly));
-        string key = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Hash(tablePath) + "|" + GeneratorStamp() + "|" + DependencyStamp(assembly)))).ToLowerInvariant();
-        string cache = Path.Combine(Path.GetFullPath(cacheRoot), key);
-        Directory.CreateDirectory(cache);
-        string cachedShell = Path.Combine(cache, ShellName + ".dll"), ready = Path.Combine(cache, "ready.txt");
-        using (AcquireCacheLock(Path.Combine(cache, "generation.lock")))
+        string tableHash = Convert.ToHexString(SHA256.HashData(compressed)).ToLowerInvariant();
+        string inputs = tableHash + "|" + GeneratorStamp() + "|" + DependencyStamp(assembly);
+        // Game version is the public grouping; the fingerprint prevents incompatible
+        // tools or binaries within one game version from overwriting active references.
+        string key = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(inputs))).ToLowerInvariant();
+        string shared = Path.Combine(Path.GetFullPath(cacheRoot), gameVersion, key);
+        Directory.CreateDirectory(shared);
+        using (AcquireCacheLock(Path.Combine(shared, "generation.lock")))
         {
-            string[] relativeFiles = { ShellName + ".dll", ShellName + ".xml", "navigation.json", "ref/" + ShellName + ".dll", "ref/" + ShellName + ".xml",
-                "lib/" + ShellName + ".dll", "lib/" + ShellName + ".pdb", "lib/" + ShellName + ".xml", "lib/navigation.json" };
-            string[] files = relativeFiles.Select(p => Path.Combine(cache, p)).ToArray();
-            bool complete = File.Exists(ready) && files.All(File.Exists) && File.ReadAllText(ready) == string.Join("|", files.Select(Hash));
-            if (!complete)
+            string tablePath = Path.Combine(shared, "names.json"), ready = Path.Combine(shared, "ready.txt");
+            string[] relativeFiles = { "names.json", "names.json.gz", ShellName + ".dll", ShellName + ".xml", "navigation.json",
+                "ref/" + ShellName + ".dll", "ref/" + ShellName + ".xml", "lib/" + ShellName + ".dll", "lib/" + ShellName + ".pdb", "lib/" + ShellName + ".xml", "lib/navigation.json" };
+            string[] files = relativeFiles.Select(p => Path.Combine(shared, p)).ToArray();
+            string StampFiles() => inputs + "|" + string.Join("|", files.Select(Hash));
+            if (!File.Exists(ready) || !files.All(File.Exists) || File.ReadAllText(ready) != StampFiles())
             {
                 File.Delete(ready);
-                GenerateShell(tablePath, assembly, cachedShell);
-                File.WriteAllText(ready, string.Join("|", files.Select(Hash)));
+                File.WriteAllBytes(tablePath + ".gz", compressed);
+                using (var gzip = new GZipStream(new MemoryStream(compressed), CompressionMode.Decompress))
+                using (var destination = File.Create(tablePath)) gzip.CopyTo(destination);
+                GenerateShell(tablePath, assembly, Path.Combine(shared, ShellName + ".dll"));
+                File.WriteAllText(ready, StampFiles());
             }
-            string destinationDirectory = Path.GetDirectoryName(Path.GetFullPath(destination));
-            foreach (string relative in relativeFiles)
-            {
-                if (relative == ShellName + ".xml" || relative == "lib/navigation.json") continue;
-                string target = Path.Combine(destinationDirectory, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                File.Copy(Path.Combine(cache, relative), target, overwrite: true);
-            }
-            File.Delete(Path.ChangeExtension(destination, ".xml"));
-            File.Delete(Path.Combine(destinationDirectory, "lib", "navigation.json"));
+            WriteNavigationItems(shared);
+            WriteGeneratedFile(Path.Combine(output, "GameSdkIdentity.g.cs"), System.Text.Encoding.UTF8.GetBytes(
+                "// Generated from the shared names table.\n[assembly: System.Reflection.AssemblyMetadataAttribute(\"BD2.GameNames\", " + JsonSerializer.Serialize(Stamp(table)) + ")]\n"));
+            WriteGeneratedFile(Path.Combine(output, "shared-sdk.txt"), System.Text.Encoding.UTF8.GetBytes(shared));
+            var properties = new System.Xml.Linq.XElement("PropertyGroup",
+                new System.Xml.Linq.XElement("BD2SharedSdkDir", shared));
+            var import = new System.Xml.Linq.XElement("Import",
+                new System.Xml.Linq.XAttribute("Project", Path.Combine(shared, "GameSourceNavigation.props")),
+                new System.Xml.Linq.XAttribute("Condition", "Exists('" + Path.Combine(shared, "GameSourceNavigation.props") + "')"));
+            using var props = new MemoryStream();
+            new System.Xml.Linq.XDocument(new System.Xml.Linq.XElement("Project", properties, import)).Save(props);
+            WriteGeneratedFile(Path.Combine(output, "GameSourceNavigation.props"), props.ToArray());
         }
+        // Remove only obsolete generated copies in this SDK obj directory after
+        // publishing a complete shared reference. Never touch hand-written files.
+        foreach (string name in new[] { "names.json", "names.json.gz", ShellName + ".dll", ShellName + ".xml", "navigation.json", "package-ready.txt", "ready.txt" })
+            File.Delete(Path.Combine(output, name));
+        foreach (string folder in new[] { "ref", "lib", "runtime-obj", "runtime-bin" })
+        {
+            string target = Path.GetFullPath(Path.Combine(output, folder));
+            if (Path.GetDirectoryName(target) != output) throw new InvalidDataException("Invalid generated cleanup path");
+            if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+        }
+        Console.WriteLine($"Shared game SDK {gameVersion}: {shared}");
     }
 
     private static FileStream AcquireCacheLock(string path, string message = "Waiting for the shared game source-navigation cache to finish generating...")

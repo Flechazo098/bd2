@@ -6,6 +6,7 @@
     <AssemblyName>BD2LoginUI</AssemblyName>
     <RootNamespace>Bd2LoginUI</RootNamespace>
     <BD2PluginVersionKey>login_ui</BD2PluginVersionKey>
+    <BD2GameVersion>2.35.10</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="BepInEx">

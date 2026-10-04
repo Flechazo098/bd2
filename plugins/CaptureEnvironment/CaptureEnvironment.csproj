@@ -6,6 +6,7 @@
     <AssemblyName>BD2CaptureEnvironment</AssemblyName>
     <RootNamespace>Bd2CaptureEnvironment</RootNamespace>
     <BD2PluginVersionKey>capture_environment</BD2PluginVersionKey>
+    <BD2GameVersion>2.35.10</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="BepInEx">

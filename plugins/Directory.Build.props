@@ -17,5 +17,6 @@
     <BD2SdkTool Condition="'$(BD2SdkTool)' == ''">$(BD2PluginsDir)GameSdk/bin/$(BD2SdkConfiguration)/net8.0/GameSdk.dll</BD2SdkTool>
     <BD2SdkIntermediateFolder Condition="'$(BD2SdkIntermediateFolder)' == ''">game-sdk</BD2SdkIntermediateFolder>
     <BD2GameSdkCache Condition="'$(BD2GameSdkCache)' == ''">$(BD2_GAME_SDK_CACHE)</BD2GameSdkCache>
+    <BD2GameSdkCache Condition="'$(BD2GameSdkCache)' == ''">$(BD2RepositoryDir).build/game-sdk</BD2GameSdkCache>
   </PropertyGroup>
 </Project>

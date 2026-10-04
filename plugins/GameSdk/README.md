@@ -36,6 +36,7 @@ Visual Studio / Rider 也可在 NuGet 包管理界面添加该源，打开“包
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AssemblyName>MyPlugin</AssemblyName>
+    <BD2GameVersion>2.35.10</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BD2.GameSdk"
@@ -79,25 +80,32 @@ IDE 项目加载/设计时构建会准备可读引用；CLI 首次构建同样�
 
 首次全量生成会花费数分钟，日志持续报告已处理的类型数。本机 2.35.10 的一次验证生成了 **24,856 个源码文件、654,265 个声明、319,350 个带方法体的符号**。生成结果按名字表、生成器及其依赖、全部游戏 Managed DLL 的指纹缓存，同一台机器上的插件项目共用；并行构建会等待同一个缓存生成完成。后续构建不再执行全量反编译。
 
-默认共享缓存路径为 `%LOCALAPPDATA%\BD2\GameSdk\navigation`。可用环境变量改变位置：
+所有依赖 SDK 的插件必须在自己的 `.csproj` 明确声明目标**游戏版本**：
 
-```powershell
-$env:BD2_GAME_SDK_CACHE = 'D:\Caches\BD2.GameSdk'
-dotnet build MyPlugin.csproj -c Release '-p:GameDir=E:\Games\BrownDustII'
+```xml
+<BD2GameVersion>2.35.10</BD2GameVersion>
 ```
 
-保持这个路径稳定；更改路径、工具或游戏 DLL 后首次构建会重新准备缓存。删除 `obj` 不影响共享源码缓存；缺失的缓存源码可在下次准备时从 PDB 恢复。可删除共享缓存来强制重新生成，它不存放手写源码。
+这个值与 SDK/API 工具版本（如 `0.2.1`）不同。构建核对声明值、SDK 内嵌表、真实游戏 DLL 指纹，以及仓库 `versions.json`（仓库插件）。缺少声明或版本不匹配会报错；不会自动选用其他版本。NuGet 项目仍需安装带对应游戏版本的包。
 
-插件 `obj/<配置>/<框架>/bd2-game-sdk` 中的布局遵循 .NET 的引用程序集查找约定（仓库插件使用 `game-sdk` 子目录）：
+共享目录按 `<缓存根>/<游戏版本>/<内容指纹>/` 存放。同版本的三个插件、Debug/Release、NuGet 项目在输入一致时直接引用同一份产物；内容指纹用于隔离同一游戏版本内不同 SDK 实现或 Managed DLL，避免覆盖正在使用的旧引用。
+
+仓库默认缓存根为 `.build/game-sdk`，与源码位于同一盘。第三方 NuGet 项目默认使用 `%LOCALAPPDATA%\BD2\GameSdk\navigation`；可在本机 `Directory.Build.props` 设置 `BD2GameSdkCache`，或设置环境变量 `BD2_GAME_SDK_CACHE`。删除插件 `obj` 不影响共享缓存。缺失的共享源码可在下次准备时从 PDB 恢复；删除共享缓存才会触发重新生成。
+
+共享目录包含如下产物，**每个插件 obj 不再复制这些大文件**：
 
 | 路径 | 用途 |
 | --- | --- |
-| `ref/Assembly-CSharp.Readable.dll` | 编译器引用，带引用程序集标记，禁止执行 |
-| `lib/Assembly-CSharp.Readable.dll` + `.pdb` | IDE 对应实现和导航符号；源码内嵌，不依赖联网下载 |
-| `GameSourceNavigation.props` | 把共享源码链接到项目浏览器 |
-| `navigation.json` | 元数据 token 到文件/行列的全量索引、覆盖统计与 DLL/PDB 指纹；schema 2 的文件路径相对于 `SourceRoot` |
+| `ref/Assembly-CSharp.Readable.dll` + XML | 编译器引用，带引用程序集标记，禁止执行 |
+| `lib/Assembly-CSharp.Readable.dll` + `.pdb` | IDE 对应实现和内嵌源码符号 |
+| `lib/sources` | 完整可读源码，供项目浏览与搜索 |
+| `names.json` + `.gz` | 同一名字表的缓存导出，供 reobf 使用 |
+| `navigation.json` | 全量 token 索引；schema 2 路径相对于 `SourceRoot` |
+| `GameSourceNavigation.props` | 共享源码的 MSBuild 文件列表 |
 
-`lib` 中的程序集仅供开发导航，**不要部署或执行**。这里展示的是从当前 DLL 重建的源码，局部变量名和语法可能与开发商原始工程不同。导航 PDB 对应可读程序集；它不能用来在真实混淆游戏 DLL 上逐行调试。
+每个插件 `obj/<配置>/<框架>/game-sdk`（NuGet 为 `bd2-game-sdk`）只保留小型 `GameSdkIdentity.g.cs`、`shared-sdk.txt`、导航导入 `.props` 和锁文件。首次构建通过生成的指针设置引用路径，后续 IDE 加载直接导入共享配置；`Game Sources` 仍可浏览搜索。旧布局的大文件副本在成功准备后自动清理。
+
+`lib` 中的程序集仅供开发导航，**不要部署或执行**。这里展示的是当前 DLL 的反编译源码，局部变量名和语法可能与原始工程不同。导航 PDB 对应可读程序集，不能用于真实混淆游戏 DLL 的逐行调试。所有开发产物都不会复制到游戏部署目录。
 
 ## 插件代码
 
@@ -164,7 +172,8 @@ owner.StartCoroutine(Game.MemberName(owner.GetType(), "ReadableCoroutineName"));
 
 | MSBuild 属性 | 用途 |
 | --- | --- |
-| `GameDir` | 游戏根目录，常规项目唯一必填配置 |
+| `BD2GameVersion` | 每个插件 csproj 必填的目标游戏版本，例如 `2.35.10`；不从 SDK 包版本或仓库版本自动推断 |
+| `GameDir` | 游戏根目录，本机安装路径（另须在插件 csproj 声明 BD2GameVersion） |
 | `BD2ManagedDir` | 自定义 Managed 路径，默认 `GameDir/BrownDust II_Data/Managed` |
 | `BD2BepInExDir` | 自定义 BepInEx 路径，默认 `GameDir/BepInEx` |
 | `BD2GameSdkCache` | 共享导航缓存目录，可在 `Directory.Build.props` 配置；默认取 `BD2_GAME_SDK_CACHE` 环境变量或用户缓存目录 |
@@ -212,7 +221,7 @@ go run .\cmd\bd2client --dev run
 dotnet build plugins/LocalIdentity/LocalIdentity.csproj -c Release '-p:GameDir=<客户端目录>'
 ```
 
-构建工具从自身资源导出表到 `obj` 缓存，用本机真实 DLL 的元数据生成壳，再做回映射。`GameSdk` 和 `BD2.GameNames` 的唯一名字数据源是仓库内的 `GameNames/Mappings/names.json.gz`。两份程序集内嵌的是同一份压缩字节，不维护第二份映射；`obj` 里的表只是可以删除重建的缓存。NuGet 包同样不再包含单独的 `tools/data` 表文件。
+构建工具把表和可读引用生成到按游戏版本分组的共享缓存，插件 `obj` 只保存该目录的指针，再使用共享表做回映射。`GameSdk` 和 `BD2.GameNames` 的唯一名字数据源是仓库内的 `GameNames/Mappings/names.json.gz`。两份程序集内嵌的是同一份压缩字节，不维护第二份映射；共享目录里的表只是可以删除重建的缓存。NuGet 包同样不再包含单独的 `tools/data` 表文件。
 
 表包含 `game_version`、完整类型名、成员声明类型/签名/metadata token、参数映射、真实 DLL 的 MVID/SHA-256 和官方映射 SHA-256。构建时先验证 DLL 指纹，仓库构建还核对 `versions.json`；不匹配会要求更新 SDK，不会尝试使用其他版本或猜名字。插件启动时核对表指纹、游戏 DLL 和少量已知条目。
 
@@ -235,7 +244,7 @@ dotnet build plugins/LocalIdentity/LocalIdentity.csproj -c Release '-p:GameDir=<
 ```powershell
 dotnet build plugins/GameSdk/GameSdk.csproj -c Release
 $tool = 'plugins/GameSdk/bin/Release/net8.0/GameSdk.dll'
-dotnet $tool prepare-embedded '<Assembly-CSharp.dll>' '<输出目录>'
+dotnet $tool prepare-embedded '<Assembly-CSharp.dll>' '<插件 obj 指针目录>' --game-version 2.35.10
 dotnet $tool export-names '<导出的 names.json>'
 dotnet $tool reobf '<names.json>' '<可读插件.dll>' '<运行插件.dll>' '<Assembly-CSharp.dll>' '<BepInEx/core>'
 dotnet $tool verify '<names.json>' '<运行插件.dll>' '<Assembly-CSharp.dll>'
@@ -244,6 +253,6 @@ dotnet $tool verify-navigation '<生成的 SDK 目录>'
 dotnet $tool self-test
 ```
 
-手动编译须引用 `ref/Assembly-CSharp.Readable.dll` 并编译同目录 `GameSdkIdentity.g.cs`，保留相邻 `lib` 以供 IDE 查找。`verify-navigation` 全量检查 PE/PDB 身份、内嵌/本地源码校验和、类型文档和全部方法体的符号。
+手动编译通过 `shared-sdk.txt` 找到共享目录，引用其中 `ref/Assembly-CSharp.Readable.dll`，并编译指针目录中的 `GameSdkIdentity.g.cs`；共享目录相邻 `lib` 供 IDE 查找。`verify-navigation` 全量检查 PE/PDB 身份、内嵌/本地源码校验和、类型文档和全部方法体的符号。
 
 `self-test` 生成合成游戏 DLL，验证重载、泛型、继承、嵌套/编译器生成类型、私有成员、事件、参数、表达式、字符串不变和版本拒绝。`.build/game-sdk-tests` 仅保存每次自测的临时产物，不参与 SDK 构建、源码导航或客户端启动，用完可以删除；下次自测会重新生成。`VerifyPackages.ps1` 验证仓库外 NuGet 项目及完整源码/PDB 覆盖。实际 Unity/Harmony 行为需在游戏启动后检查日志。
