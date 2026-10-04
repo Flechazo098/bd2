@@ -354,13 +354,6 @@ func (s *Server) dispatch(path string, request []byte) (int, []byte, error) {
 			return 0, nil, fmt.Errorf("%s: %w", path, err)
 		}
 		return 102, nil, nil
-	case "/QuestUpdate":
-		questID, err := s.progress.UpdateQuest(request)
-		if err != nil {
-			return 0, nil, fmt.Errorf("%s: %w", path, err)
-		}
-		response := wire.AppendVarint(nil, 1, uint64(questID))
-		return 19, wire.AppendBytes(response, 2, nil), nil
 	}
 	for _, handler := range s.handlers {
 		code, response, ok, err := handler.Handle(path, request)

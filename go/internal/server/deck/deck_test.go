@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/versionconfig"
@@ -117,6 +118,11 @@ func TestDeckPersistenceAndCommands(t *testing.T) {
 		t.Fatalf("deck save: %d %v", code, e)
 	}
 	way := wire.AppendVarint(nil, 2, 21)
+	if e = s.ConfigureWaypoints(func(uint64) (gamedata.WaypointPack, error) {
+		return gamedata.WaypointPack{Points: map[uint64]gamedata.Waypoint{1: {ID: 1, MapID: 212}}}, nil
+	}, func(uint64, bool) error { return nil }); e != nil {
+		t.Fatal(e)
+	}
 	way = wire.AppendVarint(way, 3, 1)
 	if code, _, _, e = s.Handle("/WaypointSave", req(2, way)); e != nil || code != 32 {
 		t.Fatalf("way: %d %v", code, e)

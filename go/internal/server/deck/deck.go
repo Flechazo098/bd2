@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"sync"
 
+	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/versionconfig"
@@ -38,16 +38,16 @@ type Seed struct {
 	AutoReviveCatalyst       uint64       `json:"auto_revive_catalyst,omitempty"`
 }
 type state struct {
-	Version                  string            `json:"version"`
-	Deck                     []DeckEntry       `json:"deck"`
-	FieldDeck                []FieldEntry      `json:"field_deck"`
-	FieldCharControlDeckType uint64            `json:"field_char_control_deck_type"`
-	Waypoints                map[uint64]uint64 `json:"waypoints"`
-	Costumes                 map[uint64]uint64 `json:"costumes"`
-	Packs                    map[uint64]uint64 `json:"packs"`
-	HighestTotalBattlePower  uint64            `json:"highest_total_battle_power"`
-	PortraitCostumeID        uint64            `json:"portrait_costume_id"`
-	AutoReviveCatalyst       uint64            `json:"auto_revive_catalyst"`
+	Version                  string              `json:"version"`
+	Deck                     []DeckEntry         `json:"deck"`
+	FieldDeck                []FieldEntry        `json:"field_deck"`
+	FieldCharControlDeckType uint64              `json:"field_char_control_deck_type"`
+	Waypoints                map[uint64][]uint64 `json:"waypoints"`
+	Costumes                 map[uint64]uint64   `json:"costumes"`
+	Packs                    map[uint64]uint64   `json:"packs"`
+	HighestTotalBattlePower  uint64              `json:"highest_total_battle_power"`
+	PortraitCostumeID        uint64              `json:"portrait_costume_id"`
+	AutoReviveCatalyst       uint64              `json:"auto_revive_catalyst"`
 }
 type Store struct {
 	mu              sync.RWMutex
@@ -62,6 +62,8 @@ type Store struct {
 	collection      *player.CollectionStore
 	sessionID       string
 	replies         map[string]deckReply
+	waypointDesign  func(uint64) (gamedata.WaypointPack, error)
+	waypointPack    func(uint64, bool) error
 }
 
 type deckReply struct {
@@ -143,7 +145,7 @@ func NewStore(seed Seed) (*Store, error) {
 	if e := seed.validate(); e != nil {
 		return nil, e
 	}
-	return &Store{state: state{Version: versionconfig.State(), FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}, presets: map[uint64]Preset{}, presetSlots: presetBaseCount, costumeSettings: map[uint64]CostumeSetting{}, replies: map[string]deckReply{}}, nil
+	return &Store{state: state{Version: versionconfig.State(), FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64][]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}, presets: map[uint64]Preset{}, presetSlots: presetBaseCount, costumeSettings: map[uint64]CostumeSetting{}, replies: map[string]deckReply{}}, nil
 }
 func OpenStore(storage stateio.Store, seed Seed) (*Store, error) {
 	s, e := NewStore(seed)
@@ -174,6 +176,9 @@ func OpenStore(storage stateio.Store, seed Seed) (*Store, error) {
 	}
 	if loaded.Version != versionconfig.State() || (len(loaded.Deck) != 0 && validDeck(loaded.Deck) != nil) || validField(loaded.FieldDeck) != nil || loaded.Waypoints == nil || loaded.Costumes == nil || loaded.Packs == nil {
 		return nil, errors.New("deck: invalid saved state")
+	}
+	if e = validWaypointState(loaded.Waypoints); e != nil {
+		return nil, e
 	}
 	s.state = loaded
 	if e = s.loadPresetEntries(); e != nil {
@@ -210,9 +215,9 @@ func clone(x state) state {
 	y := x
 	y.Deck = append([]DeckEntry(nil), x.Deck...)
 	y.FieldDeck = append([]FieldEntry(nil), x.FieldDeck...)
-	y.Waypoints = map[uint64]uint64{}
+	y.Waypoints = map[uint64][]uint64{}
 	for k, v := range x.Waypoints {
-		y.Waypoints[k] = v
+		y.Waypoints[k] = append([]uint64(nil), v...)
 	}
 	y.Costumes = map[uint64]uint64{}
 	for k, v := range x.Costumes {
@@ -410,12 +415,7 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		}
 		return 373, response, true, nil
 	case "/WaypointInfo":
-		if e := checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		return 31, encodeWaypoints(s.state.Waypoints), true, nil
+		return s.handleWaypoint(path, req)
 	case "/DeckSave":
 		if e := checkSeq(req); e != nil {
 			return 0, nil, true, e
@@ -474,24 +474,8 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		n.FieldCharControlDeckType = v
 		e = s.commit(n)
 		return 288, nil, true, e
-	case "/WaypointSave":
-		pack, ok, e := wire.Varint(req, 2)
-		if e != nil || !ok || pack == 0 {
-			return 0, nil, true, errors.New("deck: invalid waypoint pack")
-		}
-		way, ok, e := wire.Varint(req, 3)
-		if e != nil || !ok || way == 0 {
-			return 0, nil, true, errors.New("deck: invalid waypoint")
-		}
-		if e = checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		n := clone(s.state)
-		n.Waypoints[pack] = way
-		e = s.commit(n)
-		return 32, nil, true, e
+	case "/WaypointSave", "/WaypointUse":
+		return s.handleWaypoint(path, req)
 	case "/CostumeUse":
 		raw, ok, e := wire.Bytes(req, 2)
 		if e != nil || !ok {
@@ -604,20 +588,6 @@ func encodeField(xs []FieldEntry) []byte {
 		v := wire.AppendVarint(nil, 1, x.Slot)
 		v = wire.AppendVarint(v, 2, x.CharacterInvenIndex)
 		v = wire.AppendVarint(v, 3, x.CostumeInvenIndex)
-		b = wire.AppendBytes(b, 1, v)
-	}
-	return b
-}
-func encodeWaypoints(xs map[uint64]uint64) []byte {
-	keys := make([]uint64, 0, len(xs))
-	for k := range xs {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-	var b []byte
-	for _, k := range keys {
-		v := wire.AppendVarint(nil, 1, k)
-		v = wire.AppendVarint(v, 2, xs[k])
 		b = wire.AppendBytes(b, 1, v)
 	}
 	return b

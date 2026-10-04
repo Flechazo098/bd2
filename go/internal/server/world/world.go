@@ -164,6 +164,9 @@ type Service struct {
 	packJamDesign      *gamedata.PackJamDesign
 	packJamMu          sync.Mutex
 	fieldPacks         map[int]gamedata.FieldPack
+	fieldObjects       map[int]gamedata.FieldObjectDesign
+	fieldObjectLoader  func(int) (gamedata.FieldObjectDesign, error)
+	fieldReset         gamedata.FieldResetSchedule
 	squadLevel         func() (uint64, error)
 	seed               Seed
 	state              *progress.Store
@@ -200,6 +203,12 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/QuestUpdate":
+		return s.handleQuestUpdate(request)
+	case "/FieldObjectInfo":
+		return s.handleFieldObjectInfo(request)
+	case "/FieldObjectReward":
+		return s.handleFieldObjectReward(request)
 	case "/QuestInfo", "/QuestAccept", "/QuestGiveUp":
 		return s.handleQuestSelection(path, request)
 	case "/PackBuy":

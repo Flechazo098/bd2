@@ -7,6 +7,46 @@ import (
 	"testing"
 )
 
+func TestCollectedFieldObjectsAppearInDetailAndSummary(t *testing.T) {
+	s := testService()
+	s.packSummaryTargets = map[int]bool{21: true}
+	s.packDetailDesign = func(int) (gamedata.PackDetailDesign, error) { return gamedata.PackDetailDesign{}, nil }
+	s.WithFieldObjects(map[int]gamedata.FieldObjectDesign{21: {Objects: map[int]gamedata.FieldRewardObject{
+		1001: {ID: 1001, GroupID: 101, Type: 2, ResetType: 1},
+		1002: {ID: 1002, GroupID: 102, Type: 1, ResetType: 1},
+	}}})
+	for _, id := range []int{1001, 1002} {
+		if err := s.state.MarkFieldRewardOpened(21, 0, id, "once"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 21)
+	_, detail, _, err := s.Handle("/PackDetailInfo", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := 0
+	err = wire.Walk(detail, func(field wire.Field) error {
+		if field.Number == 2 {
+			rows++
+		}
+		return nil
+	})
+	if err != nil || rows != 2 {
+		t.Fatalf("opened detail %x: %v", detail, err)
+	}
+	_, summary, _, err := s.Handle("/PackSummaryInfoList", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _, _ := wire.Bytes(summary, 1)
+	once, _, _ := wire.Varint(row, 2)
+	regen, _, _ := wire.Varint(row, 3)
+	if once != 1 || regen != 1 {
+		t.Fatalf("collected counts %x", row)
+	}
+}
+
 func TestPackDetailUsesVerifiedDesignAndRejectsUnavailableState(t *testing.T) {
 	s := testService()
 	s.packSummaryTargets = map[int]bool{21: true, 22: true}

@@ -30,12 +30,15 @@ func (s *Service) handlePackDetail(request []byte) (int, []byte, bool, error) {
 		// has a persisted domain, do not invent active flags or claim history.
 		return 0, nil, true, fmt.Errorf("%w: PackDetailInfo pack %d requires regenerating monster state", ErrInvalidRequest, packID)
 	}
-	// These repeated fields contain obtained field objects and completed
-	// research objects, not static candidates. No such grants exist in the
-	// current domain. Ordinary story battle inventory grants are excluded by
-	// the GameData monster category verified above. The response's protobuf
-	// collections are non-null even when the payload has no encoded fields.
-	return 627, []byte{}, true, nil
+	ids, err := s.openedFieldObjects(packID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	response := []byte{}
+	for _, id := range ids {
+		response = wire.AppendBytes(response, 2, wire.AppendVarint(nil, 1, uint64(id)))
+	}
+	return 627, response, true, nil
 }
 
 func (s *Service) attachPackDetailDesign(root, version string) {
