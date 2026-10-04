@@ -1,6 +1,10 @@
 {
   "version": "2.35.10",
   "pack_id": 21,
+  "placeholder_costume_id": 996000,
+  "square_scene_id": 3,
+  "initial_reputations": [{"group_id": 1, "state": 1}],
+  "initial_rank_statues": [{"id": 3, "season": 77, "error": true}],
   "start_quest_id": 1,
   "battle_unlock_quest_id": 26,
   "reward_character": {

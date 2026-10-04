@@ -36,10 +36,86 @@ func (c *EquipmentGachaCatalog) includeCollaborationURWeapons(db *sql.DB) error 
 	if c == nil || c.equipment == nil {
 		return fmt.Errorf("gamedata: missing equipment catalog")
 	}
-	g, ok := c.Gachas[71200001]
-	if !ok || !g.TicketOnly || len(g.TicketIDs) != 1 || g.TicketIDs[0] != 1104 || len(g.Pool) != 3 {
-		return fmt.Errorf("gamedata: missing or malformed UR equipment ticket pool")
+	// Select guaranteed weapon products from their existing equipment definitions,
+	// rather than tying eligibility to a product or resource-ticket number.
+	var targets []uint64
+	for id, g := range c.Gachas {
+		if !g.TicketOnly || len(g.TicketIDs) == 0 || len(g.Pool) == 0 {
+			continue
+		}
+		eligible := true
+		for _, branch := range g.Pool {
+			if branch.ID != 0 || branch.Weight == 0 || len(branch.Children) == 0 {
+				eligible = false
+				break
+			}
+			for _, item := range branch.Children {
+				if item.ID == 0 || len(item.Children) != 0 {
+					eligible = false
+					break
+				}
+			}
+		}
+		if !eligible {
+			continue
+		}
+		var visit func([]WeightedEquipment) error
+		visit = func(pool []WeightedEquipment) error {
+			for _, entry := range pool {
+				if entry.ID == 0 {
+					if len(entry.Children) == 0 {
+						eligible = false
+					}
+					if err := visit(entry.Children); err != nil {
+						return err
+					}
+					continue
+				}
+				var raw []byte
+				if err := db.QueryRow("SELECT ProtoBuf FROM EquipmentTable WHERE id=?", entry.ID).Scan(&raw); err != nil {
+					return err
+				}
+				grade, e1 := packedInts(raw, 3)
+				quality, e2 := packedInts(raw, 18)
+				owner, e3 := packedInts(raw, 16)
+				if e1 != nil || e2 != nil || e3 != nil {
+					return fmt.Errorf("gamedata: malformed ticket equipment %d", entry.ID)
+				}
+				if len(grade) != 1 || grade[0] != 4 || len(quality) != 1 || quality[0] != 3 || len(owner) != 1 || owner[0] == 0 {
+					eligible = false
+				}
+			}
+			return nil
+		}
+		if err := visit(g.Pool); err != nil {
+			return err
+		}
+		if eligible {
+			targets = append(targets, id)
+		}
 	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
+	// Publish only after all selected products validate successfully.
+	clone := *c
+	clone.Gachas = make(map[uint64]EquipmentGacha, len(c.Gachas))
+	for id, g := range c.Gachas {
+		clone.Gachas[id] = g
+	}
+	clone.equipment = make(map[uint64]EquipmentDesign, len(c.equipment))
+	for id, d := range c.equipment {
+		clone.equipment[id] = d
+	}
+	for _, id := range targets {
+		if err := clone.includeCollaborationWeaponPool(db, id); err != nil {
+			return err
+		}
+	}
+	c.Gachas, c.equipment = clone.Gachas, clone.equipment
+	return nil
+}
+
+func (c *EquipmentGachaCatalog) includeCollaborationWeaponPool(db *sql.DB, id uint64) error {
+	g := c.Gachas[id]
 	readRows := func(query string) (map[uint64][]byte, error) {
 		rows, err := db.Query(query)
 		if err != nil {
@@ -110,7 +186,7 @@ func (c *EquipmentGachaCatalog) includeCollaborationURWeapons(db *sql.DB) error 
 				return err
 			}
 			grade := grades[owner]
-			if grade < 3 || grade > 5 || (branchGrade != 0 && branchGrade != grade) {
+			if grade == 0 || (branchGrade != 0 && branchGrade != grade) {
 				return fmt.Errorf("gamedata: unknown or mixed UR ticket character tier")
 			}
 			branchGrade = grade
@@ -155,6 +231,10 @@ func (c *EquipmentGachaCatalog) includeCollaborationURWeapons(db *sql.DB) error 
 		c.equipment[id] = design
 	}
 	g.Pool = pool
+	g.Grades = make(map[uint64]uint64, len(seen))
+	for id := range seen {
+		g.Grades[id] = c.equipment[id].Grade
+	}
 	c.Gachas[g.ID] = g
 	return nil
 }

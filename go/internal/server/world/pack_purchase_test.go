@@ -11,6 +11,41 @@ import (
 	"testing"
 )
 
+func TestPaidPackUsesDesignCostAndCurrenciesOnce(t *testing.T) {
+	storage := stateio.NewMemory()
+	s := testService()
+	var err error
+	s.inventory, err = player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.collection, err = player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.wallet, err = player.OpenWallet(storage, player.Currency{FreeJewelry: 101})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.storyCatalog.Packs[709] = gamedata.StoryPack{ID: 709, BuyType: 3, BuyPrice: 37, BuyRewards: []gamedata.Reward{{Type: 2, Count: 8}, {Type: 20, Count: 11}}}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := s.purchaseStoryPack(709, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := s.wallet.Snapshot()
+	if got.FreeJewelry != 64 || got.Jewelry != 8 || got.Mileage != 11 {
+		t.Fatalf("currency=%+v", got)
+	}
+	s.storyCatalog.Packs[710] = gamedata.StoryPack{ID: 710, BuyType: 3, BuyPrice: 37, BuyRewards: []gamedata.Reward{{Type: 8, ID: 4, Count: 1}}}
+	if _, err := s.purchaseStoryPack(710, false); err == nil {
+		t.Fatal("invalid reward accepted")
+	}
+	if s.wallet.Snapshot().FreeJewelry != 64 {
+		t.Fatal("invalid reward charged")
+	}
+}
+
 type purchaseFailStore struct {
 	*accountstate.Repository
 	fail bool

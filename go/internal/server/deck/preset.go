@@ -16,12 +16,6 @@ import (
 	"bd2server/internal/server/wire"
 )
 
-const (
-	presetBaseCount = 5
-	presetMaxCount  = 12
-	presetSlotPrice = 2000
-)
-
 type Preset struct {
 	Name          string        `json:"name"`
 	ResourceID    uint64        `json:"resource_id"`
@@ -92,7 +86,7 @@ func (s *Store) loadPresetEntries() error {
 		return err
 	}
 	if found {
-		if err := json.Unmarshal(rawConfig, &s.presetSlots); err != nil || s.presetSlots < presetBaseCount || s.presetSlots > presetMaxCount {
+		if err := json.Unmarshal(rawConfig, &s.presetSlots); err != nil || s.presetSlots < s.presetDesign.BaseCount || s.presetSlots > s.presetDesign.Maximum {
 			return errors.New("deck: invalid preset slot configuration")
 		}
 	}
@@ -109,7 +103,7 @@ func (s *Store) loadPresetEntries() error {
 		if err := json.Unmarshal(payload, &preset); err != nil || preset.Slot != slot {
 			return fmt.Errorf("deck: invalid preset %q", key)
 		}
-		if err := validatePresetShape(preset, s.presetSlots); err != nil {
+		if err := s.validatePresetShape(preset, s.presetSlots); err != nil {
 			return fmt.Errorf("deck: invalid preset %q: %w", key, err)
 		}
 		s.presets[slot] = preset
@@ -156,8 +150,8 @@ func (s *Store) validatePresetOwnershipLocked() error {
 	return nil
 }
 
-func validatePresetShape(p Preset, slotCount uint64) error {
-	if p.Slot >= slotCount || p.ResourceID > 21 || p.ResourceColor > 5 || !validPresetName(p.Name) || len(p.Decks) > 5 {
+func (s *Store) validatePresetShape(p Preset, slotCount uint64) error {
+	if p.Slot >= slotCount || (p.ResourceID != 0 && !s.presetDesign.Icons[p.ResourceID]) || p.ResourceColor > 5 || !validPresetName(p.Name) || len(p.Decks) > 5 {
 		return errors.New("invalid metadata or deck count")
 	}
 	characters, positions, sequences := map[uint64]bool{}, map[uint64]bool{}, map[uint64]bool{}
@@ -196,7 +190,7 @@ func validPresetName(value string) bool {
 }
 
 func (s *Store) validatePresetOwnedLocked(p Preset) error {
-	if err := validatePresetShape(p, s.presetSlots); err != nil {
+	if err := s.validatePresetShape(p, s.presetSlots); err != nil {
 		return err
 	}
 	ownedEquipment := make(map[uint64]player.Equipment)
@@ -531,17 +525,28 @@ func (s *Store) handlePresetAddSlot(request []byte) (int, []byte, bool, error) {
 	if reply, found := s.cachedReplyLocked("add-slot", seq); found {
 		return reply.code, reply.body, true, nil
 	}
-	if s.wallet == nil {
-		return 0, nil, true, errors.New("deck: preset wallet unavailable")
+	if s.wallet == nil || s.presetDesign.Validate() != nil {
+		return 0, nil, true, errors.New("deck: preset wallet/design unavailable")
 	}
-	if s.presetSlots > presetMaxCount || count > presetMaxCount-s.presetSlots {
+	if s.presetSlots > s.presetDesign.Maximum || count > s.presetDesign.Maximum-s.presetSlots {
 		return 0, nil, true, errors.New("deck: preset slot limit exceeded")
 	}
-	if count > ^uint64(0)/presetSlotPrice {
+	if count > ^uint64(0)/s.presetDesign.Price {
 		return 0, nil, true, errors.New("deck: preset slot price overflow")
 	}
 	identity := "preset-slot:" + s.sessionID + ":" + strconv.FormatUint(seq, 10)
-	if _, err := s.wallet.SpendGoldOnce(identity, count*presetSlotPrice); err != nil {
+	var spendErr error
+	switch s.presetDesign.PriceType {
+	case 4:
+		_, spendErr = s.wallet.SpendGoldOnce(identity, count*s.presetDesign.Price)
+	case 3:
+		_, spendErr = s.wallet.SpendFreeJewelryOnce(identity, count*s.presetDesign.Price)
+	case 2:
+		_, spendErr = s.wallet.SpendJewelryOnce(identity, count*s.presetDesign.Price)
+	case 12:
+		_, spendErr = s.wallet.SpendCatalystOnce(identity, count*s.presetDesign.Price)
+	}
+	if err := spendErr; err != nil {
 		return 0, nil, true, fmt.Errorf("deck: buy preset slot: %w", err)
 	}
 	next := s.presetSlots + count
@@ -594,7 +599,7 @@ func (s *Store) handlePresetInfoChange(request []byte) (int, []byte, bool, error
 		preset = Preset{Slot: slot, Decks: []PresetDeck{}, Blesses: []PresetBless{}}
 	}
 	preset.Name, preset.ResourceID, preset.ResourceColor = string(nameBytes), resourceID, color
-	if err := validatePresetShape(preset, s.presetSlots); err != nil {
+	if err := s.validatePresetShape(preset, s.presetSlots); err != nil {
 		return 0, nil, true, fmt.Errorf("deck: invalid preset metadata: %w", err)
 	}
 	if err := s.persistPresetLocked(preset); err != nil {

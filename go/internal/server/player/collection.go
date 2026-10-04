@@ -431,8 +431,8 @@ func (s *CollectionStore) GachaSelectionChangeCounts() []GachaSelectionChangeCou
 }
 
 func (s *CollectionStore) SetPreview(eventIndex uint64, costumeIDs []uint64) error {
-	if eventIndex == 0 || len(costumeIDs) != 10 {
-		return errors.New("player: infinite preview requires an event index and ten costumes")
+	if eventIndex == 0 || len(costumeIDs) == 0 {
+		return errors.New("player: infinite preview requires an event index and costumes")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -452,7 +452,7 @@ func (s *CollectionStore) LockPreview(eventIndex uint64) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.data.LatestPreview) != 10 || s.data.PreviewEventIndex == 0 {
+	if len(s.data.LatestPreview) == 0 || s.data.PreviewEventIndex == 0 {
 		return errors.New("player: no complete infinite gacha preview to lock")
 	}
 	if eventIndex != s.data.PreviewEventIndex {

@@ -207,7 +207,18 @@ func (s *InventorySlots) Handle(path string, request []byte) (int, []byte, bool,
 		return 0, nil, true, err
 	}
 	identity := fmt.Sprintf("inventory-slot:%s:%s:%d", path, s.sessionID, seq)
-	if _, err := s.wallet.SpendGoldOnce(identity, cost); err != nil {
+	var chargeErr error
+	switch rule.PriceType {
+	case 2:
+		_, chargeErr = s.wallet.SpendJewelryOnce(identity, cost)
+	case 3:
+		_, chargeErr = s.wallet.SpendFreeJewelryOnce(identity, cost)
+	case 4:
+		_, chargeErr = s.wallet.SpendGoldOnce(identity, cost)
+	default:
+		chargeErr = errors.New("unsupported slot currency")
+	}
+	if err := chargeErr; err != nil {
 		return 0, nil, true, fmt.Errorf("player: inventory slot price: %w", err)
 	}
 	next := s.state
@@ -229,7 +240,7 @@ func (s *InventorySlots) Handle(path string, request []byte) (int, []byte, bool,
 }
 
 func inventorySlotPrice(rule gamedata.InventorySlotRule, current, count uint64) (uint64, error) {
-	if rule.PriceType != 4 || count == 0 || current < rule.Default || current > rule.Maximum || count > rule.Maximum-current {
+	if (rule.PriceType != 2 && rule.PriceType != 3 && rule.PriceType != 4) || count == 0 || current < rule.Default || current > rule.Maximum || count > rule.Maximum-current {
 		return 0, errors.New("player: invalid inventory slot price request")
 	}
 	var total uint64

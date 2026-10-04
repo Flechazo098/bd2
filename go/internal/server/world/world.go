@@ -23,14 +23,30 @@ import (
 
 var ErrInvalidRequest = errors.New("world: invalid request")
 
+type InitialReputation struct {
+	GroupID        uint64 `json:"group_id"`
+	State          uint64 `json:"state"`
+	ElapsedSeconds uint64 `json:"elapsed_seconds,omitempty"`
+}
+type InitialRankStatue struct {
+	ID     uint64 `json:"id"`
+	Season uint64 `json:"season"`
+	Error  bool   `json:"error"`
+}
+
 type Seed struct {
-	Version             string             `json:"version"`
-	PackID              int                `json:"pack_id"`
-	StartQuestID        int                `json:"start_quest_id"`
-	BattleUnlockQuestID int                `json:"battle_unlock_quest_id"`
-	RewardCharacter     player.Character   `json:"reward_character"`
-	RewardCostume       player.Costume     `json:"reward_costume"`
-	StoryCharacters     []player.Character `json:"story_characters"`
+	SquareSceneID      uint64              `json:"square_scene_id,omitempty"`
+	InitialReputations []InitialReputation `json:"initial_reputations,omitempty"`
+	InitialRankStatues []InitialRankStatue `json:"initial_rank_statues,omitempty"`
+	// Versioned story slot placeholder; confirmed current CostumeTable row, slot semantics await current capture.
+	PlaceholderCostumeID uint64             `json:"placeholder_costume_id,omitempty"`
+	Version              string             `json:"version"`
+	PackID               int                `json:"pack_id"`
+	StartQuestID         int                `json:"start_quest_id"`
+	BattleUnlockQuestID  int                `json:"battle_unlock_quest_id"`
+	RewardCharacter      player.Character   `json:"reward_character"`
+	RewardCostume        player.Costume     `json:"reward_costume"`
+	StoryCharacters      []player.Character `json:"story_characters"`
 }
 
 // Load reads the small, versioned world seed.  Quest IDs are then verified
@@ -115,7 +131,7 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 	for id := range packs {
 		storyPackIDs = append(storyPackIDs, id)
 	}
-	service.storyRoster, err = gamedata.LoadStoryCharacterCatalog(gameDataRoot, gameDataVersion, storyPackIDs)
+	service.storyRoster, err = gamedata.LoadStoryCharacterCatalog(gameDataRoot, gameDataVersion, storyPackIDs, seed.PlaceholderCostumeID)
 	if err != nil {
 		return nil, err
 	}
@@ -502,8 +518,12 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 			}
 		}
 	}
-	if packID == s.seed.PackID && s.questDifficultyFor(packID, quest) == 0 {
-		for _, reward := range questPictorialItems[quest] {
+	if s.questDifficultyFor(packID, quest) == 0 {
+		quests, known := s.questsFor(packID)
+		if !known {
+			return nil, nil, fmt.Errorf("world: unknown collection reward pack%d", packID)
+		}
+		for _, reward := range quests[quest].CollectionRewards {
 			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
 		}
 	}
@@ -586,17 +606,32 @@ func (s *Service) packInfoFor(packID int) ([]byte, error) {
 		visit := wire.AppendVarint(nil, 5, uint64(packID))
 		return wire.AppendBytes(out, 12, visit), nil
 	}
-	open := wire.AppendVarint(nil, 1, 1)
-	open = wire.AppendVarint(open, 2, 1)
-	out = wire.AppendBytes(out, 9, open)
+	for _, state := range s.seed.InitialReputations {
+		row := wire.AppendVarint(nil, 1, state.GroupID)
+		row = wire.AppendVarint(row, 2, state.State)
+		if state.ElapsedSeconds != 0 {
+			row = wire.AppendVarint(row, 3, state.ElapsedSeconds)
+		}
+		out = wire.AppendBytes(out, 9, row)
+	}
 	visit := wire.AppendVarint(nil, 5, uint64(packID))
 	out = wire.AppendBytes(out, 12, visit)
-	stat := wire.AppendVarint(nil, 1, 3)
-	stat = wire.AppendVarint(stat, 2, 77)
-	stat = wire.AppendVarint(stat, 3, 1)
-	out = wire.AppendBytes(out, 14, stat)
-	reward := wire.AppendVarint(nil, 3, 3)
-	reward = wire.AppendVarint(reward, 4, 150)
+	for _, state := range s.seed.InitialRankStatues {
+		row := wire.AppendVarint(nil, 1, state.ID)
+		row = wire.AppendVarint(row, 2, state.Season)
+		if state.Error {
+			row = wire.AppendVarint(row, 3, 1)
+		}
+		out = wire.AppendBytes(out, 14, row)
+	}
+	if s.packJamDesign == nil {
+		return out, nil
+	}
+	if err := s.packJamDesign.ValidateReward(); err != nil {
+		return nil, err
+	}
+	reward := wire.AppendVarint(nil, 3, s.packJamDesign.Reward.Type)
+	reward = wire.AppendVarint(reward, 4, s.packJamDesign.Reward.Count)
 	group := wire.AppendBytes(nil, 1, reward)
 	group = wire.AppendBytes(group, 6, reward)
 	return wire.AppendBytes(out, 16, group), nil
@@ -653,12 +688,8 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 	}
 	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 {
 		rewardCharacter := encodeCharacter(s.seed.RewardCharacter)
-		// Pictorial state: acquired level 1, progress 60.
-		rewardCharacter = wire.AppendBytes(rewardCharacter, 12, wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 60))
 		rewards = wire.AppendBytes(rewards, 2, rewardCharacter)
 		costume := encodeCostume(s.seed.RewardCostume)
-		// Pictorial state observed for the starter costume.
-		costume = wire.AppendBytes(costume, 5, wire.AppendVarint(wire.AppendVarint(nil, 1, 7), 2, 116))
 		rewards = wire.AppendBytes(rewards, 3, costume)
 		for _, character := range s.seed.StoryCharacters {
 			view := wire.AppendVarint(nil, 2, character.ID)
@@ -705,7 +736,13 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 		}
 	}
 	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 {
-		deckIDs := []uint64{s.seed.RewardCharacter.InvenIndex, s.seed.StoryCharacters[0].InvenIndex, s.seed.StoryCharacters[1].InvenIndex, s.seed.StoryCharacters[2].InvenIndex, s.starter.Characters[0].InvenIndex}
+		deckIDs := []uint64{s.seed.RewardCharacter.InvenIndex}
+		for _, character := range s.seed.StoryCharacters {
+			deckIDs = append(deckIDs, character.InvenIndex)
+		}
+		for _, character := range s.starter.Characters {
+			deckIDs = append(deckIDs, character.InvenIndex)
+		}
 		for index, characterID := range deckIDs {
 			deck := wire.AppendVarint(nil, 1, characterID)
 			deck = wire.AppendVarint(deck, 2, ^uint64(0))
@@ -776,13 +813,10 @@ func (s *Service) accountPackInfo() []byte {
 			}
 		}
 	}
-	return wire.AppendVarint(out, 5, 3)
-}
-
-var questPictorialItems = map[int][]gamedata.Reward{
-	3:  {{ID: 2101, Type: 17, Count: 1}},
-	10: {{ID: 2102, Type: 17, Count: 1}},
-	28: {{ID: 2103, Type: 17, Count: 1}},
+	if s.seed.SquareSceneID != 0 {
+		out = wire.AppendVarint(out, 5, s.seed.SquareSceneID)
+	}
+	return out
 }
 
 // PictorialCharacters hides quest-26 rewards until they are earned, even

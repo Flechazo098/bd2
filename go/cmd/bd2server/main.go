@@ -96,6 +96,7 @@ func serve(args []string) (serveErr error) {
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
 	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
+	seasonScheduleSeed := fs.String("schedule-seed", "", "versioned server content calendar")
 	devToolsConfig := fs.String("dev-tools-config", "", "development-tool settings JSON (defaults to DATA_DIR/dev-tools.json)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -179,6 +180,7 @@ func serve(args []string) (serveErr error) {
 	for target, name := range map[*string]string{
 		accountSeed: "login_user.json", playerSeed: "starter_player.json", readonlySeed: "readonly.json",
 		mailSeed: "mail.json", deckSeed: "decks.json", worldSeed: "world.json", gachaScheduleSeed: "gacha_schedule.json",
+		seasonScheduleSeed: "schedule.json",
 	} {
 		if *target == "" {
 			*target = filepath.Join(seedRoot, name)
@@ -297,6 +299,10 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load readonly server configuration: %w", err)
 	}
+	seasonSchedule, err := schedule.Load(filepath.Clean(*seasonScheduleSeed))
+	if err != nil {
+		return fmt.Errorf("load server content calendar: %w", err)
+	}
 	mailbox, err := mail.Load(filepath.Clean(*mailSeed))
 	if err != nil {
 		return fmt.Errorf("load starter mailbox: %w", err)
@@ -309,7 +315,11 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load starter deck: %w", err)
 	}
-	deckStateStore, err := deck.OpenStore(stateRepository, deckConfig)
+	presetDesign, err := gamedata.LoadPresetDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load party preset GameData: %w", err)
+	}
+	deckStateStore, err := deck.OpenStore(stateRepository, deckConfig, *presetDesign)
 	if err != nil {
 		return fmt.Errorf("load deck state: %w", err)
 	}
@@ -319,6 +329,14 @@ func serve(args []string) (serveErr error) {
 	ownedItems, err := player.OpenInventory(stateRepository, starter)
 	if err != nil {
 		return fmt.Errorf("load owned inventory: %w", err)
+	}
+	recipeDesign, err := gamedata.LoadCookingRecipeDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load cooking recipes: %w", err)
+	}
+	recipeService, err := feature.NewRecipeService(recipeDesign, starter.CookingRecipes, ownedItems)
+	if err != nil {
+		return fmt.Errorf("load learned recipes: %w", err)
 	}
 	randomBoxes, err := gamedata.LoadRandomBoxDesign(gameData, *gameDataVersion)
 	if err != nil {
@@ -375,6 +393,13 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load mail state: %w", err)
 	}
+	contentTickets, err := gamedata.LoadGachaContentTicketDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load gacha content tickets: %w", err)
+	}
+	if err := mailService.AttachContentTickets(contentTickets); err != nil {
+		return fmt.Errorf("attach mailbox content tickets: %w", err)
+	}
 	if err := mailService.AttachSeedPath(filepath.Clean(*mailSeed)); err != nil {
 		return fmt.Errorf("watch mail seed: %w", err)
 	}
@@ -396,12 +421,6 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := missionService.AttachMail(mailService); err != nil {
 		return fmt.Errorf("attach mission compensation mailbox: %w", err)
-	}
-	if err := missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 101}); err != nil {
-		return fmt.Errorf("record daily login mission: %w", err)
-	}
-	if err := missionService.SetProgress(gamedata.MissionKey{GroupType: 1, GroupID: 2, ID: 201}, 1); err != nil {
-		return fmt.Errorf("record weekly login mission: %w", err)
 	}
 	ownedEquipment, err := player.OpenEquipmentInventory(stateRepository)
 	if err != nil {
@@ -454,6 +473,10 @@ func serve(args []string) (serveErr error) {
 	if err := worldService.ConfigureStartPack(startingPackID, initializeAccount); err != nil {
 		return fmt.Errorf("configure account starting chapter: %w", err)
 	}
+	missionUnlocked := worldService.MissionsUnlocked
+	if err := missionService.RecordLogin(missionUnlocked); err != nil {
+		return fmt.Errorf("record login missions: %w", err)
+	}
 	if err := login.AttachLastPlayedPack(worldService); err != nil {
 		return fmt.Errorf("attach persisted login destination: %w", err)
 	}
@@ -468,7 +491,7 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load owned collection: %w", err)
 	}
-	infiniteGacha, err := gamedata.LoadInfiniteGacha(gameData, *gameDataVersion)
+	infiniteGacha, err := gamedata.LoadInfiniteGachaForSchedules(gameData, *gameDataVersion, scheduleGroupIDs)
 	if err != nil {
 		return fmt.Errorf("load infinite gacha GameData: %w", err)
 	}
@@ -482,7 +505,7 @@ func serve(args []string) (serveErr error) {
 	if err := gachaService.AttachSchedule(gachaSchedule); err != nil {
 		return fmt.Errorf("attach gacha schedule: %w", err)
 	}
-	previewEventIndex, err := serverConfig.CashProductEventIndex(gamedata.InfiniteProductGroupID, gamedata.InfiniteProductID)
+	previewEventIndex, err := serverConfig.CashProductEventIndex(infiniteGacha.ProductGroupID, infiniteGacha.ProductID)
 	if err != nil {
 		return fmt.Errorf("load infinite preview event: %w", err)
 	}
@@ -499,8 +522,8 @@ func serve(args []string) (serveErr error) {
 	}
 	gachaService.AttachInventory(ownedItems)
 	gachaService.AttachEquipmentGacha(equipmentGacha, ownedEquipment)
-	gachaService.AttachPreviewMission(func() error {
-		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 111})
+	gachaService.AttachDrawMission(func(count uint64) error {
+		return missionService.RecordEvent(missions.ConditionGachaBuy, 0, count, missionUnlocked)
 	})
 	if err := collection.BindBaseCharacters(worldService.CharacterService().RawAll()); err != nil {
 		return fmt.Errorf("bind base collection characters: %w", err)
@@ -556,6 +579,13 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := worldService.CharacterService().AttachTalentGrowth(talentGrowth); err != nil {
 		return fmt.Errorf("attach character talent growth: %w", err)
+	}
+	immortalDesign, err := gamedata.LoadImmortalDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load immortal talent GameData: %w", err)
+	}
+	if err := worldService.CharacterService().AttachImmortalDesign(immortalDesign); err != nil {
+		return fmt.Errorf("attach immortal talent GameData: %w", err)
 	}
 	costumePotentialDesign, err := gamedata.LoadCostumePotentialDesign(gameData, *gameDataVersion)
 	if err != nil {
@@ -640,8 +670,8 @@ func serve(args []string) (serveErr error) {
 	if err := foodService.AttachContext(worldService.CurrentPackID, battleService.Active); err != nil {
 		return err
 	}
-	battleService.AttachTutorialWin(func() error {
-		return missionService.CompleteMission(gamedata.MissionKey{GroupType: 0, GroupID: 1, ID: 113})
+	battleService.AttachMonsterWinMission(func() error {
+		return missionService.CompleteSingleTargetEvent(missions.ConditionMonsterKill, missionUnlocked)
 	})
 	battleService.AttachPictorialBuffs(func() ([]gamedata.PictorialBuffStat, error) {
 		_, buffs, err := pictorialService.Snapshot()
@@ -671,13 +701,14 @@ func serve(args []string) (serveErr error) {
 		masterTitleService,
 		recruitService,
 		foodService,
+		recipeService,
 		starter,
 		mailService,
 		gachaService,
 		achievementCounters,
 		missionService,
 		pictorialService,
-		schedule.Current(),
+		seasonSchedule,
 		readonly.Service{Seed: serverConfig},
 		feature.Service{},
 	)

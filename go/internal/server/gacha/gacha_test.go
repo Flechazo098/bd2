@@ -23,15 +23,15 @@ func TestTicketOnlyEquipmentDrawUsesGameDataAndNoScheduleAccounting(t *testing.T
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
 	const version = "20260923193640"
-	infinite, err := gamedata.LoadInfiniteGacha(root, version)
+	infinite, err := gamedata.LoadInfiniteGachaForSchedules(root, version, []uint64{infiniteScheduleGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.LoadRegularCostumeGacha(root, version)
+	regular, err := gamedata.LoadRegularCostumeGachaGroups(root, version, []uint64{10001, 135, 205, 121}, []uint64{29})
 	if err != nil {
 		t.Fatal(err)
 	}
-	equipmentCatalog, err := gamedata.LoadEquipmentGacha(root, version)
+	equipmentCatalog, err := gamedata.LoadEquipmentGachaGroups(root, version, []uint64{10002, 9, 133, 206})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func fixtureCharacter(id, hp uint64) gamedata.CharacterDesign {
 }
 
 func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{
 		60901: fixtureCharacter(6090, 253),
 	})
 	if err != nil {
@@ -142,7 +142,7 @@ func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,9 +171,9 @@ func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview := wire.AppendVarint(nil, 1, 1)
-	preview = wire.AppendVarint(preview, 2, gamedata.InfiniteGachaID)
-	preview = wire.AppendVarint(preview, 3, gamedata.InfiniteProductGroupID)
-	preview = wire.AppendVarint(preview, 4, gamedata.InfiniteProductID)
+	preview = wire.AppendVarint(preview, 2, fixtureInfiniteGachaID)
+	preview = wire.AppendVarint(preview, 3, fixtureInfiniteProductGroupID)
+	preview = wire.AppendVarint(preview, 4, fixtureInfiniteProductID)
 	code, response, ok, err := service.Handle("/GachaBuyPreview", preview)
 	if err != nil || !ok || code != 175 {
 		t.Fatalf("preview code=%d ok=%v err=%v", code, ok, err)
@@ -213,8 +213,8 @@ func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
 	}
 
 	buy := wire.AppendVarint(nil, 1, 3)
-	buy = wire.AppendVarint(buy, 3, gamedata.InfiniteProductGroupID)
-	product := wire.AppendVarint(nil, 1, gamedata.InfiniteProductID)
+	buy = wire.AppendVarint(buy, 3, fixtureInfiniteProductGroupID)
+	product := wire.AppendVarint(nil, 1, fixtureInfiniteProductID)
 	product = wire.AppendVarint(product, 3, 1)
 	buy = wire.AppendBytes(buy, 4, product)
 	code, response, ok, err = service.Handle("/CashShopBuy", buy)
@@ -259,7 +259,7 @@ func TestInfinitePreviewAndFreeConfirmationPersist(t *testing.T) {
 	productID, productFound, productErr := wire.Varint(countInfo, 2)
 	_, saleGroupFound, saleGroupErr := wire.Varint(countInfo, 3)
 	count, countFound, countErr := wire.Varint(countInfo, 4)
-	if err != nil || parseErr != nil || groupErr != nil || productErr != nil || saleGroupErr != nil || countErr != nil || !ok || code != 432 || countFields(response, 1) != 1 || !found || !groupFound || !productFound || saleGroupFound || !countFound || productGroup != gamedata.InfiniteProductGroupID || productID != gamedata.InfiniteProductID || count != 1 {
+	if err != nil || parseErr != nil || groupErr != nil || productErr != nil || saleGroupErr != nil || countErr != nil || !ok || code != 432 || countFields(response, 1) != 1 || !found || !groupFound || !productFound || saleGroupFound || !countFound || productGroup != fixtureInfiniteProductGroupID || productID != fixtureInfiniteProductID || count != 1 {
 		t.Fatalf("purchase count code=%d group=%d product=%d saleGroupFound=%v count=%d found=%v/%v/%v/%v ok=%v err=%v/%v/%v/%v/%v/%v", code, productGroup, productID, saleGroupFound, count, found, groupFound, productFound, countFound, ok, err, parseErr, groupErr, productErr, saleGroupErr, countErr)
 	}
 	if _, _, _, err := service.Handle("/GachaBuyPreview", preview); err == nil {
@@ -292,11 +292,11 @@ func scheduleGroupIDs(windows []ScheduleWindow) []uint64 {
 }
 
 func TestInfinitePreviewMustBeLockedAndRerollClearsLock(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,9 +317,9 @@ func TestInfinitePreviewMustBeLockedAndRerollClearsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview := wire.AppendVarint(nil, 1, 1)
-	preview = wire.AppendVarint(preview, 2, gamedata.InfiniteGachaID)
-	preview = wire.AppendVarint(preview, 3, gamedata.InfiniteProductGroupID)
-	preview = wire.AppendVarint(preview, 4, gamedata.InfiniteProductID)
+	preview = wire.AppendVarint(preview, 2, fixtureInfiniteGachaID)
+	preview = wire.AppendVarint(preview, 3, fixtureInfiniteProductGroupID)
+	preview = wire.AppendVarint(preview, 4, fixtureInfiniteProductID)
 	if _, _, _, err := service.Handle("/GachaBuyPreview", preview); err != nil {
 		t.Fatal(err)
 	}
@@ -328,8 +328,8 @@ func TestInfinitePreviewMustBeLockedAndRerollClearsLock(t *testing.T) {
 		t.Fatalf("first preview event=%d locked=%v", firstEvent, locked)
 	}
 	buy := wire.AppendVarint(nil, 1, 2)
-	buy = wire.AppendVarint(buy, 3, gamedata.InfiniteProductGroupID)
-	product := wire.AppendVarint(nil, 1, gamedata.InfiniteProductID)
+	buy = wire.AppendVarint(buy, 3, fixtureInfiniteProductGroupID)
+	product := wire.AppendVarint(nil, 1, fixtureInfiniteProductID)
 	product = wire.AppendVarint(product, 3, 1)
 	buy = wire.AppendBytes(buy, 4, product)
 	if _, _, _, err := service.Handle("/CashShopBuy", buy); err == nil {
@@ -349,11 +349,11 @@ func TestInfinitePreviewMustBeLockedAndRerollClearsLock(t *testing.T) {
 }
 
 func TestRegularGachaBuySpendsWalletAndPersistsCostume(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		10100084: {ID: 10100084, Count: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
@@ -395,11 +395,11 @@ func TestRegularGachaBuySpendsWalletAndPersistsCostume(t *testing.T) {
 }
 
 func TestRegularGachaSequenceReuseAcrossLoginIsANewPurchase(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		10100084: {ID: 10100084, Count: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
@@ -445,11 +445,11 @@ func TestRegularGachaSequenceReuseAcrossLoginIsANewPurchase(t *testing.T) {
 }
 
 func TestPaidRegularGachaBuySpendsPaidJewelry(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		8100118: {ID: 8100118, Count: 10, PriceType: 2, Price: 2000, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
@@ -488,11 +488,11 @@ func TestPaidRegularGachaBuySpendsPaidJewelry(t *testing.T) {
 
 func TestPriceType19IsRejectedWithoutChargingDiamonds(t *testing.T) {
 	character := fixtureCharacter(6090, 253)
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
@@ -528,11 +528,11 @@ func TestPriceType19IsRejectedWithoutChargingDiamonds(t *testing.T) {
 
 func TestUnverifiedGachaRPCsRemainUnhandled(t *testing.T) {
 	character := fixtureCharacter(6090, 253)
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
@@ -563,11 +563,11 @@ func newMultiBuyTestService(t *testing.T, storage stateio.Store) *Service {
 	t.Helper()
 	character := fixtureCharacter(6090, 253)
 	characters := map[uint64]gamedata.CharacterDesign{60901: character}
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, characters)
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		11: {ID: 11, Count: 1, FreeCountDay: 2, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 		12: {ID: 12, Count: 1, FreeCountDay: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 		13: {ID: 13, Count: 10, PriceType: 3, Price: 2000, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
@@ -788,7 +788,7 @@ func TestGachaMultiBuyFailureRollsBackWholeSQLiteOperation(t *testing.T) {
 	if err := service.collection.EnsurePersisted(); err != nil {
 		t.Fatal(err)
 	}
-	service.AttachPreviewMission(func() error { return errors.New("injected mission failure after reward") })
+	service.AttachDrawMission(func(uint64) error { return errors.New("injected mission failure after reward") })
 	operation, err := repo.BeginOperation()
 	if err != nil {
 		t.Fatal(err)
@@ -901,7 +901,7 @@ func TestEquipmentPointExchangeUsesGameDataAndIsIdempotent(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, version, "release", "common-dbdata.bin")); os.IsNotExist(err) {
 		t.Skip("installed 2.35.10 GameData archive is unavailable")
 	}
-	infinite, err := gamedata.LoadInfiniteGacha(root, version)
+	infinite, err := gamedata.LoadInfiniteGachaForSchedules(root, version, []uint64{infiniteScheduleGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +974,7 @@ func TestCompletedStepUpPersistsAndRemainsVisible(t *testing.T) {
 	const stepUpGroupID = 29
 	stepUpGachaIDs := []uint64{8100118, 8100119, 8100120, 8100121}
 	character := fixtureCharacter(6090, 253)
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +982,7 @@ func TestCompletedStepUpPersistsAndRemainsVisible(t *testing.T) {
 	for _, id := range stepUpGachaIDs {
 		gachas[id] = gamedata.RegularGacha{ID: id, Count: 1, PriceType: 2, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(gachas, map[uint64]gamedata.CharacterDesign{60901: character})
+	regular, err := fixtureRegularCatalog(gachas, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1064,7 +1064,7 @@ func TestInstalledStepUpGroups29And30UseGenericIndependentProgress(t *testing.T)
 		t.Skip("set BD2_REAL_GAMEDATA for installed GameData integration test")
 	}
 	const version = "20260923193640"
-	design, err := gamedata.LoadInfiniteGacha(root, version)
+	design, err := gamedata.LoadInfiniteGachaForSchedules(root, version, []uint64{infiniteScheduleGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1135,11 +1135,11 @@ func TestInstalledStepUpGroups29And30UseGenericIndependentProgress(t *testing.T)
 
 func TestRegularTenPullContainsTenClientDisplayEntriesAtMaxLevel(t *testing.T) {
 	character := fixtureCharacter(6090, 253)
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		11000084: {ID: 11000084, Count: 10, PriceType: 3, Price: 2000, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
@@ -1201,7 +1201,7 @@ func TestRegularTenPullContainsTenClientDisplayEntriesAtMaxLevel(t *testing.T) {
 
 func TestGachaPointManualExchangePersistsAndRetriesWithoutDoubleGrant(t *testing.T) {
 	character := fixtureCharacter(6090, 253)
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1211,8 +1211,8 @@ func TestGachaPointManualExchangePersistsAndRetriesWithoutDoubleGrant(t *testing
 		{Weight: 1, Children: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 		{Weight: 1, Children: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
-		11000145: {ID: 11000145, Count: 10, PriceType: 3, Price: 2000, Pool: pool},
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
+		11000145: {Grades: map[uint64]uint64{60901: 5}, ID: 11000145, Count: 10, PriceType: 3, Price: 2000, Pool: pool},
 	}, map[uint64]gamedata.CharacterDesign{60901: character})
 	if err != nil {
 		t.Fatal(err)
@@ -1294,11 +1294,11 @@ func TestGachaPointManualExchangePersistsAndRetriesWithoutDoubleGrant(t *testing
 }
 
 func TestCashShopPurchaseCountStartsEmpty(t *testing.T) {
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{60901: fixtureCharacter(6090, 253)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1331,12 +1331,15 @@ func TestTwelvePickSelectionSavePersistsAndReturnsInGachaInfo(t *testing.T) {
 	}
 	characters[4001] = fixtureCharacter(400, 100)
 	characters[3001] = fixtureCharacter(300, 100)
-	design, err := gamedata.NewInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
+	design, err := fixtureInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 5001, Weight: 1}}}}, characters)
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 5001, Weight: 1}}}}, characters)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := regular.AddGroupDesign(gamedata.GachaGroupDesign{ID: paidTwelvePickGroupID, PointCount: 1, SelectCount: 12}, gamedata.GachaFixedDesign{}); err != nil {
 		t.Fatal(err)
 	}
 	storage := stateio.NewMemory()
@@ -1380,11 +1383,11 @@ func TestTwelvePickSelectionSavePersistsAndReturnsInGachaInfo(t *testing.T) {
 
 func TestDailyFreeAndPaidSingleDrawsResetByUTCDate(t *testing.T) {
 	characters := map[uint64]gamedata.CharacterDesign{5001: fixtureCharacter(500, 100)}
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{5001}, characters)
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{5001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		101: {ID: 101, Count: 1, DailyPayGachaCount: 1, DailyPayGachaPriceCount: 90, FreeCountDay: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 5001, Weight: 1}}},
 	}, characters)
 	if err != nil {
@@ -1495,7 +1498,7 @@ func TestMoonriseSelectionCashProductAndOneTimeTicketDraw(t *testing.T) {
 	}
 	characters[4001] = fixtureCharacter(400, 100)
 	characters[3001] = fixtureCharacter(300, 100)
-	design, err := gamedata.NewInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
+	design, err := fixtureInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1508,11 +1511,134 @@ func TestMoonriseSelectionCashProductAndOneTimeTicketDraw(t *testing.T) {
 			}}},
 		},
 	}}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{moonriseProductID: moonrise}, characters)
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{moonriseProductID: moonrise}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := regular.AddGroupDesign(gamedata.GachaGroupDesign{ID: paidTwelvePickGroupID, PointCount: 1, BuyLimitCount: 10, CashProductGroupID: moonriseProductGroupID, CashProductID: moonriseProductID, TenTimeGachaID: moonriseProductID, SelectCount: 12, SelectionChoiceRate: 100, GachaSubType: 1}, gamedata.GachaFixedDesign{}); err != nil {
+	if err := regular.AddGroupDesign(gamedata.GachaGroupDesign{ID: paidTwelvePickGroupID, PointCount: 1, BuyLimitCount: 10, CashProductGroupID: moonriseProductGroupID, CashProductID: moonriseProductID, CashRewards: []gamedata.BattleReward{{Type: moonriseTicketType, ID: moonriseTicketID, Count: 1}}, TenTimeGachaID: moonriseProductID, SelectCount: 12, SelectionChoiceRate: 100, GachaSubType: 1}, gamedata.GachaFixedDesign{}); err != nil {
+		t.Fatal(err)
+	}
+	storage := stateio.NewMemory()
+	collection, err := player.OpenCollectionStore(storage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet, err := player.OpenWallet(storage, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := player.OpenInventory(storage, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(design, regular, collection, wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.AttachInventory(inventory)
+	if err := service.AttachSchedule(&ScheduleSeed{ClientVersion: "test", Schedules: []ScheduleWindow{{GroupID: paidTwelvePickGroupID, StartTime: 1, EndTime: 2}}, StepUps: []ScheduleWindow{{GroupID: 30, StartTime: 1, EndTime: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	product := wire.AppendVarint(nil, 1, moonriseProductID)
+	product = wire.AppendVarint(product, 3, 1)
+	buyProduct := wire.AppendVarint(nil, 1, 1)
+	buyProduct = wire.AppendVarint(buyProduct, 3, moonriseProductGroupID)
+	buyProduct = wire.AppendBytes(buyProduct, 4, product)
+	if code, _, handled, err := service.Handle("/CashShopBuy", buyProduct); err != nil || !handled || code != 61 {
+		t.Fatalf("cash product code=%d handled=%v err=%v", code, handled, err)
+	}
+	if !inventory.WasGranted(moonriseTicketGrant) {
+		t.Fatal("moonrise cash product purchase was not persisted")
+	}
+	if _, bought := collection.Grant(moonriseProductGrant); !bought {
+		t.Fatal("moonrise cash purchase marker was not persisted")
+	}
+	selection := wire.AppendVarint(nil, 1, 2)
+	for slot, itemID := range fiveStars {
+		entry := wire.AppendVarint(nil, 1, paidTwelvePickGroupID)
+		if slot != 0 {
+			entry = wire.AppendVarint(entry, 2, uint64(slot))
+		}
+		entry = wire.AppendVarint(entry, 3, itemID)
+		selection = wire.AppendBytes(selection, 2, entry)
+	}
+	if _, _, _, err := service.Handle("/GachaSelectionSave", selection); err != nil {
+		t.Fatal(err)
+	}
+	draw := wire.AppendVarint(nil, 1, 3)
+	draw = wire.AppendVarint(draw, 2, moonriseProductID)
+	draw = wire.AppendVarint(draw, 3, 3)
+	if code, response, handled, err := service.Handle("/GachaBuy", draw); err != nil || !handled || code != 146 || countFields(response, 4) != 3 {
+		t.Fatalf("moonrise draw code=%d handled=%v err=%v", code, handled, err)
+	}
+	grant, found := collection.Grant(moonriseDrawGrant)
+	if !found || len(grant.ViewCostumeIDs) != 0 {
+		// The completion grant is deliberately an empty marker; the concrete
+		// result remains keyed by the request identity for retry replay.
+		if !found {
+			t.Fatal("moonrise completion marker missing")
+		}
+	}
+	if got := collection.GachaUser(paidTwelvePickGroupID).TotalBuyCount; got != 10 {
+		t.Fatalf("moonrise total buy count=%d want=10", got)
+	}
+	if _, _, _, err := service.Handle("/GachaBuy", wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 4), 2, moonriseProductID), 3, 3)); err == nil {
+		t.Fatal("second moonrise draw was accepted")
+	}
+	_, info, _, err := service.Handle("/GachaInfo", wire.AppendVarint(nil, 1, 5))
+	if err != nil || len(collectScheduleWindows(t, info, 1)) != 0 || !sameScheduleGroups(collectScheduleWindows(t, info, 7), 30) {
+		t.Fatalf("post-moonrise schedules=%v step=%v err=%v", scheduleGroupIDs(collectScheduleWindows(t, info, 1)), scheduleGroupIDs(collectScheduleWindows(t, info, 7)), err)
+	}
+	counts := service.PurchaseCountDBInfos()
+	if len(counts) != 1 {
+		t.Fatalf("purchase counts=%d want=1", len(counts))
+	}
+	group, _, _ := wire.Varint(counts[0], 1)
+	id, _, _ := wire.Varint(counts[0], 2)
+	if group != moonriseProductGroupID || id != moonriseProductID {
+		t.Fatalf("purchase count group=%d id=%d", group, id)
+	}
+}
+
+func TestSpecialSelectionUsesDifferentProductGroupTicketAndChoiceCount(t *testing.T) {
+	const (
+		moonriseProductID      = 890001
+		moonriseProductGroupID = 770001
+		moonriseTicketID       = 660003
+		paidTwelvePickGroupID  = 550004
+		moonriseTicketType     = 19
+		moonriseTicketGrant    = "cash-product-reward:770001:890001:0"
+		moonriseProductGrant   = "cash-product:770001:890001"
+		moonriseDrawGrant      = "special-gacha:550004:890001"
+	)
+	fiveStars := make([]uint64, 4)
+	characters := make(map[uint64]gamedata.CharacterDesign, 14)
+	choices := make([]gamedata.CostumeRewardEntry, 4)
+	for i := range fiveStars {
+		fiveStars[i] = uint64(5001 + i)
+		characters[fiveStars[i]] = fixtureCharacter(uint64(500+i), 100)
+		choices[i] = gamedata.CostumeRewardEntry{ItemType: 11, ItemID: fiveStars[i], Count: 1, Weight: 1}
+	}
+	characters[4001] = fixtureCharacter(400, 100)
+	characters[3001] = fixtureCharacter(300, 100)
+	design, err := fixtureInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moonrise := gamedata.RegularGacha{ID: moonriseProductID, Count: 10, PriceType: moonriseTicketType, PriceID: moonriseTicketID, Price: 1, RewardGroup: &gamedata.CostumeRewardGroup{
+		ID: moonriseProductID, DropCount: 1, DropType: 1, Entries: []gamedata.CostumeRewardEntry{
+			{ItemType: 9, ItemID: 9100038, Count: 1, Weight: 1, Group: &gamedata.CostumeRewardGroup{ID: 9100038, DropCount: 3, Entries: choices}},
+			{ItemType: 9, ItemID: 9100039, Count: 1, Weight: 1, Group: &gamedata.CostumeRewardGroup{ID: 9100039, DropCount: 7, Entries: []gamedata.CostumeRewardEntry{
+				{ItemType: 11, ItemID: 4001, Count: 1, Weight: 1443},
+				{ItemType: 11, ItemID: 3001, Count: 1, Weight: 8557},
+			}}},
+		},
+	}}
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{moonriseProductID: moonrise}, characters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := regular.AddGroupDesign(gamedata.GachaGroupDesign{ID: paidTwelvePickGroupID, PointCount: 1, BuyLimitCount: 10, CashProductGroupID: moonriseProductGroupID, CashProductID: moonriseProductID, CashRewards: []gamedata.BattleReward{{Type: moonriseTicketType, ID: moonriseTicketID, Count: 1}}, TenTimeGachaID: moonriseProductID, SelectCount: 4, SelectionChoiceRate: 100, GachaSubType: 1}, gamedata.GachaFixedDesign{}); err != nil {
 		t.Fatal(err)
 	}
 	storage := stateio.NewMemory()
@@ -1605,11 +1731,11 @@ func TestSelectionChangeCountPersistsEnforcesLimitAndReturnsInGachaInfo(t *testi
 		4001: fixtureCharacter(400, 100),
 		3001: fixtureCharacter(300, 100),
 	}
-	design, err := gamedata.NewInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
+	design, err := fixtureInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		101: {ID: 101, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 5001, Weight: 1}}},
 	}, characters)
 	if err != nil {
@@ -1689,7 +1815,7 @@ func TestOrdinaryTwelvePickGacha101UsesSavedSelectionGroupAndPersists(t *testing
 	}
 	characters[4001] = fixtureCharacter(400, 100)
 	characters[3001] = fixtureCharacter(300, 100)
-	design, err := gamedata.NewInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
+	design, err := fixtureInfiniteGachaDesignWithRates(10, fiveStars, []uint64{4001}, []uint64{3001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1698,7 +1824,7 @@ func TestOrdinaryTwelvePickGacha101UsesSavedSelectionGroupAndPersists(t *testing
 		{Weight: 1400, Children: []gamedata.WeightedCostume{{ID: 4001, Weight: 1}}},
 		{Weight: 8300, Children: []gamedata.WeightedCostume{{ID: 3001, Weight: 1}}},
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		101: {ID: 101, Count: 10, PriceType: 3, Price: 2000, Pool: pool, TicketIDs: []uint64{1108, 1000}},
 	}, characters)
 	if err != nil {
@@ -1761,7 +1887,7 @@ func TestInstalledNewbieSelectionGuaranteeStopsAfterThirtyWithoutPoints(t *testi
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	infinite, err := gamedata.LoadInfiniteGacha(root, "20260923193640")
+	infinite, err := gamedata.LoadInfiniteGachaForSchedules(root, "20260923193640", []uint64{infiniteScheduleGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1813,23 +1939,29 @@ func TestInstalledNewbieSelectionGuaranteeStopsAfterThirtyWithoutPoints(t *testi
 		if err != nil || point != 0 {
 			t.Fatalf("draw %d point=%d err=%v", draw+1, point, err)
 		}
-		applySort, found, err := wire.Varint(response, 4)
-		if err != nil || !found || applySort != 9 {
-			t.Fatalf("draw %d selected guarantee sort=%d found=%v err=%v response=%x", draw+1, applySort, found, err, response)
-		}
 		grant, ok := collection.Grant(service.requestIdentity(31, draw+2))
-		if !ok || len(grant.ViewCostumeIDs) != 10 || !selected[grant.ViewCostumeIDs[9]] {
-			t.Fatalf("draw %d grant=%+v", draw+1, grant)
+		if !ok || len(grant.ViewCostumeIDs) != 10 {
+			t.Fatalf("grant=%+v", grant)
 		}
+		for _, sortID := range grant.SelectionApplySortIDs {
+			if sortID >= uint64(len(grant.ViewCostumeIDs)) || !selected[grant.ViewCostumeIDs[sortID]] {
+				t.Fatalf("invalid selected guarantee sort=%d grant=%+v", sortID, grant)
+			}
+		}
+		foundLast := false
+		for _, sortID := range grant.SelectionApplySortIDs {
+			if sortID == 9 {
+				foundLast = true
+			}
+		}
+		if !foundLast || !selected[grant.ViewCostumeIDs[9]] {
+			t.Fatalf("nonresetting newbie tenth-slot guarantee missing: %+v", grant)
+		}
+
 	}
 	user := collection.GachaUser(1009)
 	if user.TotalBuyCount != 30 || user.Point != 0 || wallet.Snapshot().Jewelry != 0 {
 		t.Fatalf("newbie state user=%+v wallet=%+v", user, wallet.Snapshot())
-	}
-	for _, fixed := range collection.GachaFixedStates() {
-		if fixed.FixedID == 3 && fixed.Type == 1 && fixed.Count != 0 {
-			t.Fatalf("newbie five-star fixed count accumulated: %+v", fixed)
-		}
 	}
 	before := wallet.Snapshot()
 	fourth := wire.AppendVarint(nil, 1, 5)

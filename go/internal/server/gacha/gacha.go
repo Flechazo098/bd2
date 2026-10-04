@@ -15,23 +15,9 @@ import (
 	"bd2server/internal/server/wire"
 )
 
-const infiniteGrant = "cash-product:1100001:9100033"
-
-const (
-	moonriseProductGroupID = 1500001
-	moonriseProductID      = 9100037
-	moonriseTicketType     = 19
-	moonriseTicketID       = 450030
-	moonriseProductGrant   = "cash-product:1500001:9100037"
-	moonriseTicketGrant    = "cash-product-reward:1500001:9100037:0"
-	moonriseDrawGrant      = "special-gacha:30011:9100037"
-)
-
-const (
-	infiniteScheduleGroupID = 30010
-	twelvePickGroupID       = 10001
-	paidTwelvePickGroupID   = 30011
-)
+func (s *Service) infiniteGrant() string {
+	return fmt.Sprintf("cash-product:%d:%d", s.design.ProductGroupID, s.design.ProductID)
+}
 
 type Service struct {
 	design             *gamedata.InfiniteGachaDesign
@@ -43,6 +29,7 @@ type Service struct {
 	equipmentCatalog   *gamedata.EquipmentGachaCatalog
 	equipmentInventory *player.EquipmentInventory
 	onPreview          func() error
+	onDraw             func(uint64) error
 	schedule           *ScheduleSeed
 	previewEventIndex  uint64
 	sessionMu          sync.RWMutex
@@ -51,6 +38,8 @@ type Service struct {
 	firstPreviews      map[string]firstGachaPreview
 	now                func() time.Time
 }
+
+func (s *Service) AttachDrawMission(callback func(uint64) error) { s.onDraw = callback }
 
 func (s *Service) AttachPreviewMission(callback func() error)  { s.onPreview = callback }
 func (s *Service) AttachInventory(inventory *player.Inventory) { s.inventory = inventory }
@@ -159,16 +148,21 @@ func (s *Service) PurchaseCountDBInfos() [][]byte {
 		group, id uint64
 		bought    bool
 	}{}
-	_, infiniteBought := s.collection.Grant(infiniteGrant)
+	_, infiniteBought := s.collection.Grant(s.infiniteGrant())
 	products = append(products, struct {
 		group, id uint64
 		bought    bool
-	}{gamedata.InfiniteProductGroupID, gamedata.InfiniteProductID, infiniteBought})
-	_, moonriseBought := s.collection.Grant(moonriseProductGrant)
-	products = append(products, struct {
-		group, id uint64
-		bought    bool
-	}{moonriseProductGroupID, moonriseProductID, moonriseBought})
+	}{s.design.ProductGroupID, s.design.ProductID, infiniteBought})
+	for _, group := range s.regular.Groups() {
+		if group.CashProductGroupID == 0 || group.CashProductID == 0 {
+			continue
+		}
+		_, bought := s.collection.Grant(fmt.Sprintf("cash-product:%d:%d", group.CashProductGroupID, group.CashProductID))
+		products = append(products, struct {
+			group, id uint64
+			bought    bool
+		}{group.CashProductGroupID, group.CashProductID, bought})
+	}
 	var result [][]byte
 	for _, product := range products {
 		if !product.bought {
@@ -217,8 +211,6 @@ func (s *Service) saveSelection(request []byte) (int, []byte, bool, error) {
 	if group, ok := s.regular.Group(groupID); ok && group.SelectCount != 0 {
 		expected = int(group.SelectCount)
 		changeLimit = group.SelectionChangeCount
-	} else if groupID == paidTwelvePickGroupID {
-		expected = 12
 	}
 	if expected == 0 || len(selections) != expected {
 		return 198, nil, true, fmt.Errorf("gacha: group %d requires %d selections, got %d", groupID, expected, len(selections))
@@ -483,7 +475,8 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 		}
 	}
 	isDailyPaid := buyType == 2 && design.Count == 1 && design.DailyPayGachaCount != 0 && design.DailyPayGachaPriceCount != 0 && knownGroup
-	isMoonrise := buyType == 3 && design.PriceType == moonriseTicketType && design.PriceID == moonriseTicketID && id == moonriseProductID && group.ID == paidTwelvePickGroupID
+	isMoonrise := buyType == 3 && design.PriceType == 19 && design.PriceID != 0 && knownGroup && group.GachaSubType == 1 && group.SelectCount != 0 && group.CashProductID != 0
+	completionGrant := fmt.Sprintf("special-gacha:%d:%d", group.ID, id)
 	validOrdinary := buyType == 1 && (design.PriceType == 2 || design.PriceType == 3)
 	if !isDailyFree && !isDailyPaid && !isMoonrise && !validOrdinary {
 		priceType := uint64(0)
@@ -510,7 +503,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 	}
 	grant, already := s.collection.Grant(identity)
 	if isMoonrise && !already {
-		if _, completed := s.collection.Grant(moonriseDrawGrant); completed {
+		if _, completed := s.collection.Grant(completionGrant); completed {
 			return 146, nil, true, errors.New("gacha: Moonrise product already drawn")
 		}
 	}
@@ -606,7 +599,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 			if s.inventory == nil {
 				return 146, nil, true, errors.New("gacha: inventory not attached")
 			}
-			moonriseCost, err = s.inventory.SelectMutable(moonriseTicketType, moonriseTicketID, design.Price)
+			moonriseCost, err = s.inventory.SelectMutable(design.PriceType, design.PriceID, design.Price)
 			if err != nil {
 				return 146, nil, true, err
 			}
@@ -661,7 +654,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 		}
 		purchase := player.GachaPurchase{Group: group, BuyType: buyType, Fixed: fixedStates, SelectionApplySortIDs: selectionApplySortIDs}
 		if isMoonrise {
-			purchase.CompletionGrant = moonriseDrawGrant
+			purchase.CompletionGrant = completionGrant
 		}
 		if dailyLimit != 0 {
 			purchase.DailyKey = day
@@ -687,9 +680,9 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 	for _, sortID := range grant.SelectionApplySortIDs {
 		response = wire.AppendVarint(response, 4, sortID)
 	}
-	if s.onPreview != nil {
-		if err := s.onPreview(); err != nil {
-			return 146, nil, true, fmt.Errorf("gacha: update buy mission: %w", err)
+	if !already && s.onDraw != nil {
+		if err := s.onDraw(uint64(design.Count)); err != nil {
+			return 146, nil, true, fmt.Errorf("gacha: draw mission: %w", err)
 		}
 	}
 	return 146, response, true, nil
@@ -799,9 +792,17 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 				return 146, nil, true, err
 			}
 		}
-		fixed := s.equipmentCatalog.Fixed()
+		var fixed gamedata.EquipmentFixedDesign
 		var priorSR, priorUR uint64
 		if !design.TicketOnly {
+			group, found := s.equipmentCatalog.GroupForGacha(design.ID)
+			if !found {
+				return 146, nil, true, errors.New("gacha: equipment group missing")
+			}
+			fixed, found = s.equipmentCatalog.FixedForGroup(group.ID)
+			if !found {
+				return 146, nil, true, errors.New("gacha: equipment fixed design missing")
+			}
 			priorSR = s.collection.GachaFixedCount(fixed.ID, 2)
 			priorUR = s.collection.GachaFixedCount(fixed.ID, 3)
 		}
@@ -857,6 +858,11 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 	for _, fixed := range grant.GachaFixed {
 		response = wire.AppendBytes(response, 3, gachaFixedWire(fixed))
 	}
+	if !already && s.onDraw != nil {
+		if err := s.onDraw(uint64(design.Count)); err != nil {
+			return 146, nil, true, fmt.Errorf("gacha: equipment draw mission: %w", err)
+		}
+	}
 	return 146, response, true, nil
 }
 
@@ -885,7 +891,17 @@ func costumeFixedStates(fixed gamedata.GachaFixedDesign, result gamedata.GachaFi
 }
 
 func (s *Service) completeSharedFixedStates(fixedID uint64, updates []player.GachaFixedState) []player.GachaFixedState {
-	if fixedID == 0 || s.equipmentCatalog == nil || s.equipmentCatalog.Fixed().ID != fixedID {
+	if fixedID == 0 || s.equipmentCatalog == nil {
+		return updates
+	}
+	known := false
+	for _, fixed := range s.equipmentCatalog.FixedDesigns() {
+		if fixed.ID == fixedID {
+			known = true
+			break
+		}
+	}
+	if !known {
 		return updates
 	}
 	states := make([]player.GachaFixedState, 4)
@@ -1056,18 +1072,18 @@ func (s *Service) preview(request []byte) (int, []byte, bool, error) {
 	if s.first != nil && id == s.first.GachaID {
 		return s.previewFirstGacha(request)
 	}
-	if _, bought := s.collection.Grant(infiniteGrant); bought {
+	if _, bought := s.collection.Grant(s.infiniteGrant()); bought {
 		return 175, nil, true, errors.New("gacha: infinite product already purchased")
 	}
-	if id != gamedata.InfiniteGachaID {
+	if id != s.design.GachaID {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported preview id %d", id)
 	}
 	group, found, err := wire.Varint(request, 3)
-	if err != nil || !found || group != gamedata.InfiniteProductGroupID {
+	if err != nil || !found || group != s.design.ProductGroupID {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported preview product group %d", group)
 	}
 	product, found, err := wire.Varint(request, 4)
-	if err != nil || !found || product != gamedata.InfiniteProductID {
+	if err != nil || !found || product != s.design.ProductID {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported preview product %d", product)
 	}
 	if s.previewEventIndex == 0 {
@@ -1127,22 +1143,30 @@ func (s *Service) confirm(request []byte) (int, []byte, bool, error) {
 	if err != nil {
 		return 0, nil, true, err
 	}
-	if saleGroup != 0 || buyCount != 1 {
+	if buyCount != 1 {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported product %d sale %d count %d", productID, saleGroup, buyCount)
 	}
-	if group == moonriseProductGroupID && productID == moonriseProductID {
+	for _, cashGroup := range s.regular.Groups() {
+		if group != cashGroup.CashProductGroupID || productID != cashGroup.CashProductID || saleGroup != cashGroup.CashSalesGroup {
+			continue
+		}
+		if len(cashGroup.CashRewards) == 0 {
+			return 61, nil, true, errors.New("gacha: cash product rewards unavailable")
+		}
+		productGrant := fmt.Sprintf("cash-product:%d:%d", group, productID)
+		ticketGrant := fmt.Sprintf("cash-product-reward:%d:%d:0", group, productID)
 		if s.inventory == nil {
 			return 61, nil, true, errors.New("gacha: inventory not attached")
 		}
-		items, err := s.inventory.GrantOnce(moonriseTicketGrant, []gamedata.BattleReward{{Type: moonriseTicketType, ID: moonriseTicketID, Count: 1}})
+		items, err := s.inventory.GrantOnce(ticketGrant, cashGroup.CashRewards)
 		if err != nil {
 			return 61, nil, true, err
 		}
-		if err := s.collection.RecordGrantMarker(moonriseProductGrant); err != nil {
+		if err := s.collection.RecordGrantMarker(productGrant); err != nil {
 			return 61, nil, true, err
 		}
 		if len(items) == 0 {
-			items = s.inventory.GrantedItems(moonriseTicketGrant)
+			items = s.inventory.GrantedItems(ticketGrant)
 		}
 		var bundle []byte
 		for _, item := range items {
@@ -1150,14 +1174,14 @@ func (s *Service) confirm(request []byte) (int, []byte, bool, error) {
 		}
 		return 61, wire.AppendBytes(nil, 1, bundle), true, nil
 	}
-	if group != gamedata.InfiniteProductGroupID || productID != gamedata.InfiniteProductID {
+	if group != s.design.ProductGroupID || productID != s.design.ProductID || saleGroup != s.design.SaleGroup {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported cash product group=%d product=%d", group, productID)
 	}
-	grant, err := s.collection.ConfirmInfinite(infiniteGrant, s.design)
+	grant, err := s.collection.ConfirmInfinite(s.infiniteGrant(), s.design)
 	if err != nil {
 		return 0, nil, true, err
 	}
-	if err := s.creditOverflow(infiniteGrant, grant); err != nil {
+	if err := s.creditOverflow(s.infiniteGrant(), grant); err != nil {
 		return 61, nil, true, err
 	}
 	return 61, wire.AppendBytes(nil, 1, s.rewardBundle(grant)), true, nil
@@ -1255,8 +1279,7 @@ func (s *Service) rewardBundle(grant player.CollectionGrant) []byte {
 
 func (s *Service) gachaInfo() []byte {
 	var out []byte
-	_, infinitePurchased := s.collection.Grant(infiniteGrant)
-	_, moonriseDrawn := s.collection.Grant(moonriseDrawGrant)
+	_, infinitePurchased := s.collection.Grant(s.infiniteGrant())
 	if s.schedule != nil {
 		for _, entry := range s.schedule.Schedules {
 			// The versioned seed is the public schedule, while availability of
@@ -1264,11 +1287,13 @@ func (s *Service) gachaInfo() []byte {
 			// grant exists, publishing this group makes the client reopen the
 			// preview flow even though the authoritative preview endpoint must
 			// reject a second purchase.
-			if infinitePurchased && entry.GroupID == infiniteScheduleGroupID {
+			if infinitePurchased && entry.GroupID == s.design.GroupID {
 				continue
 			}
-			if moonriseDrawn && entry.GroupID == paidTwelvePickGroupID {
-				continue
+			if special, ok := s.regular.Group(entry.GroupID); ok && special.GachaSubType == 1 && special.CashProductID != 0 {
+				if _, drawn := s.collection.Grant(fmt.Sprintf("special-gacha:%d:%d", special.ID, special.TenTimeGachaID)); drawn {
+					continue
+				}
 			}
 			schedule := wire.AppendVarint(nil, 1, entry.GroupID)
 			schedule = wire.AppendVarint(schedule, 2, entry.StartTime)

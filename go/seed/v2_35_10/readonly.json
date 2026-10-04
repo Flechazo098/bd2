@@ -3666,6 +3666,32 @@
           ]
         }
       ]
+    },
+    "/RootSortIdInfo": {
+      "packet_code": 367,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 2
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 140
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        }
+      ]
     }
   }
 }

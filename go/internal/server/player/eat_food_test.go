@@ -307,6 +307,9 @@ func TestCurrentHealthGrowthAndImmortalClearPersistedInjury(t *testing.T) {
 		t.Fatal(err)
 	}
 	request = wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 77)
+	target, _, _ := wire.Varint(request, 2)
+	candidate, _ := characters.Find(target)
+	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}})
 	if _, _, _, err = characters.Handle("/CharImmortal", request); err != nil {
 		t.Fatal(err)
 	}
@@ -387,6 +390,9 @@ func TestCurrentHealthRetainsSavedCharacterHPWithoutSeparateEntryAcrossReopen(t 
 	// Revival must write the restored value, since deleting the entry alone
 	// would expose the zero HP in the owned character record again.
 	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 78)
+	target, _, _ := wire.Varint(request, 2)
+	candidate, _ := characters.Find(target)
+	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}})
 	if _, _, _, err = characters.Handle("/CharImmortal", request); err != nil {
 		t.Fatal(err)
 	}

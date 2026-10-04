@@ -60,7 +60,7 @@ func TestScheduleSeedStrictValidation(t *testing.T) {
 
 func TestActivePickupCostumesUsesHalfOpenScheduleWindows(t *testing.T) {
 	character := gamedata.CharacterDesign{ID: 1, HP: 1, CostumeMaxLevel: 5}
-	catalog, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	catalog, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		11: {ID: 11, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 101, Weight: 1}}},
 		12: {ID: 12, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 102, Weight: 1}}},
 	}, map[uint64]gamedata.CharacterDesign{101: character, 102: character})
@@ -93,11 +93,11 @@ func TestGachaInfoUsesInjectedScheduleAndEmptyAccountHasNoPreview(t *testing.T) 
 		t.Fatal(err)
 	}
 	character := gamedata.CharacterDesign{ID: 1, HP: 1, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 1}
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{11}, map[uint64]gamedata.CharacterDesign{11: character})
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{11}, map[uint64]gamedata.CharacterDesign{11: character})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 11, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{11: character})
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 11, Weight: 1}}}}, map[uint64]gamedata.CharacterDesign{11: character})
 	if err != nil {
 		t.Fatal(err)
 	}

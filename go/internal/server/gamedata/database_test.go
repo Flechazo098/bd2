@@ -53,7 +53,11 @@ func TestReadQuestDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeDatabaseTestArchive(t, filepath.Join(release, ArchiveName), questDatabaseEntry, encrypted)
+	member, err := DatabaseName("common")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDatabaseTestArchive(t, filepath.Join(release, ArchiveName), member, encrypted)
 	got, err := ReadQuestDatabase(root, "123")
 	if err != nil {
 		t.Fatal(err)

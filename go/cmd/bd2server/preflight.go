@@ -17,6 +17,7 @@ import (
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/readonly"
 	"bd2server/internal/server/resourcepolicy"
+	calendarschedule "bd2server/internal/server/schedule"
 	"bd2server/internal/server/versionconfig"
 )
 
@@ -106,6 +107,9 @@ func preflight(args []string) error {
 	}
 	if _, err := readonly.Load(filepath.Join(seedRoot, "readonly.json")); err != nil {
 		return err
+	}
+	if _, err := calendarschedule.Load(filepath.Join(seedRoot, "schedule.json")); err != nil {
+		return fmt.Errorf("load server content calendar: %w", err)
 	}
 	schedule, err := gacha.LoadScheduleSeed(filepath.Join(seedRoot, "gacha_schedule.json"), versions.GameVersion)
 	if err != nil {

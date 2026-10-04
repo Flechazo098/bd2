@@ -29,6 +29,7 @@ type Service struct {
 	loadPhases         func(string, string, int, uint64, uint64) ([]gamedata.BattlePhase, error)
 	buffs              func() ([]gamedata.PictorialBuffStat, error)
 	onTutorialWin      func() error
+	onMonsterWin       func() error
 	commitHealth       func(map[uint64]uint64) error
 }
 
@@ -72,6 +73,8 @@ func (s *Service) BeginSession(id string) {
 	}
 	s.activeSession = id
 }
+
+func (s *Service) AttachMonsterWinMission(callback func() error) { s.onMonsterWin = callback }
 
 func (s *Service) AttachTutorialWin(callback func() error) { s.onTutorialWin = callback }
 
@@ -394,6 +397,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if len(bundle) != 0 {
 				response = wire.AppendBytes(response, 5, bundle)
 				rewardBundle = true
+			}
+		}
+		if result == 1 && state.monster != 0 && s.onMonsterWin != nil {
+			if err := s.onMonsterWin(); err != nil {
+				return 0, nil, true, fmt.Errorf("battle: monster win mission: %w", err)
 			}
 		}
 		if result == 1 && s.onTutorialWin != nil {

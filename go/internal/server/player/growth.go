@@ -1,6 +1,7 @@
 package player
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,8 @@ type CharacterStore struct {
 	maxHealth       func(Character) (uint64, error)
 	promoteGrowth   func(Character, []gamedata.PromotionCost) (gamedata.PromotionGrowthResult, error)
 	talentGrowth    *gamedata.TalentGrowthDesign
+	immortal        *gamedata.ImmortalDesign
+	immortalReplies map[string]talentUpgradeReply
 	sessionID       string
 	talentReplies   map[string]map[string]talentUpgradeReply
 	talentApplied   map[string]talentUpgradeReply
@@ -56,6 +59,14 @@ func (s *CharacterStore) AttachWallet(wallet *Wallet) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.wallet = wallet
+	return nil
+}
+
+func (s *CharacterStore) AttachImmortalDesign(design *gamedata.ImmortalDesign) error {
+	if design == nil {
+		return errors.New("player: nil immortal design")
+	}
+	s.immortal = design
 	return nil
 }
 
@@ -481,6 +492,17 @@ func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error)
 	if err != nil || !present || seq == 0 {
 		return 0, nil, true, errors.New("player: CharImmortal missing sequence")
 	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(request))
+	s.mu.Lock()
+	key := fmt.Sprintf("%s:%d", s.sessionID, seq)
+	prior, already := s.immortalReplies[key]
+	s.mu.Unlock()
+	if already {
+		if prior.Digest != digest {
+			return 0, nil, true, errors.New("player: immortal replay payload changed")
+		}
+		return prior.Code, append([]byte(nil), prior.Body...), true, nil
+	}
 	var indices []uint64
 	err = wire.Walk(request, func(field wire.Field) error {
 		if field.Number != 2 {
@@ -516,6 +538,12 @@ func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error)
 		if !found {
 			return 0, nil, true, fmt.Errorf("player: CharImmortal unknown character %d", index)
 		}
+		if character.HP != 0 {
+			return 0, nil, true, errors.New("player: immortal requires a defeated character")
+		}
+		if !s.immortal.CanRestore(character.ID, character.TalentLevel) {
+			return 0, nil, true, errors.New("player: character has no supported immortal talent at current level")
+		}
 		maximum, err := s.MaxHealth(index)
 		if err != nil {
 			return 0, nil, true, err
@@ -532,6 +560,15 @@ func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error)
 			return 0, nil, true, err
 		}
 	}
+	s.mu.Lock()
+	if s.immortalReplies == nil {
+		s.immortalReplies = map[string]talentUpgradeReply{}
+	}
+	if len(s.immortalReplies) >= 1024 {
+		s.immortalReplies = map[string]talentUpgradeReply{}
+	}
+	s.immortalReplies[key] = talentUpgradeReply{Digest: digest, Code: 96, Body: append([]byte(nil), response...)}
+	s.mu.Unlock()
 	return 96, response, true, nil
 }
 

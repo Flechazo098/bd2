@@ -49,7 +49,11 @@ func attachTestStoryCatalog(s *Service) {
 }
 
 func testService() *Service {
-	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: progress.NewStore(), starter: &player.Starter{Version: "2.35.10"}, quests: map[int]gamedata.QuestDesign{1: {ID: 1}, 2: {ID: 2}, 3: {ID: 3}}}
+	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1, PlaceholderCostumeID: 996000}, state: progress.NewStore(), starter: &player.Starter{Version: "2.35.10"}, quests: map[int]gamedata.QuestDesign{1: {ID: 1}, 2: {ID: 2}, 3: {ID: 3}}}
+	s.seed.SquareSceneID = 3
+	s.seed.InitialReputations = []InitialReputation{{GroupID: 1, State: 1}}
+	s.seed.InitialRankStatues = []InitialRankStatue{{ID: 3, Season: 77, Error: true}}
+	s.packJamDesign = &gamedata.PackJamDesign{Reward: gamedata.Reward{Type: 3, Count: 150}}
 	attachTestStoryCatalog(s)
 	return s
 }
@@ -82,7 +86,7 @@ func TestQuest29EchoesCurrentStoryDeck(t *testing.T) {
 	if _, _, ok, err := decks.Handle("/DeckSave", save); err != nil || !ok {
 		t.Fatalf("deck save ok=%v err=%v", ok, err)
 	}
-	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
+	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1, PlaceholderCostumeID: 996000}, state: state,
 		starter: &player.Starter{Version: "2.35.10"}, quests: quests, decks: decks}
 	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 2)
@@ -351,7 +355,7 @@ func TestQuest28GrantsEquipmentInRewardBundle(t *testing.T) {
 	entry := quests[28]
 	entry.Rewards[0] = []gamedata.Reward{{Type: 3, Count: 70}, {Type: 10, ID: 10010}}
 	quests[28] = entry
-	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
+	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1, PlaceholderCostumeID: 996000}, state: state,
 		starter: starter, equipment: equipment, inventory: inventory, quests: quests}
 	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)
@@ -398,7 +402,7 @@ func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1}, state: state,
+	s := &Service{seed: Seed{Version: "2.35.10", PackID: 21, StartQuestID: 1, PlaceholderCostumeID: 996000}, state: state,
 		starter: &player.Starter{Version: "2.35.10"}, wallet: wallet, quests: quests}
 	attachTestStoryCatalog(s)
 	request := wire.AppendVarint(nil, 1, 1)

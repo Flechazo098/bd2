@@ -55,6 +55,7 @@ type Store struct {
 	state           state
 	presets         map[uint64]Preset
 	presetSlots     uint64
+	presetDesign    gamedata.PresetDesign
 	costumeSettings map[uint64]CostumeSetting
 	wallet          *player.Wallet
 	characters      *player.CharacterStore
@@ -141,14 +142,24 @@ func validDeck(entries []DeckEntry) error {
 	}
 	return nil
 }
-func NewStore(seed Seed) (*Store, error) {
+func NewStore(seed Seed, designs ...gamedata.PresetDesign) (*Store, error) {
 	if e := seed.validate(); e != nil {
 		return nil, e
 	}
-	return &Store{state: state{Version: versionconfig.State(), FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64][]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}, presets: map[uint64]Preset{}, presetSlots: presetBaseCount, costumeSettings: map[uint64]CostumeSetting{}, replies: map[string]deckReply{}}, nil
+	var design gamedata.PresetDesign
+	if len(designs) > 1 {
+		return nil, errors.New("deck: multiple preset designs")
+	}
+	if len(designs) == 1 {
+		design = designs[0]
+		if err := design.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return &Store{presetDesign: design, state: state{Version: versionconfig.State(), FieldDeck: append([]FieldEntry(nil), seed.FieldDeck...), FieldCharControlDeckType: seed.FieldCharControlDeckType, AutoReviveCatalyst: seed.AutoReviveCatalyst, Waypoints: map[uint64][]uint64{}, Costumes: map[uint64]uint64{}, Packs: map[uint64]uint64{}}, presets: map[uint64]Preset{}, presetSlots: design.BaseCount, costumeSettings: map[uint64]CostumeSetting{}, replies: map[string]deckReply{}}, nil
 }
-func OpenStore(storage stateio.Store, seed Seed) (*Store, error) {
-	s, e := NewStore(seed)
+func OpenStore(storage stateio.Store, seed Seed, designs ...gamedata.PresetDesign) (*Store, error) {
+	s, e := NewStore(seed, designs...)
 	if e != nil {
 		return nil, e
 	}
@@ -498,43 +509,6 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		n.Costumes[char] = cost
 		e = s.commit(n)
 		return 41, nil, true, e
-	case "/PackBuy":
-		pack, ok, e := wire.Varint(req, 2)
-		if e != nil || !ok || pack == 0 {
-			return 0, nil, true, errors.New("deck: invalid pack")
-		}
-		if e = checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		n := clone(s.state)
-		// Purchasing the story pack is idempotent. Login/bootstrap may repeat
-		// the request after a client restart before all local state is restored.
-		n.Packs[pack] = 1
-		e = s.commit(n)
-		if e != nil {
-			return 0, nil, true, e
-		}
-		packInfo := wire.AppendVarint(nil, 1, pack)
-		packInfo = wire.AppendVarint(packInfo, 8, n.Packs[pack])
-		response := wire.AppendBytes(nil, 1, packInfo)
-		// Starter pack purchase grants the local story-pack entitlement and
-		// starter currency. These are semantic RewardDBInfoBundle fields, not
-		// recorded response bytes.
-		entitlement := wire.AppendVarint(nil, 2, 1)
-		entitlement = wire.AppendVarint(entitlement, 3, 19)
-		entitlement = wire.AppendVarint(entitlement, 4, 1)
-		entitlement = wire.AppendVarint(entitlement, 8, ^uint64(0)-32400000+1)
-		currency := wire.AppendVarint(nil, 3, 12)
-		currency = wire.AppendVarint(currency, 4, 200)
-		tracking := wire.AppendVarint(nil, 2, 1)
-		tracking = wire.AppendVarint(tracking, 3, 19)
-		tracking = wire.AppendVarint(tracking, 4, 1)
-		bundle := wire.AppendBytes(nil, 1, entitlement)
-		bundle = wire.AppendBytes(bundle, 1, currency)
-		bundle = wire.AppendBytes(bundle, 6, tracking)
-		return 6, wire.AppendBytes(response, 2, bundle), true, nil
 	case "/SaveTotalBattlePower":
 		power, ok, e := wire.Varint(req, 2)
 		if e != nil || !ok || power == 0 {

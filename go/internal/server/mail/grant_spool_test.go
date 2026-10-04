@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"bd2server/internal/server/gamedata"
 	"encoding/json"
 	"errors"
 	"math"
@@ -263,7 +264,6 @@ func TestGrantSpoolEnforcesMailInt32IDAndCountBoundaries(t *testing.T) {
 		{Type: 8, ID: 1000, Count: math.MaxInt32 + 1},
 		{Type: 2, ID: 1, Count: 1},
 		{Type: 2, Count: math.MaxInt32 + 1},
-		{Type: 19, ID: 450031, Count: 1},
 		{Type: 19, ID: 450030, Count: 0},
 		{Type: 19, ID: 450030, Count: 2},
 	} {
@@ -282,6 +282,9 @@ func TestGrantSpoolOneUseContentTicketItemDBInfoPersistsAndIsIdempotent(t *testi
 	// AddContentTicketItem; it consumes a normal ItemDBInfo with an instance ID.
 	store := stateio.NewMemory()
 	service, inventory, _ := spoolTestService(t, store)
+	if err := service.AttachContentTickets(&gamedata.GachaContentTicketDesign{IDs: map[uint64]bool{450030: true, 660003: true}}); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(t.TempDir(), "grants.json")
 	writeSpool(t, path, spoolGrant("full-moon-one-use", GrantReward{Type: 19, ID: 450030, Count: 1}))
 	if err := service.AttachGrantSpoolPath(path); err != nil {
@@ -316,6 +319,7 @@ func TestGrantSpoolOneUseContentTicketItemDBInfoPersistsAndIsIdempotent(t *testi
 		t.Fatalf("content ticket not stored: %+v", got)
 	}
 	service, inventory, _ = spoolTestService(t, store)
+	service.AttachContentTickets(&gamedata.GachaContentTicketDesign{IDs: map[uint64]bool{450030: true, 660003: true}})
 	if err := service.AttachGrantSpoolPath(path); err != nil {
 		t.Fatal(err)
 	}

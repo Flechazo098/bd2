@@ -41,7 +41,7 @@ func (s *Service) handlePackDocking(path string, request []byte) (int, []byte, b
 		return 72, nil, true, nil
 	}
 	reward := s.packJamDesign.Reward
-	if reward.Type != 3 || reward.ID != 0 || reward.Count == 0 || reward.Count > uint64(^uint32(0)>>1) {
+	if s.packJamDesign.ValidateReward() != nil {
 		return 0, nil, true, fmt.Errorf("world: unsupported pack jam reward")
 	}
 	if _, err := s.wallet.GrantQuestOnce(identity, []gamedata.Reward{reward}); err != nil {
