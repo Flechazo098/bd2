@@ -32,6 +32,38 @@ func TestArenaPositionRestoresAcrossRestartWithoutStoryQuestOrRepurchase(t *test
 	if pack, err := s.LastPlayedPackID(); err != nil || pack != 3001 {
 		t.Fatalf("restored login pack=%d err=%v", pack, err)
 	}
+	s.fieldPacks[3002] = gamedata.FieldPack{ID: 3002, Type: 3, MapIDs: map[int]bool{30021: true}}
+	accountInfo := s.accountPackInfo()
+	arenaRows := 0
+	if err := wire.Walk(accountInfo, func(field wire.Field) error {
+		if field.Number == 1 {
+			id, _, _ := wire.Varint(field.Value, 1)
+			if id == 3002 {
+				t.Fatal("unvisited arena was exposed as purchased")
+			}
+			if id == 3001 {
+				arenaRows++
+				buy, _, _ := wire.Varint(field.Value, 8)
+				if buy != 1 {
+					t.Fatal("saved arena missing purchased marker")
+				}
+				if err := wire.Walk(field.Value, func(inner wire.Field) error {
+					if inner.Number != 1 && inner.Number != 8 {
+						t.Fatalf("saved arena fabricated field %d", inner.Number)
+					}
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if arenaRows != 1 {
+		t.Fatalf("saved arena rows=%d", arenaRows)
+	}
 	request = wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 3001)
 	code, body, handled, err := s.Handle("/PackInGameInfo", request)
 	if err != nil || !handled || code != 5 {

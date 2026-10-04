@@ -58,11 +58,14 @@ func TestEmptyPacketCodesReturnsCopy(t *testing.T) {
 
 func TestStandaloneNativeDefaults(t *testing.T) {
 	for path, want := range map[string]int{
-		"/EventScheduleInfo": 163,
-		"/EquipInfo":         34,
-		"/TodayQuestInfo":    64,
-		"/UpdateAgeGate":     0,
-		"/ActiveMap":         0,
+		"/EventScheduleInfo":       163,
+		"/EquipInfo":               34,
+		"/TodayQuestInfo":          64,
+		"/UpdateAgeGate":           0,
+		"/ActiveMap":               0,
+		"/PvpBattleDeckInfo":       87,
+		"/PvpBattleHistory":        97,
+		"/PvpBattleOnceRewardInfo": 277,
 	} {
 		code, proto, ok, err := Handle(path, wire.AppendVarint(nil, 1, 55))
 		if err != nil || !ok || code != want || len(proto) != 0 {
