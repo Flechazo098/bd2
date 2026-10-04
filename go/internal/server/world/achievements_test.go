@@ -63,6 +63,7 @@ func TestAchievementUpdatePersistsAndRetries(t *testing.T) {
 		row := wire.AppendVarint(nil, 1, 7)
 		row = wire.AppendVarint(row, 2, 2)
 		if content != 0 {
+			row = wire.AppendVarint(row, 3, 1000)
 			row = wire.AppendVarint(row, 4, content)
 		}
 		expected = wire.AppendBytes(expected, 1, row)
@@ -114,7 +115,7 @@ func TestAchievementBatchRetryKeepsEarlierReceipt(t *testing.T) {
 type achievementClaimsFixture struct{}
 
 func (achievementClaimsFixture) ClaimedAchievementIDs() map[gamedata.AchievementKey]bool {
-	return map[gamedata.AchievementKey]bool{{ContentsGroup: 1, GroupID: 7, ID: 3}: true}
+	return map[gamedata.AchievementKey]bool{{ContentsGroup: 1, GroupID: 7, ID: 1003}: true}
 }
 func TestAchievementInfoIncludesRealClaimState(t *testing.T) {
 	s := achievementTestService(t, stateio.NewMemory())
@@ -136,7 +137,7 @@ func TestAchievementInfoIncludesRealClaimState(t *testing.T) {
 		t.Fatalf("missing claim group rows: %x", body)
 	}
 	clear, found, err := wire.Varint(rows[1], 3)
-	if err != nil || !found || clear != 3 {
+	if err != nil || !found || clear != 1003 {
 		t.Fatal("max_clear_id did not come from actual claims")
 	}
 }

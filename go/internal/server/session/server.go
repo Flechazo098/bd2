@@ -50,6 +50,14 @@ type SessionAware interface {
 	BeginSession(id string)
 }
 
+// ResponseObserver runs inside the same transaction as the authoritative
+// domain operation. It can derive progress and encode response notifications;
+// any observer error rolls the entire request or batch back.
+type ResponseObserver interface {
+	BeforeDispatch(path string, request []byte) error
+	AfterDispatch(path string, request, response []byte) ([]byte, error)
+}
+
 type gameSession struct {
 	key       []byte
 	accountID string
@@ -65,12 +73,23 @@ type Server struct {
 	latestSessionSet   bool
 	login              LoginService
 	handlers           []Handler
+	observers          []ResponseObserver
 	progress           *progress.Store
 	stateTx            stateio.TransactionalStore
 	auth               LoginAuthenticator
 	now                func() time.Time
 	sessionTTL         time.Duration
 	maxSessions        int
+}
+
+func (s *Server) AttachResponseObserver(observer ResponseObserver) error {
+	if observer == nil {
+		return errors.New("session response observer is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observers = append(s.observers, observer)
+	return nil
 }
 
 func (s *Server) AttachLoginAuthenticator(authenticator LoginAuthenticator) error {
@@ -177,11 +196,11 @@ func (s *Server) DispatchRaw(path string, body []byte, cookie string) (transport
 		return transport.RawReply{}, fmt.Errorf("%s decrypt: %w", path, err)
 	}
 	return s.withStateTransaction(func() (transport.RawReply, error) {
-		code, response, err := s.dispatch(path, request)
+		code, response, notify, err := s.dispatchObserved(path, request)
 		if err != nil {
 			return transport.RawReply{}, err
 		}
-		encoded, err := protocol.Encode(code, response, game.key, s.now().UnixMilli())
+		encoded, err := protocol.EncodeWithNotify(code, response, game.key, s.now().UnixMilli(), notify)
 		return transport.RawReply{Body: encoded}, err
 	})
 }
@@ -252,6 +271,11 @@ func (s *Server) activate(game *gameSession) {
 			aware.BeginSession(game.id)
 		}
 	}
+	for _, observer := range s.observers {
+		if aware, ok := observer.(SessionAware); ok {
+			aware.BeginSession(game.id)
+		}
+	}
 }
 
 func (s *Server) withStateTransaction(run func() (transport.RawReply, error)) (reply transport.RawReply, err error) {
@@ -301,7 +325,7 @@ func (s *Server) handleBatch(body, key []byte) (transport.RawReply, error) {
 	items := make([]protocol.BatchResponse, 0, len(requests))
 	for i, request := range requests {
 		itemStarted := time.Now()
-		code, response, err := s.dispatch(request.Path, decoded[i])
+		code, response, notify, err := s.dispatchObserved(request.Path, decoded[i])
 		if err != nil {
 			return transport.RawReply{}, fmt.Errorf("batch %s: %w", request.Path, err)
 		}
@@ -311,7 +335,7 @@ func (s *Server) handleBatch(body, key []byte) (transport.RawReply, error) {
 		} else if itemElapsed >= 100*time.Millisecond {
 			slog.Warn("slow batch item", "index", i, "path", request.Path, "duration_ms", float64(itemElapsed.Microseconds())/1000)
 		}
-		raw, err := protocol.Encode(code, response, key, time.Now().UnixMilli())
+		raw, err := protocol.EncodeWithNotify(code, response, key, time.Now().UnixMilli(), notify)
 		if err != nil {
 			return transport.RawReply{}, err
 		}

@@ -685,6 +685,24 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load achievement counter state: %w", err)
 	}
+	if err := missionService.AttachAchievementProgress(achievementCounters); err != nil {
+		return fmt.Errorf("attach achievement completion validation: %w", err)
+	}
+	if err := login.AttachAchievementExperience(missionService); err != nil {
+		return fmt.Errorf("attach persisted achievement experience: %w", err)
+	}
+	achievementGrades, err := gamedata.LoadGameplayAchievementGrades(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load achievement gameplay grades: %w", err)
+	}
+	achievementObserver, err := world.NewGameplayAchievementObserver(achievementCounters,
+		worldService.GameplayAchievementProvider(achievementCounterDesign, achievementGrades))
+	if err != nil {
+		return fmt.Errorf("initialize achievement gameplay observer: %w", err)
+	}
+	if err := achievementObserver.SyncRecordedHistory(); err != nil {
+		return fmt.Errorf("restore recorded achievement history: %w", err)
+	}
 	game, err := session.NewServerWithProgress(login, progressState,
 		battleService,
 		worldService,
@@ -714,6 +732,9 @@ func serve(args []string) (serveErr error) {
 	)
 	if err != nil {
 		return err
+	}
+	if err := game.AttachResponseObserver(achievementObserver); err != nil {
+		return fmt.Errorf("attach achievement progress notifications: %w", err)
 	}
 	if authService != nil {
 		if err := game.AttachLoginAuthenticator(authService); err != nil {

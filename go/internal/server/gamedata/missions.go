@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -45,8 +46,10 @@ type SectionRewardDesign struct {
 }
 
 type AchievementDesign struct {
-	AddExp  uint64
-	Rewards []Reward
+	Target       float64
+	CounterGroup uint64
+	AddExp       uint64
+	Rewards      []Reward
 }
 
 // LoadMissionDesign loads the three non-event design tables from the shared
@@ -226,7 +229,7 @@ func loadAchievementRows(db *sql.DB, design *MissionDesign) error {
 		if err != nil {
 			return fmt.Errorf("gamedata: AchievementTable id: %w", err)
 		}
-		if contents == 0 || groupID == 0 || id == 0 {
+		if groupID == 0 || id == 0 {
 			continue
 		}
 		exp, err := optionalScalar(proto, 8)
@@ -237,11 +240,27 @@ func loadAchievementRows(db *sql.DB, design *MissionDesign) error {
 		if err != nil {
 			return fmt.Errorf("gamedata: AchievementTable %d/%d/%d: %w", contents, groupID, id, err)
 		}
+		parent, err := optionalScalar(proto, 13)
+		if err != nil {
+			return err
+		}
+		useType, err := optionalScalar(proto, 21)
+		if err != nil {
+			return err
+		}
+		if parent != 0 || useType != 0 {
+			continue
+		}
 		key := AchievementKey{contents, groupID, id}
 		if _, exists := design.Achievements[key]; exists {
 			return fmt.Errorf("gamedata: duplicate AchievementTable key %+v", key)
 		}
-		design.Achievements[key] = AchievementDesign{AddExp: exp, Rewards: rewards}
+		target, found, err := fixed64Double(proto, 3)
+		if err != nil || !found || target < 0 || math.IsNaN(target) || math.IsInf(target, 0) {
+			return fmt.Errorf("gamedata: invalid achievement target")
+		}
+		counter := groupID
+		design.Achievements[key] = AchievementDesign{Target: target, CounterGroup: counter, AddExp: exp, Rewards: rewards}
 	}
 	return rows.Err()
 }

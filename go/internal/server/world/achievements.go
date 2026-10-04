@@ -132,6 +132,11 @@ func (s *AchievementService) Handle(path string, request []byte) (int, []byte, b
 				row := wire.AppendVarint(nil, 1, uint64(group))
 				row = wire.AppendVarint(row, 2, uint64(state.Counts[strconv.Itoa(group)]))
 				var maxID uint64
+				// AchievementPacket.UpdateAchievementCount initializes title MaxClearId
+				// to 1000; this is the client protocol default, not a granted tier.
+				if content == 1 {
+					maxID = 1000
+				}
 				for key := range claimed {
 					if key.GroupID == uint64(group) && key.ContentsGroup == uint64(content) && key.ID > maxID {
 						maxID = key.ID
