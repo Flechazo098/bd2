@@ -67,6 +67,10 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 	if err != nil {
 		return nil, err
 	}
+	packSummaryTargets, err := gamedata.LoadPackSummaryTargets(gameDataRoot, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
 	if _, ok := quests[seed.StartQuestID]; !ok {
 		return nil, fmt.Errorf("world: start quest %d is absent from QuestTable%d", seed.StartQuestID, seed.PackID)
 	}
@@ -80,6 +84,7 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		}
 	}
 	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack, fieldPacks: fieldPacks}
+	service.packSummaryTargets = packSummaryTargets
 	return service, nil
 }
 
@@ -113,23 +118,24 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
-	fieldPacks   map[int]gamedata.FieldPack
-	squadLevel   func() (uint64, error)
-	seed         Seed
-	state        *progress.Store
-	starter      *player.Starter
-	equipment    *player.EquipmentInventory
-	inventory    *player.Inventory
-	wallet       *player.Wallet
-	characters   *player.CharacterStore
-	collection   *player.CollectionStore
-	decks        *deck.Store
-	quests       map[int]gamedata.QuestDesign
-	transition   gamedata.PackTransition
-	packs        map[int]map[int]gamedata.QuestDesign
-	transitions  map[int]gamedata.PackTransition
-	activePackMu sync.RWMutex
-	activePack   int
+	packSummaryTargets map[int]bool
+	fieldPacks         map[int]gamedata.FieldPack
+	squadLevel         func() (uint64, error)
+	seed               Seed
+	state              *progress.Store
+	starter            *player.Starter
+	equipment          *player.EquipmentInventory
+	inventory          *player.Inventory
+	wallet             *player.Wallet
+	characters         *player.CharacterStore
+	collection         *player.CollectionStore
+	decks              *deck.Store
+	quests             map[int]gamedata.QuestDesign
+	transition         gamedata.PackTransition
+	packs              map[int]map[int]gamedata.QuestDesign
+	transitions        map[int]gamedata.PackTransition
+	activePackMu       sync.RWMutex
+	activePack         int
 }
 
 func (s *Service) AttachCollection(collection *player.CollectionStore) error {
@@ -150,6 +156,8 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/PackSummaryInfoList":
+		return s.handlePackSummary(request)
 	case "/PackInfo":
 		seq, found, err := wire.Varint(request, 1)
 		if err != nil || !found || seq == 0 {

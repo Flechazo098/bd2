@@ -1313,21 +1313,6 @@
         }
       ]
     },
-    "/CharScoutInfo": {
-      "packet_code": 0,
-      "fields": [
-        {
-          "number": 1,
-          "type": 2,
-          "bytes": "6jDALw=="
-        },
-        {
-          "number": 3,
-          "type": 0,
-          "varint": 1789842805819
-        }
-      ]
-    },
     "/ColosseumUserInfo": {
       "packet_code": 473,
       "fields": [
