@@ -271,6 +271,22 @@ func (s *Store) Position() (SavedPosition, bool) {
 	return s.position, s.position.PackID != 0
 }
 
+// LastPlayedPackID is the pack of the latest committed field position. The
+// client suppresses SaveUserPosition in hidden packs, retaining the outside
+// field position rather than choosing a temporary hidden scene on relogin.
+// Zero means no position has been committed, so LoginUser can keep its seed.
+func (s *Store) LastPlayedPackID() (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.position.PackID == 0 {
+		return 0, nil
+	}
+	if s.position.PackID < 0 || s.position.PackID > int(^uint32(0)>>1) || s.position.Position.MapID <= 0 || s.position.RawJSON == "" {
+		return 0, ErrInvalidPosition
+	}
+	return uint64(s.position.PackID), nil
+}
+
 func (s *Store) TutorialCleared(id int) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

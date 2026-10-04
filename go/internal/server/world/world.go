@@ -63,17 +63,23 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		return nil, err
 	}
 	quests := packs[seed.PackID]
+	fieldPacks, err := gamedata.LoadFieldPacks(gameDataRoot, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
 	if _, ok := quests[seed.StartQuestID]; !ok {
 		return nil, fmt.Errorf("world: start quest %d is absent from QuestTable%d", seed.StartQuestID, seed.PackID)
 	}
 	transition := transitions[seed.PackID]
 	activePack := seed.PackID
 	if saved, found := state.Position(); found {
-		if _, known := packs[saved.PackID]; known {
+		_, storyKnown := packs[saved.PackID]
+		_, fieldKnown := fieldPacks[saved.PackID]
+		if storyKnown || fieldKnown {
 			activePack = saved.PackID
 		}
 	}
-	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack}
+	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack, fieldPacks: fieldPacks}
 	return service, nil
 }
 
@@ -107,6 +113,8 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	fieldPacks   map[int]gamedata.FieldPack
+	squadLevel   func() (uint64, error)
 	seed         Seed
 	state        *progress.Store
 	starter      *player.Starter
@@ -249,6 +257,9 @@ func requestQuest(request []byte) (int, int, error) {
 }
 
 func (s *Service) questsFor(packID int) (map[int]gamedata.QuestDesign, bool) {
+	if _, exists := s.fieldPacks[packID]; exists {
+		return map[int]gamedata.QuestDesign{}, true
+	}
 	if s.packs != nil {
 		quests, found := s.packs[packID]
 		return quests, found
@@ -273,6 +284,9 @@ func (s *Service) transitionFor(packID int) gamedata.PackTransition {
 // pack to be complete. This accepts the configured next story pack only after
 // its predecessor is complete, without exposing arbitrary GameData tables.
 func (s *Service) packUnlocked(packID int) bool {
+	if pack, exists := s.fieldPacks[packID]; exists {
+		return s.fieldPackUnlocked(pack)
+	}
 	current := s.seed.PackID
 	for steps := 0; steps < 64 && current != 0; steps++ {
 		if current == packID {
@@ -425,9 +439,17 @@ func (s *Service) packInfoFor(packID int) ([]byte, error) {
 		out = wire.AppendBytes(out, 3, packed)
 	}
 	position := "{}"
+	mapID := 0
+	restored := false
 	if saved, found := s.state.Position(); found && saved.PackID == packID && saved.RawJSON != "" {
+		if pack, arena := s.fieldPacks[packID]; arena && !pack.MapIDs[saved.Position.MapID] {
+			return nil, fmt.Errorf("world: saved map %d does not belong to arena pack %d", saved.Position.MapID, packID)
+		}
 		position = saved.RawJSON
+		mapID = saved.Position.MapID
+		restored = true
 	}
+	slog.Info("world: deliver field position", "pack", packID, "map", mapID, "restored", restored)
 	out = wire.AppendString(out, 4, position)
 	// The remaining starter-only records were observed in the official
 	// starter-pack response. They represent reputation, hunting-ground, statue,

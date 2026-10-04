@@ -345,6 +345,9 @@ func (s *Server) dispatch(path string, request []byte) (int, []byte, error) {
 		if err := s.progress.SaveUserPosition(request); err != nil {
 			return 0, nil, fmt.Errorf("%s: %w", path, err)
 		}
+		if saved, found := s.progress.Position(); found {
+			slog.Info("field position saved", "pack", saved.PackID, "map", saved.Position.MapID)
+		}
 		return 7, nil, nil
 	case "/TutorialClear":
 		if err := s.progress.ClearTutorial(request); err != nil {
