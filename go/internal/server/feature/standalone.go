@@ -45,7 +45,6 @@ var commandSuccess = map[string]int{
 	"/SaveFieldCharControlDeckType": 288,
 	"/WaypointSave":                 32,
 	"/ActiveMap":                    0,
-	"/MasterTitleInfoUpdate":        592,
 	"/FieldDeckSave":                274,
 	"/CostumeUse":                   41,
 	"/BattleExit":                   388,

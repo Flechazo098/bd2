@@ -41,7 +41,6 @@ var emptyResponses = map[string]int{
 	"/GuildInitInfo":                   332,
 	"/IdCardPresetInfo":                450,
 	"/LifeUserInfo":                    594,
-	"/MasterTitleInfo":                 590,
 	"/MiniEventHubInfo":                534,
 	"/MyLikeInfo":                      218,
 	"/MyRoomItemInfo":                  232,
