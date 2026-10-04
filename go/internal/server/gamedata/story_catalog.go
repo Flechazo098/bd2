@@ -111,7 +111,12 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 			return nil, fmt.Errorf("gamedata: invalid story pack%d buy rewards", id)
 		}
 		for i, count := range counts {
-			if count == 0 || types[i] == 0 {
+			// PackTable may retain a disabled reward slot with a real type/ID
+			// and zero count. It contributes no granted reward.
+			if count == 0 {
+				continue
+			}
+			if types[i] == 0 || count > math.MaxInt32 || types[i] > math.MaxInt32 || ids[i] > math.MaxInt32 {
 				rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid story pack%d buy reward", id)
 			}
