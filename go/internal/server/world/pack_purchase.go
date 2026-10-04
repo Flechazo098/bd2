@@ -47,7 +47,7 @@ func (s *Service) handlePackBuy(request []byte) (int, []byte, bool, error) {
 func (s *Service) grantPurchaseRewards(identity string, rewards []gamedata.Reward) ([]player.Item, error) {
 	var itemRewards []gamedata.BattleReward
 	for _, reward := range rewards {
-		if reward.Count == 0 {
+		if reward.Count == 0 && reward.Type != 11 {
 			return nil, fmt.Errorf("world: empty pack purchase reward")
 		}
 		if reward.Type == 19 {
@@ -55,6 +55,36 @@ func (s *Service) grantPurchaseRewards(identity string, rewards []gamedata.Rewar
 				return nil, fmt.Errorf("world: invalid pack ticket")
 			}
 			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+		}
+	}
+	var costumeIDs []uint64
+	for _, reward := range rewards {
+		if reward.Type == 11 {
+			if s.questCostumes == nil {
+				return nil, fmt.Errorf("world: missing purchase costume design")
+			}
+			if _, found := s.questCostumes.Character(reward.ID); !found {
+				return nil, fmt.Errorf("world: missing purchase costume %d", reward.ID)
+			}
+			costumeIDs = append(costumeIDs, reward.ID)
+		}
+	}
+	if len(costumeIDs) > 0 {
+		grant, err := s.collection.GrantCostumes(identity+":costumes", costumeIDs, s.questCostumes)
+		if err != nil {
+			return nil, err
+		}
+		var exchanges []gamedata.Reward
+		for _, x := range grant.Exchanges {
+			if x.ExchangeItemType != 20 {
+				return nil, fmt.Errorf("world: unsupported purchase costume exchange")
+			}
+			exchanges = append(exchanges, gamedata.Reward{Type: x.ExchangeItemType, ID: x.ExchangeItemID, Count: x.ExchangeCount})
+		}
+		if len(exchanges) > 0 {
+			if _, err := s.wallet.GrantQuestOnce(identity+":costumes:exchange", exchanges); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {
@@ -78,6 +108,7 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 	if !exists {
 		return nil, fmt.Errorf("%w: unknown purchase pack %d", ErrInvalidRequest, id)
 	}
+	buyRewards := pack.BuyRewards
 	identity := packPurchaseIdentity(id)
 	if _, owned := s.collection.Grant(identity); owned {
 		return []byte{}, nil
@@ -85,12 +116,12 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 	if !initial && pack.BuyPrice != 0 {
 		return nil, fmt.Errorf("%w: paid pack purchase type %d is unsupported", ErrInvalidRequest, pack.BuyType)
 	}
-	for _, reward := range pack.BuyRewards {
-		if reward.Type != 3 && reward.Type != 4 && reward.Type != 12 && reward.Type != 19 {
+	for _, reward := range buyRewards {
+		if reward.Type != 3 && reward.Type != 4 && reward.Type != 12 && reward.Type != 19 && reward.Type != 11 {
 			return nil, fmt.Errorf("world: unsupported pack purchase reward type %d", reward.Type)
 		}
 	}
-	items, err := s.grantPurchaseRewards(identity, pack.BuyRewards)
+	items, err := s.grantPurchaseRewards(identity, buyRewards)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +129,10 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 		return nil, err
 	}
 	var bundle []byte
-	for _, reward := range pack.BuyRewards {
+	if grant, found := s.collection.Grant(identity + ":costumes"); found {
+		bundle = append(bundle, player.CollectionRewardBundle(s.collection, grant)...)
+	}
+	for _, reward := range buyRewards {
 		if reward.Type == 3 || reward.Type == 4 || reward.Type == 12 {
 			currency := wire.AppendVarint(wire.AppendVarint(nil, 3, reward.Type), 4, reward.Count)
 			bundle = wire.AppendBytes(bundle, 1, currency)

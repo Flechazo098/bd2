@@ -26,8 +26,7 @@ func TestStoryCatalogEnumeratesSeparateChainsAndContentTicketRules(t *testing.T)
 			raw = wire.AppendVarint(raw, 8, 1)
 			raw = wire.AppendVarint(raw, 9, 100)
 			raw = wire.AppendVarint(raw, 10, 19)
-			// An official-shaped disabled costume slot must be equivalent
-			// to omitting that slot; type and ID remain populated.
+			// Non-stackable costume instances retain their ID with count zero.
 			raw = wire.AppendVarint(raw, 8, 0)
 			raw = wire.AppendVarint(raw, 9, 200)
 			raw = wire.AppendVarint(raw, 10, 11)
@@ -82,7 +81,7 @@ func TestStoryCatalogEnumeratesSeparateChainsAndContentTicketRules(t *testing.T)
 	if d.Packs[1].Quests[1].NextQuestID != 2 || d.Packs[1].Quests[2].PriorQuestID != 1 || d.Packs[1].Quests[3].Type != 1 {
 		t.Fatal("quest edges/type were lost")
 	}
-	if rewards := d.Packs[7].BuyRewards; len(rewards) != 1 || rewards[0].Type != 19 || rewards[0].ID != 100 {
+	if rewards := d.Packs[7].BuyRewards; len(rewards) != 2 || rewards[0].Type != 19 || rewards[0].ID != 100 || rewards[1].Type != 11 || rewards[1].ID != 200 || rewards[1].Count != 0 {
 		t.Fatalf("buy rewards=%+v", rewards)
 	}
 	if len(d.TicketSources[101]) != 2 {
