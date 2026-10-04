@@ -37,8 +37,13 @@ $toolVersion = $PackageVersion.Split('-')[0]
 Invoke-Dotnet @('publish', (Join-Path $PSScriptRoot 'GameSdk.csproj'), '-c', 'Release', '--nologo', '-o', $tool, "-p:Version=$toolVersion", '-p:UseAppHost=false')
 $assembly = Join-Path $GameDir 'BrownDust II_Data\Managed\Assembly-CSharp.dll'
 $toolDll = Join-Path $tool 'GameSdk.dll'
-Invoke-Dotnet @($toolDll, 'prepare-embedded', $assembly, $sdk, $VersionConfig)
-$table = Join-Path $sdk 'names.json'
+$previousSdkCache = $env:BD2_GAME_SDK_CACHE
+try {
+    if (-not $env:BD2_GAME_SDK_CACHE) { $env:BD2_GAME_SDK_CACHE = Join-Path $repository '.build/game-sdk' }
+    Invoke-Dotnet @($toolDll, 'prepare-embedded', $assembly, $sdk, $VersionConfig)
+} finally { $env:BD2_GAME_SDK_CACHE = $previousSdkCache }
+$sharedSdk = [IO.File]::ReadAllText((Join-Path $sdk 'shared-sdk.txt')).Trim()
+$table = Join-Path $sharedSdk 'names.json'
 $runtimeProject = Join-Path $PSScriptRoot '..\GameNames\GameNames.csproj'
 Invoke-Dotnet @('pack', $runtimeProject, '-c', 'Release', '--nologo', '-o', $OutputDirectory,
     "-p:Version=$PackageVersion", "-p:GameNamesTable=$table", "-p:BaseIntermediateOutputPath=$runtimeObj/", "-p:OutputPath=$runtimeBin/")

@@ -146,6 +146,7 @@ internal static class SourceNavigation
 
     internal static void Verify(string sdkDirectory)
     {
+        sdkDirectory = Program.ResolveSdkDirectory(sdkDirectory);
         string library = Path.Combine(sdkDirectory, "lib", Program.ShellName + ".dll"), pdbPath = Path.ChangeExtension(library, ".pdb");
         var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(Path.Combine(sdkDirectory, "navigation.json")));
         if (Program.Hash(library) != manifest.AssemblySha256 || Program.Hash(pdbPath) != manifest.PdbSha256)

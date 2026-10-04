@@ -11,7 +11,7 @@
 
 SDK 和共享运行时已内嵌当前游戏版本的同一份名字表。源码构建只需客户端目录，无需提供官方映射。`.NET 8 SDK` 构建工具；插件为 `netstandard2.1`，运行时为 `netstandard2.0`。构建自动生成可读引用、完整源码和内嵌源码 PDB，编译插件、执行 reobf 并验证真实 DLL 的引用。首次生成耗时数分钟，三个插件和 Debug/Release 共用本机缓存；IDE 转到定义可以查看方法体，`Game Sources` 文件夹提供全量浏览与搜索。IDE 设置见 [完整源码导航](GameSdk/README.md#完整源码导航)。
 
-仓库公共路径和默认值集中在 `plugins/Directory.Build.props`；配置/框架相关的输出路径与构建步骤由 `Directory.Build.targets` 自动导入。三个插件 `.csproj` 只保留插件属性和需要的程序集引用。首次开发复制 `Directory.Build.local.props.example` 为 `Directory.Build.local.props`，填写 `BD2LocalGameDir` 和可选的 `BD2CaptureGameDir`；本机文件被 Git 忽略。配置后 IDE 与命令行共用这些路径，不需要在三个子目录分别放一份 `Directory.Build.props`。命令行 `-p:GameDir=...` 仍可覆盖本机设置。
+仓库公共路径和默认值集中在 `plugins/Directory.Build.props`；配置/框架相关的输出路径与构建步骤由 `Directory.Build.targets` 自动导入。三个插件 `.csproj` 保留插件属性、明确的 `<BD2GameVersion>2.35.10</BD2GameVersion>` 和需要的程序集引用。目标游戏版本必须由每个插件声明，缺失或与 SDK 表不符时构建报错。首次开发复制 `Directory.Build.local.props.example` 为 `Directory.Build.local.props`，填写 `BD2LocalGameDir` 和可选的 `BD2CaptureGameDir`；本机文件被 Git 忽略。配置后 IDE 与命令行共用这些路径，不需要在三个子目录分别放一份 `Directory.Build.props`。命令行 `-p:GameDir=...` 仍可覆盖本机设置。
 
 `BD2GameSdkCache` 可放在本机 props 中指定共享源码缓存。特殊目录布局可以设置 `BD2ManagedDir`、`BD2BepInExDir`；`BD2SdkDir` 可覆盖中间产物目录。新增子目录 `Directory.Build.props` 会阻断 MSBuild 自动查找父文件，确有需要时应显式导入公共 `plugins/Directory.Build.props`。
 
@@ -21,7 +21,7 @@ dotnet build .\plugins\LoginUI\LoginUI.csproj -c Release -p:GameDir="<本地服�
 dotnet build .\plugins\CaptureEnvironment\CaptureEnvironment.csproj -c Release -p:GameDir="<原版客户端目录>"
 ```
 
-`bin` 中的插件是回映射后的运行产物，部署时同时复制相邻的 `BD2.GameNames.dll`。壳和明文表缓存在 `obj`，不部署。客户端开发入口 `go run .\cmd\bd2client --dev run` 自动使用内嵌表；发布和原版抓包启动脚本也携带共享库。
+`bin` 中的插件是回映射后的运行产物，部署时同时复制相邻的 `BD2.GameNames.dll`。可读程序集、PDB、源码和名字表统一保存在 `.build/game-sdk/<游戏版本>/<内容指纹>`，各插件 `obj` 只留小型指针和生成配置，不部署。客户端开发入口 `go run .\cmd\bd2client --dev run` 自动使用内嵌表；发布和原版抓包启动脚本也携带共享库。
 
 唯一名字数据源为 `GameNames/Mappings/names.json.gz`。只有维护者更新游戏版本的表时才需要官方 `.obfuscate`，执行 `GameSdk/UpdateNames.ps1`，验证后提交新表，再发布新版本 SDK。
 
