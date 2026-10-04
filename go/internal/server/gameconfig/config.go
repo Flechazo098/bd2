@@ -19,8 +19,10 @@ type Config struct {
 	Story         StoryConfig `json:"story"`
 }
 
-// StartPackID selects the entry chapter for newly initialized accounts.
-// Existing accounts retain their persisted entry and selected chapter.
+// StartPackID is fixed for the server by its first successful initialization.
+// TODO: Revisit this restriction if the official story rework merges the old
+// story and master packs into one progression. Its release date is unconfirmed;
+// it may extend into 2027, so do not infer or implement a merged chain now.
 type StoryConfig struct {
 	StartPackID int `json:"start_pack_id"`
 }

@@ -36,7 +36,10 @@ func TestStartingChapterPolicyPersistsWithoutReplacingTutorialSeed(t *testing.T)
 		t.Fatal(err)
 	}
 	s.state = reopened
-	if err := s.ConfigureStartPack(21, false); err != nil {
+	if err := s.ConfigureStartPack(21, false); err == nil {
+		t.Fatal("accepted account inconsistent with server entry policy")
+	}
+	if err := s.ConfigureStartPack(1, false); err != nil {
 		t.Fatal(err)
 	}
 	if s.startingPack() != 1 {
