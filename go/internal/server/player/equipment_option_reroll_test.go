@@ -269,8 +269,12 @@ func TestEquipmentMainOptionChangeEquippedCharacterHealthReadsEquipment(t *testi
 			t.Fatalf("equipped character response missing: found=%v err=%v", found, err)
 		}
 		hp, found, err := wire.Varint(character, 3)
-		if err != nil || !found || hp != 123 {
+		if err != nil || found || hp != 0 {
 			t.Fatalf("updated health=%d found=%v err=%v", hp, found, err)
+		}
+		maximum, err := characters.MaxHealth(characterIndex)
+		if err != nil || maximum != 123 {
+			t.Fatalf("updated maximum=%d err=%v", maximum, err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("equipped main option change deadlocked while resolving character health")

@@ -188,28 +188,37 @@ func (s *CharacterStore) MaxHealth(index uint64) (uint64, error) {
 	return character.HP, nil
 }
 
+// CurrentHealth resolves persisted current HP independently from maximum HP.
+// A missing current_hp entry retains the owned character record's HP, including
+// zero. Recomputing equipment or other maximum-health stats must never heal it.
 func (s *CharacterStore) CurrentHealth(index uint64) (uint64, error) {
-	maximum, err := s.MaxHealth(index)
+	var saved Character
+	for _, character := range s.RawAll() {
+		if character.InvenIndex == index {
+			saved = character
+			break
+		}
+	}
+	if saved.InvenIndex == 0 {
+		return 0, fmt.Errorf("player: unknown health character %d", index)
+	}
+	return s.savedCurrentHealth(saved)
+}
+
+func (s *CharacterStore) savedCurrentHealth(saved Character) (uint64, error) {
+	if s.store == nil {
+		return saved.HP, nil
+	}
+	data, found, err := s.store.LoadEntry("characters", "current_hp", strconv.FormatUint(saved.InvenIndex, 10))
 	if err != nil {
 		return 0, err
 	}
-	return s.currentHealthAtMaximum(index, maximum)
-}
-
-func (s *CharacterStore) currentHealthAtMaximum(index, maximum uint64) (uint64, error) {
-	if s.store == nil {
-		return maximum, nil
-	}
-	data, found, err := s.store.LoadEntry("characters", "current_hp", strconv.FormatUint(index, 10))
-	if err != nil || !found {
-		return maximum, err
+	if !found {
+		return saved.HP, nil
 	}
 	var hp uint64
 	if json.Unmarshal(data, &hp) != nil {
 		return 0, errors.New("player: invalid saved current health")
-	}
-	if hp > maximum {
-		hp = maximum
 	}
 	return hp, nil
 }
@@ -380,6 +389,9 @@ func (s *FoodService) recoverCharacter(index uint64, items []Item) (Character, e
 			return Character{}, errors.New("player: EatFood recovery overflow")
 		}
 		total += value
+	}
+	if current > maximum {
+		current = maximum
 	}
 	if total >= maximum-current {
 		character.HP = maximum

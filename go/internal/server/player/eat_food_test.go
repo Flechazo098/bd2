@@ -315,6 +315,104 @@ func TestCurrentHealthGrowthAndImmortalClearPersistedInjury(t *testing.T) {
 	}
 }
 
+func TestCurrentHealthRetainsSavedCharacterHPWithoutSeparateEntryAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []Character{{InvenIndex: 77, ID: 350, Level: 1, HP: 17}, {InvenIndex: 78, ID: 360, Level: 1, HP: 0}}
+	open := func(store stateio.Store) *CharacterStore {
+		inventory, err := OpenInventory(store, &Starter{Version: "2.35.10"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		characters, err := OpenCharacterStore(store, seed, inventory, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = characters.AttachMaxHealth(func(Character) (uint64, error) { return 500, nil }); err != nil {
+			t.Fatal(err)
+		}
+		if err = characters.EnsurePersisted(); err != nil {
+			t.Fatal(err)
+		}
+		return characters
+	}
+	check := func(characters *CharacterStore) {
+		for _, saved := range seed {
+			hp, err := characters.CurrentHealth(saved.InvenIndex)
+			if err != nil || hp != saved.HP {
+				t.Fatalf("current %d=%d want=%d err=%v", saved.InvenIndex, hp, saved.HP, err)
+			}
+			character, found := characters.Find(saved.InvenIndex)
+			if !found || character.HP != saved.HP {
+				t.Fatalf("Find=%+v found=%v", character, found)
+			}
+		}
+		all := characters.All()
+		if len(all) != 2 || all[0].HP != 17 || all[1].HP != 0 {
+			t.Fatalf("All=%+v", all)
+		}
+		maximum, err := characters.MaxHealth(77)
+		if err != nil || maximum != 500 {
+			t.Fatalf("maximum=%d err=%v", maximum, err)
+		}
+	}
+	characters := open(repo)
+	check(characters)
+	rows, err := repo.ListEntries("characters", "current_hp")
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("reads created entries=%v err=%v", rows, err)
+	}
+	if err = repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	characters = open(repo)
+	check(characters)
+	if err = characters.SetCurrentHealth(77, 300); err != nil {
+		t.Fatal(err)
+	}
+	if err = characters.SetCurrentHealth(78, 0); err != nil {
+		t.Fatal(err)
+	}
+	if hp, _ := characters.CurrentHealth(77); hp != 300 {
+		t.Fatalf("explicit health entry lost=%d", hp)
+	}
+	// Revival must write the restored value, since deleting the entry alone
+	// would expose the zero HP in the owned character record again.
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 78)
+	if _, _, _, err = characters.Handle("/CharImmortal", request); err != nil {
+		t.Fatal(err)
+	}
+	if hp, _ := characters.CurrentHealth(78); hp != 500 {
+		t.Fatalf("revived health=%d", hp)
+	}
+}
+
+func TestEatFoodRecoversSavedHPWithoutSeparateCurrentHealthEntry(t *testing.T) {
+	food, inventory, characters := foodTestService(t, stateio.NewMemory())
+	// The seed has current HP 7 and maximum 100, with no current_hp entry.
+	stacks, err := inventory.GrantOnce("saved-health-food", []gamedata.BattleReward{{Type: 5, ID: 101, Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err = food.Handle("/EatFood", foodRequest(1, 77, 21, stacks[0])); err != nil {
+		t.Fatal(err)
+	}
+	if hp, _ := characters.CurrentHealth(77); hp != 22 {
+		t.Fatalf("recovered saved health=%d want22", hp)
+	}
+	if len(inventory.All()) != 0 {
+		t.Fatal("food was not consumed")
+	}
+}
+
 type failFoodStore struct {
 	stateio.AtomicEntryStore
 	fail bool

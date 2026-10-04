@@ -27,7 +27,8 @@ func TestEquipmentStatContributionsUseOnlyEquippedOwnerAndAllHealthOptions(t *te
 	if hp := gamedata.AggregateStats(gamedata.BaseStats{Health: 100}, got).Health; hp != 121 {
 		t.Fatalf("equipped health=%v", hp)
 	}
-	// A normal Find callback must safely enter equipment snapshot resolution.
+	// Maximum health must safely enter equipment snapshot resolution without
+	// changing the persisted current HP returned by Find.
 	_, _, characters := foodTestService(t, stateio.NewMemory())
 	if err := characters.AttachMaxHealth(func(c Character) (uint64, error) {
 		contributions, err := s.StatContributions(c)
@@ -36,10 +37,17 @@ func TestEquipmentStatContributionsUseOnlyEquippedOwnerAndAllHealthOptions(t *te
 		t.Fatal(err)
 	}
 	done := make(chan Character, 1)
-	go func() { c, _ := characters.Find(77); done <- c }()
+	go func() {
+		maximum, err := characters.MaxHealth(77)
+		if err != nil || maximum != 121 {
+			t.Errorf("maximum=%d err=%v", maximum, err)
+		}
+		c, _ := characters.Find(77)
+		done <- c
+	}()
 	select {
 	case c := <-done:
-		if c.HP != 121 {
+		if c.HP != 7 {
 			t.Fatalf("Find health=%d", c.HP)
 		}
 	case <-time.After(time.Second):

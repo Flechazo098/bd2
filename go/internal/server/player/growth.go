@@ -223,18 +223,8 @@ func validateCharacters(characters []Character) error {
 
 func (s *CharacterStore) All() []Character {
 	characters := s.RawAll()
-	s.mu.Lock()
-	maxHealth := s.maxHealth
-	s.mu.Unlock()
-	if maxHealth != nil {
-		for i := range characters {
-			if hp, err := maxHealth(characters[i]); err == nil {
-				characters[i].HP = hp
-			}
-		}
-	}
 	for i := range characters {
-		if hp, err := s.currentHealthAtMaximum(characters[i].InvenIndex, characters[i].HP); err == nil {
+		if hp, err := s.savedCurrentHealth(characters[i]); err == nil {
 			characters[i].HP = hp
 		}
 	}
@@ -255,37 +245,13 @@ func (s *CharacterStore) RawAll() []Character {
 }
 
 func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
-	s.mu.Lock()
-	for _, character := range s.characters {
+	for _, character := range s.RawAll() {
 		if character.InvenIndex == inventoryIndex {
-			maxHealth := s.maxHealth
-			s.mu.Unlock()
-			if maxHealth != nil {
-				if hp, err := maxHealth(character); err == nil {
-					character.HP = hp
-				}
-			}
-			if hp, err := s.currentHealthAtMaximum(character.InvenIndex, character.HP); err == nil {
+			if hp, err := s.savedCurrentHealth(character); err == nil {
 				character.HP = hp
 			}
 			return character, true
 		}
-	}
-	collection := s.collection
-	s.mu.Unlock()
-	if collection != nil {
-		character, found := collection.FindCharacter(inventoryIndex)
-		if found && s.maxHealth != nil {
-			if hp, err := s.maxHealth(character); err == nil {
-				character.HP = hp
-			}
-		}
-		if found {
-			if hp, err := s.currentHealthAtMaximum(character.InvenIndex, character.HP); err == nil {
-				character.HP = hp
-			}
-		}
-		return character, found
 	}
 	return Character{}, false
 }
@@ -508,7 +474,8 @@ func (s *CharacterStore) promoteCharacter(current Character, position int, fromC
 // charImmortal completes the automatic post-battle revival for characters
 // whose TalentSkillTable.ClassType is 14. The story character 6010 has
 // ValueList[0]=10000 at every talent level (100%). The authoritative maximum
-// HP is recomputed by Find from the same calculator as character growth.
+// Maximum HP is calculated separately from the persisted current HP and the
+// restored value is saved explicitly for subsequent character snapshots.
 func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error) {
 	seq, present, err := wire.Varint(request, 1)
 	if err != nil || !present || seq == 0 {
@@ -557,7 +524,11 @@ func (s *CharacterStore) charImmortal(request []byte) (int, []byte, bool, error)
 		response = wire.AppendBytes(response, 1, CharacterWire(character))
 	}
 	for _, index := range indices {
-		if err := s.resetCurrentHealth(index); err != nil {
+		maximum, err := s.MaxHealth(index)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		if err := s.SetCurrentHealth(index, maximum); err != nil {
 			return 0, nil, true, err
 		}
 	}
