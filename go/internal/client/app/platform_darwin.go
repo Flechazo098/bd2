@@ -3,7 +3,6 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,7 +16,7 @@ func ShowFatalError(err error) {
 	}
 }
 
-func launchGame(target string) error {
+func launchGame(target, proxyURL string) error {
 	info, err := os.Stat(target)
 	if err != nil || !info.IsDir() || !strings.EqualFold(filepath.Ext(target), ".app") {
 		return fmt.Errorf("invalid macOS application bundle %q", target)
@@ -27,14 +26,6 @@ func launchGame(target string) error {
 	}
 	// LaunchServices does not inherit open's environment; --env explicitly
 	// supplies the Unity variables to the newly launched application.
-	args := []string{target}
-	for _, entry := range gameProxyEnvironment(os.Environ(), systemGameProxy()) {
-		key, _, found := strings.Cut(entry, "=")
-		if found && (strings.EqualFold(key, "UNITY_PROXYSERVER") || strings.EqualFold(key, "UNITY_NOPROXY")) {
-			args = append(args, "--env", entry)
-		}
-	}
-	args = append(args, "--args")
-	args = append(args, gameLaunchArguments()...)
+	args := gameOpenArguments(target, os.Environ(), proxyURL)
 	return exec.Command("open", args...).Start()
 }

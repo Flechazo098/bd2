@@ -139,17 +139,30 @@ internal sealed class SecureGameRelay : IDisposable
                 if (count <= 0) throw new IOException("Incomplete relay body");
                 offset += count;
             }
-            response = await PlatformControlHttp.Send(remote, start[0], body, null, 4, lifetime.Token,
+            // The native hard deadline leaves margin inside Unity's 30s timeout.
+            response = await PlatformControlHttp.Send(remote, start[0], body, null, 25, lifetime.Token,
                 lifetime.Token, 64 * 1024 * 1024, headers).ConfigureAwait(false);
             if (maintenance || response.StatusCode == 0)
-                log?.LogInfo("Game relay upstream result: path=" + remote.AbsolutePath + " status=" + response.StatusCode +
-                    " error=" + (response.Error ?? "none"));
-            if (response.StatusCode == 0 || response.Data == null) throw new IOException("Native game transport unavailable");
+                log?.LogInfo("Game relay upstream result: request_id=" + response.RequestId + " status=" + response.StatusCode +
+                    " failure=" + (response.FailureKind ?? "none"));
+            if (response.StatusCode == 0 || response.Data == null)
+            {
+                // Return a complete, recognizable local failure. The game sends all
+                // non-Success results through its own same-packet backoff; recovery
+                // distinguishes this marker from actual upstream HTTP errors.
+                byte[] failureBody = Encoding.UTF8.GetBytes("Native game transport unavailable.\n");
+                byte[] failure = Encoding.ASCII.GetBytes("HTTP/1.1 502 Native Transport Failure\r\nConnection: close\r\nCache-Control: no-store\r\nX-BD2-Transport-Failure: 1\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: " +
+                    failureBody.Length.ToString(CultureInfo.InvariantCulture) + "\r\n\r\n");
+                stream.Write(failure, 0, failure.Length);
+                stream.Write(failureBody, 0, failureBody.Length);
+                return;
+            }
             StringBuilder output = new StringBuilder("HTTP/1.1 ").Append(response.StatusCode.ToString(CultureInfo.InvariantCulture)).Append(" Response\r\nConnection: close\r\nCache-Control: no-store\r\n");
             foreach (KeyValuePair<string, string> item in response.Headers)
             {
                 if ((item.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || item.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) ||
-                    item.Key.StartsWith("X-BD2-", StringComparison.OrdinalIgnoreCase)) && item.Value.IndexOfAny(new[] { '\r', '\n' }) < 0)
+                    (item.Key.StartsWith("X-BD2-", StringComparison.OrdinalIgnoreCase) &&
+                        !item.Key.Equals("X-BD2-Transport-Failure", StringComparison.OrdinalIgnoreCase))) && item.Value.IndexOfAny(new[] { '\r', '\n' }) < 0)
                     output.Append(item.Key).Append(": ").Append(item.Value).Append("\r\n");
             }
             output.Append("Content-Length: ").Append(response.Data.Length.ToString(CultureInfo.InvariantCulture)).Append("\r\n\r\n");

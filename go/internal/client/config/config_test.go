@@ -96,3 +96,38 @@ func TestPathUsesMacAppSiblingBepInEx(t *testing.T) {
 		t.Fatalf("Path()=%q want=%q", got, want)
 	}
 }
+
+func TestExplicitProxyNormalization(t *testing.T) {
+	for _, test := range []struct{ raw, want string }{
+		{"", ""}, {"  ", ""}, {" http://127.0.0.1:12451/ ", "http://127.0.0.1:12451"}, {"http://[::1]:8080", "http://[::1]:8080"}, {"http://proxy.example:08080", "http://proxy.example:8080"},
+	} {
+		got, err := NormalizeProxyURL(test.raw)
+		if err != nil || got != test.want {
+			t.Errorf("normalize proxy: got %q, %v", got, err)
+		}
+	}
+	for _, bad := range []string{"http://proxy", "https://proxy:443", "socks5://proxy:1080", "http://user:secret@proxy:8080", "http://proxy:0", "http://proxy:65536", "http://proxy:http", "http://proxy:+80", "http://proxy:8080/path", "http://proxy:8080?secret", "http://proxy:8080?", "http://proxy:8080#", "http://proxy:8080#secret", "http://:8080", "http://[::1%25zone]:8080"} {
+		if _, err := NormalizeProxyURL(bad); err == nil {
+			t.Errorf("invalid proxy accepted: %q", bad)
+		}
+	}
+}
+
+func TestProxySettingsPersistence(t *testing.T) {
+	dir := t.TempDir()
+	saved, err := Save(dir, Settings{ServerOrigin: "http://127.0.0.1:8080", CDNMode: CDNOfficial, ProxyURL: "http://localhost:12451/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil || loaded.ProxyURL != "http://localhost:12451" || saved != loaded {
+		t.Fatalf("proxy not persisted: %#v, %v", loaded, err)
+	}
+	if _, err := Save(dir, Settings{ServerOrigin: "http://127.0.0.1:8080", CDNMode: CDNOfficial}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = Load(dir)
+	if err != nil || loaded.ProxyURL != "" {
+		t.Fatal("omitted proxy should use direct connection")
+	}
+}

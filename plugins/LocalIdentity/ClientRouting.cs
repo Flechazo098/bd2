@@ -84,6 +84,9 @@ internal sealed class ClientRouting : IDisposable
     {
         string path = Path.Combine(Paths.ConfigPath, ConfigFileName);
         ClientConfig config = ParseConfig(ReadBoundedFile(path, MaximumResponseBytes));
+        // Set only our process-local choice. Login UI also uses this value when
+        // the game is launched directly; it never imports a system proxy.
+        Environment.SetEnvironmentVariable("BD2_CLIENT_PROXY_URL", config.proxy_url);
         ValidateOrigin(config.server_origin, "server_origin");
         config.server_origin = config.server_origin.TrimEnd('/');
 
@@ -174,12 +177,8 @@ internal sealed class ClientRouting : IDisposable
         request.AllowAutoRedirect = false;
         request.Timeout = 10_000;
         request.ReadWriteTimeout = 10_000;
-        if (endpoint.IsLoopback)
-        {
-            // UnityWebRequest can inherit a system proxy even for loopback.
-            // The configured private server must be contacted directly.
-            request.Proxy = null;
-        }
+        request.Proxy = endpoint.IsLoopback || string.IsNullOrEmpty(config.proxy_url)
+            ? null : new WebProxy(config.proxy_url);
 
         log.LogInfo("Requesting client resource policy: origin=" + config.server_origin +
             " endpoint=" + endpoint.AbsoluteUri + " mode=" + config.cdn_mode + " method=PUT");
@@ -214,13 +213,14 @@ internal sealed class ClientRouting : IDisposable
     private static ClientConfig ParseConfig(string json)
     {
         JObject value = ParseObject(json, "client configuration");
-        RequireOnly(value, "schema_version", "server_origin", "cdn_mode", "local_resource_directory");
+        RequireOnly(value, "schema_version", "server_origin", "cdn_mode", "local_resource_directory", "proxy_url");
         ClientConfig config = new ClientConfig
         {
             schema_version = RequiredInteger(value, "schema_version"),
             server_origin = RequiredString(value, "server_origin"),
             cdn_mode = RequiredString(value, "cdn_mode"),
-            local_resource_directory = OptionalString(value, "local_resource_directory")
+            local_resource_directory = OptionalString(value, "local_resource_directory"),
+            proxy_url = NormalizeClientProxy(OptionalString(value, "proxy_url"))
         };
         if (config.schema_version != 2)
         {
@@ -239,6 +239,30 @@ internal sealed class ClientRouting : IDisposable
             throw new InvalidDataException("local_resource_directory is only valid when cdn_mode is local");
         }
         return config;
+    }
+
+    private static string NormalizeClientProxy(string raw)
+    {
+        raw = raw.Trim();
+        if (raw.Length == 0) return string.Empty;
+        const string error = "proxy_url must be an HTTP proxy address with an explicit port and no credentials or path";
+        if (raw.IndexOfAny(new[] { '?', '#', '@', '%' }) >= 0) throw new InvalidDataException(error);
+        foreach (char character in raw)
+            if (char.IsWhiteSpace(character) || char.IsControl(character)) throw new InvalidDataException(error);
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri proxy) || proxy.Scheme != "http" ||
+            string.IsNullOrEmpty(proxy.Host) || !string.IsNullOrEmpty(proxy.UserInfo) ||
+            !string.IsNullOrEmpty(proxy.Query) || !string.IsNullOrEmpty(proxy.Fragment) || proxy.AbsolutePath != "/")
+            throw new InvalidDataException(error);
+        string authority = raw.Substring(raw.IndexOf("://", StringComparison.Ordinal) + 3).TrimEnd('/');
+        int separator = authority.LastIndexOf(':');
+        if (separator <= 0) throw new InvalidDataException(error);
+        string portText = authority.Substring(separator + 1);
+        foreach (char character in portText) if (character < '0' || character > '9') throw new InvalidDataException(error);
+        if (!int.TryParse(portText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+            out int port) || port < 1 || port > 65535) throw new InvalidDataException(error);
+        string host = proxy.IdnHost.Trim('[', ']');
+        if (proxy.HostNameType == UriHostNameType.IPv6) host = "[" + host + "]";
+        return "http://" + host + ":" + port.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static ResourcePolicy ParsePolicy(string json)
@@ -403,6 +427,7 @@ internal sealed class ClientRouting : IDisposable
         public string server_origin;
         public string cdn_mode;
         public string local_resource_directory;
+        public string proxy_url;
     }
 
     private sealed class ResourcePolicy

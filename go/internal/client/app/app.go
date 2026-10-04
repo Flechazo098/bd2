@@ -33,6 +33,7 @@ type Options struct {
 }
 
 type Request struct {
+	ProxyURL               string               `json:"proxy_url"`
 	GameDirectory          string               `json:"game_directory"`
 	ServerOrigin           string               `json:"server_origin"`
 	CDNMode                clientconfig.CDNMode `json:"cdn_mode"`
@@ -41,7 +42,7 @@ type Request struct {
 }
 
 func (r Request) settings() clientconfig.Settings {
-	return clientconfig.Settings{ServerOrigin: r.ServerOrigin, CDNMode: r.CDNMode, LocalResourceDirectory: r.LocalResourceDirectory}
+	return clientconfig.Settings{ServerOrigin: r.ServerOrigin, ProxyURL: r.ProxyURL, CDNMode: r.CDNMode, LocalResourceDirectory: r.LocalResourceDirectory}
 }
 
 type Response struct {
@@ -51,6 +52,7 @@ type Response struct {
 }
 
 type InitialState struct {
+	ProxyURL               string               `json:"proxy_url"`
 	Platform               string               `json:"platform"`
 	ClientVersion          string               `json:"client_version"`
 	GameVersion            string               `json:"game_version"`
@@ -75,7 +77,7 @@ type Studio struct {
 	cancel          context.CancelFunc
 	mu              sync.Mutex
 	quitOnce        sync.Once
-	launch          func(string) error
+	launch          func(string, string) error
 	savePreferences func(string) error
 }
 
@@ -133,6 +135,7 @@ func (s *Studio) Initialize() InitialState {
 		s.log().Warn("saved client connection settings are unavailable", "error", err)
 		return state
 	}
+	state.ProxyURL = settings.ProxyURL
 	state.ServerOrigin = settings.ServerOrigin
 	state.CDNMode = settings.CDNMode
 	state.LocalResourceDirectory = settings.LocalResourceDirectory
@@ -295,7 +298,8 @@ func (s *Studio) Launch(input Request) (Response, error) {
 		if _, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), s.options.Versions); err != nil {
 			return Response{}, err
 		}
-		if _, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.options.Versions); err != nil {
+		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.options.Versions)
+		if err != nil {
 			return Response{}, err
 		}
 		if err := s.savePreferences(input.GameDirectory); err != nil {
@@ -314,7 +318,7 @@ func (s *Studio) Launch(input Request) (Response, error) {
 				return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)
 			}
 		}
-		if err := s.launch(installation.LaunchTarget()); err != nil {
+		if err := s.launch(installation.LaunchTarget(), settings.ProxyURL); err != nil {
 			if errors.Is(err, errGameAlreadyRunning) {
 				return success("Brown Dust II is already running", nil), nil
 			}

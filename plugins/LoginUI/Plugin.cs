@@ -24,6 +24,7 @@ public sealed class Plugin : BaseUnityPlugin
     private void OnApplicationQuit()
     {
         DisposeGameRelay();
+        PlatformControlHttp.Shutdown();
     }
 
     private void Awake()
@@ -31,10 +32,15 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
+            PlatformControlHttp.SetCompletionLogger(message => Logger.LogInfo(message));
             if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_PROXYSERVER")) &&
                 !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_NOPROXY")))
                 Logger.LogInfo("Game loopback transport uses launch-time Unity proxy bypass");
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => DisposeGameRelay();
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                DisposeGameRelay();
+                PlatformControlHttp.Shutdown();
+            };
             Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             EnsureRecoveryHost();
             InitializeCredentials();

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	clientconfig "bd2server/internal/client/config"
@@ -169,5 +170,45 @@ func TestOfficialDoesNotContactServer(t *testing.T) {
 	}, testVersions())
 	if err != nil || policy.Mode != clientconfig.CDNOfficial {
 		t.Fatalf("policy=%+v err=%v", policy, err)
+	}
+}
+
+func TestResourcePolicyLoopbackBypassesPlayerAndEnvironmentProxy(t *testing.T) {
+	var proxyCalls atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(ResourcePolicy{Mode: clientconfig.CDNServer, ServerDataURL: "https://cdn.example/ServerData", GameDataURL: "https://cdn.example/GameData", BundleVersion: testVersions().BundleVersion, GameDataVersion: testVersions().GameDataVersion})
+	}))
+	defer server.Close()
+	for _, configured := range []string{"", proxy.URL} {
+		_, err := FetchResourcePolicy(context.Background(), nil, clientconfig.Settings{ServerOrigin: server.URL, CDNMode: clientconfig.CDNServer, ProxyURL: configured}, testVersions())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if proxyCalls.Load() != 0 {
+		t.Fatal("loopback policy request used proxy")
+	}
+}
+
+func TestResourcePolicyUsesExplicitProxyForRemoteOrigin(t *testing.T) {
+	var proxyCalls atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect || r.Host != "remote.invalid:443" {
+			t.Errorf("unexpected proxy request: %s %s", r.Method, r.Host)
+		}
+		proxyCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	_, err := FetchResourcePolicy(context.Background(), nil, clientconfig.Settings{ServerOrigin: "https://remote.invalid", CDNMode: clientconfig.CDNServer, ProxyURL: proxy.URL}, testVersions())
+	if err == nil || proxyCalls.Load() != 1 {
+		t.Fatal("remote policy request did not use explicit HTTP proxy")
 	}
 }

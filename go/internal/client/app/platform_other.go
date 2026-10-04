@@ -14,6 +14,6 @@ func ShowFatalError(err error) {
 	}
 }
 
-func launchGame(string) error {
+func launchGame(string, string) error {
 	return errors.New("the Brown Dust II client is not supported on Linux")
 }
