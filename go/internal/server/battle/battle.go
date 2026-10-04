@@ -31,6 +31,32 @@ type Service struct {
 	onTutorialWin      func() error
 	onMonsterWin       func() error
 	commitHealth       func(map[uint64]uint64) error
+	hunting            HuntingRuntime
+	monsterHunt        MonsterHuntRuntime
+}
+
+type MonsterHuntRuntime interface {
+	EnterBattle(request []byte, receipt string) ([]byte, error)
+	CompleteBattle(request []byte, receipt string) ([]byte, error)
+}
+
+func (s *Service) AttachMonsterHunt(runtime MonsterHuntRuntime) {
+	s.monsterHunt = runtime
+}
+
+func isMonsterHunt(mode uint64) bool { return mode == 8 || mode == 24 }
+
+// HuntingRuntime validates the active hunting ground and settles each won
+// encounter with the account's persistent AP, monsters and reward ledger.
+type HuntingRuntime interface {
+	ValidateBattle(pack int, mode, monster, deck uint64) error
+	CompleteBattle(pack int, mode, monster, deck uint64, receipt string) ([]byte, [][]byte, error)
+}
+
+const huntingGroundMode = 5
+
+func (s *Service) AttachHunting(runtime HuntingRuntime) {
+	s.hunting = runtime
 }
 
 type battleState struct {
@@ -40,6 +66,8 @@ type battleState struct {
 	monster      uint64
 	deck         uint64
 	pack         int
+	mode         uint64
+	enterReceipt string
 	initialBlue  [][]byte
 	phases       []gamedata.BattlePhase
 	phase        int
@@ -187,6 +215,32 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: current pack resolver is unavailable")
 		}
 		monster, _, _ := wire.Varint(request, 3)
+		var huntResponse []byte
+		if isMonsterHunt(mode) {
+			if s.monsterHunt == nil {
+				return 0, nil, true, errors.New("battle: monster hunt runtime unavailable")
+			}
+			if validator, ok := s.monsterHunt.(interface {
+				ValidatePack(int, []byte) error
+			}); ok {
+				if err := validator.ValidatePack(packID, request); err != nil {
+					return 0, nil, true, err
+				}
+			}
+			seq, _, _ := wire.Varint(request, 1)
+			huntResponse, err = s.monsterHunt.EnterBattle(request, fmt.Sprintf("%s:%d", s.activeSession, seq))
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: enter monster hunt: %w", err)
+			}
+		}
+		if mode == huntingGroundMode {
+			if s.hunting == nil {
+				return 0, nil, true, errors.New("battle: hunting runtime unavailable")
+			}
+			if err := s.hunting.ValidateBattle(packID, mode, monster, deck); err != nil {
+				return 0, nil, true, err
+			}
+		}
 		if mode == 1 && s.currentDifficulty != nil {
 			difficulty, resolveErr := s.currentDifficulty()
 			if resolveErr != nil {
@@ -202,7 +256,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 		}
 		var phases []gamedata.BattlePhase
-		if s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0) {
+		if !isMonsterHunt(mode) && (s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0)) {
 			loader := s.loadPhases
 			if loader == nil {
 				loader = gamedata.BattleDeckPhases
@@ -216,6 +270,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 		}
 		response := wire.AppendVarint(nil, 2, deck)
+		response = append(response, huntResponse...)
 		if s.buffs != nil {
 			buffs, err := s.buffs()
 			if err != nil {
@@ -234,6 +289,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		response = wire.AppendVarint(response, 6, 1)
 		state.entered, state.index, state.round, state.initialBlue = true, 0, 0, nil
 		state.monster, state.deck, state.pack = monster, deck, packID
+		state.mode = mode
+		seq, _, _ := wire.Varint(request, 1)
+		state.enterReceipt = fmt.Sprintf("%s:%d", s.activeSession, seq)
 		state.phases, state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = phases, 0, false, 0, nil
 		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
@@ -314,13 +372,24 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: end before enter")
 		}
 		result, found, err := wire.Varint(request, 2)
-		if err != nil || !found || result == 0 {
+		if err != nil || !found || result == 0 || result > 4 {
 			return 0, nil, true, errors.New("battle: invalid result")
 		}
 		if result == 1 && len(state.phases) != 0 && (state.phase != len(state.phases)-1 || !state.phaseStarted) {
 			return 0, nil, true, errors.New("battle: victory before final phase start")
 		}
 		response := wire.AppendVarint(nil, 1, result)
+		if isMonsterHunt(state.mode) {
+			// Monster Hunt owns its remaining HP, progression and daily/season
+			// rewards. Field HP and ordinary pack rewards must not settle here.
+			extra, err := s.monsterHunt.CompleteBattle(request, state.enterReceipt)
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: settle monster hunt: %w", err)
+			}
+			response = append(response, extra...)
+			state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
+			return 15, response, true, nil
+		}
 		var resultCharacters [][]byte
 		finishedHealth := make(map[uint64]uint64)
 		participants := make(map[uint64]bool)
@@ -374,7 +443,20 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			response = wire.AppendBytes(response, 3, character)
 		}
 		rewardBundle := false
-		if result == 1 && s.inventory != nil && state.monster != 0 && s.gameDataRoot != "" {
+		if result == 1 && state.mode == huntingGroundMode {
+			seq, _, _ := wire.Varint(request, 1)
+			bundle, monsters, err := s.hunting.CompleteBattle(state.pack, state.mode, state.monster, state.deck,
+				fmt.Sprintf("%s:%d", s.activeSession, seq))
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: settle hunting encounter: %w", err)
+			}
+			for _, monster := range monsters {
+				response = wire.AppendBytes(response, 4, monster)
+			}
+			response = wire.AppendBytes(response, 5, bundle)
+			rewardBundle = true
+		}
+		if result == 1 && state.mode != huntingGroundMode && s.inventory != nil && state.monster != 0 && s.gameDataRoot != "" {
 			if state.pack <= 0 {
 				return 0, nil, true, errors.New("battle: victory has no locked pack")
 			}

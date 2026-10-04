@@ -46,6 +46,8 @@ func (s *Service) AttachAchievementProgress(source AchievementProgressSource) er
 }
 
 type Service struct {
+	levelRewards        *gamedata.AchievementLevelDesign
+	levelReward         uint64
 	achievementProgress AchievementProgressSource
 	mu                  sync.Mutex
 	storage             stateio.Store
@@ -221,6 +223,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		return 0, nil, true, err
 	}
 	switch path {
+	case "/UserLevelReward":
+		response, err := s.userLevelReward(request)
+		return 73, response, true, err
 	case "/MissionInfo":
 		if err := requireSeq(request); err != nil {
 			return 118, nil, true, err

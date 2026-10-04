@@ -22,7 +22,7 @@ func TestHandleAuditedEmptyResponses(t *testing.T) {
 }
 
 func TestHandleRejectsUnknownAndInvalidRequests(t *testing.T) {
-	for _, path := range []string{"/FieldObjectInfo", "/WaypointInfo", "/WaypointSave", "/WaypointUse", "/AchievementInfo", "/AchievementUpdate", "/RecipeInfo", "/PackInfo", "/DeckInfo", "/RootSortIdInfo"} {
+	for _, path := range []string{"/HuntDispatchInfo", "/HuntingGroundInfo", "/HuntingGroundInfoList", "/HuntingGroundEnter", "/UserLevelReward", "/FieldObjectInfo", "/WaypointInfo", "/WaypointSave", "/WaypointUse", "/AchievementInfo", "/AchievementUpdate", "/RecipeInfo", "/PackInfo", "/DeckInfo", "/RootSortIdInfo"} {
 		if _, _, handled, err := Handle(path, wire.AppendVarint(nil, 1, 1)); handled || err != nil {
 			t.Fatalf("stateful route %s still has a stateless success fallback", path)
 		}

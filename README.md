@@ -78,6 +78,8 @@ BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows
 
 游戏规则统一使用服务端同目录的 `game.json`，修改后重启生效；开发入口读取仓库根目录的文件。联动 UR 专武是否加入 UR 必得装备券池及升级保留配置的方法见 [服务端游戏规则配置](GAME_CONFIGURATION.md)。
 
+服务端日志默认输出 INFO 及以上级别，仅终端启用颜色：TRACE 灰、DEBUG 青、INFO 绿、WARN 黄、ERROR 红。可用 `serve --log-level debug --log-color auto` 调整，或设置 `BD2_LOG_LEVEL` 和 `BD2_LOG_COLOR` 环境变量；显式命令行参数优先。级别支持 `trace/debug/info/warn/error`，颜色支持 `auto/always/never`。`auto` 下文件和重定向保持纯文本，`NO_COLOR` 或 `TERM=dumb` 也会关闭颜色；如需在 Docker 日志流中显示颜色，可显式选择 `always`。
+
 ### 启动客户端
 
 先手动安装 [BepInEx](https://github.com/BepInEx/BepInEx/releases)。然后打开我们的客户端工具 `bd2client.exe`。

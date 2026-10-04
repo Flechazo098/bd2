@@ -44,6 +44,12 @@ type Handler interface {
 	Handle(path string, request []byte) (packetCode int, response []byte, ok bool, err error)
 }
 
+// SessionHandler receives the same opaque login identity for requests within
+// a batch, allowing durable receipts without mutable global session state.
+type SessionHandler interface {
+	HandleSession(path string, request []byte, sessionID string) (packetCode int, response []byte, ok bool, err error)
+}
+
 // SessionAware handlers use a login-scoped opaque ID when protobuf request
 // sequences participate in durable idempotency keys.
 type SessionAware interface {
@@ -71,6 +77,7 @@ type Server struct {
 	sessions           map[[sha256.Size]byte]*gameSession
 	latestSessionToken [sha256.Size]byte
 	latestSessionSet   bool
+	activeSessionID    string
 	login              LoginService
 	handlers           []Handler
 	observers          []ResponseObserver
@@ -266,6 +273,7 @@ func (s *Server) deleteSession(token [sha256.Size]byte, game *gameSession) {
 }
 
 func (s *Server) activate(game *gameSession) {
+	s.activeSessionID = game.id
 	for _, handler := range s.handlers {
 		if aware, ok := handler.(SessionAware); ok {
 			aware.BeginSession(game.id)
@@ -380,7 +388,18 @@ func (s *Server) dispatch(path string, request []byte) (int, []byte, error) {
 		return 102, nil, nil
 	}
 	for _, handler := range s.handlers {
-		code, response, ok, err := handler.Handle(path, request)
+		var code int
+		var response []byte
+		var ok bool
+		var err error
+		if scoped, supports := handler.(SessionHandler); supports {
+			if s.activeSessionID == "" {
+				return 0, nil, errSessionRequired
+			}
+			code, response, ok, err = scoped.HandleSession(path, request, s.activeSessionID)
+		} else {
+			code, response, ok, err = handler.Handle(path, request)
+		}
 		if err != nil {
 			return 0, nil, err
 		}
