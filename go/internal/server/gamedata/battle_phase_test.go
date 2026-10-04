@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/server/wire"
 	"database/sql"
 	"reflect"
 	"testing"
@@ -55,6 +56,36 @@ func TestBattleDeckPhasesDesignRows(t *testing.T) {
 		if _, e := battleDeckPhasesFromDB(db, 8, 8); e == nil {
 			t.Fatalf("accepted invalid row %x", b)
 		}
+	}
+}
+
+func TestBattleDeckPhasesRetainSelectedDifficulty(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{"CREATE TABLE FieldMonsterTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)", "CREATE TABLE PhaseBattleTable(groupId INTEGER,id INTEGER,ProtoBuf BLOB)", "CREATE TABLE BattleDeckTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)"} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Exec("INSERT INTO FieldMonsterTable VALUES(8,?)", wire.AppendVarint(nil, 21, 1))
+	for _, v := range []struct{ id, deck uint64 }{{1, 8}, {2, 9}} {
+		data := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 2, v.deck), 3, 1), 4, v.id)
+		if _, err := db.Exec("INSERT INTO PhaseBattleTable VALUES(1,?,?)", v.id, data); err != nil {
+			t.Fatal(err)
+		}
+		for d := uint64(0); d <= 2; d++ {
+			if _, err := db.Exec("INSERT INTO BattleDeckTable VALUES(?,?)", v.deck+d*100000, wire.AppendVarint(nil, 24, d)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got, err := battleDeckPhasesFromDB(db, 8, 200008)
+	want := []BattlePhase{{1, 1, 200008}, {1, 2, 200009}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v error %v", got, err)
 	}
 }
 func TestPhaseScalarRejectsInvalidDesign(t *testing.T) {

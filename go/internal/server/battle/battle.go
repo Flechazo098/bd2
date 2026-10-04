@@ -16,18 +16,20 @@ import (
 )
 
 type Service struct {
-	mu              sync.Mutex
-	states          map[string]*battleState
-	activeSession   string
-	gameDataRoot    string
-	gameDataVersion string
-	inventory       *player.Inventory
-	currentPack     func() (int, error)
-	loadRewards     func(string, string, int, uint64) ([]gamedata.BattleReward, error)
-	loadPhases      func(string, string, int, uint64, uint64) ([]gamedata.BattlePhase, error)
-	buffs           func() ([]gamedata.PictorialBuffStat, error)
-	onTutorialWin   func() error
-	commitHealth    func(map[uint64]uint64) error
+	mu                 sync.Mutex
+	states             map[string]*battleState
+	activeSession      string
+	gameDataRoot       string
+	gameDataVersion    string
+	inventory          *player.Inventory
+	currentPack        func() (int, error)
+	currentDifficulty  func() (uint64, error)
+	loadDifficultyDeck func(string, string, int, uint64, uint64) (uint64, error)
+	loadRewards        func(string, string, int, uint64) ([]gamedata.BattleReward, error)
+	loadPhases         func(string, string, int, uint64, uint64) ([]gamedata.BattlePhase, error)
+	buffs              func() ([]gamedata.PictorialBuffStat, error)
+	onTutorialWin      func() error
+	commitHealth       func(map[uint64]uint64) error
 }
 
 type battleState struct {
@@ -93,6 +95,11 @@ func NewService(gameDataRoot, gameDataVersion string, inventory *player.Inventor
 		inventory: inventory, currentPack: currentPack, loadRewards: gamedata.BattleDeckRewards,
 		states: make(map[string]*battleState),
 	}
+}
+
+// AttachCurrentDifficulty selects the GameData quest deck for the active pack.
+func (s *Service) AttachCurrentDifficulty(resolve func() (uint64, error)) {
+	s.currentDifficulty = resolve
 }
 
 func (s *Service) AttachPictorialBuffs(buffs func() ([]gamedata.PictorialBuffStat, error)) {
@@ -177,6 +184,20 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: current pack resolver is unavailable")
 		}
 		monster, _, _ := wire.Varint(request, 3)
+		if mode == 1 && s.currentDifficulty != nil {
+			difficulty, resolveErr := s.currentDifficulty()
+			if resolveErr != nil {
+				return 0, nil, true, fmt.Errorf("battle: resolve difficulty: %w", resolveErr)
+			}
+			loader := s.loadDifficultyDeck
+			if loader == nil {
+				loader = gamedata.BattleDeckForDifficulty
+			}
+			deck, err = loader(s.gameDataRoot, s.gameDataVersion, packID, deck, difficulty)
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: select difficulty deck: %w", err)
+			}
+		}
 		var phases []gamedata.BattlePhase
 		if s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0) {
 			loader := s.loadPhases

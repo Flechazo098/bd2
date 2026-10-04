@@ -52,8 +52,9 @@ type indexedGrant struct {
 }
 
 type questKey struct {
-	pack  uint32
-	quest uint32
+	difficulty uint32
+	pack       uint32
+	quest      uint32
 }
 
 func validateSnapshot(snapshot validationSnapshot) []Problem {
@@ -407,8 +408,9 @@ func progressKeys(tx *sql.Tx) ([]questKey, []questKey, error) {
 		return nil, nil, err
 	}
 	var quests map[string]struct {
-		QuestID int `json:"QuestID"`
-		PackID  int `json:"PackID"`
+		QuestID    int `json:"QuestID"`
+		Difficulty int `json:"Difficulty"`
+		PackID     int `json:"PackID"`
 	}
 	if json.Unmarshal(fields["quests"], &quests) != nil {
 		return nil, nil, errors.New("accountstate: invalid progress.quests")
@@ -416,7 +418,7 @@ func progressKeys(tx *sql.Tx) ([]questKey, []questKey, error) {
 	questKeys := make([]questKey, 0, len(quests))
 	for key, value := range quests {
 		parsed, parseErr := parseQuestKey(key)
-		if parseErr != nil || value.PackID != int(parsed.pack) || value.QuestID != int(parsed.quest) {
+		if parseErr != nil || value.PackID != int(parsed.pack) || value.QuestID != int(parsed.quest) || value.Difficulty != int(parsed.difficulty) {
 			return nil, nil, fmt.Errorf("accountstate: invalid progress quest key %q", key)
 		}
 		questKeys = append(questKeys, parsed)
@@ -440,22 +442,26 @@ func progressKeys(tx *sql.Tx) ([]questKey, []questKey, error) {
 }
 
 func parseQuestKey(value string) (questKey, error) {
-	left, right, found := strings.Cut(value, ":")
-	if !found {
-		return questKey{}, errors.New("missing separator")
+	parts := strings.Split(value, ":")
+	if len(parts) != 3 {
+		return questKey{}, errors.New("invalid quest identity")
 	}
-	pack, packErr := strconv.ParseUint(left, 10, 32)
-	quest, questErr := strconv.ParseUint(right, 10, 32)
-	if packErr != nil || questErr != nil {
+	pack, e1 := strconv.ParseUint(parts[0], 10, 32)
+	level, e2 := strconv.ParseUint(parts[1], 10, 32)
+	quest, e3 := strconv.ParseUint(parts[2], 10, 32)
+	if e1 != nil || e2 != nil || e3 != nil || level > 4 {
 		return questKey{}, errors.New("invalid integer")
 	}
-	return questKey{pack: uint32(pack), quest: uint32(quest)}, nil
+	return questKey{pack: uint32(pack), difficulty: uint32(level), quest: uint32(quest)}, nil
 }
 
 func sortQuestKeys(keys []questKey) {
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].pack != keys[j].pack {
 			return keys[i].pack < keys[j].pack
+		}
+		if keys[i].difficulty != keys[j].difficulty {
+			return keys[i].difficulty < keys[j].difficulty
 		}
 		return keys[i].quest < keys[j].quest
 	})

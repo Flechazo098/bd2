@@ -71,7 +71,7 @@ func TestLastPlayedPackTracksPersistedPositionAcrossRestart(t *testing.T) {
 
 func TestStoreKeepsPackOverlap(t *testing.T) {
 	storage := stateio.NewMemory()
-	initial := `{"version":2,"position":{"PackID":0,"Position":{"MapId":0,"PlayerPosition":{"x":0,"y":0,"z":0},"ColleaguePositions":null},"RawJSON":""},"tutorials":[],"quests":{"21:1":{"QuestID":1,"PackID":21,"Values":[7]}},"cleared_quests":{"21:1":true}}`
+	initial := `{"version":3,"selections":{},"start_pack_id":21,"active_pack_id":21,"position":{"PackID":0,"Position":{"MapId":0,"PlayerPosition":{"x":0,"y":0,"z":0},"ColleaguePositions":null},"RawJSON":""},"tutorials":[],"quests":{"21:0:1":{"QuestID":1,"PackID":21,"Values":[7]}},"cleared_quests":{"21:0:1":true}}`
 	if err := storage.Save("progress", []byte(initial)); err != nil {
 		t.Fatal(err)
 	}
@@ -115,14 +115,14 @@ func TestStoreKeepsPackOverlap(t *testing.T) {
 		t.Fatalf("saved version=%d err=%v", version, err)
 	}
 	var cleared map[string]bool
-	if err := json.Unmarshal(saved["cleared_quests"], &cleared); err != nil || !cleared["21:1"] || !cleared["22:1"] {
+	if err := json.Unmarshal(saved["cleared_quests"], &cleared); err != nil || !cleared["21:0:1"] || !cleared["22:0:1"] {
 		t.Fatalf("saved clears=%v err=%v", cleared, err)
 	}
 }
 
 func TestStoreRejectsBrokenSave(t *testing.T) {
 	storage := stateio.NewMemory()
-	if err := storage.Save("progress", []byte(`{"version":2,"quests":{"12":{"QuestID":5,"PackID":21}}}`)); err != nil {
+	if err := storage.Save("progress", []byte(`{"version":3,"selections":{},"start_pack_id":21,"active_pack_id":21,"quests":{"12":{"QuestID":5,"PackID":21}}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := OpenStore(storage); err == nil {
@@ -135,5 +135,38 @@ func TestStoreRejectsLegacySave(t *testing.T) {
 	_ = storage.Save("progress", []byte(`{"quests":{"1":{"QuestID":1,"PackID":21}}}`))
 	if _, err := OpenStore(storage); err == nil {
 		t.Fatal("accepted unversioned legacy state")
+	}
+}
+
+func TestDifficultyPositionAndActivePackPersistIndependently(t *testing.T) {
+	storage := stateio.NewMemory()
+	s, err := OpenStore(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStartPack(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetActivePackID(21); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SelectQuest(21, QuestSelection{QuestID: 4, Difficulty: 1}); err != nil {
+		t.Fatal(err)
+	}
+	request := wire.AppendVarint(nil, 2, 21)
+	request = wire.AppendString(request, 3, `{"MapId":211,"PlayerPosition":{"x":1,"y":2,"z":3}}`)
+	if err := s.SaveUserPosition(request); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetActivePackID(22); err != nil {
+		t.Fatal(err)
+	}
+	s, err = OpenStore(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := s.Position()
+	if saved.Difficulty != 1 || saved.PackID != 21 || s.ActivePackID() != 22 || s.StartPackID() != 1 {
+		t.Fatalf("state lost %+v", saved)
 	}
 }

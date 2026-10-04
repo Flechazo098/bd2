@@ -420,7 +420,7 @@ func TestQuest27UsesGameDataFreeJewelryReward(t *testing.T) {
 	}
 }
 
-func TestPackInfoUsesPersistedCharacterLevel(t *testing.T) {
+func TestPackInfoDoesNotEmitFixedRewardRosterWithoutActiveFormation(t *testing.T) {
 	storage := stateio.NewMemory()
 	starter := &player.Starter{Version: "2.35.10"}
 	inventory, err := player.OpenInventory(storage, starter)
@@ -455,7 +455,7 @@ func TestPackInfoUsesPersistedCharacterLevel(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if level != 20 {
-		t.Fatalf("pack character level=%d want20", level)
+	if level != 0 {
+		t.Fatalf("fixed reward character leaked without an authored active formation: level=%d", level)
 	}
 }

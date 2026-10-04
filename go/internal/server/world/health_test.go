@@ -70,7 +70,7 @@ func TestTutorialCharInfoRestoresFieldHealthWithoutExposingStoryRoster(t *testin
 	}
 }
 
-func TestPackInfoStoryCharactersUsePersistedDeadAndInjuredHP(t *testing.T) {
+func TestPackInfoWithoutFormationDoesNotEmitSeedStoryRoster(t *testing.T) {
 	storage := stateio.NewMemory()
 	starter := &player.Starter{Version: "2.35.10"}
 	inventory, err := player.OpenInventory(storage, starter)
@@ -126,7 +126,7 @@ func TestPackInfoStoryCharactersUsePersistedDeadAndInjuredHP(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if count != 2 {
-		t.Fatalf("pack story roster count=%d", count)
+	if count != 0 {
+		t.Fatalf("unconditional seed story roster count=%d", count)
 	}
 }

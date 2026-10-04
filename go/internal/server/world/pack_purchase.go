@@ -13,7 +13,7 @@ func packPurchaseIdentity(id int) string { return fmt.Sprintf("pack-purchase:%d"
 // awards the bootstrap pack's real purchase rewards, not a recovery inference
 // from a saved position or from the former seed-only unlock chain.
 func (s *Service) EnsureInitialPackPurchase() error {
-	_, err := s.purchaseStoryPack(s.seed.PackID, true)
+	_, err := s.purchaseStoryPack(s.startingPack(), true)
 	return err
 }
 

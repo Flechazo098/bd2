@@ -12,6 +12,44 @@ import (
 
 func request(seq uint64) []byte { return wire.AppendVarint(nil, 1, seq) }
 
+func TestQuestBattleSelectsAndRetainsDifficultyDeck(t *testing.T) {
+	s := NewService("design", "version", nil, func() (int, error) { return 1, nil })
+	s.AttachCurrentDifficulty(func() (uint64, error) { return 2, nil })
+	s.loadDifficultyDeck = func(_, _ string, pack int, deck, difficulty uint64) (uint64, error) {
+		if pack != 1 || deck != 1 || difficulty != 2 {
+			t.Fatalf("selection %d/%d/%d", pack, deck, difficulty)
+		}
+		return 200001, nil
+	}
+	s.loadPhases = func(_, _ string, pack int, monster, deck uint64) ([]gamedata.BattlePhase, error) {
+		if pack != 1 || deck != 200001 {
+			t.Fatalf("phase selection %d/%d", pack, deck)
+		}
+		return nil, nil
+	}
+	enter := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(request(1), 3, 1), 4, 1), 5, 1)
+	_, response, _, err := s.Handle("/BattleEnter", enter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deck, _, _ := wire.Varint(response, 2)
+	if deck != 200001 {
+		t.Fatalf("deck %d", deck)
+	}
+	start := wire.AppendBytes(wire.AppendVarint(request(2), 2, 200001), 5, wire.AppendVarint(nil, 2, 101))
+	if _, _, _, err := s.Handle("/BattleStart", start); err != nil {
+		t.Fatal(err)
+	}
+	_, response, _, err = s.Handle("/BattleRetry", wire.AppendVarint(request(3), 2, 200001))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deck, _, _ = wire.Varint(response, 3)
+	if deck != 200001 {
+		t.Fatalf("retry deck %d", deck)
+	}
+}
+
 func TestLocalBattleLifecycle(t *testing.T) {
 	s := &Service{}
 	enter := request(1)

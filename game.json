@@ -1,5 +1,8 @@
 {
   "schema_version": 1,
+  "story": {
+    "start_pack_id": 21
+  },
   "gacha": {
     "include_collaboration_ur_weapons": false
   }

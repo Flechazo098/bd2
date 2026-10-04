@@ -9,9 +9,16 @@ import (
 // LastPlayedPackID prevents LoginUser from selecting a field that this server
 // cannot restore. A fresh account keeps the versioned login seed's pack.
 func (s *Service) LastPlayedPackID() (uint64, error) {
-	id, err := s.state.LastPlayedPackID()
-	if err != nil || id == 0 {
-		return id, err
+	id := uint64(s.state.ActivePackID())
+	if id == 0 {
+		var err error
+		id, err = s.state.LastPlayedPackID()
+		if err != nil {
+			return id, err
+		}
+	}
+	if id == 0 {
+		id = uint64(s.startingPack())
 	}
 	if !s.packUnlocked(int(id)) {
 		return 0, errors.New("world: saved login pack is unavailable")

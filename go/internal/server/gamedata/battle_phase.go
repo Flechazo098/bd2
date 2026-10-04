@@ -89,6 +89,29 @@ func battleDeckPhasesFromDB(db *sql.DB, monsterID, deckID uint64) ([]BattlePhase
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if len(phases) != 0 && !selected {
+		// Phase rows name the normal decks. Hard story battles use the
+		// independently authored difficulty decks for every phase.
+		var data []byte
+		if err := db.QueryRow("SELECT ProtoBuf FROM BattleDeckTable WHERE id=?", deckID).Scan(&data); err != nil {
+			return nil, fmt.Errorf("gamedata: selected phase deck %d: %w", deckID, err)
+		}
+		difficulty, err := phaseScalar(data, 24)
+		if err != nil {
+			return nil, err
+		}
+		if difficulty == 0 {
+			return nil, fmt.Errorf("gamedata: phase group %d does not contain selected deck %d", group, deckID)
+		}
+		for i := range phases {
+			mapped, err := battleDeckForDifficultyFromDB(db, phases[i].DeckID, difficulty)
+			if err != nil {
+				return nil, err
+			}
+			phases[i].DeckID = mapped
+			selected = selected || mapped == deckID
+		}
+	}
 	if len(phases) == 0 || !selected {
 		return nil, fmt.Errorf("gamedata: phase group %d does not contain selected deck %d", group, deckID)
 	}
