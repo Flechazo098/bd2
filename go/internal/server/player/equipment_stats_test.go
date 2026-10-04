@@ -46,3 +46,42 @@ func TestEquipmentStatContributionsUseOnlyEquippedOwnerAndAllHealthOptions(t *te
 		t.Fatal("Find deadlocked calculating equipped health")
 	}
 }
+
+func TestEatFoodWithRankedEquipmentAndEmptyHealthOptionRankCurves(t *testing.T) {
+	food, inventory, characters := foodTestService(t, stateio.NewMemory())
+	equipment := &EquipmentInventory{owned: equipmentSnapshot{Equipment: []Equipment{{
+		InvenIndex: 1, UseChar: 77, Level: 1, Rank: []uint64{2, 2, 2},
+		MainOption: []EquipmentOption{{GroupID: 10, ID: 1}},
+	}}}}
+	if err := equipment.AttachStatDesign(&gamedata.EquipmentStatDesign{Options: map[[2]uint64]gamedata.EquipmentStatRule{
+		{10, 1}: {Default: 10, Growth: 2, Levels: []float64{0, 1}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachMaxHealth(func(c Character) (uint64, error) {
+		contributions, err := equipment.StatContributions(c)
+		if err != nil {
+			return 0, err
+		}
+		return uint64(gamedata.AggregateStats(gamedata.BaseStats{Health: 100}, contributions).Health), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.SetCurrentHealth(77, 20); err != nil {
+		t.Fatal(err)
+	}
+	stacks, err := inventory.GrantOnce("ranked-equipment-food", []gamedata.BattleReward{{Type: 5, ID: 105, Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := food.Handle("/EatFood", foodRequest(1, 77, 21, stacks[0])); err != nil {
+		t.Fatal(err)
+	}
+	// Base 100 + equipment 12 = 112 maximum; the 50% dish heals 56.
+	if hp, err := characters.CurrentHealth(77); err != nil || hp != 76 {
+		t.Fatalf("healed health=%d err=%v", hp, err)
+	}
+	if len(inventory.All()) != 0 {
+		t.Fatal("successful recovery did not consume dish")
+	}
+}

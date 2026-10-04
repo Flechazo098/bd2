@@ -118,7 +118,9 @@ func equipmentStatContribution(rule EquipmentStatRule, option EquipmentOption, s
 		}
 		var ranks float32
 		for i, rank := range option.Rank {
-			if rank == 0 {
+			// EquipmentInfo.GetEquipOptionByRank returns zero for an empty
+			// RankValueN curve, even when the equipment has a rank there.
+			if rank == 0 || len(rule.Ranks[i]) == 0 {
 				continue
 			}
 			if rank < 1 || rank > len(rule.Ranks[i]) {
