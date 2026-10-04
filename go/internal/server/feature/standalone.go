@@ -9,7 +9,6 @@ var standaloneDefaults = map[string]int{
 	"/BalanceVersionCheck": 186,
 	"/ChargeCostInfo":      123,
 	"/EquipInfo":           34,
-	"/AchievementInfo":     166,
 	"/HuntDispatchInfo":    189,
 	"/EventMissionInfo":    127,
 	"/MissionInfo":         118,
@@ -27,7 +26,6 @@ var standaloneDefaults = map[string]int{
 	"/PvpBattleHistory":        97,
 	"/PvpBattleOnceRewardInfo": 277,
 	"/TodayQuestInfo":          64,
-	"/WaypointInfo":            31,
 	"/FieldDeckInfo":           273,
 	"/HuntingGroundInfoList":   387,
 	"/FriendRecommend":         211,
@@ -42,7 +40,6 @@ var standaloneDefaults = map[string]int{
 var commandSuccess = map[string]int{
 	"/UpdateAgeGate":                0,
 	"/SaveFieldCharControlDeckType": 288,
-	"/WaypointSave":                 32,
 	"/ActiveMap":                    0,
 	"/FieldDeckSave":                274,
 	"/CostumeUse":                   41,

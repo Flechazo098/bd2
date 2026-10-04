@@ -494,7 +494,7 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 	}
 }
 
-func TestNativeProgress(t *testing.T) {
+func TestNativePositionAndQuestDomainRouting(t *testing.T) {
 	server, _ := NewServer(fakeLogin{})
 	reply := login(t, server)
 	cookie := "s=" + reply.Cookie
@@ -514,10 +514,10 @@ func TestNativeProgress(t *testing.T) {
 	quest = wire.AppendVarint(quest, 3, 21)
 	quest = wire.AppendBytes(quest, 4, []byte{121})
 	body, _ = cryptox.EncryptBase64Payload(quest, server.KeyForTest())
-	if _, err := server.DispatchRaw("/QuestUpdate", []byte(body), cookie); err != nil {
-		t.Fatal(err)
+	if _, err := server.DispatchRaw("/QuestUpdate", []byte(body), cookie); !errors.Is(err, transport.ErrNotImplemented) {
+		t.Fatalf("QuestUpdate without an owning world domain must fail closed: %v", err)
 	}
-	if stored, ok := server.ProgressForTest().Quest(12); !ok || stored.PackID != 21 {
-		t.Fatalf("quest not stored: %+v/%v", stored, ok)
+	if stored, ok := server.ProgressForTest().Quest(12); ok {
+		t.Fatalf("unvalidated quest bypassed the world domain: %+v", stored)
 	}
 }

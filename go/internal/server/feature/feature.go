@@ -31,7 +31,6 @@ var emptyResponses = map[string]int{
 	"/EquipPresetInfo":                 253,
 	"/EvilCastleDailyRewardState":      441,
 	"/EvilCastleTowerInfo":             200,
-	"/FieldObjectInfo":                 28,
 	"/FieldTrapInfo":                   171,
 	"/FireWorksInfo":                   554,
 	"/FishingCollectionInfo":           465,

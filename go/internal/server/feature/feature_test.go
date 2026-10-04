@@ -8,8 +8,8 @@ import (
 )
 
 func TestHandleAuditedEmptyResponses(t *testing.T) {
-	if got := len(EmptyPacketCodes()); got != 30 {
-		t.Fatalf("audited empty-response registry has %d paths, want 30", got)
+	if got := len(EmptyPacketCodes()); got != 29 {
+		t.Fatalf("audited empty-response registry has %d paths, want 29", got)
 	}
 	for path, wantCode := range EmptyPacketCodes() {
 		t.Run(path, func(t *testing.T) {
@@ -22,6 +22,11 @@ func TestHandleAuditedEmptyResponses(t *testing.T) {
 }
 
 func TestHandleRejectsUnknownAndInvalidRequests(t *testing.T) {
+	for _, path := range []string{"/FieldObjectInfo", "/WaypointInfo", "/WaypointSave", "/WaypointUse", "/AchievementInfo", "/AchievementUpdate"} {
+		if _, _, handled, err := Handle(path, wire.AppendVarint(nil, 1, 1)); handled || err != nil {
+			t.Fatalf("stateful route %s still has a stateless success fallback", path)
+		}
+	}
 	if code, proto, ok, err := Handle("/not-a-real-endpoint", wire.AppendVarint(nil, 1, 1)); code != 0 || proto != nil || ok || err != nil {
 		t.Fatalf("unknown route was not fail-closed: code=%d proto=%x ok=%t err=%v", code, proto, ok, err)
 	}

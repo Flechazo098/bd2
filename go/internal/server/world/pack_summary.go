@@ -19,16 +19,27 @@ func (s *Service) handlePackSummary(request []byte) (int, []byte, bool, error) {
 		if !s.packSummaryTargets[int(id)] {
 			continue
 		}
-		// These are collected reward counts, not quest completion or remaining
-		// rewards. Field object and research grants are not implemented. The
-		// client's monster category requires UseBattleSkip && Type != 3 &&
-		// RegenId > 0; the current story battles (pack21 monsters 1..4 and
-		// pack22 monsters 1..8) have both RegenId and UseBattleSkip zero and
-		// their persisted battle reward grants do not count in this category.
-		// Regenerating field reward battles are not implemented. The collected
-		// counts are therefore zero (protobuf defaults). The client loads the
-		// maxima from PackRewardSummaryData and calculates the remainder.
-		response = wire.AppendBytes(response, 1, wire.AppendVarint(nil, 1, id))
+		ids, err := s.openedFieldObjects(int(id))
+		if err != nil {
+			return 0, nil, true, err
+		}
+		var once, regen uint64
+		for _, objectID := range ids {
+			object := s.fieldObjects[int(id)].Objects[objectID]
+			if object.Type == 2 {
+				once++
+			} else if object.Type == 1 || object.Type == 3 {
+				regen++
+			}
+		}
+		row := wire.AppendVarint(nil, 1, id)
+		if once > 0 {
+			row = wire.AppendVarint(row, 2, once)
+		}
+		if regen > 0 {
+			row = wire.AppendVarint(row, 3, regen)
+		}
+		response = wire.AppendBytes(response, 1, row)
 	}
 	return 625, response, true, nil
 }

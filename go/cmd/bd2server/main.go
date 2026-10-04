@@ -514,6 +514,12 @@ func serve(args []string) (serveErr error) {
 	if err := worldService.AttachDecks(deckStateStore); err != nil {
 		return fmt.Errorf("attach world deck state: %w", err)
 	}
+	if err := worldService.AttachWaypointRuntime(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("attach waypoint runtime: %w", err)
+	}
+	if err := worldService.AttachFieldObjectRuntime(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("attach field object runtime: %w", err)
+	}
 	if err := ownedEquipment.AttachCharacters(worldService.CharacterService()); err != nil {
 		return fmt.Errorf("attach equipment character state: %w", err)
 	}
@@ -641,6 +647,14 @@ func serve(args []string) (serveErr error) {
 		_, buffs, err := pictorialService.Snapshot()
 		return buffs, err
 	})
+	achievementCounterDesign, err := gamedata.LoadAchievementCounterDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load achievement counters: %w", err)
+	}
+	achievementCounters, err := world.NewAchievementService(achievementCounterDesign, stateRepository, missionService)
+	if err != nil {
+		return fmt.Errorf("load achievement counter state: %w", err)
+	}
 	game, err := session.NewServerWithProgress(login, progressState,
 		battleService,
 		worldService,
@@ -660,6 +674,7 @@ func serve(args []string) (serveErr error) {
 		starter,
 		mailService,
 		gachaService,
+		achievementCounters,
 		missionService,
 		pictorialService,
 		schedule.Current(),
