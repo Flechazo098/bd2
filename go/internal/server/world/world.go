@@ -672,6 +672,16 @@ func (s *Service) packDBInfoRows() [][]byte {
 		}
 		packID = nextPackID
 	}
+	// A committed arena position is this account's prior-entry marker. Expose
+	// only that arena as purchased so the client restores its existing lobby
+	// without treating every independent arena as unlocked or rewarded.
+	if saved, found := s.state.Position(); found {
+		if pack, arena := s.fieldPacks[saved.PackID]; arena && pack.MapIDs[saved.Position.MapID] {
+			current := wire.AppendVarint(nil, 1, uint64(saved.PackID))
+			current = wire.AppendVarint(current, 8, 1)
+			rows = append(rows, current)
+		}
+	}
 	return rows
 }
 
