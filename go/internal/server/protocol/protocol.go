@@ -25,6 +25,12 @@ type Envelope struct {
 // Encode encrypts protobuf bytes using the active key and wraps them in the
 // JSON envelope expected by game API responses.
 func Encode(code int, proto, key []byte, now int64) ([]byte, error) {
+	return EncodeWithNotify(code, proto, key, now, nil)
+}
+
+// Notify is plain base64 protobuf in the JSON envelope. The client parses it
+// separately after decrypting the response data (NetworkManager.OnAfterResponse).
+func EncodeWithNotify(code int, proto, key []byte, now int64, notify []byte) ([]byte, error) {
 	data, err := cryptox.EncryptBase64Payload(proto, key)
 	if err != nil {
 		return nil, err
@@ -32,6 +38,7 @@ func Encode(code int, proto, key []byte, now int64) ([]byte, error) {
 	return json.Marshal(Envelope{
 		PacketCode: code, Length: base64.StdEncoding.EncodedLen(len(proto)),
 		Data: data, ServerNowTime: now,
+		Notify: base64.StdEncoding.EncodeToString(notify),
 	})
 }
 

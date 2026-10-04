@@ -33,15 +33,28 @@ var ErrInvalidRequest = errors.New("missions: invalid request")
 // code. A request cannot manufacture a mission completion merely by naming a
 // table row. AchievementClear is different: its request carries the exact
 // client-calculated completed achievement ids, as in the official protocol.
+type AchievementProgressSource interface {
+	AchievementValue(groupID uint64) (uint64, error)
+}
+
+func (s *Service) AttachAchievementProgress(source AchievementProgressSource) error {
+	if source == nil {
+		return errors.New("missions: nil achievement progress")
+	}
+	s.achievementProgress = source
+	return nil
+}
+
 type Service struct {
-	mu        sync.Mutex
-	storage   stateio.Store
-	design    *gamedata.MissionDesign
-	inventory *player.Inventory
-	wallet    *player.Wallet
-	mail      *mail.Service
-	state     snapshot
-	now       func() time.Time
+	achievementProgress AchievementProgressSource
+	mu                  sync.Mutex
+	storage             stateio.Store
+	design              *gamedata.MissionDesign
+	inventory           *player.Inventory
+	wallet              *player.Wallet
+	mail                *mail.Service
+	state               snapshot
+	now                 func() time.Time
 }
 
 func (s *Service) AttachWallet(wallet *player.Wallet) error {
@@ -593,8 +606,60 @@ func (s *Service) clearAchievements(request []byte) ([]byte, error) {
 	if err != nil || len(claims) == 0 {
 		return nil, fmt.Errorf("%w: achievement clear info", ErrInvalidRequest)
 	}
+	requested := map[gamedata.AchievementKey]bool{}
+	for _, claim := range claims {
+		for _, id := range claim.IDs {
+			key, _, ok := s.achievementDesign(contents, claim.GroupID, id)
+			if !ok {
+				return nil, fmt.Errorf("%w: unknown achievement", ErrInvalidRequest)
+			}
+			requested[key] = true
+		}
+	}
+	for key := range requested {
+		if contains(s.state.Claimed, "achievement:"+achievementName(key)) {
+			continue
+		}
+		for earlier := range s.design.Achievements {
+			if earlier.ContentsGroup != key.ContentsGroup || earlier.GroupID != key.GroupID || earlier.ID >= key.ID {
+				continue
+			}
+			if !requested[earlier] && !contains(s.state.Claimed, "achievement:"+achievementName(earlier)) {
+				return nil, fmt.Errorf("missions: achievement tier %v requires earlier tier %v to be claimed", key, earlier)
+			}
+		}
+	}
+	// Validate the whole batch before granting any reward.
+	for _, claim := range claims {
+		for _, id := range claim.IDs {
+			key, d, ok := s.achievementDesign(contents, claim.GroupID, id)
+			if !ok {
+				return nil, fmt.Errorf("%w: unknown achievement", ErrInvalidRequest)
+			}
+			if contains(s.state.Claimed, "achievement:"+achievementName(key)) {
+				continue
+			}
+			if d.Target > 0 {
+				if s.achievementProgress == nil {
+					return nil, errors.New("missions: achievement progress unavailable")
+				}
+				group := d.CounterGroup
+				if group == 0 {
+					group = key.GroupID
+				}
+				value, err := s.achievementProgress.AchievementValue(group)
+				if err != nil {
+					return nil, err
+				}
+				if float64(value) < d.Target {
+					return nil, fmt.Errorf("missions: achievement %v requires %g progress, got %d", key, d.Target, value)
+				}
+			}
+		}
+	}
 	var allItems []player.Item
 	var addExp uint64
+	var currencyRewards []gamedata.Reward
 	next := cloneSnapshot(s.state)
 	for _, claim := range claims {
 		for _, id := range claim.IDs {
@@ -606,11 +671,19 @@ func (s *Service) clearAchievements(request []byte) ([]byte, error) {
 			if contains(next.Claimed, identity) {
 				continue
 			}
-			items, err := s.inventory.GrantOnce(identity, battleRewards(design.Rewards))
+			items, err := s.grantRewards(identity, design.Rewards)
 			if err != nil {
 				return nil, err
 			}
+			if ^uint64(0)-addExp < design.AddExp {
+				return nil, errors.New("missions: achievement exp overflow")
+			}
 			addExp += design.AddExp
+			for _, reward := range design.Rewards {
+				if reward.Type == 2 || reward.Type == 3 || reward.Type == 4 || reward.Type == 12 || reward.Type == 20 {
+					currencyRewards = append(currencyRewards, reward)
+				}
+			}
 			allItems = append(allItems, items...)
 			next.Claimed = append(next.Claimed, identity)
 		}
@@ -622,7 +695,13 @@ func (s *Service) clearAchievements(request []byte) ([]byte, error) {
 		return nil, err
 	}
 	response := wire.AppendVarint(nil, 1, addExp)
-	return wire.AppendBytes(response, 2, rewardBundle(allItems)), nil
+	bundle := rewardBundle(allItems)
+	for _, reward := range currencyRewards {
+		item := wire.AppendVarint(nil, 3, reward.Type)
+		item = wire.AppendVarint(item, 4, reward.Count)
+		bundle = wire.AppendBytes(bundle, 1, item)
+	}
+	return wire.AppendBytes(response, 2, bundle), nil
 }
 
 // The official all-clear request omits ContentsGroup (protobuf value zero).
@@ -797,7 +876,10 @@ func (s *Service) grantRewards(identity string, rewards []gamedata.Reward) ([]pl
 	}
 	var stack []gamedata.BattleReward
 	for _, reward := range rewards {
-		if reward.Type == 3 || reward.Type == 4 {
+		if reward.Type == 2 || reward.Type == 3 || reward.Type == 4 || reward.Type == 12 || reward.Type == 20 {
+			if s.wallet == nil {
+				return nil, errors.New("missions: currency reward wallet unavailable")
+			}
 			continue
 		}
 		if reward.ID == 0 || reward.Count == 0 {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -39,6 +40,19 @@ type LoginSeed struct {
 	firstGacha     FirstGachaProvider
 	friendshipAP   FriendshipAPProvider
 	lastPlayedPack LastPlayedPackProvider
+	achievementExp AchievementExperienceProvider
+}
+
+type AchievementExperienceProvider interface {
+	AchievementExperience() (uint64, error)
+}
+
+func (s *LoginSeed) AttachAchievementExperience(provider AchievementExperienceProvider) error {
+	if provider == nil {
+		return errors.New("account: missing achievement experience provider")
+	}
+	s.achievementExp = provider
+	return nil
 }
 
 // LastPlayedPackProvider reads the persisted return destination. A zero value
@@ -354,6 +368,19 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.achievementExp != nil {
+		experience, err := s.achievementExp.AchievementExperience()
+		if err != nil {
+			return nil, fmt.Errorf("account: achievement experience: %w", err)
+		}
+		if experience > math.MaxInt32 {
+			return nil, errors.New("account: achievement experience exceeds protocol range")
+		}
+		user, _, err = wire.ReplaceVarint(user, 12, experience)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.lastPlayedPack != nil {
 		packID, err := s.lastPlayedPack.LastPlayedPackID()
 		if err != nil {
