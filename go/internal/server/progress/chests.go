@@ -8,20 +8,20 @@ import (
 	"strings"
 )
 
-func fieldRewardKey(pack, difficulty, id int) string {
-	return fmt.Sprintf("%d:%d:%d", pack, difficulty, id)
+func fieldRewardKey(pack, id int) string {
+	return fmt.Sprintf("%d:%d", pack, id)
 }
 
 // FieldRewardOpened reads persisted entries on every call; request rollback
 // therefore does not leave an opened-object cache behind.
-func (s *Store) FieldRewardOpened(pack, difficulty, id int, period string) (bool, error) {
+func (s *Store) FieldRewardOpened(pack, id int, period string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	store, err := s.fieldRewardEntries()
 	if err != nil {
 		return false, err
 	}
-	raw, found, err := store.LoadEntry("progress", "field_rewards", fieldRewardKey(pack, difficulty, id))
+	raw, found, err := store.LoadEntry("progress", "field_rewards", fieldRewardKey(pack, id))
 	return found && string(raw) == period, err
 }
 func (s *Store) fieldRewardEntries() (stateio.EntryStore, error) {
@@ -34,19 +34,19 @@ func (s *Store) fieldRewardEntries() (stateio.EntryStore, error) {
 	}
 	return store, nil
 }
-func (s *Store) MarkFieldRewardOpened(pack, difficulty, id int, period string) error {
+func (s *Store) MarkFieldRewardOpened(pack, id int, period string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if pack <= 0 || difficulty < 0 || difficulty > 4 || id <= 0 {
+	if pack <= 0 || id <= 0 {
 		return fmt.Errorf("progress: invalid field reward identity")
 	}
 	store, err := s.fieldRewardEntries()
 	if err != nil {
 		return err
 	}
-	return store.PutEntry("progress", "field_rewards", fieldRewardKey(pack, difficulty, id), []byte(period))
+	return store.PutEntry("progress", "field_rewards", fieldRewardKey(pack, id), []byte(period))
 }
-func (s *Store) OpenedFieldRewards(pack, difficulty int) ([]int, error) {
+func (s *Store) OpenedFieldRewards(pack int) ([]int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	store, err := s.fieldRewardEntries()
@@ -57,7 +57,7 @@ func (s *Store) OpenedFieldRewards(pack, difficulty int) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	prefix := fmt.Sprintf("%d:%d:", pack, difficulty)
+	prefix := fmt.Sprintf("%d:", pack)
 	var ids []int
 	for key, raw := range entries {
 		if len(raw) == 0 {

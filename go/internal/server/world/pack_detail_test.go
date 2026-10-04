@@ -16,7 +16,7 @@ func TestCollectedFieldObjectsAppearInDetailAndSummary(t *testing.T) {
 		1002: {ID: 1002, GroupID: 102, Type: 1, ResetType: 1},
 	}}})
 	for _, id := range []int{1001, 1002} {
-		if err := s.state.MarkFieldRewardOpened(21, 0, id, "once"); err != nil {
+		if err := s.state.MarkFieldRewardOpened(21, id, "once"); err != nil {
 			t.Fatal(err)
 		}
 	}
