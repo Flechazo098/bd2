@@ -59,7 +59,7 @@ func TestOfficialPickupRateDefinition(t *testing.T) {
 }
 
 func TestTenPullGuaranteesGradeFourWhenAllNormalRollsAreGradeThree(t *testing.T) {
-	gacha := RegularGacha{Count: 10, Pool: []WeightedCostume{
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, Count: 10, Pool: []WeightedCostume{
 		{Weight: 150, ID: 5001}, {Weight: 150, ID: 5002}, {Weight: 1400, ID: 4001}, {Weight: 8300, ID: 3001},
 	}}
 	roll, err := gacha.rollWith(func(limit uint64) (uint64, error) {
@@ -82,7 +82,7 @@ func TestTenPullGuaranteesGradeFourWhenAllNormalRollsAreGradeThree(t *testing.T)
 }
 
 func TestFixedPickupTenPullAlwaysStartsWithPickupCostume(t *testing.T) {
-	gacha := RegularGacha{Count: 10, FixedCostumeID: 21201, Pool: []WeightedCostume{
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, Count: 10, FixedCostumeID: 21201, Pool: []WeightedCostume{
 		{Weight: 300, ID: 5002}, {Weight: 1400, ID: 4001}, {Weight: 8300, ID: 3001},
 	}}
 	roll, err := gacha.rollWith(func(limit uint64) (uint64, error) { return limit - 1, nil })

@@ -18,24 +18,24 @@ import (
 )
 
 const (
-	InfiniteGachaID        = 9100033
-	InfiniteProductGroupID = 1100001
-	InfiniteProductID      = 9100033
-	officialRateScale      = 10000
-	officialFiveStarRate   = 300
-	officialFourStarRate   = 1400
+	officialRateScale    = 10000
+	officialFiveStarRate = 300
+	officialFourStarRate = 1400
 )
 
 // InfiniteGachaDesign is the non-account portion of the paid
 // "infinite reroll" product. The local server deliberately makes final
 // confirmation free, but still reads the official result pool from GameData.
 type InfiniteGachaDesign struct {
-	Count        int
-	CostumeIDs   []uint64 // five-star compatibility view
-	FiveStarIDs  []uint64
-	FourStarIDs  []uint64
-	ThreeStarIDs []uint64
-	characters   map[uint64]CharacterDesign
+	GachaID, ProductGroupID, ProductID, SaleGroup uint64
+	rewardProgram                                 *CostumeRewardGroup
+	GroupID                                       uint64
+	Count                                         int
+	CostumeIDs                                    []uint64 // five-star compatibility view
+	FiveStarIDs                                   []uint64
+	FourStarIDs                                   []uint64
+	ThreeStarIDs                                  []uint64
+	characters                                    map[uint64]CharacterDesign
 }
 
 type CharacterDesign struct {
@@ -54,6 +54,7 @@ type WeightedCostume struct {
 }
 
 type RegularGacha struct {
+	Grades                  map[uint64]uint64
 	ID                      uint64
 	Count                   int
 	DailyPayGachaCount      uint64
@@ -75,6 +76,7 @@ type GachaGroupDesign struct {
 	CashProductGroupID         uint64
 	CashProductID              uint64
 	CashSalesGroup             uint64
+	CashRewards                []BattleReward
 	FixedID                    uint64
 	PointCount                 uint64
 	PickUpExchangeCost         uint64
@@ -89,6 +91,10 @@ type GachaGroupDesign struct {
 	IsSelectedFromPity         bool
 }
 
+// CostumeRewardGroup preserves the audited costume reward program.
+// DropType 1 is the current fixed combination mode with ratio=1 per child;
+// this is distinct from field-object independent percentage rolls. Unsupported
+// combination ratios fail loading rather than silently discarding probability.
 // CostumeRewardGroup preserves RewardGroupTable's execution structure.  A
 // zero DropType repeats one weighted choice DropCount times; DropType 1 emits
 // every entry once.  Keeping that distinction is required for selection and
@@ -366,24 +372,8 @@ func (c *RegularGachaCatalog) CostumeGrade(costumeID uint64) (uint64, bool) {
 }
 
 func (c *RegularGachaCatalog) recordPoolGrades(gacha RegularGacha) {
-	if gacha.FixedCostumeID != 0 {
-		c.grades[gacha.FixedCostumeID] = 5
-	}
-	for branch, item := range gacha.Pool {
-		grade := uint64(0)
-		switch len(gacha.Pool) {
-		case 4:
-			if branch < 2 {
-				grade = 5
-			} else {
-				grade = uint64(6 - branch) // branch 2/3 => grade 4/3
-			}
-		case 3:
-			grade = uint64(5 - branch)
-		}
-		if grade != 0 {
-			recordCostumeGrade(c.grades, item, grade)
-		}
+	for id, grade := range gacha.Grades {
+		c.grades[id] = grade
 	}
 }
 
@@ -580,12 +570,16 @@ func (g RegularGacha) RollWithCostumeFixedSelection(previous4, previous5 uint64,
 
 func (g RegularGacha) rollWithCostumeFixed(previous4, previous5 uint64, fixed GachaFixedDesign, normalSelectedFive, pitySelectedFive []uint64, draw func(uint64) (uint64, error)) ([]uint64, GachaFixedRoll, error) {
 	state := GachaFixedRoll{CostumeGrade4Count: previous4, CostumeGrade5Count: previous5, CostumeGrade4Sort: -1, CostumeGrade5Sort: -1}
-	if g.Count <= 0 || (len(g.Pool) != 3 && len(g.Pool) != 4) || fixed.ID == 0 || (fixed.CostumeGrade4Count == 0 && fixed.CostumeGrade5Count == 0) || draw == nil {
+	if g.Count <= 0 || len(g.Pool) == 0 || fixed.ID == 0 || (fixed.CostumeGrade4Count == 0 && fixed.CostumeGrade5Count == 0) || draw == nil {
 		return nil, state, errors.New("gamedata: invalid costume fixed gacha")
 	}
-	fiveBranches := 1
-	if len(g.Pool) == 4 {
-		fiveBranches = 2
+	fivePool, err := g.gradePool(5)
+	if err != nil {
+		return nil, state, err
+	}
+	fourPool, err := g.gradePool(4)
+	if err != nil {
+		return nil, state, err
 	}
 	result := make([]uint64, g.Count)
 	for i := range result {
@@ -607,18 +601,21 @@ func (g RegularGacha) rollWithCostumeFixed(previous4, previous5 uint64, fixed Ga
 					state.SelectionSorts = append(state.SelectionSorts, i)
 				}
 			} else {
-				id, err = rollCostumeChoiceWith(g.Pool[:fiveBranches], draw)
+				id, err = rollCostumeChoiceWith(fivePool, draw)
 			}
 			grade = 5
 			state.CostumeGrade5Sort = i
 		case force4:
-			id, err = rollCostumeChoiceWith([]WeightedCostume{g.Pool[fiveBranches]}, draw)
+			id, err = rollCostumeChoiceWith(fourPool, draw)
 			grade = 4
 			state.CostumeGrade4Sort = i
 		default:
-			var branch int
-			branch, id, err = rollCostumeBranchWith(g.Pool, draw)
-			if branch < fiveBranches {
+			_, id, err = rollCostumeBranchWith(g.Pool, draw)
+			grade = g.Grades[id]
+			if grade < 3 || grade > 5 {
+				return nil, state, errors.New("gamedata: missing costume grade")
+			}
+			if grade == 5 {
 				grade = 5
 				if err == nil && len(normalSelectedFive) != 0 {
 					var selected uint64
@@ -631,25 +628,24 @@ func (g RegularGacha) rollWithCostumeFixed(previous4, previous5 uint64, fixed Ga
 						state.SelectionSorts = append(state.SelectionSorts, i)
 					}
 				}
-			} else {
-				grade = uint64(4 + fiveBranches - branch)
 			}
 		}
 		if err != nil {
 			return nil, state, err
 		}
 		result[i] = id
-		switch grade {
-		case 5:
-			state.CostumeGrade4Count = 0
-			state.CostumeGrade5Count = 0
-		case 4:
-			state.CostumeGrade4Count = 0
-			state.CostumeGrade5Count++
-		default:
-			state.CostumeGrade4Count++
-			state.CostumeGrade5Count++
+		if state.CostumeGrade4Count == math.MaxUint64 || state.CostumeGrade5Count == math.MaxUint64 {
+			return nil, state, errors.New("gamedata: costume fixed counter overflow")
 		}
+		state.CostumeGrade4Count++
+		state.CostumeGrade5Count++
+		if force4 || force5 || fixed.ResetOnMatchingGrade && grade >= 4 {
+			state.CostumeGrade4Count = 0
+		}
+		if force5 || fixed.ResetOnMatchingGrade && grade == 5 {
+			state.CostumeGrade5Count = 0
+		}
+
 	}
 	return result, state, nil
 }
@@ -666,21 +662,24 @@ func (g RegularGacha) rollWith(draw func(uint64) (uint64, error)) ([]uint64, err
 	}
 	hasFourOrFive := g.FixedCostumeID != 0
 	for i := start; i < len(result); i++ {
-		branch, id, err := rollCostumeBranchWith(g.Pool, draw)
+		_, id, err := rollCostumeBranchWith(g.Pool, draw)
 		if err != nil {
 			return nil, err
 		}
-		if branch < len(g.Pool)-1 {
+		if g.Grades[id] >= 4 {
 			hasFourOrFive = true
 		}
 		result[i] = id
 	}
-	// Official costume ten-pulls guarantee grade four or above. The ordinary
-	// four-branch pools are ordered as pickup-5, other-5, grade-4, grade-3.
-	// If all ten normal rolls landed in grade 3, replace the final slot with
-	// an equal-weight draw from the real grade-4 branch.
-	if g.FixedCostumeID == 0 && g.Count == 10 && len(g.Pool) == 4 && !hasFourOrFive {
-		id, err := rollCostumeChoiceWith([]WeightedCostume{g.Pool[2]}, draw)
+	// Ordinary costume ten-pulls guarantee grade four or above. If all
+	// natural results are grade three, condition the actual weighted pool on
+	// grade four for the last slot, irrespective of branch order or count.
+	if g.FixedCostumeID == 0 && g.Count == 10 && len(g.Grades) != 0 && !hasFourOrFive {
+		fourPool, err := g.gradePool(4)
+		if err != nil || len(fourPool) == 0 {
+			return nil, errors.New("gamedata: grade four guarantee pool unavailable")
+		}
+		id, err := rollCostumeChoiceWith(fourPool, draw)
 		if err != nil {
 			return nil, err
 		}
@@ -820,6 +819,9 @@ func rollCostumeBranch(pool []WeightedCostume) (int, uint64, error) {
 }
 
 func rollCostumeBranchWith(pool []WeightedCostume, draw func(uint64) (uint64, error)) (int, uint64, error) {
+	if len(pool) == 0 || draw == nil {
+		return 0, 0, errors.New("gamedata: empty costume choice")
+	}
 	var total uint64
 	for _, item := range pool {
 		if item.Weight == 0 || math.MaxUint64-total < item.Weight {
@@ -855,6 +857,9 @@ func rollCostumeChoice(pool []WeightedCostume) (uint64, error) {
 }
 
 func rollCostumeChoiceWith(pool []WeightedCostume, draw func(uint64) (uint64, error)) (uint64, error) {
+	if len(pool) == 0 || draw == nil {
+		return 0, errors.New("gamedata: empty costume choice")
+	}
 	var total uint64
 	for _, item := range pool {
 		if item.Weight == 0 || math.MaxUint64-total < item.Weight {
@@ -882,14 +887,6 @@ func rollCostumeChoiceWith(pool []WeightedCostume, draw func(uint64) (uint64, er
 		value -= item.Weight
 	}
 	return 0, errors.New("gamedata: regular gacha selection failed")
-}
-
-// LoadRegularCostumeGacha retains the historical catalog used by existing
-// callers. New schedule code should pass the captured active group IDs to
-// LoadRegularCostumeGachaGroups; GameData defines a group but does not say that
-// it is currently open.
-func LoadRegularCostumeGacha(root, version string) (*RegularGachaCatalog, error) {
-	return LoadRegularCostumeGachaGroups(root, version, []uint64{10001, 135, 205, 121}, []uint64{29})
 }
 
 func LoadActiveGacha(root, version string, costumeGroupIDs, equipmentGroupIDs, stepUpGroupIDs []uint64) (*RegularGachaCatalog, *EquipmentGachaCatalog, error) {
@@ -1029,10 +1026,6 @@ func ClassifyActiveGachaGroups(root, version string, groupIDs []uint64) (costume
 }
 
 func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupIDs []uint64) (*RegularGachaCatalog, error) {
-	infinite, err := LoadInfiniteGacha(root, version)
-	if err != nil {
-		return nil, err
-	}
 	plain, err := ReadQuestDatabase(root, version)
 	if err != nil {
 		return nil, err
@@ -1068,9 +1061,6 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 		if err := catalog.SetGachaEventAddFreeCount(bonusCounts[0]); err != nil {
 			return nil, err
 		}
-	}
-	for id, character := range infinite.characters {
-		catalog.characters[id] = character
 	}
 	gachaIDs := make(map[uint64]struct{})
 	for _, groupID := range groupIDs {
@@ -1169,16 +1159,6 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 				return nil, err
 			}
 		}
-		if len(pool) == 4 {
-			err = validateOfficialPickupRates(pool)
-		} else if len(pool) == 3 {
-			err = validateRegularCostumeRates(pool)
-		} else if reward.DropType == 0 {
-			err = fmt.Errorf("expected three or four rarity branches, got %d", len(pool))
-		}
-		if err != nil {
-			return nil, fmt.Errorf("gamedata: regular gacha %d probability: %w", id, err)
-		}
 		var program *CostumeRewardGroup
 		if reward.DropType != 0 {
 			program = reward
@@ -1202,7 +1182,7 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 		if (dailyPayCount == 0) != (dailyPayPrice == 0) {
 			return nil, fmt.Errorf("gamedata: regular gacha %d has incomplete daily paid design", id)
 		}
-		catalog.Gachas[id] = RegularGacha{ID: id, Count: int(counts[0]), DailyPayGachaCount: dailyPayCount, DailyPayGachaPriceCount: dailyPayPrice, FreeCountDay: freeCount, PriceType: priceTypes[0], PriceID: priceID, Price: prices[0], Pool: pool, RewardGroup: program, FixedCostumeID: fixedCostumeID, TicketIDs: ticketIDs}
+		catalog.Gachas[id] = RegularGacha{Grades: catalog.grades, ID: id, Count: int(counts[0]), DailyPayGachaCount: dailyPayCount, DailyPayGachaPriceCount: dailyPayPrice, FreeCountDay: freeCount, PriceType: priceTypes[0], PriceID: priceID, Price: prices[0], Pool: pool, RewardGroup: program, FixedCostumeID: fixedCostumeID, TicketIDs: ticketIDs}
 		catalog.recordPoolGrades(catalog.Gachas[id])
 	}
 	if err := catalog.loadGroupsAndFixed(db); err != nil {
@@ -1276,11 +1256,11 @@ func loadCostumeRewardGroup(db *sql.DB, id uint64, visiting map[uint64]bool) (*C
 		}
 		return 0, false
 	}
+	dropType, _ := one(2)
 	dropCount, ok := one(1)
-	if !ok || dropCount == 0 {
+	if dropType > 1 || dropType == 0 && (!ok || dropCount == 0) {
 		return nil, errors.New("reward group has invalid drop count")
 	}
-	dropType, _ := one(2)
 	ids, _ := packedInts(raw, 5)
 	types, _ := packedInts(raw, 6)
 	counts, _ := packedInts(raw, 4)
@@ -1291,7 +1271,7 @@ func loadCostumeRewardGroup(db *sql.DB, id uint64, visiting map[uint64]bool) (*C
 	group := &CostumeRewardGroup{ID: id, DropCount: dropCount, DropType: dropType, Entries: make([]CostumeRewardEntry, len(ids))}
 	for i := range ids {
 		entry := CostumeRewardEntry{ItemType: types[i], ItemID: ids[i], Count: counts[i], Weight: weights[i]}
-		if entry.Count == 0 || entry.Weight == 0 {
+		if entry.Count == 0 || entry.Weight == 0 || dropType == 1 && entry.Weight != 1 {
 			return nil, errors.New("reward group has zero count or weight")
 		}
 		switch entry.ItemType {
@@ -1373,8 +1353,12 @@ func collectCostumeRewardIDs(group *CostumeRewardGroup, out *[]uint64) {
 }
 
 func loadCostumeGrade(db *sql.DB, costumeID uint64) (uint64, error) {
+	characterID, err := loadCostumeBaseCharacterID(db, costumeID)
+	if err != nil {
+		return 0, err
+	}
 	var raw []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM CharTable WHERE id=?", costumeID/10).Scan(&raw); err != nil {
+	if err := db.QueryRow("SELECT ProtoBuf FROM CharTable WHERE id=?", characterID).Scan(&raw); err != nil {
 		return 0, err
 	}
 	grades, _ := packedInts(raw, 9)
@@ -1382,19 +1366,6 @@ func loadCostumeGrade(db *sql.DB, costumeID uint64) (uint64, error) {
 		return 0, fmt.Errorf("gamedata: costume %d has invalid character grade %v", costumeID, grades)
 	}
 	return grades[0], nil
-}
-
-func validateRegularCostumeRates(pool []WeightedCostume) error {
-	if len(pool) != 3 {
-		return fmt.Errorf("expected three rarity branches, got %d", len(pool))
-	}
-	want := [...]uint64{officialFiveStarRate, officialFourStarRate, officialRateScale - officialFiveStarRate - officialFourStarRate}
-	for i, item := range pool {
-		if item.Weight != want[i] {
-			return fmt.Errorf("branch %d weight=%d want=%d", i, item.Weight, want[i])
-		}
-	}
-	return nil
 }
 
 func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
@@ -1426,6 +1397,13 @@ func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
 		_, tenLoaded := c.Gachas[group.TenTimeGachaID]
 		if !oneLoaded && !tenLoaded {
 			continue
+		}
+		if group.CashProductGroupID != 0 && group.CashProductID != 0 {
+			var err error
+			group.CashRewards, err = loadGachaCashRewards(db, group)
+			if err != nil {
+				return err
+			}
 		}
 		c.groups[id] = group
 		if oneLoaded {
@@ -1514,35 +1492,6 @@ func (c *RegularGachaCatalog) loadStepFixed(db *sql.DB) error {
 	return nil
 }
 
-func validateFixedPickupRemainderRates(pool []WeightedCostume) error {
-	if len(pool) != 3 {
-		return fmt.Errorf("expected three rarity branches, got %d", len(pool))
-	}
-	want := [...]uint64{officialFiveStarRate, officialFourStarRate, officialRateScale - officialFiveStarRate - officialFourStarRate}
-	for i, item := range pool {
-		if item.Weight != want[i] {
-			return fmt.Errorf("branch %d weight=%d want=%d", i, item.Weight, want[i])
-		}
-	}
-	return nil
-}
-
-// validateOfficialPickupRates prevents a GameData/schema regression from
-// silently changing the published costume pickup rates. The two five-star
-// branches are pickup 1.5% plus the ordinary five-star pool 1.5%.
-func validateOfficialPickupRates(pool []WeightedCostume) error {
-	if len(pool) != 4 {
-		return fmt.Errorf("expected four rarity branches, got %d", len(pool))
-	}
-	want := [...]uint64{150, 150, officialFourStarRate, officialRateScale - officialFiveStarRate - officialFourStarRate}
-	for i, item := range pool {
-		if item.Weight != want[i] {
-			return fmt.Errorf("branch %d weight=%d want=%d", i, item.Weight, want[i])
-		}
-	}
-	return nil
-}
-
 func collectCostumeIDs(pool []WeightedCostume, result *[]uint64) {
 	for _, item := range pool {
 		if item.ID != 0 {
@@ -1554,7 +1503,10 @@ func collectCostumeIDs(pool []WeightedCostume, result *[]uint64) {
 }
 
 func loadGachaCharacterDesign(db *sql.DB, costumeID uint64) (CharacterDesign, error) {
-	characterID := costumeID / 10
+	characterID, err := loadCostumeBaseCharacterID(db, costumeID)
+	if err != nil {
+		return CharacterDesign{}, err
+	}
 	var character []byte
 	if err := db.QueryRow("SELECT ProtoBuf FROM CharTable WHERE id=?", characterID).Scan(&character); err != nil {
 		return CharacterDesign{}, fmt.Errorf("gamedata: costume %d character %d: %w", costumeID, characterID, err)
@@ -1680,8 +1632,8 @@ func NewInfiniteGachaDesign(count int, costumeIDs []uint64, characters map[uint6
 	return NewInfiniteGachaDesignWithRates(count, costumeIDs, costumeIDs, costumeIDs, characters)
 }
 
-// NewInfiniteGachaDesignWithRates builds the local reroll design. Its first
-// Count-1 slots use the official costume base rates (3%/14%/83%), while the
+// NewInfiniteGachaDesignWithRates builds a synthetic reroll policy for tests.
+// Its first Count-1 slots use an explicit 3%/14%/83% synthetic policy, while the
 // last slot is a five-star guarantee chosen uniformly from the real eligible
 // five-star pool.
 func NewInfiniteGachaDesignWithRates(count int, fiveStarIDs, fourStarIDs, threeStarIDs []uint64, characters map[uint64]CharacterDesign) (*InfiniteGachaDesign, error) {
@@ -1705,7 +1657,7 @@ func NewInfiniteGachaDesignWithRates(count int, fiveStarIDs, fourStarIDs, threeS
 	return design, nil
 }
 
-func LoadInfiniteGacha(root, version string) (*InfiniteGachaDesign, error) {
+func LoadInfiniteGachaForSchedules(root, version string, groups []uint64) (*InfiniteGachaDesign, error) {
 	plain, err := ReadQuestDatabase(root, version)
 	if err != nil {
 		return nil, err
@@ -1725,30 +1677,41 @@ func LoadInfiniteGacha(root, version string) (*InfiniteGachaDesign, error) {
 	}
 	defer db.Close()
 
+	infiniteGroupID, infiniteGachaID, err := loadInfiniteGachaIdentity(db, groups)
+	if err != nil {
+		return nil, err
+	}
 	var gacha []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM GachaTable WHERE id=?", InfiniteGachaID).Scan(&gacha); err != nil {
+	if err := db.QueryRow("SELECT ProtoBuf FROM GachaTable WHERE id=?", infiniteGachaID).Scan(&gacha); err != nil {
 		return nil, fmt.Errorf("gamedata: infinite gacha: %w", err)
 	}
 	count, _ := packedInts(gacha, 5)
 	reward, _ := packedInts(gacha, 7)
 	priceCount, _ := packedInts(gacha, 10)
-	if len(count) != 1 || count[0] != 10 || len(reward) != 1 || reward[0] != InfiniteGachaID || len(priceCount) != 0 {
+	if len(count) != 1 || count[0] == 0 || len(reward) != 1 || reward[0] == 0 || len(priceCount) != 0 {
 		return nil, fmt.Errorf("gamedata: unexpected infinite gacha definition count=%v reward=%v price=%v", count, reward, priceCount)
 	}
-	var cash []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM CashProductTable WHERE id=? AND GroupId=?", InfiniteProductID, InfiniteProductGroupID).Scan(&cash); err != nil {
-		return nil, fmt.Errorf("gamedata: infinite product: %w", err)
+	productGroupID, productID, saleGroup, err := loadInfiniteCashIdentity(db, reward[0])
+	if err != nil {
+		return nil, err
 	}
-	productID, _ := packedInts(cash, 6)
-	groupID, _ := packedInts(cash, 5)
-	if len(productID) != 1 || productID[0] != InfiniteProductID || len(groupID) != 1 || groupID[0] != InfiniteProductGroupID {
-		return nil, fmt.Errorf("gamedata: unexpected infinite product identity")
+	program, err := loadCostumeRewardGroup(db, reward[0], map[uint64]bool{})
+	if err != nil {
+		return nil, err
+	}
+	programCount, err := costumeRewardCount(program)
+	if err != nil || programCount != count[0] {
+		return nil, fmt.Errorf("gamedata: infinite reward count does not match gacha")
 	}
 
 	// GachaTable.FixedGachaRewardId=9100035 is the official costume pool used
 	// by the observed infinite previews. RewardGroup item type 11 is Costume.
+	fixedPool, err := optionalScalar(gacha, 3)
+	if err != nil || fixedPool == 0 {
+		return nil, errors.New("gamedata: infinite fixed reward missing")
+	}
 	var pool []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=9100035").Scan(&pool); err != nil {
+	if err := db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", fixedPool).Scan(&pool); err != nil {
 		return nil, fmt.Errorf("gamedata: infinite costume pool: %w", err)
 	}
 	ids, err := packedInts(pool, 5)
@@ -1793,7 +1756,10 @@ func LoadInfiniteGacha(root, version string) (*InfiniteGachaDesign, error) {
 		if types[i] != 11 || costumeID == 0 {
 			return nil, fmt.Errorf("gamedata: infinite pool entry %d has type %d", costumeID, types[i])
 		}
-		characterID := costumeID / 10
+		characterID, err := loadCostumeBaseCharacterID(db, costumeID)
+		if err != nil {
+			return nil, err
+		}
 		var character []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM CharTable WHERE id=?", characterID).Scan(&character); err != nil {
 			return nil, fmt.Errorf("gamedata: costume %d character %d: %w", costumeID, characterID, err)
@@ -1833,20 +1799,30 @@ func LoadInfiniteGacha(root, version string) (*InfiniteGachaDesign, error) {
 		costume.HP = uint64(hp)
 		characters[costumeID] = costume
 	}
-	fourStarPool, err := loadCostumeRewardPool(db, 70008)
-	if err != nil {
-		return nil, fmt.Errorf("gamedata: infinite four-star pool: %w", err)
-	}
-	threeStarPool, err := loadCostumeRewardPool(db, 70004)
-	if err != nil {
-		return nil, fmt.Errorf("gamedata: infinite three-star pool: %w", err)
-	}
+	var allIDs []uint64
+	collectCostumeRewardIDs(program, &allIDs)
 	var fourStarIDs, threeStarIDs []uint64
-	collectCostumeIDs(fourStarPool, &fourStarIDs)
-	collectCostumeIDs(threeStarPool, &threeStarIDs)
-	if len(ids) != 129 || len(fourStarIDs) != 13 || len(threeStarIDs) != 16 {
-		return nil, fmt.Errorf("gamedata: unexpected infinite rarity pools five=%d four=%d three=%d", len(ids), len(fourStarIDs), len(threeStarIDs))
+	seen := map[uint64]bool{}
+	for _, costumeID := range allIDs {
+		if seen[costumeID] {
+			continue
+		}
+		seen[costumeID] = true
+		grade, err := loadCostumeGrade(db, costumeID)
+		if err != nil {
+			return nil, err
+		}
+		switch grade {
+		case 4:
+			fourStarIDs = append(fourStarIDs, costumeID)
+		case 3:
+			threeStarIDs = append(threeStarIDs, costumeID)
+		case 5:
+		default:
+			return nil, fmt.Errorf("gamedata: unsupported infinite costume grade %d", grade)
+		}
 	}
+
 	for _, costumeID := range append(append([]uint64(nil), fourStarIDs...), threeStarIDs...) {
 		if _, exists := characters[costumeID]; exists {
 			continue
@@ -1857,7 +1833,10 @@ func LoadInfiniteGacha(root, version string) (*InfiniteGachaDesign, error) {
 		}
 		characters[costumeID] = character
 	}
-	return NewInfiniteGachaDesignWithRates(int(count[0]), ids, fourStarIDs, threeStarIDs, characters)
+	design := &InfiniteGachaDesign{Count: int(count[0]), CostumeIDs: append([]uint64(nil), ids...), FiveStarIDs: ids, FourStarIDs: fourStarIDs, ThreeStarIDs: threeStarIDs, characters: characters}
+	design.GroupID, design.GachaID, design.ProductGroupID, design.ProductID, design.SaleGroup = infiniteGroupID, infiniteGachaID, productGroupID, productID, saleGroup
+	design.rewardProgram = program
+	return design, nil
 }
 
 func fixed64Double(proto []byte, number int) (float64, bool, error) {
@@ -1888,8 +1867,14 @@ func (d *InfiniteGachaDesign) Roll() ([]uint64, error) {
 }
 
 func (d *InfiniteGachaDesign) rollWith(draw func(uint64) (uint64, error)) ([]uint64, error) {
-	if d == nil || d.Count <= 0 || len(d.FiveStarIDs) == 0 || len(d.FourStarIDs) == 0 || len(d.ThreeStarIDs) == 0 || draw == nil {
+	if d == nil || d.Count <= 0 || draw == nil {
 		return nil, fmt.Errorf("gamedata: invalid infinite gacha design")
+	}
+	if d.rewardProgram != nil {
+		return rollCostumeRewardGroup(d.rewardProgram, draw)
+	}
+	if len(d.FiveStarIDs) == 0 || len(d.FourStarIDs) == 0 || len(d.ThreeStarIDs) == 0 {
+		return nil, errors.New("gamedata: incomplete synthetic infinite pools")
 	}
 	result := make([]uint64, d.Count)
 	for i := 0; i < d.Count-1; i++ {

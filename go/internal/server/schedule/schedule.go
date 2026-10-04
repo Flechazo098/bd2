@@ -3,55 +3,88 @@
 package schedule
 
 import (
+	"bd2server/internal/server/versionconfig"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"os"
 
 	"bd2server/internal/server/wire"
 )
 
 // Season is the named semantic form of Proto.Net.SeasonInfo.
 type Season struct {
-	ID                uint64
-	StartMilliseconds uint64
-	EndMilliseconds   uint64
-	RankRewardGroupID uint64
+	ID                uint64 `json:"id"`
+	StartMilliseconds uint64 `json:"start_milliseconds"`
+	EndMilliseconds   uint64 `json:"end_milliseconds"`
+	RankRewardGroupID uint64 `json:"rank_reward_group_id"`
+	Error             bool   `json:"error,omitempty"`
+	Return            bool   `json:"return,omitempty"`
 }
 
 type Content struct {
-	ID      uint64
-	Current Season
-	Next    Season
+	ID      uint64 `json:"id"`
+	Current Season `json:"current"`
+	Next    Season `json:"next"`
 }
 
 type RegularSeason struct {
-	ContentID uint64
-	Season    uint64
+	ContentID uint64 `json:"content_id"`
+	Season    uint64 `json:"season"`
 }
 
 // Service contains the configured regular-content calendar for this fixed
 // client/GameData version. It is server configuration, not a captured packet:
 // Handle encodes every protobuf field from these named values.
 type Service struct {
-	CalculateMilliseconds uint64
-	Contents              []Content
-	Regular               []RegularSeason
+	Version               string          `json:"version"`
+	CalculateMilliseconds uint64          `json:"calculate_milliseconds"`
+	Contents              []Content       `json:"contents"`
+	Regular               []RegularSeason `json:"regular"`
 }
 
-func Current() *Service {
-	return &Service{
-		CalculateMilliseconds: 32400000,
-		Contents: []Content{
-			{ID: 1, Current: Season{160, 1789344000000, 1789916399000, 1}, Next: Season{161, 1789948800000, 1790521199000, 1}},
-			{ID: 2, Current: Season{58, 1755129600000, 253370678399000, 1}, Next: Season{58, 1755129600000, 253370678399000, 1}},
-			{ID: 3, Current: Season{129, 1789657200000, 1790262000000, 1}, Next: Season{999999, 253370764800000, 253370764800000, 1}},
-			{ID: 4, Current: Season{862, 1789830000000, 1789916400000, 1}, Next: Season{999999, 253370764800000, 253370764800000, 1}},
-			{ID: 5, Current: Season{29, 1787788800000, 1790089199000, 1}, Next: Season{30, 1790121600000, 1791385199000, 1}},
-			{ID: 6, Current: Season{26, 1787788800000, 1788361199000, 1}, Next: Season{27, 1790121600000, 1790693999000, 1}},
-			{ID: 7, Current: Season{14, 1788220800000, 1790812800000, 1}, Next: Season{999999, 253370764800000, 253370764800000, 1}},
-			{ID: 8, Current: Season{42, 1789603200000, 1790089199000, 1}, Next: Season{43, 1790121600000, 1790780399000, 1}},
-			{ID: 9, Current: Season{2, 1787788800000, 1792594799000, 1}, Next: Season{999999, 253370764800000, 253370764800000, 1}},
-		},
-		Regular: []RegularSeason{{1, 5}, {2, 6}, {5, 5}, {8, 0}, {9, 0}},
+// Load reads this server's versioned calendar policy. It does not infer live
+// official seasons from today's clock or from static reward design tables.
+func Load(path string) (*Service, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("schedule: read seed: %w", err)
 	}
+	var s Service
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("schedule: decode seed: %w", err)
+	}
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func (s *Service) Validate() error {
+	if s == nil || s.Version != versionconfig.State() || s.CalculateMilliseconds == 0 || s.CalculateMilliseconds > math.MaxInt32 || len(s.Contents) == 0 {
+		return errors.New("schedule: invalid calendar version/calculation interval")
+	}
+	ids := map[uint64]bool{}
+	for _, content := range s.Contents {
+		if content.ID == 0 || content.ID > math.MaxInt32 || ids[content.ID] {
+			return errors.New("schedule: invalid/duplicate content identity")
+		}
+		ids[content.ID] = true
+		for _, season := range []Season{content.Current, content.Next} {
+			if season.ID == 0 || season.ID > math.MaxInt32 || season.StartMilliseconds == 0 || season.StartMilliseconds > season.EndMilliseconds || season.EndMilliseconds > math.MaxInt64 || season.RankRewardGroupID > math.MaxInt32 {
+				return errors.New("schedule: invalid season")
+			}
+		}
+	}
+	seen := map[uint64]bool{}
+	for _, regular := range s.Regular {
+		if !ids[regular.ContentID] || seen[regular.ContentID] || regular.Season > math.MaxInt32 {
+			return errors.New("schedule: invalid regular season")
+		}
+		seen[regular.ContentID] = true
+	}
+	return nil
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
@@ -86,6 +119,12 @@ func encodeSeason(season Season) []byte {
 	result := wire.AppendVarint(nil, 1, season.ID)
 	result = wire.AppendVarint(result, 2, season.StartMilliseconds)
 	result = wire.AppendVarint(result, 3, season.EndMilliseconds)
+	if season.Error {
+		result = wire.AppendVarint(result, 4, 1)
+	}
+	if season.Return {
+		result = wire.AppendVarint(result, 5, 1)
+	}
 	if season.RankRewardGroupID != 0 {
 		result = wire.AppendVarint(result, 6, season.RankRewardGroupID)
 	}

@@ -83,7 +83,7 @@ func loadInventorySlotDesign(db *sql.DB) (*InventorySlotDesign, error) {
 			return InventorySlotRule{}, err
 		}
 		rule := InventorySlotRule{Default: initial, Maximum: maximum, PriceType: priceType, BasePrice: basePrice, MaxPrice: maxPrice}
-		if rule.Default > rule.Maximum || rule.PriceType != 4 {
+		if rule.Default > rule.Maximum || (rule.PriceType != 2 && rule.PriceType != 3 && rule.PriceType != 4) {
 			return InventorySlotRule{}, errors.New("gamedata: unsupported inventory slot rule")
 		}
 		return rule, nil

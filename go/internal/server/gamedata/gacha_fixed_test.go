@@ -18,7 +18,7 @@ func TestCostumeGuaranteedFourAndFiveCountsAcrossOneAndTen(t *testing.T) {
 	}
 	// The first of a ten-pull hits the shared four-star boundary after nine
 	// unsuccessful singles, and the next nine slots continue the new count.
-	gacha := RegularGacha{ID: 1, Count: 10, PriceType: 3, Price: 2000, Pool: pool}
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, ID: 1, Count: 10, PriceType: 3, Price: 2000, Pool: pool}
 	roll, state, err := gacha.rollWithCostumeFixed(9, 25, fixed, nil, nil, chooseThree)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestTwelvePickSelectionAppliesToNaturalAndPityFiveStar(t *testing.T) {
 		{Weight: 1400, Children: []WeightedCostume{{ID: 4001, Weight: 1}}},
 		{Weight: 8300, Children: []WeightedCostume{{ID: 3001, Weight: 1}}},
 	}
-	gacha := RegularGacha{ID: 101, Count: 1, PriceType: 3, Price: 200, Pool: pool}
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, ID: 101, Count: 1, PriceType: 3, Price: 200, Pool: pool}
 	fixed := GachaFixedDesign{ID: 8, CostumeGrade4Count: 10, CostumeGrade5Count: 100, ResetOnMatchingGrade: true}
 	selected := []uint64{5012, 5013}
 	chooseFirst := func(limit uint64) (uint64, error) { return 0, nil }

@@ -33,8 +33,8 @@ type QuestCharacterDesign struct {
 
 // QuestCostumeDesign is one row from StoryCharGroupTable. UniqueCharacterID
 // comes from CostumeTable.UseUniqueCharId and is useful for matching a story
-// costume to its character design. Costume 996000 is the official placeholder
-// used for an account-owned party slot; callers must not treat it as owned.
+// costume to its character design. Versioned world configuration identifies
+// player-controlled placeholders; this loader preserves their authored IDs.
 type QuestCostumeDesign struct {
 	Order             uint64
 	CostumeID         uint64

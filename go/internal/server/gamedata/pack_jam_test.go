@@ -23,7 +23,7 @@ func TestPackJamDesignLoadsDefaultsAndRejectsUnsupportedRewards(t *testing.T) {
 	if err != nil || design.InsertMin != 5 || design.InsertMax != 5 || design.Reward.ID != 0 || design.Reward.Type != 3 || design.Reward.Count != 150 {
 		t.Fatalf("design=%+v err=%v", design, err)
 	}
-	raw = wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 2, 5), 3, 5), 4, 150), 6, 4)
+	raw = wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 2, 5), 3, 5), 4, 150), 6, 8)
 	if _, err := db.Exec("UPDATE PackJamEventTable SET ProtoBuf=?", raw); err != nil {
 		t.Fatal(err)
 	}

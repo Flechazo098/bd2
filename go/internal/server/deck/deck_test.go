@@ -16,7 +16,7 @@ func seeded(t *testing.T) *Store {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s, e := NewStore(x)
+	s, e := NewStore(x, testPresetDesign)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -132,16 +132,10 @@ func TestDeckPersistenceAndCommands(t *testing.T) {
 	if code, _, _, e = s.Handle("/CostumeUse", req(3, wire.AppendBytes(nil, 2, use))); e != nil || code != 41 {
 		t.Fatalf("use: %d %v", code, e)
 	}
-	pack := wire.AppendVarint(nil, 2, 21)
-	code, b, _, e := s.Handle("/PackBuy", req(4, pack))
-	if e != nil || code != 6 {
-		t.Fatalf("buy: %d %v", code, e)
+	if _, _, handled, err := s.Handle("/PackBuy", req(4, wire.AppendVarint(nil, 2, 21))); handled || err != nil {
+		t.Fatal("pack purchase must be handled by world")
 	}
-	p, _, _ := wire.Bytes(b, 1)
-	id, _, _ := wire.Varint(p, 1)
-	if id != 21 {
-		t.Fatalf("pack response=%d", id)
-	}
+	var b []byte
 	reopened, e := OpenStore(storage, seed)
 	if e != nil {
 		t.Fatal(e)
@@ -151,7 +145,7 @@ func TestDeckPersistenceAndCommands(t *testing.T) {
 		t.Fatal(e)
 	}
 	entry, _, _ := wire.Bytes(b, 1)
-	id, _, _ = wire.Varint(entry, 1)
+	id, _, _ := wire.Varint(entry, 1)
 	if id != 100 {
 		t.Fatalf("persist deck=%d", id)
 	}
@@ -373,3 +367,11 @@ func TestDeckCharAutoRevivePreservesExplicitZeroCatalyst(t *testing.T) {
 		t.Fatalf("reloaded state=%+v err=%v", reopened.state, err)
 	}
 }
+
+var testPresetDesign = func() gamedata.PresetDesign {
+	d := gamedata.PresetDesign{BaseCount: 5, Maximum: 12, PriceType: 4, Price: 2000, Icons: map[uint64]bool{}}
+	for id := uint64(1); id <= 21; id++ {
+		d.Icons[id] = true
+	}
+	return d
+}()

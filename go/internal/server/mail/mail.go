@@ -50,12 +50,14 @@ var itemDBInfoTypes = map[uint64]bool{
 	29: true, // instant-use item
 }
 
-// The currently audited ContentTicket claim uses CommonPacket.AddContentTicketItem
-// through ItemDBInfo. Other content tickets have independent state and are not
-// enabled by this local mail implementation.
+// Content tickets are one-use dictionary entries; only Gacha semantics are
+// supported by this mailbox, with IDs read from the current table.
 func supportedItemDBInfoReward(reward gamedata.Reward) bool {
-	return itemDBInfoTypes[reward.Type] && reward.ID != 0 &&
-		(reward.Type != 19 || reward.ID == 450030 && reward.Count == 1)
+	return itemDBInfoTypes[reward.Type] && reward.ID != 0 && (reward.Type != 19 || reward.Count == 1)
+}
+
+func (s *Service) supportedItemDBInfoReward(reward gamedata.Reward) bool {
+	return itemDBInfoTypes[reward.Type] && reward.ID != 0 && (reward.Type != 19 || reward.Count == 1 && s.contentTickets != nil && s.contentTickets.IDs[reward.ID])
 }
 
 var currencyRewardTypes = map[uint64]bool{
@@ -128,8 +130,8 @@ func (s *Starter) Validate() error {
 			return errors.New("mail: reward arrays differ in length")
 		}
 		for i, typ := range m.RewardTypes {
-			if typ == 19 && !supportedItemDBInfoReward(gamedata.Reward{Type: typ, ID: m.RewardIDs[i], Count: m.RewardCounts[i]}) {
-				return errors.New("mail: content ticket reward requires id 450030 and count 1")
+			if typ == 19 && (m.RewardIDs[i] == 0 || m.RewardCounts[i] != 1) {
+				return errors.New("mail: content ticket reward requires an ID and count 1")
 			}
 		}
 	}
@@ -237,6 +239,7 @@ type stateSnapshot struct {
 // delivery. Starter is immutable source data; mutable rows live in the player
 // state alongside the bounded core snapshot.
 type Service struct {
+	contentTickets *gamedata.GachaContentTicketDesign
 	mu             sync.Mutex
 	Starter        *Starter
 	seedPath       string
@@ -252,6 +255,14 @@ type Service struct {
 	issued         map[string]uint64
 	history        map[uint64]MailDBInfo
 	now            func() time.Time
+}
+
+func (s *Service) AttachContentTickets(design *gamedata.GachaContentTicketDesign) error {
+	if design == nil {
+		return errors.New("mail: nil content tickets")
+	}
+	s.contentTickets = design
+	return nil
 }
 
 // AttachCostumeRewards enables ElementType 11 mail attachments. The catalog is
@@ -576,7 +587,7 @@ func (s *Service) open(request []byte) ([]byte, error) {
 				// ItemDBInfo would make the local state and client model disagree.
 				return nil, errors.New("mail: my-room trophy rewards require MyRoomTrophyDBInfo")
 			default:
-				if !supportedItemDBInfoReward(reward) {
+				if !s.supportedItemDBInfoReward(reward) {
 					return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
 				}
 				if reward.ID == 0 || reward.Count == 0 {

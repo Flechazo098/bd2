@@ -76,7 +76,7 @@ func (s *Service) grantPurchaseRewards(identity string, rewards []gamedata.Rewar
 		}
 		var exchanges []gamedata.Reward
 		for _, x := range grant.Exchanges {
-			if x.ExchangeItemType != 20 {
+			if !purchaseCurrency(x.ExchangeItemType) || x.ExchangeItemID != 0 {
 				return nil, fmt.Errorf("world: unsupported purchase costume exchange")
 			}
 			exchanges = append(exchanges, gamedata.Reward{Type: x.ExchangeItemType, ID: x.ExchangeItemID, Count: x.ExchangeCount})
@@ -113,12 +113,27 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 	if _, owned := s.collection.Grant(identity); owned {
 		return []byte{}, nil
 	}
-	if !initial && pack.BuyPrice != 0 {
-		return nil, fmt.Errorf("%w: paid pack purchase type %d is unsupported", ErrInvalidRequest, pack.BuyType)
-	}
 	for _, reward := range buyRewards {
-		if reward.Type != 3 && reward.Type != 4 && reward.Type != 12 && reward.Type != 19 && reward.Type != 11 {
+		if !purchaseCurrency(reward.Type) && reward.Type != 19 && reward.Type != 11 {
 			return nil, fmt.Errorf("world: unsupported pack purchase reward type %d", reward.Type)
+		}
+	}
+	if !initial && pack.BuyPrice != 0 {
+		var err error
+		switch pack.BuyType {
+		case 2:
+			_, err = s.wallet.SpendJewelryOnce(identity+":price", pack.BuyPrice)
+		case 3:
+			_, err = s.wallet.SpendFreeJewelryOnce(identity+":price", pack.BuyPrice)
+		case 4:
+			_, err = s.wallet.SpendGoldOnce(identity+":price", pack.BuyPrice)
+		case 12:
+			_, err = s.wallet.SpendCatalystOnce(identity+":price", pack.BuyPrice)
+		default:
+			return nil, fmt.Errorf("%w: unsupported pack purchase currency%d", ErrInvalidRequest, pack.BuyType)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	items, err := s.grantPurchaseRewards(identity, buyRewards)
@@ -133,7 +148,7 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 		bundle = append(bundle, player.CollectionRewardBundle(s.collection, grant)...)
 	}
 	for _, reward := range buyRewards {
-		if reward.Type == 3 || reward.Type == 4 || reward.Type == 12 {
+		if purchaseCurrency(reward.Type) {
 			currency := wire.AppendVarint(wire.AppendVarint(nil, 3, reward.Type), 4, reward.Count)
 			bundle = wire.AppendBytes(bundle, 1, currency)
 		}
@@ -142,4 +157,12 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 		bundle = wire.AppendBytes(bundle, 1, player.ItemWire(item))
 	}
 	return bundle, nil
+}
+
+func purchaseCurrency(typ uint64) bool {
+	switch typ {
+	case 2, 3, 4, 12, 20:
+		return true
+	}
+	return false
 }

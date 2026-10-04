@@ -18,13 +18,13 @@ func TestLoginPurchaseCountsRestoredFromSQLiteGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	design, err := gamedata.NewInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{
+	design, err := fixtureInfiniteGachaDesign(10, []uint64{60901}, map[uint64]gamedata.CharacterDesign{
 		60901: {ID: 6090, HP: 253, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 2},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(
+	regular, err := fixtureRegularCatalog(
 		map[uint64]gamedata.RegularGacha{
 			1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 60901, Weight: 1}}},
 		},
@@ -52,9 +52,9 @@ func TestLoginPurchaseCountsRestoredFromSQLiteGrant(t *testing.T) {
 	}
 
 	preview := wire.AppendVarint(nil, 1, 1)
-	preview = wire.AppendVarint(preview, 2, gamedata.InfiniteGachaID)
-	preview = wire.AppendVarint(preview, 3, gamedata.InfiniteProductGroupID)
-	preview = wire.AppendVarint(preview, 4, gamedata.InfiniteProductID)
+	preview = wire.AppendVarint(preview, 2, fixtureInfiniteGachaID)
+	preview = wire.AppendVarint(preview, 3, fixtureInfiniteProductGroupID)
+	preview = wire.AppendVarint(preview, 4, fixtureInfiniteProductID)
 	if _, _, _, err := service.Handle("/GachaBuyPreview", preview); err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +64,8 @@ func TestLoginPurchaseCountsRestoredFromSQLiteGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	buy := wire.AppendVarint(nil, 1, 3)
-	buy = wire.AppendVarint(buy, 3, gamedata.InfiniteProductGroupID)
-	product := wire.AppendVarint(nil, 1, gamedata.InfiniteProductID)
+	buy = wire.AppendVarint(buy, 3, fixtureInfiniteProductGroupID)
+	product := wire.AppendVarint(nil, 1, fixtureInfiniteProductID)
 	product = wire.AppendVarint(product, 3, 1)
 	buy = wire.AppendBytes(buy, 4, product)
 	if _, _, _, err := service.Handle("/CashShopBuy", buy); err != nil {
@@ -137,7 +137,7 @@ func assertInfinitePurchaseCount(t *testing.T, data []byte) {
 	count, countFound, countErr := wire.Varint(data, 4)
 	if groupErr != nil || idErr != nil || saleGroupErr != nil || countErr != nil ||
 		!groupFound || !idFound || saleGroupFound || !countFound ||
-		group != gamedata.InfiniteProductGroupID || id != gamedata.InfiniteProductID || saleGroup != 0 || count != 1 {
+		group != fixtureInfiniteProductGroupID || id != fixtureInfiniteProductID || saleGroup != 0 || count != 1 {
 		t.Fatalf("PurchaseCountDBInfo group=%d id=%d saleGroup=%d count=%d found=%v/%v/%v/%v errors=%v/%v/%v/%v",
 			group, id, saleGroup, count, groupFound, idFound, saleGroupFound, countFound,
 			groupErr, idErr, saleGroupErr, countErr)

@@ -10,7 +10,7 @@ func TestEquipmentTicketOnlyGachaAgainstInstalledVersion23510(t *testing.T) {
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	catalog, err := LoadEquipmentGacha(root, "20260923193640")
+	catalog, err := LoadEquipmentGachaGroups(root, "20260923193640", []uint64{10002, 9, 133, 206})
 	if err != nil {
 		t.Fatal(err)
 	}

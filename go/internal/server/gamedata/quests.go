@@ -13,12 +13,13 @@ import (
 // Reward slot zero is normal story difficulty; later slots are separate
 // difficulty tiers and must never be added to the same clear.
 type QuestDesign struct {
-	ID               int
-	Type             int
-	PriorQuestID     int
-	NextQuestID      int
-	GiveQuestItemIDs []uint64
-	Rewards          [5][]Reward
+	ID                int
+	Type              int
+	PriorQuestID      int
+	NextQuestID       int
+	GiveQuestItemIDs  []uint64
+	CollectionRewards []Reward
+	Rewards           [5][]Reward
 }
 
 func LoadQuestDesign(root, version string, packID int) (map[int]QuestDesign, error) {
@@ -66,6 +67,24 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 			continue
 		}
 		entry := QuestDesign{ID: id}
+		collectionIDs, err := packedInts(proto, 6)
+		if err != nil {
+			return nil, fmt.Errorf("gamedata: quest%d collections: %w", id, err)
+		}
+		for _, collectionID := range collectionIDs {
+			var collection []byte
+			if err := db.QueryRow("SELECT ProtoBuf FROM CollectionTable WHERE id=?", collectionID).Scan(&collection); err != nil {
+				return nil, fmt.Errorf("gamedata: quest%d collection%d: %w", id, collectionID, err)
+			}
+			itemID, err := requiredScalar(collection, 3)
+			if err != nil {
+				return nil, err
+			}
+			if itemID != collectionID {
+				return nil, fmt.Errorf("gamedata: quest%d collection%d identity mismatch%d", id, collectionID, itemID)
+			}
+			entry.CollectionRewards = append(entry.CollectionRewards, Reward{Type: 17, ID: collectionID, Count: 1})
+		}
 		entry.GiveQuestItemIDs, err = packedInts(proto, 29)
 		if err != nil {
 			return nil, fmt.Errorf("gamedata: quest%d give items: %w", id, err)

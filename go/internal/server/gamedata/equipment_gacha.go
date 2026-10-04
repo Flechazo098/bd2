@@ -16,11 +16,12 @@ import (
 // draws. Scheduled groups and standalone ticket-only draws are both derived
 // from GameData; the server does not enumerate product IDs in request logic.
 type EquipmentGachaCatalog struct {
-	Gachas    map[uint64]EquipmentGacha
-	groups    map[uint64]EquipmentGachaGroup
-	byGacha   map[uint64]uint64
-	fixed     EquipmentFixedDesign
-	equipment map[uint64]EquipmentDesign
+	Gachas       map[uint64]EquipmentGacha
+	groups       map[uint64]EquipmentGachaGroup
+	byGacha      map[uint64]uint64
+	fixed        EquipmentFixedDesign
+	fixedDesigns map[uint64]EquipmentFixedDesign
+	equipment    map[uint64]EquipmentDesign
 }
 type EquipmentGacha struct {
 	ID               uint64
@@ -30,6 +31,7 @@ type EquipmentGacha struct {
 	TicketIDs        []uint64
 	Pool             []WeightedEquipment
 	TicketOnly       bool
+	Grades           map[uint64]uint64
 }
 type EquipmentGachaGroup struct {
 	ID, FixedID, PointCount, OneTimeGachaID, TenTimeGachaID uint64
@@ -56,10 +58,6 @@ type OptionGroup struct {
 }
 type WeightedOption struct{ ID, Weight uint64 }
 type EquipmentOptionChoice struct{ GroupID, ID uint64 }
-
-func LoadEquipmentGacha(root, version string) (*EquipmentGachaCatalog, error) {
-	return LoadEquipmentGachaGroups(root, version, []uint64{10002, 9, 133, 206})
-}
 
 // LoadEquipmentGachaGroups loads only groups selected by a captured dynamic
 // schedule. Presence in GameData alone does not mean a banner is open.
@@ -96,7 +94,7 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		pickupEnabled, _ := packedInts(raw, 20)
 		pickupCosts, _ := packedInts(raw, 25)
 		pickupItems, _ := packedInts(raw, 26)
-		if len(one) != 1 || len(ten) != 1 || len(fixed) != 1 || fixed[0] != 1 || len(points) != 1 || points[0] != 1 ||
+		if len(one) != 1 || len(ten) != 1 || len(fixed) != 1 || fixed[0] == 0 || len(points) != 1 || points[0] == 0 ||
 			len(gachaTypes) != 1 || gachaTypes[0] != 2 || len(pickupEnabled) > 1 || len(pickupCosts) > 1 || len(pickupItems) > 1 {
 			return nil, fmt.Errorf("gamedata: equipment group %d malformed", groupID)
 		}
@@ -190,18 +188,50 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	var fixed []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM GachaFixedTable WHERE id=1").Scan(&fixed); err != nil {
-		return nil, err
+	for id, g := range c.Gachas {
+		g.Grades = map[uint64]uint64{}
+		var visit func([]WeightedEquipment)
+		visit = func(pool []WeightedEquipment) {
+			for _, entry := range pool {
+				if entry.ID != 0 {
+					g.Grades[entry.ID] = c.equipment[entry.ID].Grade
+				} else {
+					visit(entry.Children)
+				}
+			}
+		}
+		visit(g.Pool)
+		c.Gachas[id] = g
 	}
-	sr, _ := packedInts(fixed, 1)
-	ur, _ := packedInts(fixed, 3)
-	reset, _ := packedInts(fixed, 6)
-	if len(sr) != 1 || sr[0] != 10 || len(ur) != 1 || ur[0] != 100 || len(reset) != 1 || reset[0] != 1 {
-		return nil, fmt.Errorf("gamedata: malformed equipment fixed table")
+	c.fixedDesigns = map[uint64]EquipmentFixedDesign{}
+	for _, group := range c.groups {
+		if _, ok := c.fixedDesigns[group.FixedID]; ok {
+			continue
+		}
+		fixed, err := loadEquipmentFixed(db, group.FixedID)
+		if err != nil {
+			return nil, err
+		}
+		c.fixedDesigns[fixed.ID] = fixed
+		if c.fixed.ID == 0 || fixed.ID < c.fixed.ID {
+			c.fixed = fixed
+		}
 	}
-	c.fixed = EquipmentFixedDesign{ID: 1, SRCount: sr[0], URCount: ur[0], Reset: true}
 	return c, nil
+}
+
+func loadEquipmentFixed(db *sql.DB, id uint64) (EquipmentFixedDesign, error) {
+	var raw []byte
+	if err := db.QueryRow("SELECT ProtoBuf FROM GachaFixedTable WHERE id=?", id).Scan(&raw); err != nil {
+		return EquipmentFixedDesign{}, err
+	}
+	sr, e1 := packedInts(raw, 1)
+	ur, e2 := packedInts(raw, 3)
+	reset, e3 := packedInts(raw, 6)
+	if e1 != nil || e2 != nil || e3 != nil || len(sr) != 1 || sr[0] == 0 || len(ur) != 1 || ur[0] == 0 || len(reset) > 1 || (len(reset) == 1 && reset[0] > 1) {
+		return EquipmentFixedDesign{}, fmt.Errorf("gamedata: malformed equipment fixed table %d", id)
+	}
+	return EquipmentFixedDesign{ID: id, SRCount: sr[0], URCount: ur[0], Reset: len(reset) == 1 && reset[0] == 1}, nil
 }
 
 func classifyEquipmentRewardPool(db *sql.DB, groupID uint64) ([]WeightedEquipment, bool, error) {
@@ -259,26 +289,14 @@ func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
 	if len(freeCounts) == 1 {
 		freeCount = freeCounts[0]
 	}
-	if len(count) != 1 || len(reward) != 1 || len(price) != 1 || len(kind) != 1 || kind[0] != 3 || price[0] != uint64(count[0])*200 {
+	// Partial ticket consumption bills remaining draws individually; the local
+	// billing path currently requires an integral price per draw.
+	if len(count) != 1 || len(reward) != 1 || len(price) != 1 || len(kind) != 1 || kind[0] != 3 || count[0] == 0 || price[0] == 0 || price[0]%count[0] != 0 {
 		return EquipmentGacha{}, fmt.Errorf("gamedata: malformed equipment gacha %d", id)
 	}
 	pool, err := loadEquipmentRewardPool(db, reward[0])
 	if err != nil {
 		return EquipmentGacha{}, fmt.Errorf("gamedata: equipment gacha %d: %w", id, err)
-	}
-	var want []uint64
-	switch len(pool) {
-	case 8: // permanent draw 200/201: one 3% five-star UR branch.
-		want = []uint64{300, 200, 250, 850, 1700, 400, 1600, 4700}
-	case 9: // pickup groups: UP and non-UP five-star UR branches.
-		want = []uint64{150, 150, 200, 250, 850, 1700, 400, 1600, 4700}
-	default:
-		return EquipmentGacha{}, fmt.Errorf("gamedata: equipment gacha %d has %d branches", id, len(pool))
-	}
-	for i := range pool {
-		if pool[i].Weight != want[i] {
-			return EquipmentGacha{}, fmt.Errorf("gamedata: equipment gacha %d branch %d rate=%d", id, i, pool[i].Weight)
-		}
 	}
 	return EquipmentGacha{ID: id, Count: int(count[0]), FreeCountDay: freeCount, PriceType: kind[0], Price: price[0], TicketIDs: append([]uint64(nil), tickets...), Pool: pool}, nil
 }
@@ -421,6 +439,28 @@ func (c *EquipmentGachaCatalog) Groups() []EquipmentGachaGroup {
 	return out
 }
 func (c *EquipmentGachaCatalog) Fixed() EquipmentFixedDesign { return c.fixed }
+func (c *EquipmentGachaCatalog) FixedForGroup(groupID uint64) (EquipmentFixedDesign, bool) {
+	if c == nil {
+		return EquipmentFixedDesign{}, false
+	}
+	group, ok := c.groups[groupID]
+	if !ok {
+		return EquipmentFixedDesign{}, false
+	}
+	fixed, ok := c.fixedDesigns[group.FixedID]
+	return fixed, ok
+}
+func (c *EquipmentGachaCatalog) FixedDesigns() []EquipmentFixedDesign {
+	if c == nil {
+		return nil
+	}
+	out := make([]EquipmentFixedDesign, 0, len(c.fixedDesigns))
+	for _, fixed := range c.fixedDesigns {
+		out = append(out, fixed)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
 func (c *EquipmentGachaCatalog) RollOptions(id uint64) (main, sub []EquipmentOptionChoice, private *EquipmentOptionChoice, err error) {
 	d, ok := c.equipment[id]
 	if !ok {
@@ -485,21 +525,29 @@ type EquipmentRoll struct {
 
 func (g EquipmentGacha) rollWith(sr, ur uint64, fixed EquipmentFixedDesign, draw func(uint64) (uint64, error)) ([]uint64, EquipmentRoll, error) {
 	state := EquipmentRoll{SRCount: sr, URCount: ur, SRSort: -1, URSort: -1}
-	if g.Count <= 0 || (len(g.Pool) != 8 && len(g.Pool) != 9) {
+	if g.Count <= 0 || len(g.Pool) == 0 || len(g.Grades) == 0 {
 		return nil, state, errors.New("gamedata: invalid equipment gacha")
 	}
 	out := make([]uint64, g.Count)
 	for i := range out {
-		forceUR := state.URCount+1 >= fixed.URCount
-		forceSR := !forceUR && state.SRCount+1 >= fixed.SRCount
+		forceUR := fixed.URCount != 0 && state.URCount+1 >= fixed.URCount
+		forceSR := !forceUR && fixed.SRCount != 0 && state.SRCount+1 >= fixed.SRCount
 		var id uint64
 		var err error
 		switch {
 		case forceUR:
-			id, err = rollEquipmentChoiceWith(equipmentGuaranteedPool(g.Pool, true), draw)
+			var pool []WeightedEquipment
+			pool, err = g.gradePool(4)
+			if err == nil {
+				id, err = rollEquipmentChoiceWith(pool, draw)
+			}
 			state.URSort = i
 		case forceSR:
-			id, err = rollEquipmentChoiceWith(equipmentGuaranteedPool(g.Pool, false), draw)
+			var pool []WeightedEquipment
+			pool, err = g.gradePool(3)
+			if err == nil {
+				id, err = rollEquipmentChoiceWith(pool, draw)
+			}
 			state.SRSort = i
 		default:
 			id, err = rollEquipmentChoiceWith(g.Pool, draw)
@@ -508,59 +556,23 @@ func (g EquipmentGacha) rollWith(sr, ur uint64, fixed EquipmentFixedDesign, draw
 			return nil, state, err
 		}
 		out[i] = id
-		tier := equipmentTier(g.Pool, id)
-		switch tier {
-		case 2:
-			state.SRCount = 0
-			state.URCount = 0
-		case 1:
-			state.SRCount = 0
-			state.URCount++
-		default:
-			state.SRCount++
-			state.URCount++
+		grade, known := g.Grades[id]
+		if !known || grade == 0 || grade > 4 {
+			return nil, state, errors.New("gamedata: equipment grade unavailable")
 		}
+		state.SRCount++
+		state.URCount++
+		if forceSR || forceUR || fixed.Reset && grade >= 3 {
+			state.SRCount = 0
+		}
+		if forceUR || fixed.Reset && grade == 4 {
+			state.URCount = 0
+		}
+
 	}
 	return out, state, nil
 }
 
-func equipmentGuaranteedPool(pool []WeightedEquipment, ur bool) []WeightedEquipment {
-	if len(pool) == 8 {
-		if ur {
-			return []WeightedEquipment{{Weight: 15, Children: pool[0:1]}, {Weight: 35, Children: pool[2:3]}, {Weight: 50, Children: pool[5:6]}}
-		}
-		return []WeightedEquipment{{Weight: 15, Children: pool[1:2]}, {Weight: 35, Children: pool[3:4]}, {Weight: 50, Children: pool[6:7]}}
-	}
-	if ur {
-		return []WeightedEquipment{{Weight: 15, Children: pool[0:2]}, {Weight: 35, Children: pool[3:4]}, {Weight: 50, Children: pool[6:7]}}
-	}
-	return []WeightedEquipment{{Weight: 15, Children: pool[2:3]}, {Weight: 35, Children: pool[4:5]}, {Weight: 50, Children: pool[7:8]}}
-}
-func equipmentTier(pool []WeightedEquipment, id uint64) int {
-	for i, item := range pool {
-		if containsEquipment(item, id) {
-			if len(pool) == 8 {
-				switch i {
-				case 0, 2, 5:
-					return 2
-				case 1, 3, 6:
-					return 1
-				default:
-					return 0
-				}
-			}
-			switch i {
-			case 0, 1, 3, 6:
-				return 2
-			case 2, 4, 7:
-				return 1
-			default:
-				return 0
-			}
-		}
-	}
-	return -1
-}
 func containsEquipment(item WeightedEquipment, id uint64) bool {
 	if item.ID != 0 {
 		return item.ID == id

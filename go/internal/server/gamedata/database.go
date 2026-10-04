@@ -32,15 +32,10 @@ func ReadDatabase(root, version, logical string) ([]byte, error) {
 	return readEntry(root, version, name, logical)
 }
 
-// questDatabaseEntry is the member in the 2.35.10 GameData archive that
-// contains the shared QuestTable* SQLite database, including QuestTable21.
-// Quest data is not stored in an individual per-pack database.
-const questDatabaseEntry = "9F251C63BC72551C681EE75D328FA090D56E444B"
-
-// ReadQuestDatabase extracts the shared quest database. The member name is
-// opaque in the client archive, so callers must not derive it from a map ID.
+// ReadQuestDatabase extracts the shared common database using the client's
+// logical database naming rule. Quest tables are not per-pack databases.
 func ReadQuestDatabase(root, version string) ([]byte, error) {
-	return readEntry(root, version, questDatabaseEntry, "quest tables")
+	return ReadDatabase(root, version, "common")
 }
 
 func readEntry(root, version, name, label string) ([]byte, error) {

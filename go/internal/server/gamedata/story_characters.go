@@ -13,7 +13,14 @@ type StoryCharacterCatalog struct {
 	characters map[[2]int][]StoryCharacterDesign
 }
 
-func LoadStoryCharacterCatalog(root, version string, packs []int) (*StoryCharacterCatalog, error) {
+func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCostumes ...uint64) (*StoryCharacterCatalog, error) {
+	var placeholder uint64
+	if len(placeholderCostumes) > 1 {
+		return nil, fmt.Errorf("gamedata: multiple story placeholders")
+	}
+	if len(placeholderCostumes) == 1 {
+		placeholder = placeholderCostumes[0]
+	}
 	db, cleanup, err := openStatDatabase(root, version)
 	if err != nil {
 		return nil, err
@@ -60,7 +67,7 @@ func LoadStoryCharacterCatalog(root, version string, packs []int) (*StoryCharact
 					return nil, err
 				}
 				for _, story := range formation.StoryCostumes {
-					if story.UniqueCharacterID == unique && story.CostumeID != 996000 {
+					if story.UniqueCharacterID == unique && (placeholder == 0 || story.CostumeID != placeholder) {
 						costume = story.CostumeID
 						break
 					}

@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"bd2server/internal/server/gamedata"
 	"reflect"
 	"sort"
 	"testing"
@@ -9,6 +10,38 @@ import (
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
+
+func TestPresetChangedDesignControlsBaseLimitAndCurrency(t *testing.T) {
+	f := newPresetFixture(t)
+	design := gamedata.PresetDesign{BaseCount: 2, Maximum: 3, PriceType: 3, Price: 17}
+	d, err := OpenStore(f.storage, f.seed, design)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := player.OpenWallet(stateio.NewMemory(), player.Currency{FreeJewelry: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.wallet = w
+	d.BeginSession("changed-design")
+	if d.PresetSlotCount() != 2 {
+		t.Fatal("base count ignored")
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 1)
+	if _, _, _, err := d.Handle("/PresetAddSlot", request); err != nil {
+		t.Fatal(err)
+	}
+	if d.PresetSlotCount() != 3 || w.Snapshot().FreeJewelry != 83 || w.Snapshot().Gold != 0 {
+		t.Fatal("changed price/currency ignored")
+	}
+	request = wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 1)
+	if _, _, _, err := d.Handle("/PresetAddSlot", request); err == nil {
+		t.Fatal("changed limit ignored")
+	}
+	if w.Snapshot().FreeJewelry != 83 {
+		t.Fatal("invalid purchase charged")
+	}
+}
 
 type presetFixture struct {
 	storage    *stateio.Memory
@@ -67,7 +100,7 @@ func newPresetFixture(t *testing.T) *presetFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decks, err := OpenStore(storage, seed)
+	decks, err := OpenStore(storage, seed, testPresetDesign)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +168,7 @@ func TestPresetSaveInfoMetadataDeleteAndRestart(t *testing.T) {
 		t.Fatalf("metadata change lost content: %+v", got)
 	}
 
-	restarted, err := OpenStore(f.storage, f.seed)
+	restarted, err := OpenStore(f.storage, f.seed, testPresetDesign)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +210,7 @@ func TestPresetAddSlotChargesOncePersistsAndCaps(t *testing.T) {
 	if f.deck.PresetSlotCount() != 6 || f.wallet.Snapshot().Gold != 18000 {
 		t.Fatalf("slots=%d gold=%d", f.deck.PresetSlotCount(), f.wallet.Snapshot().Gold)
 	}
-	restarted, err := OpenStore(f.storage, f.seed)
+	restarted, err := OpenStore(f.storage, f.seed, testPresetDesign)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +316,7 @@ func TestDeckCostumeSettingSentinelsClearAndRestart(t *testing.T) {
 	if code, _, _, err := f.deck.Handle("/DeckCostumeSettingSave", req(1, wire.AppendBytes(nil, 2, setting))); err != nil || code != 398 {
 		t.Fatalf("save setting code=%d err=%v", code, err)
 	}
-	restarted, err := OpenStore(f.storage, f.seed)
+	restarted, err := OpenStore(f.storage, f.seed, testPresetDesign)
 	if err != nil {
 		t.Fatal(err)
 	}

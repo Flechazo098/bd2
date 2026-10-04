@@ -21,11 +21,11 @@ func TestGachaPointExchangeGrantsUpgradesOverflowsAndRetries(t *testing.T) {
 		rollID:   {ID: 6090, HP: 253, CostumeMaxLevel: 100, OverflowItemType: 20, OverflowItemCount: 2},
 		pickupID: {ID: 2120, HP: 300, CostumeMaxLevel: 5, OverflowItemType: 20, OverflowItemCount: 2},
 	}
-	infinite, err := gamedata.NewInfiniteGachaDesign(10, []uint64{rollID}, characters)
+	infinite, err := fixtureInfiniteGachaDesign(10, []uint64{rollID}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		gachaID: {ID: gachaID, Count: 10, PriceType: 3, Price: 2000, Pool: []gamedata.WeightedCostume{{ID: rollID, Weight: 1}}},
 	}, characters)
 	if err != nil {
@@ -141,11 +141,11 @@ func TestGachaPointExchangeUsesOnlySavedSingleSelection(t *testing.T) {
 		rollID:   fixtureCharacter(6090, 253),
 		selected: fixtureCharacter(6490, 300),
 	}
-	infinite, err := gamedata.NewInfiniteGachaDesign(10, []uint64{rollID}, characters)
+	infinite, err := fixtureInfiniteGachaDesign(10, []uint64{rollID}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		gachaID: {ID: gachaID, Count: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: rollID, Weight: 1}}},
 	}, characters)
 	if err != nil {

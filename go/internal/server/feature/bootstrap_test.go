@@ -13,13 +13,9 @@ func TestBootstrapProtocolDefaults(t *testing.T) {
 		code  int
 		proto []byte
 	}{
-		{"/PackInfo", 4, []byte{0x28, 3}},
-		{"/RecipeInfo", 46, []byte{0x12, 1, 101}},
 		{"/CashMailInfo", 140, []byte{0x18, 0}},
 		{"/AvatarInfo", 467, []byte{0x0a, 0}},
 		{"/GuildRaidSeasonReward", 310, []byte{0x0a, 0}},
-		{"/DeckInfo", 8, []byte{0x12, 4, 0, 0, 0, 0}},
-		{"/RootSortIdInfo", 367, []byte{0x0a, 7, 0x08, 2, 0x10, 0x8c, 1, 0x18, 1}},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			code, proto, handled, err := Handle(test.path, wire.AppendVarint(nil, 1, 42))

@@ -31,7 +31,7 @@ func TestSingleSidedCostumeFixedThresholdsDoNotTriggerZeroSide(t *testing.T) {
 		{Weight: 150, ID: 5001}, {Weight: 150, ID: 5002},
 		{Weight: 1400, ID: 4001}, {Weight: 8300, ID: 3001},
 	}
-	gacha := RegularGacha{ID: 1, Count: 1, PriceType: 3, Price: 200, Pool: pool}
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, ID: 1, Count: 1, PriceType: 3, Price: 200, Pool: pool}
 	chooseThree := func(limit uint64) (uint64, error) {
 		if limit == officialRateScale {
 			return limit - 1, nil
@@ -59,7 +59,7 @@ func TestCompositeCostumeRewardGroupExecutesAllChildren(t *testing.T) {
 	if count, err := costumeRewardCount(program); err != nil || count != 10 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
-	gacha := RegularGacha{ID: 1, Count: 10, PriceType: 2, Price: 500, RewardGroup: program}
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, ID: 1, Count: 10, PriceType: 2, Price: 500, RewardGroup: program}
 	roll, err := gacha.rollRewardGroup(func(limit uint64) (uint64, error) { return 0, nil })
 	if err != nil || len(roll) != 10 || roll[0] != 5001 {
 		t.Fatalf("roll=%v err=%v", roll, err)
@@ -78,7 +78,7 @@ func TestMoonriseSpecialSelectionUsesThreeChoicesAndGameDataRemainder(t *testing
 		selected[i] = uint64(5001 + i)
 		choices[i] = CostumeRewardEntry{ItemType: 11, ItemID: selected[i], Count: 1, Weight: 1}
 	}
-	gacha := RegularGacha{ID: 9100037, Count: 10, PriceType: 19, PriceID: 450030, Price: 1, RewardGroup: &CostumeRewardGroup{
+	gacha := RegularGacha{Grades: map[uint64]uint64{5001: 5, 5002: 5, 4001: 4, 3001: 3, 21201: 5}, ID: 9100037, Count: 10, PriceType: 19, PriceID: 450030, Price: 1, RewardGroup: &CostumeRewardGroup{
 		ID: 9100037, DropCount: 1, DropType: 1, Entries: []CostumeRewardEntry{
 			{ItemType: 9, ItemID: 9100038, Count: 1, Weight: 1, Group: &CostumeRewardGroup{ID: 9100038, DropCount: 3, Entries: choices}},
 			{ItemType: 9, ItemID: 9100039, Count: 1, Weight: 1, Group: &CostumeRewardGroup{ID: 9100039, DropCount: 7, Entries: []CostumeRewardEntry{
@@ -108,7 +108,7 @@ func TestMoonriseSpecialSelectionUsesThreeChoicesAndGameDataRemainder(t *testing
 
 func TestAddAndQueryStepUpDesign(t *testing.T) {
 	characters := map[uint64]CharacterDesign{5001: {ID: 500, HP: 100}}
-	catalog, err := NewRegularGachaCatalog(map[uint64]RegularGacha{
+	catalog, err := fixtureRegularCatalog(map[uint64]RegularGacha{
 		10: {ID: 10, Count: 1, PriceType: 2, Price: 1, Pool: []WeightedCostume{{ID: 5001, Weight: 1}}},
 	}, characters)
 	if err != nil {
@@ -210,7 +210,7 @@ func TestLegacyRegularGachaLoaderAgainstInstalledVersion23510(t *testing.T) {
 	if root == "" {
 		t.Skip("set BD2_TEST_GAMEDATA_ROOT for installed GameData integration test")
 	}
-	catalog, err := LoadRegularCostumeGacha(root, "20260923193640")
+	catalog, err := LoadRegularCostumeGachaGroups(root, "20260923193640", []uint64{10001, 135, 205, 121}, []uint64{29})
 	if err != nil {
 		t.Fatal(err)
 	}

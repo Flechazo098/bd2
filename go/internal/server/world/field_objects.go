@@ -131,7 +131,7 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	if position, ok := s.state.Position(); ok && (position.PackID != pack || position.Position.MapID != obj.MapID) {
 		return nil, fmt.Errorf("%w: field object outside current map", ErrInvalidRequest)
 	}
-	if obj.Type < 1 || obj.Type > 3 || obj.BuffID != 0 || obj.MonsterID != 0 || obj.QuestID != 0 || len(obj.Rewards) == 0 {
+	if obj.BuffID != 0 || obj.MonsterID != 0 || obj.QuestID != 0 || len(obj.Rewards) == 0 {
 		return nil, fmt.Errorf("%w: unsupported field object reward graph/reset", ErrInvalidRequest)
 	}
 
@@ -151,6 +151,28 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	}
 	var rewards []gamedata.Reward
 	var itemRewards []gamedata.BattleReward
+	var equipmentRewards []player.Equipment
+	// Validate every branch's type and quantity before drawing or writing a
+	// receipt. LoadFieldObjects validates every equipment option tree, including
+	// branches with zero weight, before installing the catalog.
+	for _, r := range obj.Rewards {
+		if r.Count == 0 || r.Count > uint64(^uint32(0)>>1) {
+			return nil, fmt.Errorf("world: invalid field reward count")
+		}
+		switch r.Type {
+		case 2, 3, 4, 12, 20:
+		case 5, 7, 8, 9, 13, 14, 17, 19, 27, 29:
+			if r.ID == 0 {
+				return nil, fmt.Errorf("world: invalid field item")
+			}
+		case 10:
+			if r.ID == 0 || r.Count > 100 || s.equipment == nil || design.Equipment == nil {
+				return nil, fmt.Errorf("world: invalid field equipment")
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported field reward type %d", ErrInvalidRequest, r.Type)
+		}
+	}
 	selected, err := obj.Draw()
 	if err != nil {
 		return nil, err
@@ -167,6 +189,27 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 				return nil, fmt.Errorf("world: invalid field item")
 			}
 			itemRewards = append(itemRewards, r)
+		case 10:
+			if s.equipment == nil || design.Equipment == nil || r.Count > 100 || len(equipmentRewards)+int(r.Count) > 100 {
+				return nil, fmt.Errorf("world: field equipment reward unavailable")
+			}
+			for n := uint64(0); n < r.Count; n++ {
+				main, sub, private, e := design.Equipment.RollOptions(r.ID)
+				if e != nil {
+					return nil, e
+				}
+				entry := player.Equipment{ID: r.ID, Rank: []uint64{0, 0, 0}}
+				for _, option := range main {
+					entry.MainOption = append(entry.MainOption, player.EquipmentOption{GroupID: option.GroupID, ID: option.ID})
+				}
+				for _, option := range sub {
+					entry.SubOption = append(entry.SubOption, player.EquipmentOption{GroupID: option.GroupID, ID: option.ID})
+				}
+				if private != nil {
+					entry.PrivateOption = &player.EquipmentOption{GroupID: private.GroupID, ID: private.ID}
+				}
+				equipmentRewards = append(equipmentRewards, entry)
+			}
 		default:
 			return nil, fmt.Errorf("%w: unsupported field reward type %d", ErrInvalidRequest, r.Type)
 		}
@@ -179,6 +222,12 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i, entry := range equipmentRewards {
+		equipmentRewards[i], err = s.equipment.GrantGeneratedOnce(fmt.Sprintf("%s:equipment:%d", identity, i), entry)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err = s.state.MarkFieldRewardOpened(pack, id, period); err != nil {
 		return nil, err
 	}
@@ -188,6 +237,9 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	}
 	for _, item := range items {
 		bundle = wire.AppendBytes(bundle, 1, player.ItemWire(item))
+	}
+	for _, entry := range equipmentRewards {
+		bundle = wire.AppendBytes(bundle, 4, player.EquipmentWire(entry))
 	}
 	return bundle, nil
 }

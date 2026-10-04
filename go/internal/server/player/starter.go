@@ -63,6 +63,7 @@ type Character struct {
 
 type Starter struct {
 	Version                  string      `json:"version"`
+	CookingRecipes           []uint64    `json:"cooking_recipes,omitempty"`
 	Items                    []Item      `json:"items"`
 	Costumes                 []Costume   `json:"costumes"`
 	Characters               []Character `json:"characters"`
@@ -88,6 +89,13 @@ func Load(path string) (*Starter, error) {
 func (s *Starter) Validate() error {
 	if s == nil || s.Version != versionconfig.State() {
 		return errors.New("player: wrong starter version")
+	}
+	seenRecipes := map[uint64]bool{}
+	for _, id := range s.CookingRecipes {
+		if id == 0 || id > 0x7fffffff || seenRecipes[id] {
+			return errors.New("player: invalid initial cooking recipe")
+		}
+		seenRecipes[id] = true
 	}
 	for _, item := range s.Items {
 		if item.ID == 0 || item.Count == 0 {

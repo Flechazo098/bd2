@@ -27,11 +27,11 @@ func TestFirstGachaPreviewConfirmAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	infinite, err := gamedata.NewInfiniteGachaDesign(10, []uint64{61001}, characters)
+	infinite, err := fixtureInfiniteGachaDesign(10, []uint64{61001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{
 		1: {ID: 1, Count: 1, PriceType: 3, Price: 200, Pool: []gamedata.WeightedCostume{{ID: 61001, Weight: 1}}},
 	}, characters)
 	if err != nil {
@@ -129,11 +129,11 @@ func newFirstGachaTestService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	infinite, err := gamedata.NewInfiniteGachaDesign(10, []uint64{61001}, characters)
+	infinite, err := fixtureInfiniteGachaDesign(10, []uint64{61001}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := gamedata.NewRegularGachaCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 61001, Weight: 1}}}}, characters)
+	regular, err := fixtureRegularCatalog(map[uint64]gamedata.RegularGacha{1: {ID: 1, Count: 1, PriceType: 3, Price: 1, Pool: []gamedata.WeightedCostume{{ID: 61001, Weight: 1}}}}, characters)
 	if err != nil {
 		t.Fatal(err)
 	}

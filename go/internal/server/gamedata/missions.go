@@ -30,12 +30,13 @@ type MissionDesign struct {
 }
 
 type MissionCondition struct {
-	Type        uint64
-	SubType     uint64
-	Params      []uint64
-	TargetValue uint64
-	UnlockPack  uint64
-	UnlockQuest uint64
+	Type              uint64
+	SubType           uint64
+	SubTypeComparison uint64
+	Params            []uint64
+	TargetValue       uint64
+	UnlockPack        uint64
+	UnlockQuest       uint64
 }
 
 type SectionRewardDesign struct {
@@ -154,7 +155,11 @@ func loadMissionRows(db *sql.DB, design *MissionDesign) error {
 		if err != nil {
 			return fmt.Errorf("gamedata: MissionTable unlock quest: %w", err)
 		}
-		design.Conditions[key] = MissionCondition{Type: conditionType, SubType: conditionSubType, Params: params, TargetValue: target, UnlockPack: unlockPack, UnlockQuest: unlockQuest}
+		subTypeMore, err := optionalScalar(proto, 9)
+		if err != nil {
+			return fmt.Errorf("gamedata: MissionTable subtype comparison invalid")
+		}
+		design.Conditions[key] = MissionCondition{SubTypeComparison: subTypeMore, Type: conditionType, SubType: conditionSubType, Params: params, TargetValue: target, UnlockPack: unlockPack, UnlockQuest: unlockQuest}
 	}
 	return rows.Err()
 }

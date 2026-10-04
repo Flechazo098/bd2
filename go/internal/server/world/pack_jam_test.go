@@ -95,11 +95,20 @@ func TestPackJamClaimPersistsAndRepeatedDockingSucceeds(t *testing.T) {
 	if s.wallet.Snapshot().FreeJewelry != 150 || s.wallet.WasGranted(packJamIdentity(9999)) {
 		t.Fatal("invalid pack changed wallet")
 	}
-	s.packJamDesign.Reward.Type = 4
+	s.packJamDesign.Reward.Type = 8
 	if _, _, _, err := s.Handle("/PackJamEvent", story); err == nil {
 		t.Fatal("unsupported reward accepted")
 	}
 	if s.wallet.WasGranted(packJamIdentity(21)) {
 		t.Fatal("unsupported reward marked claimed")
+	}
+	s.packJamDesign.Reward.Type = 4
+	s.packJamDesign.Reward.Count = 73
+	code, body, _, err = s.Handle("/PackJamEvent", story)
+	item, _, _ = wire.Bytes(body, 1)
+	typ, _, _ = wire.Varint(item, 3)
+	count, _, _ = wire.Varint(item, 4)
+	if err != nil || code != 72 || typ != 4 || count != 73 || s.wallet.Snapshot().Gold != 73 {
+		t.Fatal("changed reward currency/count ignored")
 	}
 }

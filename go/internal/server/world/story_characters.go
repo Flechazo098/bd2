@@ -71,7 +71,7 @@ func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, er
 	// Placeholder entries are player-controlled party slots. Their costume
 	// and character cannot be inferred from the design placeholder itself.
 	for _, costume := range formation.StoryCostumes {
-		if costume.CostumeID == 996000 {
+		if s.seed.PlaceholderCostumeID != 0 && costume.CostumeID == s.seed.PlaceholderCostumeID {
 			continue
 		}
 		temporaryMember := false
@@ -112,7 +112,7 @@ func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, er
 	// Fill authored player-controlled slots from the persisted field party,
 	// then the persisted battle party. Never synthesize the placeholder ID.
 	for _, costume := range formation.StoryCostumes {
-		if costume.CostumeID != 996000 || s.decks == nil {
+		if (s.seed.PlaceholderCostumeID == 0 || costume.CostumeID != s.seed.PlaceholderCostumeID) || s.decks == nil {
 			continue
 		}
 		var candidates []uint64

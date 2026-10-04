@@ -1,17 +1,18 @@
 package gamedata
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 )
 
 // FieldObjectDesign retains the client table identities, including unsupported
 // reward graphs, so callers can reject them without inventing a reward.
-type FieldObjectDesign struct{ Objects map[int]FieldRewardObject }
+type FieldObjectDesign struct {
+	Objects   map[int]FieldRewardObject
+	Equipment *EquipmentGachaCatalog
+}
 type FieldRewardObject struct {
 	ID, MapID, GroupID, Type, ResetType, QuestID, BuffID, MonsterID int
 	Rewards                                                         []BattleReward
@@ -46,7 +47,7 @@ func LoadFieldObjects(root, version string, pack int) (FieldObjectDesign, error)
 	return loadFieldObjects(db, common)
 }
 func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
-	design := FieldObjectDesign{Objects: map[int]FieldRewardObject{}}
+	design := FieldObjectDesign{Objects: map[int]FieldRewardObject{}, Equipment: &EquipmentGachaCatalog{equipment: map[uint64]EquipmentDesign{}}}
 	groups := map[int]FieldRewardObject{}
 	rows, err := db.Query("SELECT id,ProtoBuf FROM FieldRewardObjectGroupTable")
 	if err != nil {
@@ -91,15 +92,26 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 				rows.Close()
 				return design, fmt.Errorf("gamedata: malformed field loot %d", group[0])
 			}
-			if len(ids) > 0 && len(ids) == len(types) && len(ids) == len(counts) && len(ratios) == len(ids) && len(drop) == 1 && drop[0] > 0 && len(dropType) <= 1 {
-				obj.DropCount = drop[0]
+			if len(ids) > 0 && len(ids) == len(types) && len(ids) == len(counts) && len(ratios) == len(ids) && len(drop) <= 1 && len(dropType) <= 1 {
+				if len(drop) == 1 {
+					obj.DropCount = drop[0]
+				}
 				obj.Ratios = ratios
 				if len(dropType) > 0 {
 					obj.DropType = dropType[0]
 				}
 				for i := range ids {
 					obj.Rewards = append(obj.Rewards, BattleReward{ID: ids[i], Type: types[i], Count: counts[i]})
+					if types[i] == 10 {
+						if e := design.Equipment.loadEquipmentTree(common, WeightedEquipment{ID: ids[i]}); e != nil {
+							rows.Close()
+							return design, e
+						}
+					}
 				}
+			} else {
+				rows.Close()
+				return design, fmt.Errorf("gamedata: malformed field loot entries %d", group[0])
 			}
 		}
 		groups[id] = obj
@@ -138,29 +150,60 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 	return design, rows.Err()
 }
 
-// Draw uses the table's normalized ratio distribution for DropType 0.
-// Independent DropType 1 uses a different ratio unit and needs separate evidence.
+// DropType 0 makes DropCount weighted selections. DropType 1 checks each
+// component's percentage independently; its DropCount may be proto default zero.
 func (o FieldRewardObject) Draw() ([]BattleReward, error) {
-	if o.DropType != 0 || o.DropCount == 0 || o.DropCount > 100 || len(o.Rewards) != len(o.Ratios) {
+	return o.draw(cryptoDraw)
+}
+
+func (o FieldRewardObject) draw(draw func(uint64) (uint64, error)) ([]BattleReward, error) {
+	if o.DropType > 1 || (o.DropType == 0 && o.DropCount == 0) || o.DropCount > 100 || len(o.Rewards) == 0 || len(o.Rewards) != len(o.Ratios) {
 		return nil, fmt.Errorf("gamedata: unsupported field reward draw")
 	}
 	var total uint64
-	for _, r := range o.Ratios {
+	for i, r := range o.Ratios {
+		if o.Rewards[i].Count == 0 || o.Rewards[i].Count > uint64(^uint32(0)>>1) || (o.DropType == 1 && r > 100) {
+			return nil, fmt.Errorf("gamedata: malformed field reward component")
+		}
 		if ^uint64(0)-total < r {
 			return nil, fmt.Errorf("gamedata: reward ratio overflow")
 		}
 		total += r
 	}
-	if total == 0 {
+	if total == 0 && o.DropType == 0 {
 		return nil, fmt.Errorf("gamedata: empty field reward distribution")
 	}
 	var result []BattleReward
+	if o.DropType == 1 {
+		for i, ratio := range o.Ratios {
+			if ratio == 0 {
+				continue
+			}
+			if ratio < 100 {
+				value, err := draw(100)
+				if err != nil {
+					return nil, err
+				}
+				if value >= 100 {
+					return nil, fmt.Errorf("gamedata: field reward random out of range")
+				}
+				if value >= ratio {
+					continue
+				}
+			}
+			result = append(result, o.Rewards[i])
+		}
+		return result, nil
+	}
 	for n := uint64(0); n < o.DropCount; n++ {
-		value, err := rand.Int(rand.Reader, new(big.Int).SetUint64(total))
+		value, err := draw(total)
 		if err != nil {
 			return nil, err
 		}
-		pick := value.Uint64()
+		if value >= total {
+			return nil, fmt.Errorf("gamedata: field reward random out of range")
+		}
+		pick := value
 		for i, ratio := range o.Ratios {
 			if pick < ratio {
 				result = append(result, o.Rewards[i])
