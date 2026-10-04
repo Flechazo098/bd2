@@ -44,7 +44,7 @@ func (s *Service) fieldObjectDesign(pack int) (gamedata.FieldObjectDesign, error
 	return design, nil
 }
 func (s *Service) openedFieldObjects(pack int) ([]int, error) {
-	ids, err := s.state.OpenedFieldRewards(pack, s.questDifficulty(pack))
+	ids, err := s.state.OpenedFieldRewards(pack)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *Service) openedFieldObjects(pack int) ([]int, error) {
 		if e != nil {
 			continue
 		}
-		opened, e := s.state.FieldRewardOpened(pack, s.questDifficulty(pack), id, period)
+		opened, e := s.state.FieldRewardOpened(pack, id, period)
 		if e != nil {
 			return nil, e
 		}
@@ -134,12 +134,12 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	if obj.Type < 1 || obj.Type > 3 || obj.BuffID != 0 || obj.MonsterID != 0 || obj.QuestID != 0 || len(obj.Rewards) == 0 {
 		return nil, fmt.Errorf("%w: unsupported field object reward graph/reset", ErrInvalidRequest)
 	}
-	difficulty := s.questDifficulty(pack)
+
 	period, err := s.fieldObjectPeriod(obj)
 	if err != nil {
 		return nil, err
 	}
-	opened, err := s.state.FieldRewardOpened(pack, difficulty, id, period)
+	opened, err := s.state.FieldRewardOpened(pack, id, period)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 			return nil, fmt.Errorf("%w: unsupported field reward type %d", ErrInvalidRequest, r.Type)
 		}
 	}
-	identity := fmt.Sprintf("field-reward:%d:%d:%d:%s", pack, difficulty, id, period)
+	identity := fmt.Sprintf("field-reward:%d:%d:%s", pack, id, period)
 	if _, err = s.wallet.GrantQuestOnce(identity, rewards); err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = s.state.MarkFieldRewardOpened(pack, difficulty, id, period); err != nil {
+	if err = s.state.MarkFieldRewardOpened(pack, id, period); err != nil {
 		return nil, err
 	}
 	var bundle []byte

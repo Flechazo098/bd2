@@ -79,7 +79,7 @@ func TestFieldChestAtomicAwardRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, err := s.state.FieldRewardOpened(21, 0, 1001, "once")
+	opened, err := s.state.FieldRewardOpened(21, 1001, "once")
 	if err != nil || opened || s.wallet.Snapshot().FreeJewelry != 100 || len(s.inventory.All()) != 0 {
 		t.Fatalf("partial state after rollback opened=%v wallet=%+v err=%v", opened, s.wallet.Snapshot(), err)
 	}
@@ -129,7 +129,7 @@ func TestFieldChestAtomicAwardRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opened, err = s.state.FieldRewardOpened(21, 0, 1002, "once")
+	opened, err = s.state.FieldRewardOpened(21, 1002, "once")
 	if err != nil || opened || len(s.inventory.All()) != 0 {
 		t.Fatalf("inventory partially committed after rollback opened=%v items=%v err=%v", opened, s.inventory.All(), err)
 	}
@@ -168,6 +168,11 @@ func TestFieldChestDeltaAndPersistentRepeat(t *testing.T) {
 	}
 	s.state, err = progress.OpenStore(store)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Quest selection difficulty is independent of the pack's opened chests.
+	// Switching it must neither hide the chest nor create a second grant.
+	if err = s.state.SelectQuest(21, progress.QuestSelection{QuestID: 1, Difficulty: 2}); err != nil {
 		t.Fatal(err)
 	}
 	req = wire.AppendVarint(req, 1, 999)
