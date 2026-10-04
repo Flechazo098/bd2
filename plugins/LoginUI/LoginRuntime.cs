@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using BD2.GameNames;
+using Bd2Login;
 using BepInEx.Logging;
 
 using static BD2.GameNames.Game;
@@ -28,17 +29,7 @@ internal static class LoginRuntime
         return string.Equals(NormalizeOrigin(left), NormalizeOrigin(right), StringComparison.Ordinal);
     }
 
-    private static string NormalizeOrigin(Uri uri)
-    {
-        if (uri == null || !uri.IsAbsoluteUri || string.IsNullOrEmpty(uri.Host))
-        {
-            throw new InvalidOperationException("authentication server origin is unavailable");
-        }
-        string host = uri.IdnHost.ToLowerInvariant();
-        int port = uri.IsDefaultPort ? -1 : uri.Port;
-        UriBuilder builder = new UriBuilder(uri.Scheme.ToLowerInvariant(), host, port);
-        return builder.Uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
-    }
+    private static string NormalizeOrigin(Uri uri) => ServerLoginPreferences.NormalizeOrigin(uri);
 
     internal static void ValidateOAuthTransport(Uri uri)
     {

@@ -97,7 +97,7 @@ public sealed class Plugin : BaseUnityPlugin
             harmony.Patch(SendMaintenance, prefix: maintenancePrefix);
             harmony.Patch(
                 accessTokenGetter,
-                prefix: new HarmonyMethod(typeof(LoginController), nameof(AccessTokenPrefix)));
+                postfix: new HarmonyMethod(typeof(LoginController), nameof(AccessTokenPostfix)));
             harmony.Patch(
                 clearPCLocalData,
                 postfix: new HarmonyMethod(typeof(LoginController), nameof(ClearPCLocalDataPostfix)));

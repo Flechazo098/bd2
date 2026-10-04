@@ -65,6 +65,7 @@ internal sealed class ClientRouting : IDisposable
 
     private readonly ManualLogSource log;
     private readonly ClientConfig config;
+    internal string ServerOrigin => config.server_origin;
     private readonly ResourcePolicy resources;
     private readonly LocalResourceServer localResourceServer;
 
