@@ -85,6 +85,7 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 	}
 	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack, fieldPacks: fieldPacks}
 	service.packSummaryTargets = packSummaryTargets
+	service.attachPackDetailDesign(gameDataRoot, gameDataVersion)
 	return service, nil
 }
 
@@ -118,6 +119,7 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	packDetailDesign   func(int) (gamedata.PackDetailDesign, error)
 	packSummaryTargets map[int]bool
 	fieldPacks         map[int]gamedata.FieldPack
 	squadLevel         func() (uint64, error)
@@ -156,6 +158,8 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/PackDetailInfo":
+		return s.handlePackDetail(request)
 	case "/PackSummaryInfoList":
 		return s.handlePackSummary(request)
 	case "/PackInfo":
