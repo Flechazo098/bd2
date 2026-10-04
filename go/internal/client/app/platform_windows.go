@@ -69,7 +69,7 @@ func visibleCommand(name string, args ...string) *exec.Cmd {
 	return command
 }
 
-func launchGame(target string) error {
+func launchGame(target, proxyURL string) error {
 	if processID, running, err := windowsExecutableProcessID(filepath.Base(target)); err != nil {
 		return err
 	} else if running {
@@ -80,7 +80,7 @@ func launchGame(target string) error {
 	}
 	command := visibleCommand(target, gameLaunchArguments()...)
 	command.Dir = filepath.Dir(target)
-	command.Env = gameProxyEnvironment(os.Environ(), systemGameProxy())
+	command.Env = gameProxyEnvironment(os.Environ(), proxyURL)
 	if err := command.Start(); err != nil {
 		return err
 	}

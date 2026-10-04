@@ -170,7 +170,19 @@ func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clie
 		}, nil
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		if normalized.ProxyURL != "" {
+			proxyURL, _ := url.Parse(normalized.ProxyURL)
+			transport.Proxy = func(request *http.Request) (*url.URL, error) {
+				if resourceLoopback(request.URL.Hostname()) {
+					return nil, nil
+				}
+				return proxyURL, nil
+			}
+		}
+		defer transport.CloseIdleConnections()
+		client = &http.Client{Timeout: 10 * time.Second, Transport: transport}
 	}
 	body, err := json.Marshal(map[string]clientconfig.CDNMode{"cdn_mode": normalized.CDNMode})
 	if err != nil {

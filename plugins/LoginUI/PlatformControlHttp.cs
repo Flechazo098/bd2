@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Bd2LoginUI;
 
 // Own-origin control requests use OS TLS without Mono/Unity's TLS implementation.
-internal static class PlatformControlHttp
+internal static partial class PlatformControlHttp
 {
     public static bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
         RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
@@ -23,16 +23,68 @@ internal static class PlatformControlHttp
         public byte[] Data;
         public IReadOnlyDictionary<string, string> Headers;
         public bool RefreshInvalid;
+        public long ElapsedMilliseconds;
+        public long RequestId;
+        public long QueueMilliseconds;
+        public long TransportMilliseconds;
+        public string FailureKind;
+        public int NativeErrorCode;
         public bool Success => Error == null && StatusCode >= 200 && StatusCode < 300;
     }
 
-    public static Task<Response> Send(Uri uri, string method, byte[] body, string authorization,
+    private static readonly SemaphoreSlim NativeSlots = new SemaphoreSlim(16, 16);
+    public static async Task<Response> Send(Uri uri, string method, byte[] body, string authorization,
         int timeoutSeconds, CancellationToken lifetime, CancellationToken generation, int maxResponseBytes = 16 * 1024,
         IReadOnlyDictionary<string, string> requestHeaders = null)
     {
-        return Task.Run(() =>
+        System.Diagnostics.Stopwatch elapsed = System.Diagnostics.Stopwatch.StartNew();
+        long requestId = Interlocked.Increment(ref nextRequestId);
+        long admittedAt = -1;
+        Response completed = null;
+        try
         {
-            using (CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime, generation))
+            if (timeoutSeconds <= 0 || timeoutSeconds > 60) return completed = Failure("Invalid control request");
+            using (CancellationTokenSource admission = CancellationTokenSource.CreateLinkedTokenSource(lifetime, generation, ShutdownCancellation.Token))
+            {
+                admission.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                try { await NativeSlots.WaitAsync(admission.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException)
+                {
+                    bool owner = lifetime.IsCancellationRequested || generation.IsCancellationRequested || ShutdownCancellation.IsCancellationRequested;
+                    return completed = new Response { Error = owner ? "Native request owner canceled" : "Native request deadline exceeded", FailureKind = owner ? "OwnerCanceled" : "DeadlineExceeded" };
+                }
+                admittedAt = elapsed.ElapsedMilliseconds;
+                try
+                {
+                    // At most sixteen dedicated workers exist. Admission awaits without
+                    // occupying any worker, and native event waits never starve timer/UI
+                    // or relay tasks sharing the managed thread pool.
+                    return completed = await SendWorker(uri, method, body, authorization, timeoutSeconds, lifetime, generation, maxResponseBytes, requestHeaders, elapsed).ConfigureAwait(false);
+                }
+                finally { NativeSlots.Release(); }
+            }
+        }
+        finally
+        {
+            // The complete native transaction includes server wait; it is not a bandwidth measurement.
+            if (completed != null)
+            {
+                completed.RequestId = requestId;
+                completed.ElapsedMilliseconds = elapsed.ElapsedMilliseconds;
+                completed.QueueMilliseconds = admittedAt < 0 ? completed.ElapsedMilliseconds : admittedAt;
+                completed.TransportMilliseconds = admittedAt < 0 ? 0 : completed.ElapsedMilliseconds - admittedAt;
+                LogCompletion(uri, method, completed);
+            }
+        }
+    }
+
+    private static Task<Response> SendWorker(Uri uri, string method, byte[] body, string authorization,
+        int timeoutSeconds, CancellationToken lifetime, CancellationToken generation, int maxResponseBytes,
+        IReadOnlyDictionary<string, string> requestHeaders, System.Diagnostics.Stopwatch elapsed)
+    {
+        return Task.Factory.StartNew(() =>
+        {
+            using (CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime, generation, ShutdownCancellation.Token))
             {
                 try
                 {
@@ -43,154 +95,50 @@ internal static class PlatformControlHttp
                         maxResponseBytes <= 0 || maxResponseBytes > 64 * 1024 * 1024 ||
                         (body != null && body.Length > 64 * 1024 * 1024) ||
                         (authorization != null && (authorization.Length > 16384 || authorization.IndexOf('\r') >= 0 || authorization.IndexOf('\n') >= 0)))
-                        return Failure("Invalid control request");
-                    cancellation.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+                        return Timed(Failure("Invalid control request"), elapsed);
+                    long budget = timeoutSeconds * 1000L - elapsed.ElapsedMilliseconds;
+                    if (budget <= 0) throw new OperationCanceledException();
+                    cancellation.CancelAfter(TimeSpan.FromMilliseconds(budget));
                     cancellation.Token.ThrowIfCancellationRequested();
                     if (requestHeaders != null)
                     {
-                        if (requestHeaders.Count > 64) return Failure("Invalid control request headers");
+                        if (requestHeaders.Count > 64) return Timed(Failure("Invalid control request headers"), elapsed);
                         int headerSize = 0;
                         foreach (KeyValuePair<string, string> header in requestHeaders)
                         {
                             if (!AllowedRequestHeader(header.Key) || header.Key.Length > 256 || !ValidHeaderName(header.Key) || header.Value == null || header.Value.Length > 16384 ||
                                 header.Value.IndexOf('\r') >= 0 || header.Value.IndexOf('\n') >= 0)
-                                return Failure("Invalid control request headers");
+                                return Timed(Failure("Invalid control request headers"), elapsed);
                             headerSize += header.Key.Length + header.Value.Length;
-                            if (headerSize > 65536) return Failure("Invalid control request headers");
+                            if (headerSize > 65536) return Timed(Failure("Invalid control request headers"), elapsed);
                         }
                     }
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                        return SendWindows(uri, method, body, authorization, timeoutSeconds, cancellation.Token, maxResponseBytes, requestHeaders);
+                        return Timed(SendWindows(uri, method, body, authorization, timeoutSeconds, cancellation.Token, maxResponseBytes, requestHeaders), elapsed);
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-                        return SendMac(uri, method, body, authorization, timeoutSeconds, cancellation.Token, maxResponseBytes, requestHeaders);
-                    return Failure("Native control transport is unsupported");
+                        return Timed(SendMac(uri, method, body, authorization, timeoutSeconds, cancellation.Token, maxResponseBytes, requestHeaders, elapsed), elapsed);
+                    return Timed(Failure("Native control transport is unsupported"), elapsed);
                 }
-                catch (OperationCanceledException) { return Failure("Control request canceled"); }
-                catch (Exception exception) { return Failure("Native control transport failed: " + exception.GetType().Name); }
+                catch (OperationCanceledException)
+                {
+                    bool owner = lifetime.IsCancellationRequested || generation.IsCancellationRequested || ShutdownCancellation.IsCancellationRequested;
+                    return Timed(new Response { Error = owner ? "Native request owner canceled" : "Native request deadline exceeded", FailureKind = owner ? "OwnerCanceled" : "DeadlineExceeded" }, elapsed);
+                }
+                catch (NativeProxyConfigurationException exception) { return Timed(new Response { Error = exception.Message, FailureKind = "ProxyConfiguration" }, elapsed); }
+                catch (Exception exception) { return Timed(Failure("Native control transport failed: " + exception.GetType().Name), elapsed); }
             }
-        });
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
-    private static Response Failure(string error) => new Response { Error = error };
-
-    private static Response SendWindows(Uri uri, string method, byte[] body, string authorization,
-        int timeoutSeconds, CancellationToken token, int maxResponseBytes, IReadOnlyDictionary<string, string> requestHeaders)
-    {
-        IntPtr session = IntPtr.Zero, connection = IntPtr.Zero, request = IntPtr.Zero;
-        try
-        {
-            // Owned endpoints connect directly; browser OAuth keeps its own proxy settings.
-            session = WinHttpOpen("BD2LoginUI", 1, null, null, 0); // WINHTTP_ACCESS_TYPE_NO_PROXY
-            if (session == IntPtr.Zero) return WindowsFailure();
-            int timeout = checked(timeoutSeconds * 1000);
-            if (!WinHttpSetTimeouts(session, timeout, timeout, timeout, timeout)) return WindowsFailure();
-            connection = WinHttpConnect(session, uri.IdnHost, (ushort)uri.Port, 0);
-            if (connection == IntPtr.Zero) return WindowsFailure();
-            request = WinHttpOpenRequest(connection, method, uri.PathAndQuery, null, null, IntPtr.Zero,
-                uri.Scheme == Uri.UriSchemeHttps ? 0x00800000u : 0u);
-            if (request == IntPtr.Zero) return WindowsFailure();
-            uint disabled = 0x2 | 0x4; // WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS
-            if (!WinHttpSetOption(request, 63, ref disabled, 4)) return WindowsFailure();
-            string headers = "Accept: application/json\r\n";
-            if (body != null && !HasContentType(requestHeaders)) headers += "Content-Type: application/json\r\n";
-            if (authorization != null) headers += "Authorization: " + authorization + "\r\n";
-            if (requestHeaders != null)
-                foreach (KeyValuePair<string, string> header in requestHeaders) headers += header.Key + ": " + header.Value + "\r\n";
-            token.ThrowIfCancellationRequested();
-            // Calls have native timeouts; never close a handle concurrently with a P/Invoke call.
-            if (!WinHttpSendRequest(request, headers, (uint)headers.Length, body,
-                (uint)(body?.Length ?? 0), (uint)(body?.Length ?? 0), UIntPtr.Zero)) return WindowsFailure();
-            token.ThrowIfCancellationRequested();
-            if (!WinHttpReceiveResponse(request, IntPtr.Zero)) return WindowsFailure();
-            uint status, size = 4;
-            if (!WinHttpQueryHeaders(request, 19 | 0x20000000, null, out status, ref size, IntPtr.Zero)) return WindowsFailure();
-            Dictionary<string, string> responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            size = 0;
-            WinHttpQueryHeadersText(request, 22, null, IntPtr.Zero, ref size, IntPtr.Zero);
-            if (size > 64 * 1024) return Failure("Control response headers exceeded limit");
-            if (size > 0 && size <= 64 * 1024)
-            {
-                int headerCapacity = (int)size;
-                IntPtr headerBuffer = Marshal.AllocHGlobal((int)size);
-                try
-                {
-                    if (WinHttpQueryHeadersText(request, 22, null, headerBuffer, ref size, IntPtr.Zero))
-                        foreach (string line in (Marshal.PtrToStringUni(headerBuffer) ?? string.Empty).Split(new[] { "\r\n" }, StringSplitOptions.None))
-                            KeepResponseHeader(responseHeaders, line);
-                }
-                finally
-                {
-                    for (int index = 0; index < headerCapacity; index++) Marshal.WriteByte(headerBuffer, index, 0);
-                    Marshal.FreeHGlobal(headerBuffer);
-                }
-            }
-            using (MemoryStream response = new MemoryStream())
-            {
-                byte[] buffer = new byte[4096];
-                try
-                {
-                while (true)
-                {
-                    token.ThrowIfCancellationRequested();
-                    uint read;
-                    if (!WinHttpReadData(request, buffer, (uint)buffer.Length, out read)) return WindowsFailure();
-                    if (read == 0) break;
-                    if (response.Length + read > maxResponseBytes) return Failure("Control response exceeded limit");
-                    response.Write(buffer, 0, (int)read);
-                }
-                token.ThrowIfCancellationRequested();
-                byte[] data = response.ToArray();
-                Array.Clear(response.GetBuffer(), 0, (int)response.Length);
-                Array.Clear(buffer, 0, buffer.Length);
-                return new Response { StatusCode = (int)status, Data = data, Headers = responseHeaders, Body = Encoding.UTF8.GetString(data),
-                    RefreshInvalid = IsRefreshInvalid(responseHeaders) };
-                }
-                finally
-                {
-                    Array.Clear(buffer, 0, buffer.Length);
-                    if (response.TryGetBuffer(out ArraySegment<byte> used)) Array.Clear(used.Array, used.Offset, used.Count);
-                }
-            }
-        }
-        finally
-        {
-            if (request != IntPtr.Zero) WinHttpCloseHandle(request);
-            if (connection != IntPtr.Zero) WinHttpCloseHandle(connection);
-            if (session != IntPtr.Zero) WinHttpCloseHandle(session);
-        }
-    }
-
-    private static Response WindowsFailure() => Failure("WinHTTP error " + Marshal.GetLastWin32Error());
-
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr WinHttpOpen(string agent, uint access, string proxy, string bypass, uint flags);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr WinHttpConnect(IntPtr session, string server, ushort port, uint reserved);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr WinHttpOpenRequest(IntPtr connection, string verb, string path, string version,
-        string referer, IntPtr acceptTypes, uint flags);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpSetTimeouts(IntPtr handle, int resolve, int connect, int send, int receive);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpSetOption(IntPtr handle, uint option, ref uint value, uint size);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpSendRequest(IntPtr request, string headers, uint headersLength, byte[] body,
-        uint bodyLength, uint totalLength, UIntPtr context);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpReceiveResponse(IntPtr request, IntPtr reserved);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpQueryHeaders(IntPtr request, uint info, string name, out uint value, ref uint size, IntPtr index);
-    [DllImport("winhttp.dll", EntryPoint = "WinHttpQueryHeaders", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpQueryHeadersText(IntPtr request, uint info, string name, IntPtr value, ref uint size, IntPtr index);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpReadData(IntPtr request, [Out] byte[] buffer, uint capacity, out uint read);
-    [DllImport("winhttp.dll")] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool WinHttpCloseHandle(IntPtr handle);
+    private static Response Timed(Response response, System.Diagnostics.Stopwatch elapsed) { response.ElapsedMilliseconds = elapsed.ElapsedMilliseconds; return response; }
+    private static Response Failure(string error) => new Response { Error = error, FailureKind = "Transport" };
 
     private static Response SendMac(Uri uri, string method, byte[] body, string authorization,
-        int timeoutSeconds, CancellationToken token, int maxResponseBytes, IReadOnlyDictionary<string, string> requestHeaders)
+        int timeoutSeconds, CancellationToken token, int maxResponseBytes, IReadOnlyDictionary<string, string> requestHeaders, System.Diagnostics.Stopwatch elapsed)
     {
         IntPtr curl = IntPtr.Zero, headers = IntPtr.Zero, pinnedBody = IntPtr.Zero;
+        CurlPool pool = null;
+        bool reusable = false;
         using (MemoryStream response = new MemoryStream())
         {
             bool exceeded = false;
@@ -204,8 +152,8 @@ internal static class PlatformControlHttp
                     if (token.IsCancellationRequested || length > (ulong)maxResponseBytes || response.Length + (long)length > maxResponseBytes)
                     { exceeded = !token.IsCancellationRequested; return UIntPtr.Zero; }
                     byte[] bytes = new byte[(int)length];
-                    Marshal.Copy(data, bytes, 0, bytes.Length);
-                    response.Write(bytes, 0, bytes.Length);
+                    try { Marshal.Copy(data, bytes, 0, bytes.Length); response.Write(bytes, 0, bytes.Length); }
+                    finally { Array.Clear(bytes, 0, bytes.Length); }
                     return new UIntPtr(length);
                 }
                 catch { return UIntPtr.Zero; }
@@ -220,8 +168,8 @@ internal static class PlatformControlHttp
                         return UIntPtr.Zero;
                     headerBytes += (int)length;
                     byte[] bytes = new byte[(int)length];
-                    Marshal.Copy(data, bytes, 0, bytes.Length);
-                    KeepResponseHeader(responseHeaders, Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n'));
+                    try { Marshal.Copy(data, bytes, 0, bytes.Length); KeepResponseHeader(responseHeaders, Encoding.UTF8.GetString(bytes).TrimEnd('\r', '\n')); }
+                    finally { Array.Clear(bytes, 0, bytes.Length); }
                     return new UIntPtr(length);
                 }
                 catch { return UIntPtr.Zero; }
@@ -230,7 +178,12 @@ internal static class PlatformControlHttp
             {
                 // System libcurl is built with the OS TLS backend and its default trust store.
                 if (!EnsureCurlInitialized()) return Failure("Could not initialize system curl");
-                curl = curl_easy_init();
+                NativeProxySettings proxy = NativeProxyPolicy.Resolve(uri);
+                token.ThrowIfCancellationRequested();
+                curl = AcquireCurl(uri, proxy, token, out pool);
+                curl_easy_reset(curl);
+                SetCurl(curl, 10004, proxy.ProxyUrl ?? string.Empty); // explicitly suppress environment proxies for direct routes
+                SetCurl(curl, 10177, string.Empty); // policy already applied destination bypass
                 if (curl == IntPtr.Zero) return Failure("Could not create system curl request");
                 SetCurl(curl, 10002, uri.AbsoluteUri);
                 SetCurl(curl, 10036, method);
@@ -238,8 +191,10 @@ internal static class PlatformControlHttp
                 SetCurl(curl, 64, 1L); // verify peer chain
                 SetCurl(curl, 81, 2L); // verify hostname
                 SetCurl(curl, 99, 1L); // no signals on worker threads
-                SetCurl(curl, 155, checked(timeoutSeconds * 1000L));
-                SetCurl(curl, 156, checked(timeoutSeconds * 1000L));
+                long remaining = timeoutSeconds * 1000L - elapsed.ElapsedMilliseconds;
+                if (remaining <= 0) throw new OperationCanceledException();
+                SetCurl(curl, 155, remaining);
+                SetCurl(curl, 156, remaining);
                 SetCurl(curl, 181, uri.Scheme == Uri.UriSchemeHttps ? 2L : 3L);
                 SetCurl(curl, 182, 2L); // redirects are disabled
                 SetCurl(curl, 10018, "BD2LoginUI");
@@ -266,20 +221,23 @@ internal static class PlatformControlHttp
                 GC.KeepAlive(progress);
                 GC.KeepAlive(header);
                 token.ThrowIfCancellationRequested();
-                if (result != 0) return Failure(exceeded ? "Control response exceeded limit" : "System curl error " + result);
+                if (result != 0) return new Response { Error = exceeded ? "Control response exceeded limit" : "System curl error " + result, NativeErrorCode = result, FailureKind = "Transport" };
                 long status;
                 int infoResult = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
                     ? curl_easy_getinfo_arm64(curl, 0x200002, 0, 0, 0, 0, 0, 0, out status)
                     : curl_easy_getinfo(curl, 0x200002, out status);
                 if (infoResult != 0) return Failure("Could not read system curl status");
                 byte[] data = response.ToArray();
+                reusable = true;
                 Array.Clear(response.GetBuffer(), 0, (int)response.Length);
                 return new Response { StatusCode = (int)status, Data = data, Headers = responseHeaders, Body = Encoding.UTF8.GetString(data),
                     RefreshInvalid = IsRefreshInvalid(responseHeaders) };
             }
             finally
             {
-                if (curl != IntPtr.Zero) curl_easy_cleanup(curl);
+                // Reset while callbacks and body/header storage still exist. Reset keeps
+                // only libcurl connection/DNS caches, clearing request secrets and state.
+                if (curl != IntPtr.Zero) { curl_easy_reset(curl); ReleaseCurl(pool, curl, reusable); }
                 if (headers != IntPtr.Zero) curl_slist_free_all(headers);
                 if (pinnedBody != IntPtr.Zero)
                 {
@@ -378,6 +336,7 @@ internal static class PlatformControlHttp
     [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern int curl_global_init(long flags);
     [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr curl_easy_init();
     [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern void curl_easy_cleanup(IntPtr curl);
+    [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern void curl_easy_reset(IntPtr curl);
     [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern int curl_easy_perform(IntPtr curl);
     [DllImport(Curl, CallingConvention = CallingConvention.Cdecl)] private static extern int curl_easy_getinfo(IntPtr curl, int info, out long value);
     [DllImport(Curl, EntryPoint = "curl_easy_setopt", CallingConvention = CallingConvention.Cdecl)] private static extern int curl_easy_setopt_long(IntPtr curl, int option, long value);

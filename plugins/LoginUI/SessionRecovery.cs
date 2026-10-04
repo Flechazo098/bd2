@@ -31,6 +31,10 @@ internal static class SessionRecovery
     private static int RecoveryEnterScheduled;
     internal static int RecoveryGeneration;
     internal static int RuntimeProbeFailures;
+    private static float LastGameSuccess;
+    private static float LastGameTransportFailure;
+    private static float RuntimeProbeFailureSince;
+    private static bool RuntimeProbeDegraded;
     internal static CancellationTokenSource ControlProbeCancellation = new CancellationTokenSource();
 
     internal static void DisposeGameRelay()
@@ -128,6 +132,7 @@ internal static class SessionRecovery
         }
         if (GameRelay != null)
         {
+            __instance.timeout = 30;
             __instance.url = GameRelay.Rewrite(canonical).AbsoluteUri;
         }
     }
@@ -150,6 +155,10 @@ internal static class SessionRecovery
             {
                 return;
             }
+            if (request.result == UnityWebRequest.Result.Success && request.responseCode >= 200 && request.responseCode < 300)
+                LastGameSuccess = Time.realtimeSinceStartup;
+            else if (IsGameTransportFailure(request))
+                LastGameTransportFailure = Time.realtimeSinceStartup;
             if (requestUri.AbsolutePath.Equals("/game/LoginUser", StringComparison.Ordinal) &&
                 request.responseCode >= 200 && request.responseCode < 300)
             {
@@ -262,11 +271,17 @@ internal static class SessionRecovery
             {
                 return true;
             }
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            object failedPacket = __0.GetType().GetGameProperty("PacketData", flags)?.GetValue(__0, null);
+            object retryValue = failedPacket?.GetType().GetGameProperty("RetryCount", flags)?.GetValue(failedPacket, null);
+            // Preserve the game's same-packet backoff for two transient failures;
+            // never replay a mutation independently in the native transport.
+            if (retryValue is int retries && retries < 2) return true;
             if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
             {
-                return !BeginSessionRecovery("transport failure during recovery");
+                return !BeginSessionRecovery("transport failure during recovery after client retries");
             }
-            return !EstablishedGameSession || !BeginSessionRecovery("transport failure");
+            return !EstablishedGameSession || !BeginSessionRecovery("transport failure after client retries");
         }
         catch (Exception ex)
         {
@@ -299,10 +314,16 @@ internal static class SessionRecovery
             }
             match = request;
         }
-        // HTTP errors (including 501) are ProtocolError, even though the game calls
-        // ExponetialBackOff for every non-Success result. Do not infer status from error text.
-        return match != null && match.result == UnityWebRequest.Result.ConnectionError;
+        if (match == null || !IsGameTransportFailure(match)) return false;
+        LastGameTransportFailure = Time.realtimeSinceStartup;
+        return true;
     }
+
+    private static bool IsGameTransportFailure(UnityWebRequest request) =>
+        request.result == UnityWebRequest.Result.ConnectionError ||
+        (request.result == UnityWebRequest.Result.ProtocolError && request.responseCode == 502 &&
+            GameRelay != null && GameRelay.TryResolve(new Uri(request.url), out _) &&
+            string.Equals(request.GetResponseHeader("X-BD2-Transport-Failure"), "1", StringComparison.Ordinal));
 
     private static bool IsConfiguredServerFailure(object packetException)
     {
@@ -437,44 +458,70 @@ internal static class SessionRecovery
                     lifetime, ControlProbeCancellation.Token, response => result = response);
                 if (lifetime.IsCancellationRequested) yield break;
                 if (result == null || generation != Volatile.Read(ref RecoveryGeneration) || Volatile.Read(ref SessionRecoveryInProgress) != 0) continue;
-                if (!result.Success)
+                RuntimeStatus status = null;
+                if (result.Success && result.StatusCode == 200)
                 {
-                    Log?.LogWarning("Server runtime probe failed: " + result.Error);
-                    RuntimeProbeFailures++;
-                    if (RuntimeProbeFailures >= 3)
+                    try { status = JsonUtility.FromJson<RuntimeStatus>(result.Body); }
+                    catch (Exception) { }
+                }
+                bool valid = status != null && !string.IsNullOrWhiteSpace(status.instance_id) &&
+                    (status.status == "ready" || status.status == "draining");
+                if (!valid)
+                {
+                    if (!IsUnavailableProbe(result))
                     {
-                        BeginSessionRecovery("runtime probe failed three consecutive times");
+                        // Malformed/unsupported control responses degrade monitoring;
+                        // they do not prove the game session disappeared.
+                        RuntimeProbeFailures = 0;
+                        RuntimeProbeFailureSince = 0;
+                        if (!RuntimeProbeDegraded)
+                            Log?.LogWarning("Server runtime monitoring degraded: " + (result.Error ?? "InvalidRuntimeStatus"));
+                        RuntimeProbeDegraded = true;
+                        yield return interval;
+                        continue;
+                    }
+                    float now = Time.realtimeSinceStartup;
+                    if (RuntimeProbeFailures == 0) RuntimeProbeFailureSince = now;
+                    RuntimeProbeFailures++;
+                    Log?.LogWarning("Server runtime probe failed: " + (result.Error ?? "InvalidRuntimeStatus"));
+                    // Control-path hiccups alone must not interrupt active gameplay.
+                    // A quiet session still recovers after a sustained outage, so a
+                    // dead server cannot leave the client idle forever.
+                    bool recentSuccess = LastGameSuccess > 0 && now - LastGameSuccess < 30f;
+                    bool recentFailure = LastGameTransportFailure > LastGameSuccess && now - LastGameTransportFailure < 60f;
+                    if (RuntimeProbeFailures >= 3 && !recentSuccess)
+                    {
+                        if (recentFailure)
+                            BeginSessionRecovery("runtime probes and game transport unavailable");
+                        else if (now - RuntimeProbeFailureSince >= 90f && now - LastGameSuccess >= 90f)
+                        {
+                            ControlProbeResult readiness = null;
+                            yield return RequestControlEndpoint(new Uri(ServerRoot, "readyz"), UnityWebRequest.kHttpVerbGET,
+                                null, null, 6, lifetime, ControlProbeCancellation.Token, response => readiness = response);
+                            if (lifetime.IsCancellationRequested) yield break;
+                            if (generation != Volatile.Read(ref RecoveryGeneration)) continue;
+                            if (readiness != null && IsUnavailableProbe(readiness) && Time.realtimeSinceStartup - LastGameSuccess >= 90f)
+                                BeginSessionRecovery("runtime and readiness unavailable during idle session");
+                        }
                     }
                 }
                 else
                 {
                     RuntimeProbeFailures = 0;
-                    RuntimeStatus status = null;
-                    try
-                    {
-                        status = JsonUtility.FromJson<RuntimeStatus>(result.Body);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log?.LogWarning("Server runtime response was invalid: " + ex.Message);
-                    }
-                    if (status != null && !string.IsNullOrEmpty(status.instance_id))
-                    {
-                        if (ServerInstanceID == null)
-                        {
-                            ServerInstanceID = status.instance_id;
-                        }
-                        else if (ServerInstanceID != status.instance_id || status.status == "draining")
-                        {
-                            ServerInstanceID = status.instance_id;
-                            BeginSessionRecovery(status.status == "draining" ? "server draining" : "server instance changed");
-                        }
-                    }
+                    RuntimeProbeFailureSince = 0;
+                    RuntimeProbeDegraded = false;
+                    bool changed = ServerInstanceID != null && ServerInstanceID != status.instance_id;
+                    ServerInstanceID = status.instance_id;
+                    if (changed || status.status == "draining")
+                        BeginSessionRecovery(status.status == "draining" ? "server draining" : "server instance changed");
                 }
             }
             yield return interval;
         }
     }
+
+    private static bool IsUnavailableProbe(ControlProbeResult result) =>
+        result.StatusCode == 0 || result.StatusCode == 502 || result.StatusCode == 503 || result.StatusCode == 504;
 
     internal static bool SuppressNetworkErrorDuringRecovery(object __0, object __1)
     {
@@ -514,35 +561,78 @@ internal static class SessionRecovery
             yield break;
         }
         float deadline = Time.realtimeSinceStartup + 30f;
-        bool fieldLoaded = false;
+        bool safeSceneLoaded = false;
+        string safeScene = null;
         while (Time.realtimeSinceStartup < deadline && generation == Volatile.Read(ref RecoveryGeneration))
         {
-            GameFieldManager field = FindUnitySingleton<GameFieldManager>();
-            PropertyInfo loaded = field?.GetType().GetGameProperty(nameof(GameFieldManager.IsLoadedField), BindingFlags.Instance | BindingFlags.Public);
-            if (loaded != null && loaded.GetValue(field) is bool ready && ready)
+            bool ready;
+            try
             {
-                fieldLoaded = true;
-                break;
+                ready = TryGetRecoveredSafeScene(out safeScene);
             }
-            if (IsPackCollectionActive())
+            catch (Exception ex)
             {
-                fieldLoaded = true;
+                FinishRecovery(false, "could not inspect recovered scene: " + ex.Message, generation);
+                yield break;
+            }
+            if (ready)
+            {
+                safeSceneLoaded = true;
                 break;
             }
             yield return new WaitForSecondsRealtime(0.25f);
         }
-        if (!fieldLoaded)
+        if (!safeSceneLoaded)
         {
             if (generation == Volatile.Read(ref RecoveryGeneration))
             {
-                BeginSessionRecovery("safe scene load timed out");
+                // A local scene deadline is not evidence of an expired session.
+                // Retain normal client error handling instead of relogging forever.
+                FinishRecovery(false, "safe scene load timed out after authoritative player sync; restart the client manually", generation);
             }
             yield break;
         }
+        Log?.LogInfo("Recovered synchronized player data in safe scene: " + safeScene);
         FinishRecovery(true, null, generation);
     }
 
-    private static bool IsPackCollectionActive()
+    private static bool TryGetRecoveredSafeScene(out string scene)
+    {
+        scene = null;
+        if (!EstablishedGameSession || IsRecoveryUIActive("LoadingUI") || IsRecoveryUIActive("IntroUI")) return false;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
+        PackManager pack = FindUnitySingleton<PackManager>();
+        PropertyInfo packLoading = pack?.GetType().GetGameProperty(nameof(PackManager.IsPackLoading), flags);
+        if (!(packLoading?.GetValue(pack) is bool loading) || loading) return false;
+        GameFieldManager field = FindUnitySingleton<GameFieldManager>();
+        PropertyInfo battle = field?.GetType().GetGameProperty(nameof(GameFieldManager.IsBattlePlay), flags);
+        if (!(battle?.GetValue(field) is bool inBattle) || inBattle) return false;
+
+        // OpenMenuUICoroutine deliberately clears IsLoadedField and loads an
+        // empty scene. EntryFlow plus the completed, active MenuUI is its ready
+        // state; waiting for a loaded field would restart a healthy home menu.
+        object flow = typeof(UIManager).GetGameProperty("EntryFlow", BindingFlags.Static | BindingFlags.Public)?.GetValue(null, null);
+        PropertyInfo menuState = flow?.GetType().GetGameProperty("IsInMenuUI", flags);
+        if (menuState?.GetValue(flow) is bool inMenu && inMenu && IsRecoveryUIReady("MenuUI"))
+        {
+            scene = "home menu";
+            return true;
+        }
+        PropertyInfo loaded = field.GetType().GetGameProperty(nameof(GameFieldManager.IsLoadedField), flags);
+        if (loaded?.GetValue(field) is bool ready && ready)
+        {
+            scene = "field";
+            return true;
+        }
+        if (IsRecoveryUIReady("PackCollectionUI"))
+        {
+            scene = "pack collection";
+            return true;
+        }
+        return false;
+    }
+
+    private static Component GetRecoveryUI(string name)
     {
         Type uiManager = typeof(UIManager);
         MethodInfo getUI = uiManager?.GetGameMethod(
@@ -551,8 +641,21 @@ internal static class SessionRecovery
             null,
             new[] { typeof(string) },
             null);
-        Component collection = getUI?.Invoke(null, new object[] { "PackCollectionUI" }) as Component;
-        return collection != null && collection.gameObject != null && collection.gameObject.activeInHierarchy;
+        return getUI?.Invoke(null, new object[] { name }) as Component;
+    }
+
+    private static bool IsRecoveryUIActive(string name)
+    {
+        Component ui = GetRecoveryUI(name);
+        return ui != null && ui.gameObject != null && ui.gameObject.activeInHierarchy;
+    }
+
+    private static bool IsRecoveryUIReady(string name)
+    {
+        Component ui = GetRecoveryUI(name);
+        if (ui == null || ui.gameObject == null || !ui.gameObject.activeInHierarchy) return false;
+        PropertyInfo loaded = ui.GetType().GetGameProperty("IsLoadedUI", BindingFlags.Instance | BindingFlags.Public);
+        return loaded?.GetValue(ui) is bool ready && ready;
     }
 
     private static void ShowRecoveryOverlay(string message)

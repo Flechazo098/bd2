@@ -2,5 +2,6 @@
   "schema_version": 2,
   "server_origin": "http://127.0.0.1:8080",
   "cdn_mode": "local",
+  "proxy_url": "",
   "local_resource_directory": "E:\\bd2\\dl"
 }
