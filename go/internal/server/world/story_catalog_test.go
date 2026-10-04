@@ -8,6 +8,13 @@ import (
 	"testing"
 )
 
+type purchaseTestCostumes map[uint64]gamedata.CharacterDesign
+
+func (c purchaseTestCostumes) Character(id uint64) (gamedata.CharacterDesign, bool) {
+	d, ok := c[id]
+	return d, ok
+}
+
 func TestStoryCatalogUsesTicketsAndQuestLinksAcrossIndependentPacks(t *testing.T) {
 	s := testService()
 	s.seed.PackID = 701
@@ -67,6 +74,26 @@ func TestStoryCatalogUsesTicketsAndQuestLinksAcrossIndependentPacks(t *testing.T
 	if len(ids) != 2 || ids[0] != 405 || ids[1] != 701 {
 		t.Fatalf("terminal updates %v", ids)
 	}
+	if err := s.state.ClearQuest(33, 405); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.state.ClearQuest(50, 701); err != nil {
+		t.Fatal(err)
+	}
+	var counts = map[uint64]uint64{}
+	if err := wire.Walk(s.accountPackInfo(), func(f wire.Field) error {
+		if f.Number == 2 {
+			id, _, _ := wire.Varint(f.Value, 1)
+			count, _, _ := wire.Varint(f.Value, 3)
+			counts[id] = count
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 2 || counts[405] != 1 || counts[701] != 2 {
+		t.Fatalf("completed normal levels count sidequests or omit nonseed pack: %v", counts)
+	}
 }
 
 func TestInitialPackPurchaseUsesDesignAndDurableIdentity(t *testing.T) {
@@ -86,7 +113,8 @@ func TestInitialPackPurchaseUsesDesignAndDurableIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.storyCatalog = &gamedata.StoryCatalog{Packs: map[int]gamedata.StoryPack{707: {ID: 707, BuyRewards: []gamedata.Reward{{Type: 12, Count: 17}, {Type: 19, ID: 88, Count: 1}}}}}
+	s.storyCatalog = &gamedata.StoryCatalog{Packs: map[int]gamedata.StoryPack{707: {ID: 707, BuyRewards: []gamedata.Reward{{Type: 12, Count: 17}, {Type: 4, Count: 31}, {Type: 19, ID: 88, Count: 1}, {Type: 11, ID: 101, Count: 0}}}}}
+	s.questCostumes = purchaseTestCostumes{101: {ID: 10, HP: 100, CostumeMaxLevel: 5}}
 	for i := 0; i < 2; i++ {
 		if err := s.EnsureInitialPackPurchase(); err != nil {
 			t.Fatal(err)
@@ -94,6 +122,9 @@ func TestInitialPackPurchaseUsesDesignAndDurableIdentity(t *testing.T) {
 	}
 	if s.wallet.CatalystBalance() != 26 || len(s.inventory.All()) != 1 {
 		t.Fatal("purchase reward repeated or hardcoded")
+	}
+	if s.wallet.Snapshot().Gold != 31 || len(s.collection.Costumes()) != 1 {
+		t.Fatal("purchase gold or non-stackable level-zero costume handled incorrectly")
 	}
 	if _, owned := s.collection.Grant("pack-purchase:707"); !owned {
 		t.Fatal("missing purchase marker")

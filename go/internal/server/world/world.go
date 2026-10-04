@@ -67,7 +67,7 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		packs[id] = pack.Quests
 		transitions[id] = gamedata.PackTransition{PackID: id, NextPackID: pack.NextPackID}
 	}
-	questCostumes, err := gamedata.LoadQuestCostumes(gameDataRoot, gameDataVersion, packs)
+	questCostumes, err := gamedata.LoadQuestCostumes(gameDataRoot, gameDataVersion, packs, storyCatalog)
 	if err != nil {
 		return nil, err
 	}
@@ -685,9 +685,13 @@ func (s *Service) accountPackInfo() []byte {
 	for _, info := range s.packDBInfoRows() {
 		out = wire.AppendBytes(out, 1, info)
 	}
-	if s.packComplete() {
-		level := wire.AppendVarint(nil, 1, uint64(s.seed.PackID))
-		level = wire.AppendVarint(level, 3, uint64(len(s.state.ClearedQuests(s.seed.PackID))))
+	for _, info := range s.packDBInfoRows() {
+		id, _, _ := wire.Varint(info, 1)
+		if !s.packCompleteFor(int(id)) {
+			continue
+		}
+		level := wire.AppendVarint(nil, 1, id)
+		level = wire.AppendVarint(level, 3, uint64(len(s.storyCatalog.Packs[int(id)].MainQuestIDs)))
 		level = wire.AppendVarint(level, 5, 1)
 		out = wire.AppendBytes(out, 2, level)
 	}
