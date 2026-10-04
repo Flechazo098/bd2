@@ -75,3 +75,20 @@ func TestEquipmentOptionContributionTruncatesRatherThanRounds(t *testing.T) {
 		t.Fatalf("fraction percent=%+v err=%v", percent, err)
 	}
 }
+
+func TestEquipmentHealthStatsAllowRankedItemsWithEmptyOptionRankCurves(t *testing.T) {
+	// EquipmentInfo.GetEquipOptionByRank (0x06003145) returns zero when
+	// RankValue1/2/3 is empty. Rank belongs to the equipment, not each option.
+	d := &EquipmentStatDesign{Options: map[[2]uint64]EquipmentStatRule{
+		{10, 1}: {Default: 10, Growth: 2, Levels: []float64{0, 1}},
+		{20, 2}: {Default: 0.1, Growth: 0.01, Levels: []float64{0, 1}, Ranks: [3][]float64{nil, {0.5, 1}, nil}},
+	}}
+	flat, err := d.HealthContribution(EquipmentOption{GroupID: 10, ID: 1, Level: 1, Rank: [3]int{2, 3, 4}}, false)
+	if err != nil || flat.Flat != 12 {
+		t.Fatalf("empty rank curve contribution=%+v err=%v", flat, err)
+	}
+	percent, err := d.HealthContribution(EquipmentOption{GroupID: 20, ID: 2, Level: 1, Rank: [3]int{2, 2, 4}}, false)
+	if err != nil || percent.Percent != 0.12 {
+		t.Fatalf("mixed rank curve contribution=%+v err=%v", percent, err)
+	}
+}
