@@ -91,8 +91,8 @@ func TestStoryCatalogUsesTicketsAndQuestLinksAcrossIndependentPacks(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(counts) != 2 || counts[405] != 1 || counts[701] != 2 {
-		t.Fatalf("completed normal levels count sidequests or omit nonseed pack: %v", counts)
+	if len(counts) != 2 || counts[405] != 33 || counts[701] != 7 {
+		t.Fatalf("completed normal levels do not retain linked terminal quest IDs: %v", counts)
 	}
 }
 

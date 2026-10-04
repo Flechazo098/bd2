@@ -240,7 +240,8 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	slog.Info("server gameplay rules loaded", "config", *gameConfigPath,
-		"include_collaboration_ur_weapons", gameRules.Gacha.IncludeCollaborationURWeapons)
+		"include_collaboration_ur_weapons", gameRules.Gacha.IncludeCollaborationURWeapons,
+		"starting_pack_id", gameRules.Story.StartPackID)
 	limitedCostumes, err := gamedata.LoadLimitedCostumes(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load limited costume GameData: %w", err)
@@ -446,6 +447,9 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load world state: %w", err)
 	}
+	if err := worldService.ConfigureStartPack(gameRules.Story.StartPackID, initializeAccount); err != nil {
+		return fmt.Errorf("configure account starting chapter: %w", err)
+	}
 	if err := login.AttachLastPlayedPack(worldService); err != nil {
 		return fmt.Errorf("attach persisted login destination: %w", err)
 	}
@@ -580,6 +584,10 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load master title: %w", err)
 	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
+	battleService.AttachCurrentDifficulty(worldService.CurrentQuestDifficulty)
+	if err := worldService.AttachBattleActive(battleService.Active); err != nil {
+		return fmt.Errorf("attach world battle guard: %w", err)
+	}
 	characters := worldService.CharacterService()
 	recruitDesign, err := gamedata.LoadRecruitDesign(gameData, *gameDataVersion)
 	if err != nil {

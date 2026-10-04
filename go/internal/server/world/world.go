@@ -89,7 +89,10 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 	}
 	transition := transitions[seed.PackID]
 	activePack := seed.PackID
-	if saved, found := state.Position(); found {
+	if id := state.ActivePackID(); id != 0 {
+		activePack = id
+	}
+	if saved, found := state.Position(); found && state.ActivePackID() == 0 {
 		_, storyKnown := packs[saved.PackID]
 		_, fieldKnown := fieldPacks[saved.PackID]
 		if storyKnown || fieldKnown {
@@ -97,6 +100,10 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		}
 	}
 	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack, fieldPacks: fieldPacks}
+	service.questDifficulties, err = gamedata.LoadQuestDifficulties(gameDataRoot, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
 	service.packJamDesign = packJamDesign
 	service.packSummaryTargets = packSummaryTargets
 	service.storyCatalog = storyCatalog
@@ -104,6 +111,14 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		return nil, err
 	}
 	service.questCostumes = questCostumes
+	var storyPackIDs []int
+	for id := range packs {
+		storyPackIDs = append(storyPackIDs, id)
+	}
+	service.storyRoster, err = gamedata.LoadStoryCharacterCatalog(gameDataRoot, gameDataVersion, storyPackIDs)
+	if err != nil {
+		return nil, err
+	}
 	service.attachPackDetailDesign(gameDataRoot, gameDataVersion)
 	return service, nil
 }
@@ -138,6 +153,10 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	battleActive       func() bool
+	questDifficulties  map[int]map[int]bool
+	startingPackID     int
+	storyRoster        *gamedata.StoryCharacterCatalog
 	storyCatalog       *gamedata.StoryCatalog
 	questCostumes      player.CostumeDesignSource
 	packDetailDesign   func(int) (gamedata.PackDetailDesign, error)
@@ -181,6 +200,8 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/QuestInfo", "/QuestAccept", "/QuestGiveUp":
+		return s.handleQuestSelection(path, request)
 	case "/PackBuy":
 		return s.handlePackBuy(request)
 	case "/PackDetailInfo":
@@ -201,8 +222,8 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("world: CharInfo missing sequence")
 		}
 		var response []byte
-		characters := s.characters.All()
-		if !s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
+		characters := s.visibleOwnedCharacters(s.characters.All())
+		if s.tutorialRosterRestricted() {
 			// The tutorial roster still contains only starter identities, but
 			// their field HP must come from persisted state rather than falling
 			// through to Starter.Handle's immutable new-account HP.
@@ -215,6 +236,21 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				characters = append(characters, character)
 			}
 		}
+		if s.decks != nil {
+			seen := map[uint64]bool{}
+			for _, char := range characters {
+				seen[char.InvenIndex] = true
+			}
+			for _, entry := range s.decks.CurrentDeck() {
+				if seen[entry.CharacterInvenIndex] {
+					continue
+				}
+				if char, ok := s.characters.Find(entry.CharacterInvenIndex); ok && player.IsStoryCharacter(char) {
+					characters = append(characters, char)
+					seen[char.InvenIndex] = true
+				}
+			}
+		}
 		slog.Info("team trace: deliver owned characters", "characters", characters)
 		for _, character := range characters {
 			response = wire.AppendBytes(response, 1, encodeCharacter(character))
@@ -222,7 +258,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		response = wire.AppendVarint(response, 2, s.starter.FieldCharControlDeckType)
 		return 9, response, true, nil
 	case "/CostumeInfo":
-		if !s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
+		if s.tutorialRosterRestricted() {
 			return 0, nil, false, nil
 		}
 		var response []byte
@@ -239,6 +275,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		return 40, response, true, nil
 	case "/PackInGameInfo":
+		if s.battleActive != nil && s.battleActive() {
+			return 0, nil, true, fmt.Errorf("%w: active battle", ErrInvalidRequest)
+		}
 		pack, err := requestPack(request)
 		if err != nil {
 			return 0, nil, true, err
@@ -246,12 +285,20 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if !s.packUnlocked(pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
 		}
-		s.setCurrentPack(pack)
 		slog.Info("team trace: deliver pack progress", "pack", pack, "clearedQuests", s.state.ClearedQuests(pack), "storyCharacters", s.storyCharacters(pack))
+		if active := s.firstUnclearedQuestFor(pack); active != 0 {
+			if _, err := s.ensureQuestItems(pack, active); err != nil {
+				return 0, nil, true, err
+			}
+		}
 		response, err := s.packInfoFor(pack)
 		if err != nil {
 			return 0, nil, true, err
 		}
+		if err := s.state.SetActivePackID(pack); err != nil {
+			return 0, nil, true, err
+		}
+		s.setCurrentPack(pack)
 		return 5, response, true, nil
 	case "/QuestClear":
 		quest, pack, err := requestQuest(request)
@@ -266,20 +313,42 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if !s.canClear(pack, quest) {
 			return 0, nil, true, fmt.Errorf("%w: quest %d is not active", ErrInvalidRequest, quest)
 		}
-		items, questEquipment, err := s.grantQuestRewards(pack, quest, design.Rewards[0])
+		wasCleared := s.state.QuestCleared(quest, pack, s.questDifficultyFor(pack, quest))
+		items, questEquipment, err := s.grantQuestRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)])
 		if err != nil {
 			return 0, nil, true, err
 		}
-		if err := s.state.ClearQuest(quest, pack); err != nil {
+		if err := s.state.ClearQuest(quest, pack, s.questDifficultyFor(pack, quest)); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
 		}
-		if s.collection != nil && quest == s.seed.BattleUnlockQuestID && pack == s.seed.PackID {
+		if s.collection != nil && quest == s.seed.BattleUnlockQuestID && pack == s.seed.PackID && s.questDifficulty(pack) == 0 && !wasCleared {
 			if err := s.collection.AttachRewardCostume(s.seed.RewardCostume); err != nil {
 				return 0, nil, true, fmt.Errorf("world: attach cleared quest costume: %w", err)
 			}
 		}
+		if selection, selected := s.state.Selection(pack); selected && design.Type == 0 && !wasCleared {
+			selection.QuestID = s.nextQuestFor(pack, quest)
+			if err := s.state.SelectQuest(pack, selection); err != nil {
+				return 0, nil, true, err
+			}
+		}
+		var nextItems []player.Item
+		var nextChars [][]byte
+		if design.Type == 0 {
+			if next := s.nextQuestFor(pack, quest); next != 0 {
+				var err error
+				nextChars, _, err = s.resolveActivePartyWires(pack, next)
+				if err != nil {
+					return 0, nil, true, err
+				}
+				nextItems, err = s.ensureQuestItems(pack, next)
+				if err != nil {
+					return 0, nil, true, err
+				}
+			}
+		}
 		slog.Info("team trace: quest cleared", "pack", pack, "quest", quest, "changesBattleDeck", pack == s.seed.PackID && quest == s.seed.BattleUnlockQuestID)
-		return 18, s.clearResponse(pack, quest, design.Rewards[0], items, questEquipment), true, nil
+		return 18, s.clearResponse(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment, nextItems, nextChars), true, nil
 	default:
 		return 0, nil, false, nil
 	}
@@ -336,7 +405,7 @@ func (s *Service) storyCharacters(packID int) []player.Character {
 }
 
 func (s *Service) canClear(packID, quest int) bool {
-	if s.state.QuestCleared(quest, packID) {
+	if s.state.QuestCleared(quest, packID, s.questDifficultyFor(packID, quest)) {
 		return true
 	}
 	quests, found := s.questsFor(packID)
@@ -347,18 +416,18 @@ func (s *Service) canClear(packID, quest int) bool {
 	if !found {
 		return false
 	}
-	if design.PriorQuestID != 0 && !s.state.QuestCleared(design.PriorQuestID, packID) {
+	if design.PriorQuestID != 0 && !s.state.QuestCleared(design.PriorQuestID, packID, s.questDifficultyFor(packID, quest)) {
 		return false
 	}
 	if design.Type == 0 {
 		return quest == s.firstUnclearedQuestFor(packID)
 	}
-	_, active := s.state.QuestInPack(quest, packID)
+	_, active := s.state.QuestInPack(quest, packID, s.questDifficultyFor(packID, quest))
 	return active
 }
 
 func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.Reward) ([]player.Item, *player.Equipment, error) {
-	identity := fmt.Sprintf("pack%d:quest%d", packID, quest)
+	identity := questRewardIdentity(packID, quest, s.questDifficultyFor(packID, quest))
 	if s.wallet != nil {
 		if _, err := s.wallet.GrantQuestOnce(identity, designRewards); err != nil {
 			return nil, nil, fmt.Errorf("world: grant quest currency: %w", err)
@@ -381,7 +450,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 		case 11:
 			// Quest 26's character/costume instances come from the versioned
 			// story seed and are encoded below; they are not stackable items.
-			if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && reward.ID == s.seed.RewardCostume.ID {
+			if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 && reward.ID == s.seed.RewardCostume.ID {
 				continue
 			}
 			if s.collection == nil || s.questCostumes == nil {
@@ -399,7 +468,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 	}
 	var costumeIDs []uint64
 	for _, reward := range designRewards {
-		if reward.Type == 11 && !(packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && reward.ID == s.seed.RewardCostume.ID) {
+		if reward.Type == 11 && !(packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 && reward.ID == s.seed.RewardCostume.ID) {
 			costumeIDs = append(costumeIDs, reward.ID)
 		}
 	}
@@ -424,7 +493,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 			}
 		}
 	}
-	if packID == s.seed.PackID {
+	if packID == s.seed.PackID && s.questDifficultyFor(packID, quest) == 0 {
 		for _, reward := range questPictorialItems[quest] {
 			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
 		}
@@ -465,26 +534,21 @@ func (s *Service) packInfo() ([]byte, error) {
 
 func (s *Service) packInfoFor(packID int) ([]byte, error) {
 	var out []byte
-	if packID == s.seed.PackID && s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
-		for _, expected := range s.seed.StoryCharacters {
-			character, found := s.characters.Find(expected.InvenIndex)
-			if !found {
-				return nil, fmt.Errorf("world: persisted character %d is missing", expected.InvenIndex)
-			}
-			out = wire.AppendBytes(out, 1, encodeCharacter(character))
-		}
-		character, found := s.characters.Find(s.seed.RewardCharacter.InvenIndex)
-		if !found {
-			return nil, fmt.Errorf("world: persisted reward character %d is missing", s.seed.RewardCharacter.InvenIndex)
-		}
-		out = wire.AppendBytes(out, 1, encodeCharacter(character))
-	}
 	if active := s.firstUnclearedQuestFor(packID); active != 0 {
-		quest := wire.AppendVarint(nil, 1, uint64(active))
-		quest = wire.AppendVarint(quest, 6, uint64(packID))
+		quest := s.questInfoWire(packID, active)
+		chars, _, err := s.resolveActivePartyWires(packID, active)
+		if err != nil {
+			return nil, err
+		}
+		for _, char := range chars {
+			out = wire.AppendBytes(out, 1, char)
+		}
 		out = wire.AppendBytes(out, 2, quest)
 	}
-	cleared := s.state.ClearedQuests(packID)
+	for _, quest := range s.activeSideQuestWires(packID) {
+		out = wire.AppendBytes(out, 2, quest)
+	}
+	cleared := s.state.ClearedQuests(packID, s.questDifficulty(packID))
 	if len(cleared) != 0 {
 		var packed []byte
 		for _, id := range cleared {
@@ -495,7 +559,7 @@ func (s *Service) packInfoFor(packID int) ([]byte, error) {
 	position := "{}"
 	mapID := 0
 	restored := false
-	if saved, found := s.state.Position(); found && saved.PackID == packID && saved.RawJSON != "" {
+	if saved, found := s.state.Position(); found && saved.PackID == packID && saved.Difficulty == s.questDifficulty(packID) && saved.RawJSON != "" {
 		if pack, arena := s.fieldPacks[packID]; arena && !pack.MapIDs[saved.Position.MapID] {
 			return nil, fmt.Errorf("world: saved map %d does not belong to arena pack %d", saved.Position.MapID, packID)
 		}
@@ -538,17 +602,17 @@ func (s *Service) firstUnclearedQuestFor(packID int) int {
 		return 0
 	}
 	for _, id := range s.storyCatalog.Packs[packID].MainQuestIDs {
-		if !s.state.QuestCleared(id, packID) {
+		if !s.state.QuestCleared(id, packID, s.questDifficulty(packID)) {
 			return id
 		}
 	}
 	return 0
 }
 
-func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Reward, items []player.Item, questEquipment *player.Equipment) []byte {
+func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Reward, items []player.Item, questEquipment *player.Equipment, nextItems []player.Item, nextChars [][]byte) []byte {
 	var rewards []byte
 	if s.collection != nil {
-		if grant, found := s.collection.Grant(fmt.Sprintf("pack%d:quest%d:costumes", packID, quest)); found {
+		if grant, found := s.collection.Grant(questRewardIdentity(packID, quest, s.questDifficultyFor(packID, quest)) + ":costumes"); found {
 			rewards = append(rewards, player.CollectionRewardBundle(s.collection, grant)...)
 		}
 	}
@@ -578,7 +642,7 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 		// not an ItemDBInfo with a fabricated stack count.
 		rewards = wire.AppendBytes(rewards, 4, player.EquipmentWire(*questEquipment))
 	}
-	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID {
+	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 {
 		rewardCharacter := encodeCharacter(s.seed.RewardCharacter)
 		// Pictorial state: acquired level 1, progress 60.
 		rewardCharacter = wire.AppendBytes(rewardCharacter, 12, wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 60))
@@ -603,8 +667,11 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 	var out []byte
 	out = wire.AppendBytes(out, 1, rewards)
 	next := s.nextQuestFor(packID, quest)
+	if s.storyCatalog.Packs[packID].Quests[quest].Type != 0 {
+		next = 0
+	}
 	if next != 0 {
-		out = wire.AppendBytes(out, 2, wire.AppendVarint(nil, 1, uint64(next)))
+		out = wire.AppendBytes(out, 2, s.questInfoWire(packID, next))
 	} else {
 		// QuestClearResponse.QuestInfo is dereferenced by the client
 		// even when this is the final quest of a pack. An explicitly present,
@@ -617,7 +684,10 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 		out = wire.AppendBytes(out, 2, nil)
 	}
 	out = wire.AppendVarint(out, 3, uint64(quest))
-	if next == 0 && s.packCompleteFor(packID) {
+	for _, item := range nextItems {
+		out = wire.AppendBytes(out, 6, player.ItemWire(item))
+	}
+	if s.storyCatalog.Packs[packID].Quests[quest].Type == 0 && next == 0 && s.packCompleteFor(packID) {
 		// The final normal quest unlocks PackTable.NextPackId. Without these
 		// PackDBInfo updates the client cannot find the next story pack and
 		// falls back to presenting the hard-difficulty objective.
@@ -625,7 +695,7 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 			out = wire.AppendBytes(out, 11, info)
 		}
 	}
-	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID {
+	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 {
 		deckIDs := []uint64{s.seed.RewardCharacter.InvenIndex, s.seed.StoryCharacters[0].InvenIndex, s.seed.StoryCharacters[1].InvenIndex, s.seed.StoryCharacters[2].InvenIndex, s.starter.Characters[0].InvenIndex}
 		for index, characterID := range deckIDs {
 			deck := wire.AppendVarint(nil, 1, characterID)
@@ -649,6 +719,10 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 			out = wire.AppendBytes(out, 4, entry)
 		}
 	}
+	for _, char := range nextChars {
+		out = wire.AppendBytes(out, 5, char)
+	}
+	out = wire.AppendBytes(out, 9, s.questLevelInfoWire(packID, s.questDifficultyFor(packID, quest)))
 	out = wire.AppendBytes(out, 12, nil)
 	return wire.AppendBytes(out, 13, nil)
 }
@@ -666,7 +740,7 @@ func (s *Service) packCompleteFor(packID int) bool {
 		return false
 	}
 	for _, id := range ids {
-		if !s.state.QuestCleared(id, packID) {
+		if !s.state.QuestCleared(id, packID, s.questDifficulty(packID)) {
 			return false
 		}
 	}
@@ -687,13 +761,11 @@ func (s *Service) accountPackInfo() []byte {
 	}
 	for _, info := range s.packDBInfoRows() {
 		id, _, _ := wire.Varint(info, 1)
-		if !s.packCompleteFor(int(id)) {
-			continue
+		for level := 0; level <= 4; level++ {
+			if len(s.state.ClearedQuests(int(id), level)) > 0 || s.questDifficulty(int(id)) == level {
+				out = wire.AppendBytes(out, 2, s.questLevelInfoWire(int(id), level))
+			}
 		}
-		level := wire.AppendVarint(nil, 1, id)
-		level = wire.AppendVarint(level, 3, uint64(len(s.storyCatalog.Packs[int(id)].MainQuestIDs)))
-		level = wire.AppendVarint(level, 5, 1)
-		out = wire.AppendBytes(out, 2, level)
 	}
 	return wire.AppendVarint(out, 5, 3)
 }
@@ -707,8 +779,8 @@ var questPictorialItems = map[int][]gamedata.Reward{
 // PictorialCharacters hides quest-26 rewards until they are earned, even
 // though their instances already exist in the versioned world seed.
 func (s *Service) PictorialCharacters() []player.Character {
-	if s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) && s.characters != nil {
-		return s.characters.RawAll()
+	if !s.tutorialRosterRestricted() && s.characters != nil {
+		return s.visibleOwnedCharacters(s.characters.RawAll())
 	}
 	return append([]player.Character(nil), s.starter.Characters...)
 }
@@ -718,7 +790,7 @@ func (s *Service) PictorialCostumes() []player.Costume {
 	if s.collection != nil {
 		result = s.collection.Costumes()
 	}
-	if s.collection == nil && s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
+	if s.collection == nil && !s.tutorialRosterRestricted() && s.startingPack() == s.seed.PackID {
 		result = append(result, s.seed.RewardCostume)
 	}
 	return result

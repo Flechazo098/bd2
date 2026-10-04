@@ -44,6 +44,36 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestStartingChapterConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want int
+	}{
+		{`{"schema_version":1}`, 21},
+		{`{"schema_version":1,"story":{}}`, 21},
+		{`{"schema_version":1,"story":{"start_pack_id":1}}`, 1},
+		{`{"schema_version":1,"story":{"start_pack_id":21}}`, 21},
+		{`{"schema_version":1,"story":{"start_pack_id":0}}`, 0},
+		{`{"schema_version":1,"story":{"start_pack_id":22}}`, 0},
+		{`{"schema_version":1,"story":{"start_pack_id":"1"}}`, 0},
+		{`{"schema_version":1,"story":{"start_pack_id":null}}`, 0},
+		{`{"schema_version":1,"story":null}`, 0},
+	} {
+		path := filepath.Join(t.TempDir(), FileName)
+		if err := os.WriteFile(path, []byte(tc.text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if tc.want == 0 {
+			if err == nil {
+				t.Fatalf("accepted invalid entry: %s", tc.text)
+			}
+		} else if err != nil || cfg.Story.StartPackID != tc.want {
+			t.Fatalf("configuration %s = %+v, %v", tc.text, cfg, err)
+		}
+	}
+}
+
 func TestMissingFileDefaultsWithoutCreating(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	cfg, err := Load(path)

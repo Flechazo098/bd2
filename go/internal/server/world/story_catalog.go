@@ -44,6 +44,11 @@ func (s *Service) storyPackUnlocked(id int) bool {
 	if !exists {
 		return false
 	}
+	// A server-selected entry chapter is explicitly available to this account.
+	// This does not invent tickets for the remaining chapter catalog.
+	if id == s.startingPack() {
+		return true
+	}
 	// ContentOpen.TutorialID triggers a tutorial; the client does not use it
 	// as an authorization requirement. Story NextPackID is navigation only.
 	if pack.Open == nil {
@@ -83,9 +88,16 @@ func (s *Service) storyPackDBInfoRows() [][]byte {
 	var rows [][]byte
 	for _, id := range ids {
 		row := wire.AppendVarint(nil, 1, uint64(id))
+		selection, _ := s.state.Selection(id)
+		if selection.Difficulty != 0 {
+			row = wire.AppendVarint(row, 4, uint64(selection.Difficulty))
+		}
+		if selection.Option != 0 {
+			row = wire.AppendVarint(row, 5, uint64(selection.Option))
+		}
 		mainCleared := 0
 		for _, qid := range s.storyCatalog.Packs[id].MainQuestIDs {
-			if s.state.QuestCleared(qid, id) {
+			if s.state.QuestCleared(qid, id, s.questDifficulty(id)) {
 				mainCleared++
 			}
 		}

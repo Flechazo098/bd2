@@ -16,13 +16,20 @@ const FileName = "game.json"
 type Config struct {
 	SchemaVersion int         `json:"schema_version"`
 	Gacha         GachaConfig `json:"gacha"`
+	Story         StoryConfig `json:"story"`
+}
+
+// StartPackID selects the entry chapter for newly initialized accounts.
+// Existing accounts retain their persisted entry and selected chapter.
+type StoryConfig struct {
+	StartPackID int `json:"start_pack_id"`
 }
 
 type GachaConfig struct {
 	IncludeCollaborationURWeapons bool `json:"include_collaboration_ur_weapons"`
 }
 
-func Default() Config { return Config{SchemaVersion: 1} }
+func Default() Config { return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}} }
 
 // Load reads one explicit path. Older installations without the file retain
 // the default rules; an existing invalid file must never silently fall back.
@@ -34,7 +41,9 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("game configuration: read %s: %w", path, err)
 	}
-	var cfg Config
+	cfg := Default()
+	// The format version is required even when gameplay sections are omitted.
+	cfg.SchemaVersion = 0
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
@@ -82,6 +91,9 @@ func containsNull(value any) bool {
 func (c Config) Validate() error {
 	if c.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported schema_version %d (expected 1)", c.SchemaVersion)
+	}
+	if c.Story.StartPackID != 1 && c.Story.StartPackID != 21 {
+		return fmt.Errorf("story.start_pack_id must be 1 or 21, got %d", c.Story.StartPackID)
 	}
 	return nil
 }
