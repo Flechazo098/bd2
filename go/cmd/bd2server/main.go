@@ -39,6 +39,7 @@ import (
 	"bd2server/internal/server/session"
 	"bd2server/internal/server/transport"
 	"bd2server/internal/server/versionconfig"
+	"bd2server/internal/server/wire"
 	"bd2server/internal/server/world"
 )
 
@@ -570,6 +571,14 @@ func serve(args []string) (serveErr error) {
 	if err := login.AttachFriendshipAP(friendshipService); err != nil {
 		return err
 	}
+	accountName, found, err := wire.Bytes(login.UserInfo, 2)
+	if err != nil || !found || len(accountName) == 0 {
+		return errors.New("account seed requires its existing display name for master title")
+	}
+	masterTitleService, err := player.OpenMasterTitleService(stateRepository, string(accountName))
+	if err != nil {
+		return fmt.Errorf("load master title: %w", err)
+	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
 	characters := worldService.CharacterService()
 	battleService.AttachCommittedHealth(func(health map[uint64]uint64) error {
@@ -622,6 +631,7 @@ func serve(args []string) (serveErr error) {
 		costumePotentialService,
 		costumeBurstService,
 		friendshipService,
+		masterTitleService,
 		foodService,
 		starter,
 		mailService,
@@ -657,6 +667,9 @@ func serve(args []string) (serveErr error) {
 		if err := stateRepository.MarkInitializationComplete(); err != nil {
 			return fmt.Errorf("mark account initialization complete: %w", err)
 		}
+	}
+	if err := masterTitleService.EnsurePersisted(); err != nil {
+		return fmt.Errorf("persist master title: %w", err)
 	}
 	problems, err := stateRepository.Validate()
 	if err != nil {
