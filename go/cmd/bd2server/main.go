@@ -581,6 +581,17 @@ func serve(args []string) (serveErr error) {
 	}
 	battleService := battle.NewService(gameData, *gameDataVersion, ownedItems, worldService.CurrentPackID)
 	characters := worldService.CharacterService()
+	recruitDesign, err := gamedata.LoadRecruitDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load recruitment GameData: %w", err)
+	}
+	recruitService, err := player.NewRecruitService(&recruitDesign, &recruitDesign, collection, ownedItems, wallet,
+		func(npcID uint64) (uint64, error) {
+			return worldService.ResolveRecruitNPC(npcID, gameData, *gameDataVersion, &recruitDesign)
+		})
+	if err != nil {
+		return fmt.Errorf("load recruitment service: %w", err)
+	}
 	battleService.AttachCommittedHealth(func(health map[uint64]uint64) error {
 		for index, hp := range health {
 			maximum, err := characters.MaxHealth(index)
@@ -632,6 +643,7 @@ func serve(args []string) (serveErr error) {
 		costumeBurstService,
 		friendshipService,
 		masterTitleService,
+		recruitService,
 		foodService,
 		starter,
 		mailService,
