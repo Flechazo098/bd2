@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/player"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
 
@@ -14,6 +16,11 @@ func TestPackSummaryUsesUnlockedPackAndCollectedCounts(t *testing.T) {
 	s.packSummaryTargets = map[int]bool{21: true, 22: true}
 	s.packs = map[int]map[int]gamedata.QuestDesign{21: s.quests, 22: {1: {ID: 1}}}
 	s.transitions = map[int]gamedata.PackTransition{21: {PackID: 21, NextPackID: 22}}
+	attachTestStoryCatalog(s)
+	pack22 := s.storyCatalog.Packs[22]
+	pack22.Open = &gamedata.ContentOpenRule{TicketID: 122}
+	s.storyCatalog.Packs[22] = pack22
+	s.inventory, _ = player.OpenInventory(stateio.NewMemory(), s.starter)
 	request := wire.AppendVarint(nil, 1, 7)
 	code, got, handled, err := s.Handle("/PackSummaryInfoList", request)
 	want := wire.AppendBytes(nil, 1, wire.AppendVarint(nil, 1, 21))
@@ -31,6 +38,9 @@ func TestPackSummaryUsesUnlockedPackAndCollectedCounts(t *testing.T) {
 		if err := s.state.ClearQuest(id, 21); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := s.inventory.GrantOnce("test-terminal-ticket", []gamedata.BattleReward{{Type: 19, ID: 122, Count: 1}}); err != nil {
+		t.Fatal(err)
 	}
 	_, got, _, err = s.Handle("/PackSummaryInfoList", request)
 	want = wire.AppendBytes(want, 1, wire.AppendVarint(nil, 1, 22))

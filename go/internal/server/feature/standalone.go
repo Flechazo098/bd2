@@ -20,7 +20,6 @@ var standaloneDefaults = map[string]int{
 	"/MonsterHuntDeckInfo": 263,
 	"/Attendance":          0,
 	"/AttendanceInfo":      0,
-	"/PackPreviewInfo":     104,
 	// No PvP decks, battle history or one-time reward claims have been saved.
 	// Their repeated-only protobufs encode these account states as empty, and
 	// the client's callbacks continue the arena-lobby entry sequence.

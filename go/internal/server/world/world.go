@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"sync"
 
 	"bd2server/internal/server/deck"
@@ -58,7 +57,17 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 	if err != nil {
 		return nil, fmt.Errorf("world: open character state: %w", err)
 	}
-	packs, transitions, err := gamedata.LoadQuestPackChain(gameDataRoot, gameDataVersion, seed.PackID)
+	storyCatalog, err := gamedata.LoadStoryCatalog(gameDataRoot, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
+	packs := make(map[int]map[int]gamedata.QuestDesign)
+	transitions := make(map[int]gamedata.PackTransition)
+	for id, pack := range storyCatalog.Packs {
+		packs[id] = pack.Quests
+		transitions[id] = gamedata.PackTransition{PackID: id, NextPackID: pack.NextPackID}
+	}
+	questCostumes, err := gamedata.LoadQuestCostumes(gameDataRoot, gameDataVersion, packs)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +77,10 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		return nil, err
 	}
 	packSummaryTargets, err := gamedata.LoadPackSummaryTargets(gameDataRoot, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
+	packJamDesign, err := gamedata.LoadPackJamDesign(gameDataRoot, gameDataVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +97,13 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		}
 	}
 	service := &Service{seed: seed, state: state, starter: starter, equipment: equipment, inventory: inventory, wallet: wallet, characters: characters, quests: quests, transition: transition, packs: packs, transitions: transitions, activePack: activePack, fieldPacks: fieldPacks}
+	service.packJamDesign = packJamDesign
 	service.packSummaryTargets = packSummaryTargets
+	service.storyCatalog = storyCatalog
+	if err := service.orderMainQuests(); err != nil {
+		return nil, err
+	}
+	service.questCostumes = questCostumes
 	service.attachPackDetailDesign(gameDataRoot, gameDataVersion)
 	return service, nil
 }
@@ -119,8 +138,12 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	storyCatalog       *gamedata.StoryCatalog
+	questCostumes      player.CostumeDesignSource
 	packDetailDesign   func(int) (gamedata.PackDetailDesign, error)
 	packSummaryTargets map[int]bool
+	packJamDesign      *gamedata.PackJamDesign
+	packJamMu          sync.Mutex
 	fieldPacks         map[int]gamedata.FieldPack
 	squadLevel         func() (uint64, error)
 	seed               Seed
@@ -158,10 +181,14 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/PackBuy":
+		return s.handlePackBuy(request)
 	case "/PackDetailInfo":
 		return s.handlePackDetail(request)
 	case "/PackSummaryInfoList":
 		return s.handlePackSummary(request)
+	case "/PackPreviewInfo", "/PackJamEvent":
+		return s.handlePackDocking(path, request)
 	case "/PackInfo":
 		seq, found, err := wire.Varint(request, 1)
 		if err != nil || !found || seq == 0 {
@@ -286,45 +313,19 @@ func (s *Service) questsFor(packID int) (map[int]gamedata.QuestDesign, bool) {
 	if _, exists := s.fieldPacks[packID]; exists {
 		return map[int]gamedata.QuestDesign{}, true
 	}
-	if s.packs != nil {
-		quests, found := s.packs[packID]
-		return quests, found
-	}
-	if packID == s.seed.PackID && s.quests != nil {
-		return s.quests, true
+	if s.storyCatalog != nil {
+		pack, found := s.storyCatalog.Packs[packID]
+		return pack.Quests, found
 	}
 	return nil, false
 }
 
-func (s *Service) transitionFor(packID int) gamedata.PackTransition {
-	if s.transitions != nil {
-		return s.transitions[packID]
-	}
-	if packID == s.seed.PackID {
-		return s.transition
-	}
-	return gamedata.PackTransition{PackID: packID}
-}
-
-// packUnlocked follows the static story chain and requires every preceding
-// pack to be complete. This accepts the configured next story pack only after
-// its predecessor is complete, without exposing arbitrary GameData tables.
+// packUnlocked uses installed ContentOpen rules and real account tickets.
 func (s *Service) packUnlocked(packID int) bool {
 	if pack, exists := s.fieldPacks[packID]; exists {
 		return s.fieldPackUnlocked(pack)
 	}
-	current := s.seed.PackID
-	for steps := 0; steps < 64 && current != 0; steps++ {
-		if current == packID {
-			_, found := s.questsFor(current)
-			return found
-		}
-		if !s.packCompleteFor(current) {
-			return false
-		}
-		current = s.transitionFor(current).NextPackID
-	}
-	return false
+	return s.storyCatalog != nil && s.storyPackUnlocked(packID)
 }
 
 func (s *Service) storyCharacters(packID int) []player.Character {
@@ -339,27 +340,21 @@ func (s *Service) canClear(packID, quest int) bool {
 		return true
 	}
 	quests, found := s.questsFor(packID)
+	if !found || s.storyCatalog == nil {
+		return false
+	}
+	design, found := quests[quest]
 	if !found {
 		return false
 	}
-	startQuestID := 0
-	for id := range quests {
-		if startQuestID == 0 || id < startQuestID {
-			startQuestID = id
-		}
+	if design.PriorQuestID != 0 && !s.state.QuestCleared(design.PriorQuestID, packID) {
+		return false
 	}
-	if packID == s.seed.PackID {
-		startQuestID = s.seed.StartQuestID
+	if design.Type == 0 {
+		return quest == s.firstUnclearedQuestFor(packID)
 	}
-	if quest == startQuestID {
-		return true
-	}
-	for id := range quests {
-		if id < quest && !s.state.QuestCleared(id, packID) {
-			return false
-		}
-	}
-	return true
+	_, active := s.state.QuestInPack(quest, packID)
+	return active
 }
 
 func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.Reward) ([]player.Item, *player.Equipment, error) {
@@ -374,7 +369,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 	for i := range designRewards {
 		reward := designRewards[i]
 		switch reward.Type {
-		case 3, 4:
+		case 2, 3, 4, 12, 20:
 			if reward.Count == 0 {
 				return nil, nil, errors.New("world: zero currency reward")
 			}
@@ -386,14 +381,47 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 		case 11:
 			// Quest 26's character/costume instances come from the versioned
 			// story seed and are encoded below; they are not stackable items.
-			if packID != s.seed.PackID || quest != s.seed.BattleUnlockQuestID || reward.ID != s.seed.RewardCostume.ID {
-				return nil, nil, fmt.Errorf("world: unsupported costume reward %d", reward.ID)
+			if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && reward.ID == s.seed.RewardCostume.ID {
+				continue
+			}
+			if s.collection == nil || s.questCostumes == nil {
+				return nil, nil, fmt.Errorf("world: costume reward service unavailable")
+			}
+			if _, ok := s.questCostumes.Character(reward.ID); !ok {
+				return nil, nil, fmt.Errorf("world: missing quest costume %d", reward.ID)
 			}
 		default:
 			if reward.ID == 0 || reward.Count == 0 {
 				return nil, nil, fmt.Errorf("world: invalid item reward type=%d id=%d count=%d", reward.Type, reward.ID, reward.Count)
 			}
 			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+		}
+	}
+	var costumeIDs []uint64
+	for _, reward := range designRewards {
+		if reward.Type == 11 && !(packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && reward.ID == s.seed.RewardCostume.ID) {
+			costumeIDs = append(costumeIDs, reward.ID)
+		}
+	}
+	if len(costumeIDs) != 0 {
+		grant, err := s.collection.GrantCostumes(identity+":costumes", costumeIDs, s.questCostumes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("world: grant quest costume: %w", err)
+		}
+		var exchanges []gamedata.Reward
+		for _, exchange := range grant.Exchanges {
+			if exchange.ExchangeItemType != 20 {
+				return nil, nil, fmt.Errorf("world: unsupported quest costume exchange type %d", exchange.ExchangeItemType)
+			}
+			exchanges = append(exchanges, gamedata.Reward{Type: exchange.ExchangeItemType, ID: exchange.ExchangeItemID, Count: exchange.ExchangeCount})
+		}
+		if len(exchanges) > 0 {
+			if s.wallet == nil {
+				return nil, nil, fmt.Errorf("world: quest exchange wallet unavailable")
+			}
+			if _, err := s.wallet.GrantQuestOnce(identity+":costumes:exchange", exchanges); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	if packID == s.seed.PackID {
@@ -506,16 +534,10 @@ func (s *Service) firstUnclearedQuest() int {
 }
 
 func (s *Service) firstUnclearedQuestFor(packID int) int {
-	quests, found := s.questsFor(packID)
-	if !found {
+	if s.storyCatalog == nil {
 		return 0
 	}
-	ids := make([]int, 0, len(quests))
-	for id := range quests {
-		ids = append(ids, id)
-	}
-	sort.Ints(ids)
-	for _, id := range ids {
+	for _, id := range s.storyCatalog.Packs[packID].MainQuestIDs {
 		if !s.state.QuestCleared(id, packID) {
 			return id
 		}
@@ -525,8 +547,13 @@ func (s *Service) firstUnclearedQuestFor(packID int) int {
 
 func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Reward, items []player.Item, questEquipment *player.Equipment) []byte {
 	var rewards []byte
+	if s.collection != nil {
+		if grant, found := s.collection.Grant(fmt.Sprintf("pack%d:quest%d:costumes", packID, quest)); found {
+			rewards = append(rewards, player.CollectionRewardBundle(s.collection, grant)...)
+		}
+	}
 	for _, reward := range designRewards {
-		if reward.Type != 3 && reward.Type != 4 {
+		if reward.Type != 2 && reward.Type != 3 && reward.Type != 4 && reward.Type != 12 && reward.Type != 20 {
 			continue
 		}
 		currency := wire.AppendVarint(nil, 3, reward.Type)
@@ -631,11 +658,14 @@ func (s *Service) packComplete() bool {
 }
 
 func (s *Service) packCompleteFor(packID int) bool {
-	quests, found := s.questsFor(packID)
-	if !found || len(quests) == 0 {
+	if s.storyCatalog == nil {
 		return false
 	}
-	for id := range quests {
+	ids := s.storyCatalog.Packs[packID].MainQuestIDs
+	if len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
 		if !s.state.QuestCleared(id, packID) {
 			return false
 		}
@@ -644,57 +674,10 @@ func (s *Service) packCompleteFor(packID int) bool {
 }
 
 func (s *Service) packDBInfoRows() [][]byte {
-	var rows [][]byte
-	packID := s.seed.PackID
-	for steps := 0; steps < 64 && packID != 0; steps++ {
-		cleared := s.state.ClearedQuests(packID)
-		current := wire.AppendVarint(nil, 1, uint64(packID))
-		if len(cleared) != 0 {
-			current = wire.AppendVarint(current, 2, uint64(len(cleared)))
-		}
-		complete := s.packCompleteFor(packID)
-		if complete {
-			current = wire.AppendVarint(current, 3, 1)
-		}
-		// The seed pack was purchased by the account bootstrap. A later pack is
-		// considered entered once it has its own progress or saved position;
-		// the newly unlocked, untouched row intentionally remains unpurchased.
-		purchased := packID == s.seed.PackID || len(cleared) != 0
-		if saved, found := s.state.Position(); found && saved.PackID == packID {
-			purchased = true
-		}
-		if purchased {
-			current = wire.AppendVarint(current, 8, 1)
-		}
-		rows = append(rows, current)
-		if !complete {
-			break
-		}
-		nextPackID := s.transitionFor(packID).NextPackID
-		if nextPackID == 0 {
-			break
-		}
-		if _, found := s.questsFor(nextPackID); !found {
-			// Unit-sized services and partial deployments may know the real
-			// transition before the next QuestTable is attached. Preserve the
-			// protocol's unlocked row, but packUnlocked still refuses entry until
-			// that table is actually available.
-			rows = append(rows, wire.AppendVarint(nil, 1, uint64(nextPackID)))
-			break
-		}
-		packID = nextPackID
+	if s.storyCatalog == nil {
+		return nil
 	}
-	// A committed arena position is this account's prior-entry marker. Expose
-	// only that arena as purchased so the client restores its existing lobby
-	// without treating every independent arena as unlocked or rewarded.
-	if saved, found := s.state.Position(); found {
-		if pack, arena := s.fieldPacks[saved.PackID]; arena && pack.MapIDs[saved.Position.MapID] {
-			current := wire.AppendVarint(nil, 1, uint64(saved.PackID))
-			current = wire.AppendVarint(current, 8, 1)
-			rows = append(rows, current)
-		}
-	}
-	return rows
+	return s.storyPackDBInfoRows()
 }
 
 func (s *Service) accountPackInfo() []byte {
@@ -771,17 +754,7 @@ func (s *Service) nextQuestFor(packID, current int) int {
 	if !found {
 		return 0
 	}
-	ids := make([]int, 0, len(quests))
-	for id := range quests {
-		if id > current {
-			ids = append(ids, id)
-		}
-	}
-	sort.Ints(ids)
-	if len(ids) == 0 {
-		return 0
-	}
-	return ids[0]
+	return quests[current].NextQuestID
 }
 
 func encodeCharacter(c player.Character) []byte {
