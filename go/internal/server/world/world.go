@@ -157,11 +157,25 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		return 4, s.accountPackInfo(), true, nil
 	case "/CharInfo":
-		if !s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
-			return 0, nil, false, nil
+		seq, found, err := wire.Varint(request, 1)
+		if err != nil || !found || seq == 0 {
+			return 0, nil, true, errors.New("world: CharInfo missing sequence")
 		}
 		var response []byte
 		characters := s.characters.All()
+		if !s.state.QuestCleared(s.seed.BattleUnlockQuestID, s.seed.PackID) {
+			// The tutorial roster still contains only starter identities, but
+			// their field HP must come from persisted state rather than falling
+			// through to Starter.Handle's immutable new-account HP.
+			characters = make([]player.Character, 0, len(s.starter.Characters))
+			for _, seeded := range s.starter.Characters {
+				character, exists := s.characters.Find(seeded.InvenIndex)
+				if !exists {
+					return 0, nil, true, fmt.Errorf("world: missing starter character %d", seeded.InvenIndex)
+				}
+				characters = append(characters, character)
+			}
+		}
 		slog.Info("team trace: deliver owned characters", "characters", characters)
 		for _, character := range characters {
 			response = wire.AppendBytes(response, 1, encodeCharacter(character))
