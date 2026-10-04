@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
+using Bd2Login;
 
 namespace Bd2LoginUI;
 
@@ -180,24 +181,7 @@ internal sealed class WindowsDpapiRefreshCredentialStore : IRefreshCredentialSto
         PlayerPrefs.Save();
     }
 
-    private static string PreferenceFor(string origin)
-    {
-        byte[] input = Encoding.UTF8.GetBytes(origin);
-        byte[] digest;
-        using (SHA256 sha = SHA256.Create())
-        {
-            digest = sha.ComputeHash(input);
-        }
-        try
-        {
-            return PreferencePrefix + Hex(digest);
-        }
-        finally
-        {
-            Clear(input);
-            Clear(digest);
-        }
-    }
+    private static string PreferenceFor(string origin) => ServerLoginPreferences.Key(PreferencePrefix, origin);
 
     private static byte[] Entropy(string origin)
     {
@@ -304,16 +288,6 @@ internal sealed class WindowsDpapiRefreshCredentialStore : IRefreshCredentialSto
         {
             Marshal.WriteByte(data, i, 0);
         }
-    }
-
-    private static string Hex(byte[] value)
-    {
-        StringBuilder builder = new StringBuilder(value.Length * 2);
-        foreach (byte item in value)
-        {
-            builder.Append(item.ToString("x2"));
-        }
-        return builder.ToString();
     }
 
     private static void Clear(byte[] bytes)

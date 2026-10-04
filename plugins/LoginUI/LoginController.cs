@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using BD2.GameNames;
+using Bd2Login;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -32,15 +33,14 @@ internal static class LoginController
     internal static bool LoginInProgress;
     internal static MemoryAccessTokenStore AccessTokens;
     internal static IRefreshCredentialStore RefreshCredentials;
-    internal static bool AccessTokenPrefix(ref string __result)
+    internal static void AccessTokenPostfix(ref string __result)
     {
         if (Authentication != null && Authentication.mode == "oauth")
         {
             __result = AccessTokens.Get();
-            return false;
+            return;
         }
         __result = LocalAccessToken;
-        return false;
     }
 
     internal static void ClearPCLocalDataPostfix()
@@ -49,9 +49,7 @@ internal static class LoginController
         EstablishedGameSession = false;
         RuntimeProbeFailures = 0;
         ServerInstanceID = null;
-        PlayerPrefs.DeleteKey("AccessToken");
         DeleteCurrentRefresh();
-        PlayerPrefs.Save();
     }
 
     internal static bool SendMaintenancePrefix(object __instance, bool __0)
@@ -79,8 +77,6 @@ internal static class LoginController
                 DisposeGameRelay();
                 ServerRoot = currentRoot;
                 EnsureGameRelay();
-                PlayerPrefs.DeleteKey("AccessToken");
-                PlayerPrefs.Save();
             }
 			if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && Authentication != null &&
 				Authentication.mode == "oauth" && AccessTokens.IsUsable(NormalizedServerOrigin()))
@@ -169,8 +165,6 @@ internal static class LoginController
             try
             {
                 AccessTokens.Clear();
-                PlayerPrefs.DeleteKey("AccessToken");
-                PlayerPrefs.Save();
                 ContinueMaintenance = true;
                 SendMaintenance.Invoke(introUI, new object[] { true });
             }
@@ -181,17 +175,12 @@ internal static class LoginController
             return;
         }
         ValidateOAuthTransport(ServerRoot);
-        // Earlier development builds stored both local identifiers and OAuth
-        // access credentials in this key. OAuth credentials now live only in
-        // process memory, so remove any legacy plaintext before proceeding.
-        PlayerPrefs.DeleteKey("AccessToken");
         if (!RefreshCredentials.IsSupported)
         {
-            PlayerPrefs.SetInt("IsAutoLogin", 0);
-            PlayerPrefs.SetInt("StandaloneAutoLogin", 0);
+            ServerLoginPreferences.SetAutoLogin(NormalizedServerOrigin(), false);
+            ServerLoginPreferences.SetUseAutoLoginPC(NormalizedServerOrigin(), false);
             Log?.LogWarning("Secure refresh credential storage is unavailable; automatic login is disabled on this platform");
         }
-        PlayerPrefs.Save();
         if (LoginInProgress)
         {
             return;
@@ -213,8 +202,8 @@ internal static class LoginController
             ShowLoginPanel(introUI);
             return;
         }
-        if (PlayerPrefs.GetInt("IsAutoLogin", 0) != 0 &&
-            PlayerPrefs.GetInt("StandaloneAutoLogin", 0) != 0 &&
+        if (ServerLoginPreferences.IsAutoLogin(NormalizedServerOrigin()) &&
+            ServerLoginPreferences.UseAutoLoginPC(NormalizedServerOrigin()) &&
             CanAttemptAutomaticLogin())
         {
             LoginInProgress = true;
@@ -375,10 +364,8 @@ internal static class LoginController
             AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
             result.access_token = null;
             result.refresh_token = null;
-            PlayerPrefs.SetInt("IsAutoLogin", 0);
-            PlayerPrefs.SetInt("StandaloneAutoLogin", 0);
-            PlayerPrefs.DeleteKey("AccessToken");
-            PlayerPrefs.Save();
+            ServerLoginPreferences.SetAutoLogin(NormalizedServerOrigin(), false);
+            ServerLoginPreferences.SetUseAutoLoginPC(NormalizedServerOrigin(), false);
             Log?.LogWarning("Login succeeded, but automatic login remains disabled because this platform has no supported secure credential store");
             ContinueWithMaintenance(introUI, false);
             return;
@@ -393,7 +380,7 @@ internal static class LoginController
             }
             try
             {
-                bool autoLogin = PlayerPrefs.GetInt("StandaloneAutoLogin", 0) != 0;
+                bool autoLogin = ServerLoginPreferences.UseAutoLoginPC(NormalizedServerOrigin());
                 if (autoLogin)
                 {
                     StoreRefresh(result);
@@ -405,9 +392,7 @@ internal static class LoginController
                 }
                 AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
                 result.access_token = null;
-                PlayerPrefs.SetInt("IsAutoLogin", autoLogin ? 1 : 0);
-                PlayerPrefs.DeleteKey("AccessToken");
-                PlayerPrefs.Save();
+                ServerLoginPreferences.SetAutoLogin(NormalizedServerOrigin(), autoLogin);
                 ContinueWithMaintenance(introUI, false);
             }
             catch (Exception ex)
@@ -557,8 +542,6 @@ internal static class LoginController
                             }
                             AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
                             result.access_token = null;
-                            PlayerPrefs.DeleteKey("AccessToken");
-                            PlayerPrefs.Save();
                             refreshToken = null;
                             attemptID = null;
                         }
@@ -705,11 +688,9 @@ internal static class LoginController
     private static void ClearSavedLogin()
     {
         AccessTokens.Clear();
-        PlayerPrefs.SetInt("IsAutoLogin", 0);
-        PlayerPrefs.SetInt("StandaloneAutoLogin", 0);
-        PlayerPrefs.DeleteKey("AccessToken");
+        ServerLoginPreferences.SetAutoLogin(NormalizedServerOrigin(), false);
+        ServerLoginPreferences.SetUseAutoLoginPC(NormalizedServerOrigin(), false);
         DeleteCurrentRefresh();
-        PlayerPrefs.Save();
     }
 
     private static void DeleteCurrentRefresh()

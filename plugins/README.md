@@ -29,7 +29,9 @@ dotnet build .\plugins\CaptureEnvironment\CaptureEnvironment.csproj -c Release -
 
 认证策略由服务端同目录的 `authentication.json` 决定。`mode=local` 保持本地自动登录；公网或联机服可设为 `oauth`，并在 `providers` 中开启 `discord`、`google` 或两者。LoginUI 从当前连接的服务器读取这项策略，客户端不能自行启用服务端未开放的 provider。
 
-OAuth access token 只保存在客户端进程内存中。自动登录 refresh credential 按规范化服务器 origin 隔离：Windows 使用当前用户作用域的 DPAPI 加密，再把密文按 origin 哈希键写入 PlayerPrefs 对应的用户注册表；macOS 使用系统 Keychain Services。没有受支持安全凭据存储的平台会禁用自动登录，不会回退到明文文件或 PlayerPrefs。除 Windows 的 DPAPI 密文外，PlayerPrefs 只保存原版的 `IsAutoLogin` 与 `StandaloneAutoLogin` 非敏感选择。
+OAuth access token 只保存在客户端进程内存中。自动登录 refresh credential 按规范化服务器 origin 隔离：Windows 使用当前用户作用域的 DPAPI 加密，再把密文按 `BD2OAuthRefreshV1_<origin 哈希>` 键写入 PlayerPrefs 对应的用户注册表；macOS 使用系统 Keychain Services。没有受支持安全凭据存储的平台会禁用自动登录，不会回退到明文文件或 PlayerPrefs。
+
+自动登录选择也按服务器 origin 隔离，使用 `BD2LoginV1_IsAutoLogin_<origin 哈希>` 和 `BD2LoginV1_StandaloneAutoLogin_<origin 哈希>`。LocalIdentity 接管原版 `PlatformManager.IsAutoLogin` 与 `UseAutoLoginPC` 的全部读写，原有勾选框、确认和清除登录流程使用这些独立键；LoginUI 使用同一套键。scheme、主机和非默认端口区分服务器，主机大小写、默认端口和尾部斜杠不产生不同状态。插件不读取、覆盖或删除官方 `IsAutoLogin`、`StandaloneAutoLogin`、`AccessToken`，LocalIdentity 的启动标识通过 getter 在内存中提供。旧版写入的官方键不自动迁移或清理，避免影响官方账号；升级后各服务器需要重新选择自动登录。
 
 启动原版抓包环境：
 

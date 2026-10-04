@@ -31,11 +31,6 @@ public sealed class Plugin : BaseUnityPlugin
         {
             Log = Logger;
             Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
-            // The non-SDK branch still needs a local bootstrap identity for
-            // MaintenanceInfo. OAuth LoginUI replaces this value after its
-            // browser/device transaction completes.
-            PlayerPrefs.SetString("AccessToken", "bd2-local-development-user");
-            PlayerPrefs.Save();
             Routing = ClientRouting.Load(Logger);
             if (Interlocked.Exchange(ref ShutdownHooksInstalled, 1) == 0)
             {
@@ -53,6 +48,7 @@ public sealed class Plugin : BaseUnityPlugin
                 nameof(UseSdkPrefix),
                 BindingFlags.Static | BindingFlags.NonPublic);
             Harmony harmony = new Harmony(Guid);
+            LocalLoginState.Install(harmony, Routing.ServerOrigin, Logger);
             harmony.Patch(getter, prefix: new HarmonyMethod(prefix));
             TryInstall("OS time zone device country", () => SystemTimeZoneRegion.Install(harmony, Logger));
 
