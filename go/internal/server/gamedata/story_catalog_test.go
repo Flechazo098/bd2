@@ -26,6 +26,11 @@ func TestStoryCatalogEnumeratesSeparateChainsAndContentTicketRules(t *testing.T)
 			raw = wire.AppendVarint(raw, 8, 1)
 			raw = wire.AppendVarint(raw, 9, 100)
 			raw = wire.AppendVarint(raw, 10, 19)
+			// An official-shaped disabled costume slot must be equivalent
+			// to omitting that slot; type and ID remain populated.
+			raw = wire.AppendVarint(raw, 8, 0)
+			raw = wire.AppendVarint(raw, 9, 200)
+			raw = wire.AppendVarint(raw, 10, 11)
 		}
 		if _, err = db.Exec("INSERT INTO PackTable VALUES(?,?)", pack.id, raw); err != nil {
 			t.Fatal(err)
