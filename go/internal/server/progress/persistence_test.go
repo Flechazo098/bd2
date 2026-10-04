@@ -44,6 +44,31 @@ func TestStorePersistsProgressAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestLastPlayedPackTracksPersistedPositionAcrossRestart(t *testing.T) {
+	storage := stateio.NewMemory()
+	store, err := OpenStore(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := store.LastPlayedPackID(); err != nil || id != 0 {
+		t.Fatalf("new account pack=%d err=%v", id, err)
+	}
+	for _, pack := range []uint64{21, 3001} {
+		request := wire.AppendVarint(nil, 2, pack)
+		request = wire.AppendString(request, 3, `{"MapId":30011,"PlayerPosition":{"x":1,"y":2,"z":3}}`)
+		if err := store.SaveUserPosition(request); err != nil {
+			t.Fatal(err)
+		}
+		store, err = OpenStore(storage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id, err := store.LastPlayedPackID(); err != nil || id != pack {
+			t.Fatalf("restored pack=%d want=%d err=%v", id, pack, err)
+		}
+	}
+}
+
 func TestStoreKeepsPackOverlap(t *testing.T) {
 	storage := stateio.NewMemory()
 	initial := `{"version":2,"position":{"PackID":0,"Position":{"MapId":0,"PlayerPosition":{"x":0,"y":0,"z":0},"ColleaguePositions":null},"RawJSON":""},"tutorials":[],"quests":{"21:1":{"QuestID":1,"PackID":21,"Values":[7]}},"cleared_quests":{"21:1":true}}`

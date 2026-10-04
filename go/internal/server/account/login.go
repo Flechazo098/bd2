@@ -38,6 +38,21 @@ type LoginSeed struct {
 	inventorySlots InventorySlotProvider
 	firstGacha     FirstGachaProvider
 	friendshipAP   FriendshipAPProvider
+	lastPlayedPack LastPlayedPackProvider
+}
+
+// LastPlayedPackProvider reads the persisted return destination. A zero value
+// means there is no saved destination yet, so a new account uses its seed.
+type LastPlayedPackProvider interface {
+	LastPlayedPackID() (uint64, error)
+}
+
+func (s *LoginSeed) AttachLastPlayedPack(provider LastPlayedPackProvider) error {
+	if provider == nil {
+		return errors.New("account: missing last played pack provider")
+	}
+	s.lastPlayedPack = provider
+	return nil
 }
 
 // FirstGachaProvider reads the mutable account flag for every login, including
@@ -339,6 +354,17 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.lastPlayedPack != nil {
+		packID, err := s.lastPlayedPack.LastPlayedPackID()
+		if err != nil {
+			return nil, fmt.Errorf("account: last played pack: %w", err)
+		}
+		if packID > 0 {
+			if user, _, err = wire.ReplaceVarint(user, 4, packID); err != nil {
+				return nil, fmt.Errorf("account: replace last played pack: %w", err)
+			}
+		}
+	}
 	if s.currencies != nil {
 		gold, freeJewelry, jewelry, mileage := s.currencies.Currencies()
 		var err error

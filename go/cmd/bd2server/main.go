@@ -445,6 +445,9 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load world state: %w", err)
 	}
+	if err := login.AttachLastPlayedPack(worldService); err != nil {
+		return fmt.Errorf("attach persisted login destination: %w", err)
+	}
 	// Restore all earned seed ownership before validating persisted upgrades.
 	// A quest costume is not a collection entry; attaching it after opening
 	// collection would reject its otherwise valid burst ledger on restart.
