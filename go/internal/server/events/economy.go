@@ -38,24 +38,25 @@ type economySnapshot struct {
 // Economy dispatches verified static rewards to their owning domains. It is
 // called inside the same account transaction as the gameplay operation.
 type Economy struct {
-	ownedDesign   map[uint64]map[uint64]bool
-	avatarRewards *gamedata.AvatarRewardDesign
-	buffRewards   *BuffRewards
-	mu            sync.Mutex
-	store         stateio.Store
-	items         *player.Inventory
-	wallet        *player.Wallet
-	collection    *player.CollectionStore
-	equipment     *player.EquipmentInventory
-	costumes      player.CostumeDesignSource
-	options       equipmentRoller
-	graph         rewardResolver
-	hunting       HuntingAP
-	prestige      map[uint64]uint64
-	apCaps        map[uint64]uint64
-	resetSeconds  int64
-	now           func() time.Time
-	initial       map[uint64]uint64
+	ownedDesign      map[uint64]map[uint64]bool
+	avatarRewards    *gamedata.AvatarRewardDesign
+	buffRewards      *BuffRewards
+	mu               sync.Mutex
+	store            stateio.Store
+	items            *player.Inventory
+	wallet           *player.Wallet
+	collection       *player.CollectionStore
+	equipment        *player.EquipmentInventory
+	costumes         player.CostumeDesignSource
+	options          equipmentRoller
+	graph            rewardResolver
+	hunting          HuntingAP
+	prestige         map[uint64]uint64
+	prestigePortrait func() uint64
+	apCaps           map[uint64]uint64
+	resetSeconds     int64
+	now              func() time.Time
+	initial          map[uint64]uint64
 }
 
 func NewEconomy(store stateio.Store, items *player.Inventory, wallet *player.Wallet, collection *player.CollectionStore, equipment *player.EquipmentInventory, costumes player.CostumeDesignSource, options equipmentRoller, graph rewardResolver, initial map[uint64]uint64) (*Economy, error) {

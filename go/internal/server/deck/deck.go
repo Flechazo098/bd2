@@ -49,6 +49,14 @@ type state struct {
 	PortraitCostumeID        uint64              `json:"portrait_costume_id"`
 	AutoReviveCatalyst       uint64              `json:"auto_revive_catalyst"`
 }
+
+// PortraitCostume exposes the current portrait without changing the frozen deck schema.
+func (s *Store) PortraitCostume() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state.PortraitCostumeID
+}
+
 type Store struct {
 	mu              sync.RWMutex
 	storage         stateio.AtomicEntryStore

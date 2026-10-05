@@ -190,22 +190,23 @@ type Service struct {
 	researchEconomy    interface {
 		Apply(string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
 	}
-	squadLevel   func() (uint64, error)
-	seed         Seed
-	state        *progress.Store
-	starter      *player.Starter
-	equipment    *player.EquipmentInventory
-	inventory    *player.Inventory
-	wallet       *player.Wallet
-	characters   *player.CharacterStore
-	collection   *player.CollectionStore
-	decks        *deck.Store
-	quests       map[int]gamedata.QuestDesign
-	transition   gamedata.PackTransition
-	packs        map[int]map[int]gamedata.QuestDesign
-	transitions  map[int]gamedata.PackTransition
-	activePackMu sync.RWMutex
-	activePack   int
+	squadLevel         func() (uint64, error)
+	seed               Seed
+	state              *progress.Store
+	starter            *player.Starter
+	equipment          *player.EquipmentInventory
+	inventory          *player.Inventory
+	wallet             *player.Wallet
+	characters         *player.CharacterStore
+	collection         *player.CollectionStore
+	decks              *deck.Store
+	quests             map[int]gamedata.QuestDesign
+	transition         gamedata.PackTransition
+	packs              map[int]map[int]gamedata.QuestDesign
+	transitions        map[int]gamedata.PackTransition
+	activePackMu       sync.RWMutex
+	activePack         int
+	prestigeSelections func() (map[uint64]uint64, error)
 }
 
 func (s *Service) AttachCollection(collection *player.CollectionStore) error {
@@ -214,6 +215,16 @@ func (s *Service) AttachCollection(collection *player.CollectionStore) error {
 	}
 	s.collection = collection
 	return s.characters.AttachCollection(collection)
+}
+
+// AttachPrestigeSelections projects the durable skin choice into CostumeInfo
+// responses without changing the frozen collection/deck schemas.
+func (s *Service) AttachPrestigeSelections(provider func() (map[uint64]uint64, error)) error {
+	if provider == nil {
+		return errors.New("world: nil prestige selection provider")
+	}
+	s.prestigeSelections = provider
+	return nil
 }
 
 func (s *Service) AttachDecks(decks *deck.Store) error {
@@ -303,11 +314,26 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			costumes = s.collection.Costumes()
 		}
 		slog.Info("team trace: deliver owned costumes", "costumes", costumes, "quest26", s.seed.RewardCostume)
+		var selections map[uint64]uint64
+		if s.prestigeSelections != nil {
+			var err error
+			selections, err = s.prestigeSelections()
+			if err != nil {
+				return 0, nil, true, err
+			}
+		}
 		for _, costume := range costumes {
+			if design := selections[costume.ID]; design != 0 {
+				costume.DesignID = design
+			}
 			response = wire.AppendBytes(response, 1, encodeCostume(costume))
 		}
 		if s.collection == nil {
-			response = wire.AppendBytes(response, 1, encodeCostume(s.seed.RewardCostume))
+			costume := s.seed.RewardCostume
+			if design := selections[costume.ID]; design != 0 {
+				costume.DesignID = design
+			}
+			response = wire.AppendBytes(response, 1, encodeCostume(costume))
 		}
 		return 40, response, true, nil
 	case "/PackInGameInfo":
