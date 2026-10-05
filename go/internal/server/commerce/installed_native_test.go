@@ -13,6 +13,7 @@ import (
 	"bd2server/internal/server/events"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/hunting"
+	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
 )
@@ -138,6 +139,20 @@ func TestInstalledAllNativeProductRewardAndPriceDomains(t *testing.T) {
 		}
 		entitlement, err := NewEntitlementEconomy(store, base, resolver, items, entitlementDesign)
 		if err != nil {
+			t.Fatal(err)
+		}
+		mailbox, err := mail.OpenService(store, &mail.Starter{Version: "2.35.10", MailCount: 1}, items, wallet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		templates, err := gamedata.LoadCashMailTemplates(root, version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = mailbox.AttachCashRewards(entitlement, templates); err != nil {
+			t.Fatal(err)
+		}
+		if err = entitlement.AttachCashMail(mailbox); err != nil {
 			t.Fatal(err)
 		}
 		policy, err := NewCatalog("2.35.10", catalog, gameconfig.Default().Purchases)

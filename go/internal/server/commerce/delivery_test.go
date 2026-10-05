@@ -88,6 +88,8 @@ func cashList(t *testing.T, m *mail.Service, start, count uint64) ([]uint64, []b
 }
 func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 	fixture, _, _ := serviceFixture(t, 0)
+	nativeKey := gamedata.CashProductKey{GroupID: 44, ProductID: 1}
+	fixture.catalog.designs[nativeKey] = gamedata.CashProductDesign{Key: nativeKey, PriceType: 2, PriceCount: 1000, RandomBoxID: 20}
 	path := filepath.Join(t.TempDir(), "state.db")
 	graph := &deliveryGraph{}
 	open := func() (*accountstate.Repository, *Service, *mail.Service, *player.Wallet, *player.Inventory) {
@@ -165,7 +167,11 @@ func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 		if err = mailbox.BeforeDispatch("/CashShopBuy", nil); err != nil {
 			t.Fatal(err)
 		}
-		_, response, _, err := shop.HandleSession("/CashShopBuy", buyRequest(seq, 2, 1, 0, ""), "s")
+		request := buyRequest(seq, 2, 1, 0, "")
+		if seq == 2 {
+			request = nativeBuyRequest(seq, 44, [3]uint64{1, 0, 1})
+		}
+		_, response, _, err := shop.HandleSession("/CashShopBuy", request, "s")
 		if err != nil {
 			t.Fatal(err)
 		}
