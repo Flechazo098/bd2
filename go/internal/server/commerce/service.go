@@ -550,7 +550,15 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 				rewards = append(rewards, gamedata.Reward{Type: 9, ID: d.BonusRandomBoxID, Count: l.Count})
 			}
 		}
-		b, err := s.economy.Apply(operation, costs, rewards)
+		var b []byte
+		var err error
+		if delivery, ok := s.economy.(interface {
+			ApplyPurchase(string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
+		}); ok && d.PriceType == 1 {
+			b, err = delivery.ApplyPurchase(operation, costs, rewards)
+		} else {
+			b, err = s.economy.Apply(operation, costs, rewards)
+		}
 		if err != nil {
 			return 61, nil, true, err
 		}

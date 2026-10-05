@@ -781,6 +781,16 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load cash entitlements: %w", err)
 	}
 	cashEconomy.SetClock(time.Now, eventAPReset.ResetSeconds-9*3600)
+	cashMailTemplates, err := gamedata.LoadCashMailTemplates(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load cash mail templates: %w", err)
+	}
+	if err := mailService.AttachCashRewards(cashEconomy, cashMailTemplates); err != nil {
+		return err
+	}
+	if err := cashEconomy.AttachCashMail(mailService); err != nil {
+		return err
+	}
 	cashService, err := commerce.NewService(cashCatalog, gameplayStore, cashEconomy)
 	if err != nil {
 		return fmt.Errorf("load cash purchase state: %w", err)

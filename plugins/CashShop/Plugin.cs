@@ -372,6 +372,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static bool SetCash(CurrencyButton __instance, string __0)
     {
+        CommercePriceLayout.Reset(__instance.transform as RectTransform);
         RestorePricePrefixes(__instance);
         if (__0 == null || !__0.Contains(Marker)) return true;
         string sku = ExtractSku(__0);
@@ -391,6 +392,7 @@ public sealed class Plugin : BaseUnityPlugin
             return;
         }
         button.Set((EElementType)policy.ItemType, 0, policy.Amount);
+        button.TextPrice.text = PriceText(policy);
         button.SetEnough(CommonPacket.GetHaveCurrencyCount((EElementType)policy.ItemType, false) >= policy.Amount);
     }
 
@@ -420,12 +422,30 @@ public sealed class Plugin : BaseUnityPlugin
     {
         CurrencyButton button = Field<CurrencyButton>(__instance, "_currencyButton");
         if (button == null) return;
+        CommercePriceLayout.Reset(button.transform as RectTransform);
         RestorePricePrefixes(button);
         priceViews.Remove(button);
         if (__3 != EElementType.Cash) return;
         string sku = __7;
-        priceViews[button] = () => { Render(button, Resolve(sku)); ShowUnavailablePopupPrice(__instance, button, Resolve(sku)); };
-        ShowUnavailablePopupPrice(__instance, button, Resolve(sku));
+        priceViews[button] = () => RefreshPopupPrice(__instance, button, Resolve(sku));
+        RefreshPopupPrice(__instance, button, Resolve(sku));
+    }
+
+    private static string PriceText(CommerceProduct policy)
+    {
+        string amount = policy.Amount.ToString("N0", CultureInfo.InvariantCulture);
+        return policy.ItemType == (int)EElementType.Jewelry
+            ? amount + " <size=70%><color=#E3B01F>" + LocalTextInfo.GetText(2560) + "</color></size>"
+            : amount;
+    }
+
+    private static void RefreshPopupPrice(CashShopBuyPopupUI popup, CurrencyButton button, CommerceProduct policy)
+    {
+        CommercePriceLayout.Reset(button.transform as RectTransform);
+        Render(button, policy);
+        if (policy != null && policy.Enabled && policy.ItemType != 0)
+            CommercePriceLayout.Apply(button.transform as RectTransform, Field<UISprite>(button, "_spritePrice"), button.TextPrice);
+        ShowUnavailablePopupPrice(popup, button, policy);
     }
 
     private static void ShowUnavailablePopupPrice(CashShopBuyPopupUI popup, CurrencyButton button, CommerceProduct policy)
@@ -533,13 +553,19 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void PassPopupPrice(BuyConfirmPopupUI __instance, int __0, Define_PassBuyType __1)
     {
+        var price = Field<TMP_Text>(__instance, "_textCurrency");
+        CommercePriceLayout.Reset(price?.transform.parent as RectTransform);
         priceViews.Remove(__instance);
         if (__1 != Define_PassBuyType.PbPremium2) return;
         var table = PassInfo.GetPassBuyTable(__0, __1);
         int pass = __0;
         Define_PassBuyType buy = __1;
         priceViews[__instance] = () => PassPopupPrice(__instance, pass, buy);
-        Render(Field<UISprite>(__instance, "_uiSpriteCurrency"), Field<TMP_Text>(__instance, "_textCurrency"), Resolve(table.CashProductGroupId, table.CashProductId, table.CashSalesGroup));
+        var policy = Resolve(table.CashProductGroupId, table.CashProductId, table.CashSalesGroup);
+        var sprite = Field<UISprite>(__instance, "_uiSpriteCurrency");
+        Render(sprite, price, policy);
+        if (policy != null && policy.Enabled && policy.ItemType != 0)
+            CommercePriceLayout.Apply(price.transform.parent as RectTransform, sprite, price);
     }
 
     private static void Render(UISprite sprite, TMP_Text text, CommerceProduct policy)
@@ -549,7 +575,7 @@ public sealed class Plugin : BaseUnityPlugin
             sprite.gameObject.SetActive(policy != null && policy.Enabled && policy.ItemType != 0);
             if (policy != null && policy.Enabled && policy.ItemType != 0) sprite.SetSprite(CurrencyInfo.GetCurrencyDTO((EElementType)policy.ItemType).IconSpriteNameSmall);
         }
-        if (text != null) text.text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? "Free" : policy.Amount.ToString(CultureInfo.InvariantCulture);
+        if (text != null) text.text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? "Free" : PriceText(policy);
     }
 
     private static void GachaPrice(GachaProductButtonElement __instance, string __4)

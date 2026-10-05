@@ -42,6 +42,7 @@ type EntitlementEconomy struct {
 	design       *gamedata.CashEntitlementDesign
 	now          func() time.Time
 	resetSeconds int64
+	mail         CashMailIssuer
 }
 
 func NewEntitlementEconomy(store stateio.Store, base Economy, graph grantedResolver, items *player.Inventory, design *gamedata.CashEntitlementDesign) (*EntitlementEconomy, error) {
@@ -99,7 +100,15 @@ func (e *EntitlementEconomy) Apply(identity string, costs, rewards []gamedata.Re
 	defer e.mu.Unlock()
 	return e.apply(identity, costs, rewards)
 }
+func (e *EntitlementEconomy) ApplyResolved(identity string, costs, rewards []gamedata.Reward) ([]byte, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.applyPrepared(identity, costs, rewards, true, nil)
+}
 func (e *EntitlementEconomy) apply(identity string, costs, rewards []gamedata.Reward) ([]byte, error) {
+	return e.applyPrepared(identity, costs, rewards, false, nil)
+}
+func (e *EntitlementEconomy) applyPrepared(identity string, costs, rewards []gamedata.Reward, resolved bool, mailed []gamedata.BattleReward) ([]byte, error) {
 	if identity == "" {
 		return nil, fmt.Errorf("commerce: missing entitlement identity")
 	}
@@ -119,7 +128,10 @@ func (e *EntitlementEconomy) apply(identity string, costs, rewards []gamedata.Re
 	for i, r := range rewards {
 		input[i] = gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count}
 	}
-	leaves, err := e.graph.ResolveGranted(input)
+	leaves := input
+	if !resolved {
+		leaves, err = e.graph.ResolveGranted(input)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +153,7 @@ func (e *EntitlementEconomy) apply(identity string, costs, rewards []gamedata.Re
 			return nil, resolveErr
 		}
 		available := map[[2]uint64]uint64{}
-		for _, leaf := range leaves {
+		for _, leaf := range append(append([]gamedata.BattleReward(nil), leaves...), mailed...) {
 			k := [2]uint64{leaf.Type, leaf.ID}
 			available[k] += leaf.Count
 		}

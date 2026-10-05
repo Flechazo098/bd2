@@ -241,6 +241,8 @@ type stateSnapshot struct {
 type Service struct {
 	contentTickets    *gamedata.GachaContentTicketDesign
 	attendanceEconomy AttendanceRewardEconomy
+	cashEconomy       CashRewardEconomy
+	cashTemplates     map[uint64]bool
 	beforeMailID      uint64
 	mu                sync.Mutex
 	Starter           *Starter
@@ -415,7 +417,7 @@ func (s *Service) AttachSeedPath(path string) error {
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
-	if path != "/MailInfo" && path != "/MailOpen" && path != "/MailHistoryInfo" {
+	if path != "/MailInfo" && path != "/MailOpen" && path != "/MailHistoryInfo" && path != "/CashMailInfo" {
 		return 0, nil, false, nil
 	}
 	if s == nil || s.Starter == nil || s.inventory == nil || s.wallet == nil {
@@ -439,6 +441,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, err
 		}
 		return packetCode, s.info(), true, nil
+	}
+	if path == "/CashMailInfo" {
+		response, err := s.cashInfo(request)
+		return 140, response, true, err
 	}
 	if path == "/MailHistoryInfo" {
 		response, err := s.historyInfo(request)
@@ -499,7 +505,7 @@ func (s *Service) info() []byte {
 	var result []byte
 	remaining := uint64(0)
 	for _, entry := range s.Starter.Mails {
-		if containsID(s.state.Opened, entry.MailID) {
+		if entry.IsCash || containsID(s.state.Opened, entry.MailID) {
 			continue
 		}
 		result = wire.AppendBytes(result, 1, entry.encode())
@@ -511,7 +517,7 @@ func (s *Service) info() []byte {
 	}
 	sort.Slice(dynamicIDs, func(i, j int) bool { return dynamicIDs[i] < dynamicIDs[j] })
 	for _, id := range dynamicIDs {
-		if containsID(s.state.Opened, id) {
+		if s.dynamic[id].IsCash || containsID(s.state.Opened, id) {
 			continue
 		}
 		result = wire.AppendBytes(result, 1, s.dynamic[id].encode())
@@ -557,8 +563,16 @@ func (s *Service) open(request []byte) ([]byte, error) {
 			return nil, fmt.Errorf("mail: unknown mail %d", id)
 		}
 	}
-	// Validate the entire new attendance batch before any reward domain writes.
+	// Validate the entire attendance/cash batch before any reward domain writes.
 	for _, entry := range selected {
+		if entry.IsCash {
+			if s.cashEconomy == nil {
+				return nil, errors.New("mail: cash reward economy unavailable")
+			}
+			if err := validateCashAttachments(mailAttachments(entry)); err != nil {
+				return nil, err
+			}
+		}
 		if s.isAttendanceMail(entry.MailID) {
 			if s.attendanceEconomy == nil {
 				return nil, errors.New("mail: attendance reward economy unavailable")
@@ -579,7 +593,13 @@ func (s *Service) open(request []byte) ([]byte, error) {
 	newHistory := make([]MailDBInfo, 0, len(selected))
 	for _, entry := range selected {
 		identity := fmt.Sprintf("mail:%d", entry.MailID)
-		if s.isAttendanceMail(entry.MailID) {
+		if entry.IsCash {
+			granted, err := s.cashEconomy.ApplyResolved(identity+":cash", nil, mailAttachments(entry))
+			if err != nil {
+				return nil, err
+			}
+			bundle = append(bundle, granted...)
+		} else if s.isAttendanceMail(entry.MailID) {
 			granted, err := s.attendanceEconomy.Apply(identity+":attendance", nil, mailAttachments(entry))
 			if err != nil {
 				return nil, err
@@ -944,6 +964,12 @@ func (s *Service) enqueueCompensations(grants []compensation) error {
 		entry := MailDBInfo{
 			MailID: next.NextDynamicMailID, MailType: 2, Title: grant.title, Body: grant.body,
 			SentAt: uint64(grant.sentAt.UTC().UnixMilli()), ExpiresAt: uint64(grant.sentAt.UTC().Add(30 * 24 * time.Hour).UnixMilli()),
+		}
+		if grant.isCash {
+			entry.IsCash = true
+			entry.TemplateID = grant.templateID
+			entry.MailType = 0
+			entry.ExpiresAt = 253402300799000 // cash mail has no claim expiry in the client
 		}
 		for _, reward := range grant.rewards {
 			entry.RewardTypes = append(entry.RewardTypes, reward.Type)

@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/gameconfig"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/hunting"
+	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/readonly"
 	"bd2server/internal/server/stateio"
@@ -13,6 +14,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +119,10 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	templates, err := gamedata.LoadCashMailTemplates(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
 	newEconomy := func() (*EntitlementEconomy, *player.Wallet) {
 		store := stateio.NewMemory()
 		items, err := player.OpenInventory(store, &player.Starter{Version: "2.35.10"})
@@ -154,6 +160,17 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 		base.AttachHuntingAP(ap)
 		e, err := NewEntitlementEconomy(store, base, resolver, items, entitlements)
 		if err != nil {
+			t.Fatal(err)
+		}
+		e.SetClock(func() time.Time { return time.Date(2026, 10, 5, 5, 0, 0, 0, time.UTC) }, 0)
+		mailbox, err := mail.OpenService(store, &mail.Starter{Version: "2.35.10", MailCount: 1}, items, wallet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = mailbox.AttachCashRewards(e, templates); err != nil {
+			t.Fatal(err)
+		}
+		if err = e.AttachCashMail(mailbox); err != nil {
 			t.Fatal(err)
 		}
 		return e, wallet
@@ -321,7 +338,7 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 		}
 		delegated[gamedata.CashProductKey{GroupID: d.ProductGroupID, ProductID: d.ProductID, SaleGroup: d.SaleGroup}] = true
 	}
-	cash, recharge, delegateCount, retiredCount := 0, 0, 0, 0
+	cash, recharge, delegateCount, retiredCount, mailedProducts := 0, 0, 0, 0, 0
 	for _, p := range catalog.Products {
 		if p.PriceType != 1 {
 			continue
@@ -372,8 +389,8 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 			rewards = append(rewards, gamedata.Reward{Type: 9, ID: p.BonusRandomBoxID, Count: 1})
 		}
 		e, wallet := newEconomy()
-		bundle, err := e.Apply("installed-audit", costs, rewards)
-		if err != nil || len(bundle) == 0 {
+		bundle, err := e.ApplyPurchase("installed-audit", costs, rewards)
+		if err != nil {
 			t.Errorf("cash product %+v failed real debit/grant: %v", p.Key, err)
 			continue
 		}
@@ -387,9 +404,67 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 			return nil
 		})
 		balance := wallet.Snapshot()
-		replay, err := e.Apply("installed-audit", costs, rewards)
+		replay, err := e.ApplyPurchase("installed-audit", costs, rewards)
 		if err != nil || !bytes.Equal(replay, bundle) || wallet.Snapshot() != balance {
 			t.Errorf("cash product %+v replay repeated debit/grant: %v", p.Key, err)
+		}
+
+		mailbox := e.mail.(*mail.Service)
+		listReq := wire.AppendVarint(nil, 1, 1)
+		listReq = wire.AppendVarint(listReq, 3, 100)
+		code, list, ok, err := mailbox.Handle("/CashMailInfo", listReq)
+		if err != nil || !ok || code != 140 {
+			t.Fatalf("cash list %+v: %v", p.Key, err)
+		}
+		claim := wire.AppendVarint(nil, 1, 2)
+		mailCount := 0
+		_ = wire.Walk(list, func(f wire.Field) error {
+			if f.Number == 1 && f.Type == 2 {
+				id, _, _ := wire.Varint(f.Value, 1)
+				template, _, _ := wire.Varint(f.Value, 3)
+				cash, _, _ := wire.Varint(f.Value, 15)
+				if !templates[template] || cash != 1 {
+					t.Errorf("invalid cash mail template/flag %+v", p.Key)
+				}
+				claim = wire.AppendVarint(claim, 2, id)
+				mailCount++
+			}
+			return nil
+		})
+		if mailCount > 0 {
+			mailedProducts++
+			_, claimed, _, err := mailbox.Handle("/MailOpen", claim)
+			if err != nil {
+				t.Errorf("cash claim %+v: %v", p.Key, err)
+				continue
+			}
+			claimedBalance := wallet.Snapshot()
+			claimedItems := e.items.All()
+			_, replayed, _, err := mailbox.Handle("/MailOpen", claim)
+			if err != nil || !bytes.Equal(claimed, replayed) || wallet.Snapshot() != claimedBalance || !reflect.DeepEqual(e.items.All(), claimedItems) {
+				t.Errorf("cash claim replay %+v duplicated: %v", p.Key, err)
+			}
+			_, remaining, _, err := mailbox.Handle("/CashMailInfo", listReq)
+			n, _, _ := wire.Varint(remaining, 2)
+			if err != nil || n != 0 {
+				t.Errorf("claimed cash mail remains %+v", p.Key)
+			}
+		}
+		// Cash mailbox delivery must grant exactly what the previous immediate
+		// reward resolver granted, including subscriptions' first-day deduplication.
+		reference, referenceWallet := newEconomy()
+		if _, err := reference.Apply("reference", costs, rewards); err != nil {
+			t.Fatal(err)
+		}
+		itemTotals := func(items []player.Item) map[[3]uint64]uint64 {
+			totals := map[[3]uint64]uint64{}
+			for _, item := range items {
+				totals[[3]uint64{item.Type, item.ID, item.ExpiryTime}] += item.Count
+			}
+			return totals
+		}
+		if wallet.Snapshot() != referenceWallet.Snapshot() || !reflect.DeepEqual(itemTotals(e.items.All()), itemTotals(reference.items.All())) {
+			t.Errorf("cash product %+v mailed delivery differs from direct grant: wallet=%+v expected=%+v items=%+v expected=%+v", p.Key, wallet.Snapshot(), referenceWallet.Snapshot(), e.items.All(), reference.items.All())
 		}
 	}
 	if cash != 614 || recharge != 14 || delegateCount != 3 || retiredCount != 5 {
@@ -403,5 +478,5 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 	if len(rows) != 3 || rows[0].RequireCount != 2 || rows[0].Reward.Count != 2 || rows[1].RequireCount != 6 || rows[1].Reward.Count != 15 || rows[2].RequireCount != 8 || rows[2].Reward.Count != 30 {
 		t.Fatalf("cash bonus thresholds or rewards changed: %+v", rows)
 	}
-	t.Logf("validated %d cash rows: %d recharge variants, %d preview designs, %d unavailable historical draws; checked other reward boxes and typed ticket/skin entitlements", cash, recharge, delegateCount, retiredCount)
+	t.Logf("validated %d cash rows: %d recharge variants, %d preview designs, %d unavailable historical draws; checked %d products through cash mail creation, batch claim, and replay with typed ticket/skin entitlements", cash, recharge, delegateCount, retiredCount, mailedProducts)
 }
