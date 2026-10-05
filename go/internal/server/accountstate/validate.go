@@ -22,23 +22,24 @@ type Problem struct {
 }
 
 type validationSnapshot struct {
-	formatVersion      int
-	clientVersion      string
-	gameDataVersion    string
-	itemIndices        []uint64
-	equipmentIndices   []uint64
-	characterIndices   []uint64
-	costumeIndices     []uint64
-	itemNextIndex      uint64
-	equipmentNextIndex uint64
-	characterNextIndex uint64
-	costumeNextIndex   uint64
-	equipmentGrants    []namedIndex
-	equipmentUsers     []namedIndex
-	quests             []questKey
-	cleared            []questKey
-	granted            map[string]bool
-	itemGrants         []indexedGrant
+	formatVersion              int
+	clientVersion              string
+	gameDataVersion            string
+	itemIndices                []uint64
+	equipmentIndices           []uint64
+	characterIndices           []uint64
+	collectionCharacterIndices []uint64
+	costumeIndices             []uint64
+	itemNextIndex              uint64
+	equipmentNextIndex         uint64
+	characterNextIndex         uint64
+	costumeNextIndex           uint64
+	equipmentGrants            []namedIndex
+	equipmentUsers             []namedIndex
+	quests                     []questKey
+	cleared                    []questKey
+	granted                    map[string]bool
+	itemGrants                 []indexedGrant
 }
 
 type namedIndex struct {
@@ -73,7 +74,7 @@ func validateSnapshot(snapshot validationSnapshot) []Problem {
 	problems = append(problems, duplicateIndexProblems("costumes.duplicate_index", []string{"collection", "costumes"}, snapshot.costumeIndices)...)
 	problems = append(problems, nextIndexProblems("inventory.next_index", []string{"inventory", "next_index"}, snapshot.itemNextIndex, snapshot.itemIndices)...)
 	problems = append(problems, nextIndexProblems("equipment.next_index", []string{"equipment", "next_index"}, snapshot.equipmentNextIndex, snapshot.equipmentIndices)...)
-	problems = append(problems, nextIndexProblems("collection.next_character_index", []string{"collection", "next_character_index"}, snapshot.characterNextIndex, snapshot.characterIndices)...)
+	problems = append(problems, nextIndexProblems("collection.next_character_index", []string{"collection", "next_character_index"}, snapshot.characterNextIndex, snapshot.collectionCharacterIndices)...)
 	problems = append(problems, nextIndexProblems("collection.next_costume_index", []string{"collection", "next_costume_index"}, snapshot.costumeNextIndex, snapshot.costumeIndices)...)
 
 	for _, grant := range snapshot.equipmentGrants {
@@ -245,6 +246,10 @@ func validateState(tx *sql.Tx) ([]Problem, error) {
 		return nil, err
 	}
 	snapshot.characterIndices = append(baseCharacters, acquiredCharacters...)
+	// Collection allocation owns acquired characters. Base, story and timed
+	// companions have separate instance namespaces; they still participate in
+	// duplicate identity and equipment owner validation above.
+	snapshot.collectionCharacterIndices = acquiredCharacters
 	if snapshot.costumeIndices, _, err = indexedEntries(tx, "collection", "costumes", false); err != nil {
 		return nil, err
 	}

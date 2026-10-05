@@ -19,6 +19,23 @@ type RecipeService struct {
 	items   RecipeItems
 }
 
+func (s *RecipeService) Knows(id uint64) bool {
+	if !s.design.IDs[id] {
+		return false
+	}
+	for _, known := range s.initial {
+		if known == id {
+			return true
+		}
+	}
+	for _, item := range s.items.All() {
+		if item.Type == 7 && item.ID == id && item.Count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func NewRecipeService(design *gamedata.CookingRecipeDesign, initial []uint64, items RecipeItems) (*RecipeService, error) {
 	if design == nil || len(design.IDs) == 0 || items == nil {
 		return nil, fmt.Errorf("recipes: missing design or inventory")

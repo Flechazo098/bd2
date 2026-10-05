@@ -170,6 +170,9 @@ func (p *OwnedGameplayAchievementProvider) Snapshot() (GameplayAchievementSnapsh
 	s := GameplayAchievementSnapshot{Characters: map[uint64]player.Character{}, Costumes: map[uint64]player.Costume{}, Equipment: map[uint64]player.Equipment{}, Items: map[[2]uint64]uint64{}}
 	if p.Characters != nil {
 		for _, v := range p.Characters.RawAll() {
+			if player.IsCharmCharacter(v) || player.IsStoryCharacter(v) {
+				continue
+			}
 			s.Characters[v.InvenIndex] = v
 		}
 	}

@@ -10,11 +10,26 @@ func validValidationSnapshot() validationSnapshot {
 		formatVersion: 1, clientVersion: "2.35.10", gameDataVersion: "20260924000000",
 		itemNextIndex: 11, equipmentNextIndex: 21, characterNextIndex: 31, costumeNextIndex: 41,
 		itemIndices: []uint64{10}, equipmentIndices: []uint64{20}, characterIndices: []uint64{30}, costumeIndices: []uint64{40},
-		equipmentGrants: []namedIndex{{identity: "quest:test", index: 20}},
-		equipmentUsers:  []namedIndex{{identity: "20", index: 30}},
-		quests:          []questKey{{pack: 1, quest: 2}}, cleared: []questKey{{pack: 1, quest: 2}},
+		collectionCharacterIndices: []uint64{30},
+		equipmentGrants:            []namedIndex{{identity: "quest:test", index: 20}},
+		equipmentUsers:             []namedIndex{{identity: "20", index: 30}},
+		quests:                     []questKey{{pack: 1, quest: 2}}, cleared: []questKey{{pack: 1, quest: 2}},
 		granted:    map[string]bool{"mail:test": true},
 		itemGrants: []indexedGrant{{identity: "mail:test", indices: []uint64{9}}},
+	}
+}
+
+func TestTimedCompanionIdentityIsSeparateFromCollectionAllocator(t *testing.T) {
+	s := validValidationSnapshot()
+	companion := uint64(1<<59) + 100
+	s.characterIndices = append(s.characterIndices, companion)
+	s.equipmentUsers[0].index = companion
+	if p := validateSnapshot(s); len(p) != 0 {
+		t.Fatalf("temporary owner rejected: %+v", p)
+	}
+	s.collectionCharacterIndices = append(s.collectionCharacterIndices, s.characterNextIndex)
+	if !slices.Contains(problemCodes(validateSnapshot(s)), "collection.next_character_index") {
+		t.Fatal("permanent allocator invariant lost")
 	}
 }
 

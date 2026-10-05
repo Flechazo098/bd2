@@ -14,7 +14,6 @@ var standaloneDefaults = map[string]int{
 	"/PvpBattleDeckInfo":       87,
 	"/PvpBattleHistory":        97,
 	"/PvpBattleOnceRewardInfo": 277,
-	"/FieldDeckInfo":           273,
 	"/FriendRecommend":         211,
 	"/SupporterStatus":         438,
 	"/SupporterBattleInfo":     439,
@@ -24,10 +23,8 @@ var standaloneDefaults = map[string]int{
 // canonically empty. Domain persistence can be added without changing their
 // protocol contract. Core progress commands are handled by session first.
 var commandSuccess = map[string]int{
-	"/UpdateAgeGate":                0,
-	"/SaveFieldCharControlDeckType": 288,
-	"/ActiveMap":                    0,
-	"/FieldDeckSave":                274,
-	"/CostumeUse":                   41,
-	"/BattleExit":                   388,
+	"/UpdateAgeGate": 0,
+	"/ActiveMap":     0,
+	"/CostumeUse":    41,
+	"/BattleExit":    388,
 }

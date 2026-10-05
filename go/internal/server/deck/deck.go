@@ -58,21 +58,25 @@ func (s *Store) PortraitCostume() uint64 {
 }
 
 type Store struct {
-	mu              sync.RWMutex
-	storage         stateio.AtomicEntryStore
-	state           state
-	presets         map[uint64]Preset
-	presetSlots     uint64
-	presetDesign    gamedata.PresetDesign
-	costumeSettings map[uint64]CostumeSetting
-	wallet          *player.Wallet
-	characters      *player.CharacterStore
-	equipment       *player.EquipmentInventory
-	collection      *player.CollectionStore
-	sessionID       string
-	replies         map[string]deckReply
-	waypointDesign  func(uint64) (gamedata.WaypointPack, error)
-	waypointPack    func(uint64, bool) error
+	autoRecovery        func(uint64, uint64, []uint64) (player.AutoRecoveryResult, error)
+	autoRecoveryAllowed func() (bool, error)
+	fieldSettingsDesign *gamedata.FieldSettingsDesign
+	fieldSettingsPack   func() (int, error)
+	mu                  sync.RWMutex
+	storage             stateio.AtomicEntryStore
+	state               state
+	presets             map[uint64]Preset
+	presetSlots         uint64
+	presetDesign        gamedata.PresetDesign
+	costumeSettings     map[uint64]CostumeSetting
+	wallet              *player.Wallet
+	characters          *player.CharacterStore
+	equipment           *player.EquipmentInventory
+	collection          *player.CollectionStore
+	sessionID           string
+	replies             map[string]deckReply
+	waypointDesign      func(uint64) (gamedata.WaypointPack, error)
+	waypointPack        func(uint64, bool) error
 }
 
 type deckReply struct {
@@ -123,6 +127,11 @@ func validField(entries []FieldEntry) error {
 		sequences[e.Slot] = true
 		if e.CostumeInvenIndex != 0 {
 			costumes[e.CostumeInvenIndex] = true
+		}
+	}
+	for slot := uint64(1); slot <= uint64(len(entries)); slot++ {
+		if !sequences[slot] {
+			return errors.New("deck: field deck has a missing sequence")
 		}
 	}
 	return nil
@@ -181,7 +190,7 @@ func OpenStore(storage stateio.Store, seed Seed, designs ...gamedata.PresetDesig
 		return nil, fmt.Errorf("deck: load state: %w", e)
 	}
 	if b == nil {
-		if e = stateio.RequireNoEntries(entries, "deck", "presets", "preset_config", "costume_settings"); e != nil {
+		if e = stateio.RequireNoEntries(entries, "deck", "presets", "preset_config", "costume_settings", "field_settings"); e != nil {
 			return nil, fmt.Errorf("deck: invalid entry storage: %w", e)
 		}
 		return s, nil
@@ -250,7 +259,7 @@ func clone(x state) state {
 }
 func checkSeq(req []byte) error {
 	v, ok, e := wire.Varint(req, 1)
-	if e != nil || !ok || v == 0 {
+	if e != nil || !ok || v == 0 || v > 2147483647 {
 		return errors.New("deck: invalid request sequence")
 	}
 	return nil
@@ -340,10 +349,17 @@ func (s *Store) validateOwnedFieldDeckLocked(entries []FieldEntry) error {
 		return nil
 	}
 	for _, entry := range entries {
-		if _, found := s.characters.Find(entry.CharacterInvenIndex); !found {
+		character, found := s.characters.Find(entry.CharacterInvenIndex)
+		if !found {
 			return fmt.Errorf("deck: field deck references unknown character %d", entry.CharacterInvenIndex)
 		}
+		if player.IsStoryCharacter(character) && !s.temporaryAllowed(character) {
+			return fmt.Errorf("deck: field character unavailable in this pack")
+		}
 		if entry.CostumeInvenIndex == 0 {
+			continue
+		}
+		if (player.IsStoryCharacter(character) || player.IsCharmCharacter(character)) && character.UseCostume == entry.CostumeInvenIndex {
 			continue
 		}
 		costume, found := s.collection.CostumeByIndex(entry.CostumeInvenIndex)
@@ -361,6 +377,8 @@ func (s *Store) validateOwnedFieldDeckLocked(entries []FieldEntry) error {
 // typed request before committing a replacement JSON state.
 func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/TalentSlotSave", "/CharAutoReviveSet":
+		return s.handleFieldSettings(path, req)
 	case "/PresetInfo":
 		return s.handlePresetInfo(req)
 	case "/PresetSave":
@@ -384,55 +402,26 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		slog.Info("team trace: deliver saved battle deck", "deck", s.state.Deck)
-		return 8, encodeDeck(s.state.Deck), true, nil
+		out := encodeDeck(s.state.Deck)
+		if s.fieldSettingsDesign != nil {
+			v, e := s.loadFieldSettings()
+			if e != nil {
+				return 0, nil, true, e
+			}
+			for _, id := range s.projectTalentSlots(v.TalentIDs) {
+				out = wire.AppendVarint(out, 2, id)
+			}
+		}
+		return 8, out, true, nil
 	case "/FieldDeckInfo":
 		if e := checkSeq(req); e != nil {
 			return 0, nil, true, e
 		}
 		s.mu.RLock()
 		defer s.mu.RUnlock()
-		return 273, encodeField(s.state.FieldDeck), true, nil
+		return 273, encodeField(s.visibleFieldDeckLocked()), true, nil
 	case "/DeckCharAutoRevive":
-		if e := checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-		caster, _, e := wire.Varint(req, 2)
-		if e != nil {
-			return 0, nil, true, fmt.Errorf("deck: invalid auto-revive caster: %w", e)
-		}
-		if caster != 0 {
-			// The observed story flow has no caster and only refreshes the
-			// formation. A nonzero caster would require authoritative revive
-			// targets, talent experience, and catalyst consumption.
-			return 0, nil, true, fmt.Errorf("deck: auto-revive caster %d is not verified", caster)
-		}
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		if len(s.state.Deck) == 0 {
-			return 0, nil, true, errors.New("deck: auto-revive has no current battle deck")
-		}
-		var response []byte
-		for _, entry := range s.state.Deck {
-			deck := wire.AppendVarint(nil, 1, entry.CharacterInvenIndex)
-			if entry.CostumeInvenIndex != 0 {
-				deck = wire.AppendVarint(deck, 2, entry.CostumeInvenIndex)
-			}
-			deck = wire.AppendVarint(deck, 3, entry.Slot)
-			response = wire.AppendBytes(response, 1, deck)
-		}
-		for _, entry := range s.state.FieldDeck {
-			field := wire.AppendVarint(nil, 1, entry.Slot)
-			field = wire.AppendVarint(field, 2, entry.CharacterInvenIndex)
-			if entry.CostumeInvenIndex != 0 {
-				field = wire.AppendVarint(field, 3, entry.CostumeInvenIndex)
-			}
-			response = wire.AppendBytes(response, 2, field)
-		}
-		response = wire.AppendVarint(response, 4, 2) // Define_AutoReviveCharType.CHANGE.
-		if s.state.AutoReviveCatalyst != 0 {
-			response = wire.AppendVarint(response, 7, s.state.AutoReviveCatalyst)
-		}
-		return 373, response, true, nil
+		return s.handleAutoRecovery(req)
 	case "/WaypointInfo":
 		return s.handleWaypoint(path, req)
 	case "/DeckSave":

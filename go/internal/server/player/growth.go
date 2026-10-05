@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/stateio"
@@ -234,6 +235,13 @@ func validateCharacters(characters []Character) error {
 
 func (s *CharacterStore) All() []Character {
 	characters := s.RawAll()
+	active := characters[:0]
+	for _, c := range characters {
+		if !CharacterExpired(c, time.Now()) {
+			active = append(active, c)
+		}
+	}
+	characters = active
 	for i := range characters {
 		if hp, err := s.savedCurrentHealth(characters[i]); err == nil {
 			characters[i].HP = hp
@@ -258,6 +266,9 @@ func (s *CharacterStore) RawAll() []Character {
 func (s *CharacterStore) Find(inventoryIndex uint64) (Character, bool) {
 	for _, character := range s.RawAll() {
 		if character.InvenIndex == inventoryIndex {
+			if CharacterExpired(character, time.Now()) {
+				return Character{}, false
+			}
 			if hp, err := s.savedCurrentHealth(character); err == nil {
 				character.HP = hp
 			}

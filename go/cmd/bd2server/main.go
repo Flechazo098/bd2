@@ -569,7 +569,13 @@ func serve(args []string) (serveErr error) {
 	gachaService.AttachDrawMission(func(count uint64) error {
 		return missionService.RecordEvent(missions.ConditionGachaBuy, 0, count, missionUnlocked)
 	})
-	if err := collection.BindBaseCharacters(worldService.CharacterService().RawAll()); err != nil {
+	var permanentBaseCharacters []player.Character
+	for _, c := range worldService.CharacterService().RawAll() {
+		if !player.IsCharmCharacter(c) {
+			permanentBaseCharacters = append(permanentBaseCharacters, c)
+		}
+	}
+	if err := collection.BindBaseCharacters(permanentBaseCharacters); err != nil {
 		return fmt.Errorf("bind base collection characters: %w", err)
 	}
 	if err := mailService.AttachCostumeRewards(collection, limitedCostumes); err != nil {
@@ -592,6 +598,19 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := deckStateStore.AttachPresetRuntime(wallet, worldService.CharacterService(), ownedEquipment, collection); err != nil {
 		return fmt.Errorf("attach ordinary preset runtime: %w", err)
+	}
+	fieldSettingsDesign, err := gamedata.LoadFieldSettingsDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load field character settings: %w", err)
+	}
+	if err := deckStateStore.AttachFieldSettingsPack(worldService.CurrentPackID); err != nil {
+		return err
+	}
+	if err := deckStateStore.AttachFieldSettings(fieldSettingsDesign); err != nil {
+		return fmt.Errorf("attach field character settings: %w", err)
+	}
+	if err := login.AttachAutoReviveSettings(deckStateStore); err != nil {
+		return fmt.Errorf("attach automatic revival settings: %w", err)
 	}
 	pictorialDesign, err := gamedata.LoadPictorialDesign(gameData, *gameDataVersion)
 	if err != nil {
@@ -676,6 +695,10 @@ func serve(args []string) (serveErr error) {
 	if err := worldService.AttachFieldMonsterState(gameplayStore); err != nil {
 		return fmt.Errorf("attach field monster state: %w", err)
 	}
+	battleService.AttachFieldMonsters(worldService)
+	if err := worldService.AttachFieldBuffRuntime(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("attach field monster damage: %w", err)
+	}
 	contentOpeningDesign, err := gamedata.LoadContentOpeningDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load content opening GameData: %w", err)
@@ -739,6 +762,49 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load event economy: %w", err)
 	}
 	eventEconomy.AttachHuntingAP(huntingService)
+	talentUseDesign, err := gamedata.LoadTalentUseDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load field talent skills: %w", err)
+	}
+	talentUseService, err := player.NewTalentUseService(talentUseDesign, gameplayStore, worldService.CharacterService(), ownedItems, wallet, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load field talent state: %w", err)
+	}
+	talentUseService.AttachContext(worldService.TalentFieldContext)
+	if err := worldService.AttachAutoRecoveryPolicy(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("attach automatic recovery policy: %w", err)
+	}
+	deckStateStore.AttachAutoRecoveryAllowed(worldService.AutoRecoveryAllowed)
+	deckStateStore.AttachAutoRecovery(talentUseService.AutoRecover)
+	worldService.AttachTalentPackInfo(talentUseService.PackInfo)
+	worldService.AttachOverwhelmAuthorization(talentUseService.ConsumeOverwhelm)
+	worldService.AttachOverwhelmHunting(huntingService)
+	if err := worldService.AttachOverwhelmDesign(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("attach overwhelm design: %w", err)
+	}
+	talentUseService.AttachEffect(4, worldService.ApplyTalentFieldAbsorb)
+	talentUseService.AttachEffect(20, worldService.ApplyTalentMonsterSummon)
+	dispatchDesign, err := gamedata.LoadTalentDispatchDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load talent dispatch design: %w", err)
+	}
+	dispatchService, err := player.OpenTalentDispatch(gameplayStore, dispatchDesign, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load talent dispatch state: %w", err)
+	}
+	talentUseService.AttachEffect(18, dispatchService.Start)
+	itemCraftDesign, err := gamedata.LoadItemCraftDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load item crafting design: %w", err)
+	}
+	itemCraftService, err := player.NewItemCraftService(itemCraftDesign, talentUseDesign, gameplayStore, ownedItems, worldService.CharacterService(), wallet, recipeService.Knows)
+	if err != nil {
+		return fmt.Errorf("load item crafting state: %w", err)
+	}
+	itemCraftService.AttachContext(func() (int, bool, error) {
+		pack, err := worldService.CurrentPackID()
+		return pack, battleService.Active(), err
+	})
 	if err := worldService.ConfigureNPCRuntime(gameData, *gameDataVersion, gameplayStore); err != nil {
 		return fmt.Errorf("configure NPC world runtime: %w", err)
 	}
@@ -762,6 +828,7 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load NPC shop state: %w", err)
 	}
 	npcShopService.SetReputationSource(worldService.NPCShopReputation)
+	npcShopService.SetTalentDiscountSource(talentUseService.ShopDiscount)
 	commissionDesign, err := gamedata.LoadTodayQuests(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load NPC commission design: %w", err)
@@ -1193,6 +1260,9 @@ func serve(args []string) (serveErr error) {
 		masterTitleService,
 		recruitService,
 		foodService,
+		talentUseService,
+		dispatchService,
+		itemCraftService,
 		recipeService,
 		starter,
 		mailService,

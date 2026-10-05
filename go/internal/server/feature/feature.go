@@ -26,7 +26,6 @@ var emptyResponses = map[string]int{
 	"/CommunityRewardInfo":             289,
 	"/DailyStoryInfo":                  538,
 	"/DatingInfo":                      361,
-	"/DispatchInfo":                    0,
 	"/EquipPresetInfo":                 253,
 	"/EvilCastleDailyRewardState":      441,
 	"/EvilCastleTowerInfo":             200,

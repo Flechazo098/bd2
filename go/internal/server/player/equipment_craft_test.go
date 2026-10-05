@@ -11,6 +11,16 @@ import (
 )
 
 func TestEquipMakingAgainstInstalledCurrentVersion(t *testing.T) {
+	testEquipMakingInstalled(t, 140, 14)
+}
+
+// Char10140 has Talent901: maximum level1, no experience in Skill901/1,
+// and cumulative Growth901/1 threshold0 in current GameData.
+func TestEquipMakingNonGrowingTalentAgainstInstalledCurrentVersion(t *testing.T) {
+	testEquipMakingInstalled(t, 10140, 0)
+}
+
+func testEquipMakingInstalled(t *testing.T, characterID, expectedExperience uint64) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
 		t.Skip("set BD2_REAL_GAMEDATA for installed GameData integration test")
@@ -28,7 +38,7 @@ func TestEquipMakingAgainstInstalledCurrentVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: 140, Level: 1, TalentLevel: 1}}, inventory, root, "20260923193640")
+	characters, err := OpenCharacterStore(testStore(filepath.Join(dir, "characters.json")), []Character{{InvenIndex: 77, ID: characterID, Level: 1, TalentLevel: 1}}, inventory, root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +81,7 @@ func TestEquipMakingAgainstInstalledCurrentVersion(t *testing.T) {
 	if wallet.Snapshot().Catalyst != 7 {
 		t.Fatalf("making catalyst=%d", wallet.Snapshot().Catalyst)
 	}
-	if character, ok := characters.Find(77); !ok || character.TalentExp != 14 {
+	if character, ok := characters.Find(77); !ok || character.TalentExp != expectedExperience {
 		t.Fatalf("making character=%+v found=%t", character, ok)
 	}
 	replayCode, replay, _, err := equipment.Handle("/EquipMaking", request)

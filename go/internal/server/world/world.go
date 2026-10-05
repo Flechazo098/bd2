@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"bd2server/internal/server/deck"
 	"bd2server/internal/server/gamedata"
@@ -171,6 +172,7 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	autoRecoveryPolicy *gamedata.PackRecoveryPolicy
 	todayQuests        *todayquest.Service
 	huntingGround      interface{ EnsureForPack(int) ([]byte, error) }
 	battleActive       func() bool
@@ -189,6 +191,20 @@ type Service struct {
 	fieldObjectLoader  func(int) (gamedata.FieldObjectDesign, error)
 	monsterLoader      func(int) ([]gamedata.FieldMonsterDesign, error)
 	monsterStore       stateio.Store
+	monsterNow         func() time.Time
+	monsterSession     string
+	monsterRewards     func(int, uint64) ([]gamedata.BattleReward, error)
+	monsterMaps        func(int) (map[int][]int, error)
+	monsterDamage      func(int, uint64, string) ([][]byte, error)
+	fieldBuffs         map[uint64]gamedata.FieldBuffDesign
+	talentPackInfo     func(int) ([]byte, error)
+	overwhelmAuthorize func(string, uint64) error
+	overwhelmSky       []gamedata.SkyWayOverwhelmRule
+	overwhelmQuest     func(int, int) (gamedata.OverwhelmQuestRule, error)
+	overwhelmHunting   interface {
+		ValidateBattle(int, uint64, uint64, uint64) error
+		CompleteBattle(int, uint64, uint64, uint64, string) ([]byte, [][]byte, error)
+	}
 	npcReputation      *npcReputationRuntime
 	fieldReset         gamedata.FieldResetSchedule
 	researchDesigns    map[int]gamedata.FieldResearchDesign
@@ -251,6 +267,14 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	switch path {
 	case "/MonsterInfo":
 		return s.handleMonsterInfo(request)
+	case "/FieldMonsterRegen":
+		return s.handleFieldMonsterRegen(request)
+	case "/FieldMonsterEvent", "/FieldMonsterDamage":
+		return s.handleFieldMonsterEvent(path, request)
+	case "/FieldMonsterReward":
+		return s.handleFieldMonsterReward(request)
+	case "/Overwhelm":
+		return s.handleOverwhelm(request)
 	case "/QuestUpdate":
 		return s.handleQuestUpdate(request)
 	case "/FieldObjectInfo":
@@ -310,7 +334,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			for _, char := range characters {
 				seen[char.InvenIndex] = true
 			}
-			for _, entry := range s.decks.CurrentDeck() {
+			deckCharacters := s.decks.CurrentDeck()
+			for _, entry := range s.decks.CurrentFieldDeck() {
+				deckCharacters = append(deckCharacters, deck.DeckEntry{CharacterInvenIndex: entry.CharacterInvenIndex})
+			}
+			for _, entry := range deckCharacters {
 				if seen[entry.CharacterInvenIndex] {
 					continue
 				}
@@ -324,7 +352,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		for _, character := range characters {
 			response = wire.AppendBytes(response, 1, encodeCharacter(character))
 		}
-		response = wire.AppendVarint(response, 2, s.starter.FieldCharControlDeckType)
+		control := s.starter.FieldCharControlDeckType
+		if s.decks != nil {
+			control = s.decks.FieldControlType()
+		}
+		response = wire.AppendVarint(response, 2, control)
 		return 9, response, true, nil
 	case "/CostumeInfo":
 		if s.tutorialRosterRestricted() {
@@ -369,7 +401,15 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if eventPack, found, err := s.resolveEventFieldPack(pack); err != nil {
 			return 0, nil, true, err
 		} else if found {
-			return s.enterEventFieldPack(eventPack)
+			code, body, handled, e := s.enterEventFieldPack(eventPack)
+			if e == nil && s.talentPackInfo != nil {
+				extra, x := s.talentPackInfo(pack)
+				if x != nil {
+					return 0, nil, true, x
+				}
+				body = append(body, extra...)
+			}
+			return code, body, handled, e
 		}
 		if !s.packUnlocked(pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
@@ -383,6 +423,13 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		response, err := s.packInfoFor(pack)
 		if err != nil {
 			return 0, nil, true, err
+		}
+		if s.talentPackInfo != nil {
+			extra, e := s.talentPackInfo(pack)
+			if e != nil {
+				return 0, nil, true, e
+			}
+			response = append(response, extra...)
 		}
 		if err := s.state.SetActivePackID(pack); err != nil {
 			return 0, nil, true, err
@@ -923,7 +970,13 @@ func (s *Service) accountPackInfo() []byte {
 // though their instances already exist in the versioned world seed.
 func (s *Service) PictorialCharacters() []player.Character {
 	if !s.tutorialRosterRestricted() && s.characters != nil {
-		return s.visibleOwnedCharacters(s.characters.RawAll())
+		var permanent []player.Character
+		for _, c := range s.visibleOwnedCharacters(s.characters.RawAll()) {
+			if !player.IsCharmCharacter(c) {
+				permanent = append(permanent, c)
+			}
+		}
+		return permanent
 	}
 	return append([]player.Character(nil), s.starter.Characters...)
 }

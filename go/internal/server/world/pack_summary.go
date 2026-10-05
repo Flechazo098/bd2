@@ -39,6 +39,38 @@ func (s *Service) handlePackSummary(request []byte) (int, []byte, bool, error) {
 		if regen > 0 {
 			row = wire.AppendVarint(row, 3, regen)
 		}
+		if s.packDetailDesign != nil && s.monsterLoader != nil {
+			design, e := s.packDetailDesign(int(id))
+			if e != nil {
+				return 0, nil, true, e
+			}
+			filter := map[int]bool{}
+			for _, n := range design.RegenMonsterIDs {
+				filter[n] = true
+			}
+			rows, e := s.monsterRows(int(id), filter)
+			if e != nil {
+				return 0, nil, true, e
+			}
+			var defeated uint64
+			for _, m := range rows {
+				active, _, _ := wire.Varint(m, 6)
+				respawn, _, _ := wire.Varint(m, 3)
+				if active == 0 || respawn > uint64(s.monsterTime().UnixMilli()) {
+					defeated++
+				}
+			}
+			if defeated > 0 {
+				row = wire.AppendVarint(row, 4, defeated)
+			}
+		}
+		research, e := s.state.ResearchObjects(int(id))
+		if e != nil {
+			return 0, nil, true, e
+		}
+		if len(research) > 0 {
+			row = wire.AppendVarint(row, 5, uint64(len(research)))
+		}
 		response = wire.AppendBytes(response, 1, row)
 	}
 	return 625, response, true, nil

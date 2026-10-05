@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 )
 
 // NPCShopDesign is the ordinary in-game shop, distinct from CashShopTable.
@@ -10,6 +11,7 @@ type NPCShopDesign struct {
 	Shops    map[uint64]NPCShop
 	Products map[uint64]map[uint64]NPCProduct
 	Sell     map[uint64]NPCProduct
+	ShopNPCs map[uint64][]uint64
 }
 type NPCShop struct{ ID, PackID, ResetType, ResetCount, StartDay uint64 }
 type NPCProduct struct {
@@ -24,7 +26,74 @@ func LoadNPCShopDesign(root, version string) (NPCShopDesign, error) {
 		return NPCShopDesign{}, err
 	}
 	defer closeDB()
-	return loadNPCShopDesign(db)
+	d, e := loadNPCShopDesign(db)
+	if e != nil {
+		return d, e
+	}
+	d.ShopNPCs = map[uint64][]uint64{}
+	packs := map[uint64]bool{}
+	for _, shop := range d.Shops {
+		packs[shop.PackID] = true
+	}
+	ids := []uint64{}
+	for pack := range packs {
+		ids = append(ids, pack)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for _, pack := range ids {
+		bindings, e := LoadNPCShopActors(root, version, int(pack))
+		if e != nil {
+			return d, e
+		}
+		for shop, actors := range bindings {
+			if def, ok := d.Shops[shop]; ok && def.PackID == pack {
+				d.ShopNPCs[shop] = actors
+			}
+		}
+	}
+	return d, nil
+}
+
+// NPCInfo pairs FieldNpcTable.InteractionList (9) and InteractionValue (12).
+// EInteractionType.Shop=3 identifies the real shop ID, rather than deriving an
+// NPC identity from shop numbering or using one global bargaining discount.
+func LoadNPCShopActors(root, version string, pack int) (map[uint64][]uint64, error) {
+	db, done, e := openPackDatabase(root, version, pack)
+	if e != nil {
+		return nil, e
+	}
+	defer done()
+	rows, e := db.Query("SELECT id,ProtoBuf FROM FieldNpcTable ORDER BY id")
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	out := map[uint64][]uint64{}
+	for rows.Next() {
+		var id uint64
+		var raw []byte
+		if e = rows.Scan(&id, &raw); e != nil {
+			return nil, e
+		}
+		ts, e := packedInts(raw, 9)
+		if e != nil {
+			return nil, e
+		}
+		vs, e := packedInts(raw, 12)
+		if e != nil {
+			return nil, e
+		}
+		for i, t := range ts {
+			if t != 3 {
+				continue
+			}
+			if i >= len(vs) || vs[i] == 0 {
+				return nil, fmt.Errorf("gamedata: invalid NPC shop interaction")
+			}
+			out[vs[i]] = append(out[vs[i]], id)
+		}
+	}
+	return out, rows.Err()
 }
 func loadNPCShopDesign(db *sql.DB) (NPCShopDesign, error) {
 	d := NPCShopDesign{Shops: map[uint64]NPCShop{}, Products: map[uint64]map[uint64]NPCProduct{}, Sell: map[uint64]NPCProduct{}}
