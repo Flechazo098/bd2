@@ -351,9 +351,14 @@ func EquipmentWire(entry Equipment) []byte {
 	for _, option := range entry.SubOption {
 		base = wire.AppendBytes(base, 4, equipmentOptionWire(option))
 	}
+	// The native ResolvedPrivateOption getter dereferences PrivateOption before
+	// checking IsValid. A present empty message selects its GameData fallback;
+	// an omitted field leaves the protobuf object null and crashes the UI.
+	var private []byte
 	if entry.PrivateOption != nil {
-		base = wire.AppendBytes(base, 5, equipmentOptionWire(*entry.PrivateOption))
+		private = equipmentOptionWire(*entry.PrivateOption)
 	}
+	base = wire.AppendBytes(base, 5, private)
 	for _, rank := range entry.Rank {
 		base = wire.AppendVarint(base, 6, rank)
 	}
