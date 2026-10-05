@@ -22,11 +22,13 @@ type CashProductDesign struct {
 	NominalPaidDiamonds                                                         uint64
 }
 type CashShopDesign struct{ GroupID, ID, ProductGroupID, BulkOrderShow uint64 }
+type EventShopDesign struct{ ID, ProductGroupID uint64 }
 type CashPackageDesign struct{ GroupID, ID, SaleGroup, PackageType, PaidShopGroupID, PaidShopID, ContentsGroupID, ContentsSortID uint64 }
 type CashCatalog struct {
-	Products []CashProductDesign
-	Shops    []CashShopDesign
-	Packages []CashPackageDesign
+	Products   []CashProductDesign
+	Shops      []CashShopDesign
+	Packages   []CashPackageDesign
+	EventShops []EventShopDesign
 }
 
 func LoadCashCatalog(root, version string) (*CashCatalog, error) {
@@ -110,6 +112,19 @@ func loadCashCatalog(db *sql.DB) (*CashCatalog, error) {
 			return e
 		}
 		c.Packages = append(c.Packages, CashPackageDesign{v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err = readCashMetadata(db, "EventShopTable", func(raw []byte) error {
+		v, e := cashScalars(raw, 2, 5)
+		if e != nil {
+			return e
+		}
+		if v[0] == 0 || v[1] == 0 {
+			return fmt.Errorf("gamedata: invalid event shop")
+		}
+		c.EventShops = append(c.EventShops, EventShopDesign{v[0], v[1]})
 		return nil
 	}); err != nil {
 		return nil, err

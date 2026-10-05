@@ -26,8 +26,24 @@ func TestInstalledCalendarsContainAllRuntimeDomains(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(set.Events) != 54 || len(set.GachaSeed.Schedules) != 11 || len(set.GachaSeed.StepUps) != 2 || set.RegularService == nil || len(set.RegularService.Contents) != 9 || set.MonsterHunt == nil || len(set.MonsterHunt.History) != 78 || len(set.CashProducts) != 37 || len(set.EventHubs) != 2 || len(set.MiniGameHubs) != 6 {
+	if len(set.Events) != 54 || len(set.GachaSeed.Schedules) != 11 || len(set.GachaSeed.StepUps) != 2 || set.RegularService == nil || len(set.RegularService.Contents) != 9 || set.MonsterHunt == nil || len(set.MonsterHunt.History) != 80 || len(set.CashProducts) != 61 || len(set.EventHubs) != 4 || len(set.MiniGameHubs) != 6 {
 		t.Fatalf("installed calendar omitted a domain: events=%d gacha=%d steps=%d cash=%d hubs=%d mini=%d", len(set.Events), len(set.GachaSeed.Schedules), len(set.GachaSeed.StepUps), len(set.CashProducts), len(set.EventHubs), len(set.MiniGameHubs))
+	}
+	var mooncake, chained *EventHub
+	for i := range set.EventHubs {
+		h := &set.EventHubs[i]
+		if h.UID == 3 && h.HubID == 1003 {
+			mooncake = h
+		}
+		if h.UID == 76 && h.HubID == 59 {
+			chained = h
+		}
+	}
+	if mooncake == nil || mooncake.PlayEnd != "2026-09-30T23:59:59.000Z" || len(mooncake.Settings) != 3 || mooncake.Settings[2].EventUIDs[0] != 10000034 {
+		t.Fatal("published Mooncake Wishes calendar omitted its deferred board slot")
+	}
+	if chained == nil || len(chained.Settings) != 6 || chained.Settings[2].EventUIDs[0] != 80 {
+		t.Fatal("published Chained Soldier hub omitted its event shop")
 	}
 }
 func TestMultiFileCalendarAtomicDeterministicAndIndependentRevision(t *testing.T) {

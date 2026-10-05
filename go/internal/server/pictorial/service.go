@@ -30,6 +30,7 @@ type Service struct {
 	AwakeContributions     func(player.Character) ([]gamedata.StatContribution, error)
 	EquipmentContributions func(player.Character) ([]gamedata.StatContribution, error)
 	PotentialContributions func(player.Character) ([]gamedata.StatContribution, error)
+	permanentBuffs         func() ([]gamedata.PictorialBuffStat, error)
 	baseHealth             sync.Map // [2]uint64 (design character ID, level) -> design-only base HP
 }
 
@@ -195,6 +196,15 @@ func (s *Service) Snapshot() ([]Entry, []gamedata.PictorialBuffStat, error) {
 	})
 	type key struct{ category, stat uint64 }
 	values := map[key]float64{}
+	if s.permanentBuffs != nil {
+		permanent, err := s.permanentBuffs()
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, buff := range permanent {
+			values[key{buff.Category, buff.StatType}] += buff.Value
+		}
+	}
 	for _, entry := range entries {
 		if entry.BuffID == 0 {
 			continue

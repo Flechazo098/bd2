@@ -164,7 +164,9 @@ func (e *EntitlementEconomy) apply(identity string, costs, rewards []gamedata.Re
 			if !e.design.AvatarSets[r.ID] {
 				return nil, fmt.Errorf("commerce: unknown avatar set %d", r.ID)
 			}
-			special = append(special, player.Item{Type: r.Type, ID: r.ID, Count: r.Count, TimeValue: uint64(e.now().UnixMilli())})
+			// The shared gameplay economy expands AvatarSetTable members and
+			// emits real AvatarItem/AvatarMotion/AvatarChar ownership.
+			regular = append(regular, gamedata.Reward(r))
 		case r.Type == 19 && e.design.TicketTypes[r.ID] == 2:
 			if len(e.design.Attendance[r.ID]) == 0 {
 				return nil, fmt.Errorf("commerce: subscription reward schedule missing")

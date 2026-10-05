@@ -90,6 +90,9 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 	if err := shop.AttachShopSeed(seed); err != nil {
 		t.Fatal(err)
 	}
+	if err := shop.AttachEventShopSchedules(catalog, calendars.Events); err != nil {
+		t.Fatal(err)
+	}
 	graph, err := gamedata.LoadRewardGraph(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +110,10 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownedDesign, err := gamedata.LoadOwnedEventItemDesign(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	avatarRewards, err := gamedata.LoadAvatarRewardDesign(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +146,7 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 		}
 		base.AttachPrestigeSkins(skins)
 		base.AttachOwnedItemDesign(ownedDesign)
+		base.AttachAvatarRewards(avatarRewards)
 		ap, err := hunting.Open(store, root, "20260923193640", items, wallet, func() (int, error) { return 21, nil }, 0, 0)
 		if err != nil {
 			t.Fatal(err)
@@ -150,6 +158,141 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 		}
 		return e, wallet
 	}
+	t.Run("event shop complete calendar and native purchase", func(t *testing.T) {
+		e, wallet := newEconomy()
+		shop, err := NewService(policy, e.store, e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = shop.AttachShopSeed(seed); err != nil {
+			t.Fatal(err)
+		}
+		rows := append([]events.Schedule(nil), calendars.Events...)
+		var current events.Schedule
+		var lastEnd int64
+		for _, row := range rows {
+			if row.Type == 15 && row.ID == 71 {
+				current = row
+				if row.End > lastEnd {
+					lastEnd = row.End
+				}
+			}
+		}
+		if current.UID == 0 {
+			t.Fatal("real event shop 71 calendar missing")
+		}
+		future := events.Schedule{UID: 99999999, Type: 15, ID: 71, Start: lastEnd + 86400000, End: lastEnd + 2*86400000}
+		rows = append(rows, future)
+		if err = shop.AttachEventShopSchedules(catalog, rows); err != nil {
+			t.Fatal(err)
+		}
+		shop.SetClock(func() time.Time { return time.UnixMilli(current.Start + 1) }, 0)
+		_, info, handled, err := shop.HandleSession("/CashShopInfo", wire.AppendVarint(nil, 1, 1), "audit")
+		if err != nil || !handled {
+			t.Fatal(err)
+		}
+		actual := map[uint64]map[gamedata.CashProductKey]bool{}
+		_ = wire.Walk(info, func(f wire.Field) error {
+			if f.Number != 1 || f.Type != 2 {
+				return nil
+			}
+			uid, _, _ := wire.Varint(f.Value, 8)
+			if uid == 0 {
+				return nil
+			}
+			group, _, _ := wire.Varint(f.Value, 1)
+			id, _, _ := wire.Varint(f.Value, 2)
+			sale, _, _ := wire.Varint(f.Value, 3)
+			if actual[uid] == nil {
+				actual[uid] = map[gamedata.CashProductKey]bool{}
+			}
+			actual[uid][gamedata.CashProductKey{GroupID: group, ProductID: id, SaleGroup: sale}] = true
+			return nil
+		})
+		seenOld := false
+		for _, row := range rows {
+			if row.Type != 15 {
+				continue
+			}
+			group := uint64(0)
+			for _, design := range catalog.EventShops {
+				if design.ID == row.ID {
+					group = design.ProductGroupID
+				}
+			}
+			if row.ID == 70 {
+				seenOld = true
+			}
+			if row.ID == 71 && group != 900071 {
+				t.Fatal("event shop 71 product group mismatch")
+			}
+			expected := 0
+			for _, product := range catalog.Products {
+				if product.Key.GroupID == group {
+					expected++
+					if !actual[row.UID][product.Key] {
+						t.Fatalf("shop %d UID %d missing product %+v", row.ID, row.UID, product.Key)
+					}
+				}
+			}
+			if len(actual[row.UID]) != expected {
+				t.Fatalf("shop %d UID %d count=%d expected=%d", row.ID, row.UID, len(actual[row.UID]), expected)
+			}
+		}
+		if !seenOld || len(actual[future.UID]) == 0 {
+			t.Fatal("old or future event shop filtered")
+		}
+		fund := []gamedata.Reward{{Type: 8, ID: 2074, Count: 100}}
+		if _, err = e.Apply("audit funds", nil, fund); err != nil {
+			t.Fatal(err)
+		}
+		beforeWallet := wallet.Snapshot()
+		countItem := func(id uint64) uint64 {
+			var n uint64
+			for _, item := range e.items.All() {
+				if item.Type == 8 && item.ID == id {
+					n += item.Count
+				}
+			}
+			return n
+		}
+		beforeCoin, beforeReward := countItem(2074), countItem(710)
+		request := wire.AppendVarint(nil, 1, 2)
+		request = wire.AppendVarint(request, 3, 900071)
+		for _, id := range []uint64{1, 5} {
+			line := wire.AppendVarint(nil, 1, id)
+			line = wire.AppendVarint(line, 3, 1)
+			request = wire.AppendBytes(request, 4, line)
+		}
+		code, response, handled, err := shop.HandleSession("/CashShopBuy", request, "audit")
+		if err != nil || !handled || code != 61 {
+			t.Fatalf("native batch code=%d handled=%t err=%v", code, handled, err)
+		}
+		if wallet.Snapshot().FreeJewelry != beforeWallet.FreeJewelry-100 || countItem(2074) != beforeCoin-12 || countItem(710) != beforeReward+1 {
+			t.Fatal("native batch debit or real reward missing", wallet.Snapshot(), e.items.All())
+		}
+		for _, id := range []uint64{1, 5} {
+			found := false
+			for _, raw := range shop.PurchaseCountDBInfos() {
+				g, _, _ := wire.Varint(raw, 1)
+				p, _, _ := wire.Varint(raw, 2)
+				n, _, _ := wire.Varint(raw, 4)
+				if g == 900071 && p == id && n == 1 {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("native purchase count missing", id)
+			}
+		}
+		balance := wallet.Snapshot()
+		coins := countItem(2074)
+		rewardCount := countItem(710)
+		_, replay, _, err := shop.HandleSession("/CashShopBuy", request, "audit")
+		if err != nil || !bytes.Equal(response, replay) || wallet.Snapshot() != balance || countItem(2074) != coins || countItem(710) != rewardCount {
+			t.Fatal("native purchase replay duplicated", err)
+		}
+	})
 	delegated := map[gamedata.CashProductKey]bool{}
 	retired := map[gamedata.CashProductKey]bool{}
 	for _, group := range groups {
@@ -234,6 +377,15 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 			t.Errorf("cash product %+v failed real debit/grant: %v", p.Key, err)
 			continue
 		}
+		_ = wire.Walk(bundle, func(f wire.Field) error {
+			if f.Number == 1 && f.Type == 2 {
+				typ, _, _ := wire.Varint(f.Value, 3)
+				if typ == 62 {
+					t.Errorf("cash product %+v returned synthetic avatar set", p.Key)
+				}
+			}
+			return nil
+		})
 		balance := wallet.Snapshot()
 		replay, err := e.Apply("installed-audit", costs, rewards)
 		if err != nil || !bytes.Equal(replay, bundle) || wallet.Snapshot() != balance {

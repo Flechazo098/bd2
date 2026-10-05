@@ -9,6 +9,6 @@
     "local_identity": "0.6.1",
     "capture_environment": "0.2.0",
     "login_ui": "0.2.0",
-    "cash_shop": "0.1.0"
+    "cash_shop": "0.1.1"
   }
 }

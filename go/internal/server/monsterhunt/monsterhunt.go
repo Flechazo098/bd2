@@ -247,8 +247,16 @@ func selectSeason(rows []season, now uint64) season {
 
 func (s *Service) scheduleInfo(req []byte) (int, []byte, bool, error) {
 	current := s.current()
+	var independent []season
+	for _, row := range s.seasons {
+		if row.Independent {
+			independent = append(independent, row)
+		}
+	}
+	selectedIndependent := selectSeason(independent, uint64(s.now().UnixMilli()))
 	response := s.seed.Responses["/MonsterHuntScheduleInfo"]
 	fields := make([]readonly.Field, 0, len(response.Fields))
+	var selected []readonly.Field
 	for _, field := range response.Fields {
 		if field.Number == 1 && field.Type == 2 {
 			var id uint64
@@ -265,12 +273,17 @@ func (s *Service) scheduleInfo(req []byte) (int, []byte, bool, error) {
 					independent = f.Varint != 0
 				}
 			}
-			if !independent && id != current.ID {
+			// The current client assigns each category in a foreach: its last
+			// row wins. Keep every calendar row, but move each selected row
+			// last so future announcements cannot change the playable hunt.
+			if !independent && id == current.ID || independent && id == selectedIndependent.ID {
+				selected = append(selected, field)
 				continue
 			}
 		}
 		fields = append(fields, field)
 	}
+	fields = append(fields, selected...)
 	// Keep the entire loaded calendar immutable; projection only affects this
 	// response so subsequent requests can cross a season boundary without reload.
 	projected := &readonly.Seed{Version: s.seed.Version, Responses: map[string]readonly.Response{

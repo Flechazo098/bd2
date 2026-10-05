@@ -24,7 +24,7 @@ func TestFutureSeasonDoesNotReplaceActiveOrRewardSeason(t *testing.T) {
 	}
 }
 
-func TestScheduleProjectsOneRegularPreservesIndependentAndHistory(t *testing.T) {
+func TestSchedulePreservesAllCalendarsAndPlacesSelectedCategoriesLast(t *testing.T) {
 	field := func(n int, v uint64) readonly.Field { return readonly.Field{Number: n, Type: 0, Varint: v} }
 	row := func(id uint64, independent bool) readonly.Field {
 		flag := uint64(0)
@@ -36,24 +36,31 @@ func TestScheduleProjectsOneRegularPreservesIndependentAndHistory(t *testing.T) 
 		}}
 	}
 	s := &Service{now: func() time.Time { return time.UnixMilli(150) },
-		seasons: []season{{ID: 1, Start: 100, End: 200}, {ID: 2, Start: 300, End: 400}, {ID: 3, Start: 100, End: 200, Independent: true}},
+		seasons: []season{{ID: 1, Start: 100, End: 200}, {ID: 2, Start: 300, End: 400}, {ID: 3, Start: 100, End: 200, Independent: true}, {ID: 4, Start: 300, End: 400, Independent: true}},
 		seed: &readonly.Seed{Responses: map[string]readonly.Response{"/MonsterHuntScheduleInfo": {
-			Fields: []readonly.Field{row(1, false), row(2, false), row(3, true), field(2, 5), {Number: 3, Type: 2, Fields: []readonly.Field{field(1, 77)}}},
+			Fields: []readonly.Field{row(1, false), row(2, false), row(3, true), row(4, true), field(2, 5), {Number: 3, Type: 2, Fields: []readonly.Field{field(1, 77)}}},
 		}}},
 	}
-	for _, now := range []int64{150, 350} {
+	for _, now := range []int64{50, 150, 250, 350, 450} {
 		s.now = func() time.Time { return time.UnixMilli(now) }
 		_, response, _, err := s.scheduleInfo(wire.AppendVarint(nil, 1, 1))
 		if err != nil {
 			t.Fatal(err)
 		}
 		var ids []uint64
+		var lastRegular, lastIndependent uint64
 		history := 0
 		if err := wire.Walk(response, func(f wire.Field) error {
 			if f.Number == 1 {
 				nested, _, _ := wire.Bytes(f.Value, 1)
 				id, _, _ := wire.Varint(nested, 1)
 				ids = append(ids, id)
+				flag, _, _ := wire.Varint(f.Value, 6)
+				if flag == 0 {
+					lastRegular = id
+				} else {
+					lastIndependent = id
+				}
 			}
 			if f.Number == 3 {
 				history++
@@ -63,13 +70,17 @@ func TestScheduleProjectsOneRegularPreservesIndependentAndHistory(t *testing.T) 
 			t.Fatal(err)
 		}
 		want := uint64(1)
-		if now == 350 {
+		if now >= 300 {
 			want = 2
 		}
-		if len(ids) != 2 || ids[0] != want || ids[1] != 3 || history != 1 {
+		seen := map[uint64]bool{}
+		for _, id := range ids {
+			seen[id] = true
+		}
+		if len(ids) != 4 || len(seen) != 4 || !seen[1] || !seen[2] || !seen[3] || !seen[4] || lastRegular != want || lastIndependent != want+2 || history != 1 {
 			t.Fatalf("time=%d rows=%v history=%d", now, ids, history)
 		}
-		if len(s.seed.Responses["/MonsterHuntScheduleInfo"].Fields) != 5 {
+		if len(s.seed.Responses["/MonsterHuntScheduleInfo"].Fields) != 6 {
 			t.Fatal("projection mutated published calendars")
 		}
 	}

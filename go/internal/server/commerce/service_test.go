@@ -195,7 +195,7 @@ func TestStaleClientQuoteRejectedBeforeEconomy(t *testing.T) {
 		t.Fatal("stale amount accepted")
 	}
 }
-func TestShopWindowFiltersAndAuthorizesProducts(t *testing.T) {
+func TestShopPublishesAllWindowsAndAuthorizesActiveProducts(t *testing.T) {
 	s, eco, _ := serviceFixture(t, 0)
 	now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	s.SetClock(func() time.Time { return now }, 0)
@@ -221,7 +221,7 @@ func TestShopWindowFiltersAndAuthorizesProducts(t *testing.T) {
 		}
 		return nil
 	})
-	if products != 0 || eco.calls != 1 {
+	if products != 1 || eco.calls != 1 {
 		t.Fatal(products, eco.calls)
 	}
 }

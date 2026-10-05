@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/events"
 	"bd2server/internal/server/readonly"
 	"bd2server/internal/server/wire"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -165,7 +166,7 @@ func TestNormalAndMiniHubCalendarsUseSeparatePrefabs(t *testing.T) {
 		}
 	}
 }
-func TestMiniHubExplicitUnsupportedQuizIsRejected(t *testing.T) {
+func TestMiniHubExplicitQuizUsesHubScopedCalendar(t *testing.T) {
 	s, _ := makeService(t)
 	hub := wire.AppendVarint(nil, 14, 1003)
 	hub = wire.AppendVarint(hub, 13, 1)
@@ -175,8 +176,44 @@ func TestMiniHubExplicitUnsupportedQuizIsRejected(t *testing.T) {
 	field.Fields[5].Fields[0] = hubField(1, 11)
 	field.Fields[5].Fields[1] = hubField(2, 13)
 	attachMiniCalendar(s, field)
-	if _, _, _, err := s.HandleSession("/MiniEventHubInfo", wire.AppendVarint(nil, 1, 1), "session"); err == nil {
-		t.Fatal("unsupported quiz enabled with invented UID")
+	if _, _, _, err := s.HandleSession("/MiniEventHubInfo", wire.AppendVarint(nil, 1, 1), "session"); err != nil {
+		t.Fatal(err)
+	}
+	typ, id, start, end, err := s.ResolveMiniContentUID(40)
+	if err != nil || typ != 13 || id != 3 || start != 100 || end != 200 {
+		t.Fatalf("wrong quiz calendar: %d %d %d %d %v", typ, id, start, end, err)
+	}
+	if _, _, _, _, err := s.ResolveMiniContentUID(41); err == nil {
+		t.Fatal("unbound UID accepted")
+	}
+}
+
+func TestMiniHubStoryAndQuizRequireUniqueNonGlobalBindings(t *testing.T) {
+	for _, typ := range []uint64{13, 14} {
+		t.Run(fmt.Sprint(typ), func(t *testing.T) {
+			s, _ := makeService(t)
+			hub := wire.AppendVarint(wire.AppendVarint(nil, 14, 1003), 13, 1)
+			s.design.Tables["PackEventHubTable"] = [][]byte{hub}
+			s.design.Tables["PackEventListTable"] = [][]byte{miniSlot(1003, 2, 11, typ, 3, 0)}
+			field := miniCalendar(1, 1003, 100, 200, 300, 40)
+			field.Fields[5].Fields[0], field.Fields[5].Fields[1] = hubField(1, 11), hubField(2, typ)
+			attachMiniCalendar(s, field)
+			if _, _, _, _, err := s.ResolveMiniContentUID(40); err != nil {
+				t.Fatal(err)
+			}
+			routes, err := s.ListMiniContentRoutes()
+			if err != nil || len(routes) != 1 || routes[0].UID != 40 || routes[0].ContentType != typ || routes[0].ContentID != 3 || routes[0].Start != 100 || routes[0].End != 200 {
+				t.Fatalf("route list differs from hub projection: %+v %v", routes, err)
+			}
+			registry := events.NewRegistry()
+			if err := registry.Replace([]events.Schedule{{UID: 40, Type: 1, ID: 3, Start: 100, End: 300}}); err != nil {
+				t.Fatal(err)
+			}
+			s.registry = registry
+			if _, _, _, _, err := s.ResolveMiniContentUID(40); err == nil {
+				t.Fatal("global UID collision accepted")
+			}
+		})
 	}
 }
 func TestPublicHubsWithoutProjectCalendarDoNotGuessSchedules(t *testing.T) {

@@ -7,7 +7,7 @@ func LoadOwnedEventItemDesign(root, version string) (map[uint64]map[uint64]bool,
 	}
 	defer done()
 	out := map[uint64]map[uint64]bool{}
-	for typ, table := range map[uint64]string{47: "IdCardItemTable", 49: "AvatarItemTable"} {
+	for typ, table := range map[uint64]string{47: "IdCardItemTable", 49: "AvatarItemTable", 69: "EquipmentRankChangeItemTable"} {
 		rows, e := db.Query("SELECT id FROM " + table)
 		if e != nil {
 			return nil, e

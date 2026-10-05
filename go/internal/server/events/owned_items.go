@@ -20,7 +20,7 @@ func (e *Economy) OwnedItemInfo(path string, req []byte) (int, []byte, bool, err
 	}
 	var out []byte
 	for _, item := range e.items.All() {
-		if item.Type == 49 {
+		if item.Type == 49 || item.Type == 50 || item.Type == 61 {
 			out = wire.AppendBytes(out, 2, player.ItemWire(item))
 		}
 	}

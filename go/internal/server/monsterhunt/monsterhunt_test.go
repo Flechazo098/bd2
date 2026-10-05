@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -77,7 +78,7 @@ func TestBattleSessionProgressRewardsAndPersistentRetry(t *testing.T) {
 	if _, ok, _ := wire.Bytes(out, 7); !ok {
 		t.Fatal("clear reward missing")
 	}
-	u := s.state.Users["78"]
+	u := s.state.Users[strconv.FormatUint(c.ID, 10)]
 	if u.ClearLevel != 1 || u.Level != 2 || !u.Played {
 		t.Fatalf("progress=%+v", u)
 	}

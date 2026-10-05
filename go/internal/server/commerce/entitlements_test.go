@@ -52,8 +52,13 @@ func TestEntitlementTypedSkinExpiryRetryAndRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if items.ContentTicketExpiry(38) != uint64(now.UnixMilli()+30*86400000) || len(base.Rewards) != 2 || base.Rewards[0].Type != 45 {
+	if items.ContentTicketExpiry(38) != uint64(now.UnixMilli()+30*86400000) || len(base.Rewards) != 3 || base.Rewards[0].Type != 62 || base.Rewards[1].Type != 45 {
 		t.Fatal("expiry or prestige dispatch invalid")
+	}
+	for _, item := range items.All() {
+		if item.Type == 62 {
+			t.Fatal("commerce stored synthetic avatar set")
+		}
 	}
 	again, err := e.Apply("buy1", nil, rewards)
 	if err != nil || !bytes.Equal(first, again) || graph.Calls != 2 || base.Calls != 1 {
