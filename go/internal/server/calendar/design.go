@@ -59,6 +59,9 @@ func (s *Set) ValidateDesign(root, version string) error {
 			return fmt.Errorf("calendar: hub %d: %w", h.HubID, e)
 		}
 	}
+	if err := s.validateMiniHubBindings(play); err != nil {
+		return err
+	}
 	uid := map[uint64]events.Schedule{}
 	for _, v := range s.Events {
 		if v.UID != 0 {
