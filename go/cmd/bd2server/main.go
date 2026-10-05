@@ -736,11 +736,15 @@ func serve(args []string) (serveErr error) {
 	if err = worldService.AttachResearchRuntime(gameData, *gameDataVersion, eventEconomy); err != nil {
 		return fmt.Errorf("attach field research: %w", err)
 	}
-	prestigeSkins, err := gamedata.LoadPrestigeSkins(gameData, *gameDataVersion)
+	prestigeCatalog, err := gamedata.LoadPrestigeSkinCatalog(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load reward prestige skins: %w", err)
 	}
-	eventEconomy.AttachPrestigeSkins(prestigeSkins)
+	eventEconomy.AttachPrestigeSkins(prestigeCatalog.Skins)
+	eventEconomy.AttachPrestigePortrait(deckStateStore.PortraitCostume)
+	if err := worldService.AttachPrestigeSelections(eventEconomy.PrestigeSkinSelections); err != nil {
+		return fmt.Errorf("attach prestige skin selections: %w", err)
+	}
 	ownedEventItems, err := gamedata.LoadOwnedEventItemDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load event inventory design: %w", err)
@@ -1170,6 +1174,10 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	if initializeAccount {
+		prestigeIDs := prestigeCatalog.Giftable(cashService.IsAvailable)
+		if err := mailService.EnsureStarterPrestigeSkins(prestigeIDs, time.Now().UTC()); err != nil {
+			return fmt.Errorf("ensure account prestige-skin entitlement: %w", err)
+		}
 		if err := ensureAccountStateInitialized(
 			progressState, deckStateStore, ownedItems, ownedEquipment,
 			worldService.CharacterService(), collection, wallet, inventorySlots, mailService, missionService,

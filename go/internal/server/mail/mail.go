@@ -29,6 +29,7 @@ const (
 	mailHistoryPeriod             = 30 * 24 * time.Hour
 	mailHistoryPageMax            = 100
 	starterLimitedCostumeIdentity = "starter:limited-costumes:not-current-pickup:v1"
+	starterPrestigeSkinIdentity   = "starter:prestige-skins:not-current-purchase:v1"
 )
 
 // itemDBInfoTypes are ElementType values whose successful mail claim is
@@ -345,6 +346,11 @@ func OpenService(storage stateio.Store, starter *Starter, inventory *player.Inve
 	if id, exists := s.issued[starterLimitedCostumeIdentity]; exists {
 		if err := validateStarterLimitedCostumeMail(s.dynamic[id], nil); err != nil {
 			return nil, fmt.Errorf("mail: invalid persisted starter limited-costume gift: %w", err)
+		}
+	}
+	if id, exists := s.issued[starterPrestigeSkinIdentity]; exists {
+		if err := validateStarterPrestigeSkinMail(s.dynamic[id]); err != nil {
+			return nil, fmt.Errorf("mail: invalid persisted starter prestige-skin gift: %w", err)
 		}
 	}
 	rawHistory, err := entries.ListEntries("mail", "history")
@@ -940,6 +946,52 @@ func validateStarterLimitedCostumeMail(entry MailDBInfo, design player.CostumeDe
 				return fmt.Errorf("starter gift costume %d is unavailable or not enhancement +5", id)
 			}
 		}
+	}
+	return nil
+}
+
+// EnsureStarterPrestigeSkins gives a newly initialized account the prestige
+// skins that are not on a currently purchasable cash page. The durable issued
+// identity makes this safe to retry across startup and transaction replay.
+func (s *Service) EnsureStarterPrestigeSkins(designIDs []uint64, sentAt time.Time) error {
+	if s == nil {
+		return errors.New("mail: unavailable starter prestige-skin service")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, issued := s.issued[starterPrestigeSkinIdentity]; issued {
+		return validateStarterPrestigeSkinMail(s.dynamic[id])
+	}
+	if len(designIDs) == 0 {
+		return errors.New("mail: starter prestige-skin gift is empty")
+	}
+	seen := make(map[uint64]bool, len(designIDs))
+	rewards := make([]gamedata.Reward, 0, len(designIDs))
+	for _, designID := range designIDs {
+		if designID == 0 || seen[designID] {
+			return fmt.Errorf("mail: invalid starter prestige skin %d", designID)
+		}
+		seen[designID] = true
+		rewards = append(rewards, gamedata.Reward{Type: 45, ID: designID, Count: 1})
+	}
+	grant := compensation{identity: starterPrestigeSkinIdentity, title: "New Player Prestige Skins", body: "Prestige skins not currently available on the cash purchase page.", rewards: rewards, sentAt: sentAt}
+	if err := grant.validate(); err != nil {
+		return err
+	}
+	return s.enqueueCompensations([]compensation{grant})
+}
+
+func validateStarterPrestigeSkinMail(entry MailDBInfo) error {
+	if entry.MailID == 0 || len(entry.RewardTypes) == 0 || len(entry.RewardTypes) != len(entry.RewardIDs) || len(entry.RewardTypes) != len(entry.RewardCounts) {
+		return errors.New("invalid starter prestige-skin reward arrays")
+	}
+	seen := make(map[uint64]bool, len(entry.RewardTypes))
+	for i, typ := range entry.RewardTypes {
+		id := entry.RewardIDs[i]
+		if typ != 45 || id == 0 || entry.RewardCounts[i] != 1 || seen[id] {
+			return errors.New("starter prestige-skin gift must contain unique Type45 designs")
+		}
+		seen[id] = true
 	}
 	return nil
 }
