@@ -142,9 +142,9 @@ internal sealed class SecureGameRelay : IDisposable
             // The native hard deadline leaves margin inside Unity's 30s timeout.
             response = await PlatformControlHttp.Send(remote, start[0], body, null, 25, lifetime.Token,
                 lifetime.Token, 64 * 1024 * 1024, headers).ConfigureAwait(false);
-            if (maintenance || response.StatusCode == 0)
+            if (maintenance || response.StatusCode == 0 || response.StatusCode >= 400)
                 log?.LogInfo("Game relay upstream result: request_id=" + response.RequestId + " status=" + response.StatusCode +
-                    " failure=" + (response.FailureKind ?? "none"));
+                    " path=" + remote.AbsolutePath + " failure=" + (response.FailureKind ?? "none"));
             if (response.StatusCode == 0 || response.Data == null)
             {
                 // Return a complete, recognizable local failure. The game sends all

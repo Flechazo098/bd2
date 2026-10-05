@@ -94,6 +94,7 @@ func TestDevelopmentRunOptionsUsesRepositoryFiles(t *testing.T) {
 		"log executable": options.logExecutablePath,
 		"local identity": options.localIdentityPlugin,
 		"login UI":       options.loginUIPlugin,
+		"cash shop":      options.cashShopPlugin,
 	} {
 		if !filepath.IsAbs(path) {
 			t.Errorf("%s path is not absolute: %q", name, path)

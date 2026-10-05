@@ -109,6 +109,7 @@ type HTTP struct {
 	ResourcePolicy        resourcepolicy.Public
 	Availability          Availability
 	InstanceID            string
+	CommerceManifest      func() any
 }
 
 func (h HTTP) Handler() http.Handler {
@@ -118,6 +119,7 @@ func (h HTTP) Handler() http.Handler {
 	mux.HandleFunc("/auth/config", h.authenticationConfig)
 	mux.HandleFunc("/client/resources", h.clientResources)
 	mux.HandleFunc("/client/runtime", h.clientRuntime)
+	mux.HandleFunc("/client/commerce", h.clientCommerce)
 	if h.AuthenticationHandler != nil {
 		mux.Handle("/auth/", h.withAvailability(h.AuthenticationHandler))
 	}

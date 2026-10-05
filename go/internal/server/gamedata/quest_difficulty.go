@@ -3,35 +3,16 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // LoadQuestDifficulties reads the pack-specific selectable difficulties;
 // normal (zero) is the base story chain and is absent from this table.
 func LoadQuestDifficulties(root, version string) (map[int]map[int]bool, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.CreateTemp("", "bd2-quest-difficulty-*.sqlite")
-	if err != nil {
-		return nil, err
-	}
-	name := file.Name()
-	defer os.Remove(name)
-	if _, err = file.Write(plain); err != nil {
-		file.Close()
-		return nil, err
-	}
-	if err = file.Close(); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(name)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadQuestDifficultiesDB(db)
 }
 func loadQuestDifficultiesDB(db *sql.DB) (map[int]map[int]bool, error) {

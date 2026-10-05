@@ -5,5 +5,12 @@
   },
   "gacha": {
     "include_collaboration_ur_weapons": false
+  },
+  "purchases": {
+    "diamond_recharge": {
+      "currency": "free",
+      "gold_per_paid_diamond": 1000,
+      "diamonds_per_paid_diamond": 1
+    }
   }
 }

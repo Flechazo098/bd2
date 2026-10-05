@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -48,29 +46,11 @@ func LoadQuestFormations(root, version string, packID int) (map[int]QuestFormati
 	if packID <= 0 {
 		return nil, fmt.Errorf("gamedata: invalid quest pack %d", packID)
 	}
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.CreateTemp("", "bd2-quest-formation-*.sqlite")
-	if err != nil {
-		return nil, fmt.Errorf("gamedata: create quest database: %w", err)
-	}
-	name := f.Name()
-	defer os.Remove(name)
-	if _, err = f.Write(plain); err == nil {
-		err = f.Close()
-	} else {
-		_ = f.Close()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gamedata: write quest database: %w", err)
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(name)+"?mode=ro")
-	if err != nil {
-		return nil, fmt.Errorf("gamedata: open quest database: %w", err)
-	}
-	defer db.Close()
+	defer release()
 	return loadQuestFormationsDB(db, packID)
 }
 
@@ -87,12 +67,26 @@ func loadQuestFormationsDB(db *sql.DB, packID int) (map[int]QuestFormation, erro
 	formations := make(map[int]QuestFormation)
 	charGroups := make(map[uint64][]QuestCharacterDesign)
 	storyGroups := make(map[uint64][]QuestCostumeDesign)
+	type formationRow struct {
+		id    int
+		proto []byte
+	}
+	var sourceRows []formationRow
 	for rows.Next() {
-		var questID int
-		var proto []byte
-		if err := rows.Scan(&questID, &proto); err != nil {
-			return nil, fmt.Errorf("gamedata: scan QuestTable%d formation: %w", packID, err)
+		var row formationRow
+		if err := rows.Scan(&row.id, &row.proto); err != nil {
+			return nil, err
 		}
+		sourceRows = append(sourceRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, row := range sourceRows {
+		questID, proto := row.id, row.proto
 		charGroupID, err := optionalScalar(proto, 4)
 		if err != nil {
 			return nil, fmt.Errorf("gamedata: quest %d char group: %w", questID, err)
@@ -188,12 +182,26 @@ func loadStoryCostumeGroup(db *sql.DB, groupID uint64) ([]QuestCostumeDesign, er
 	}
 	defer rows.Close()
 	var result []QuestCostumeDesign
+	type storyRow struct {
+		id    int
+		proto []byte
+	}
+	var sourceRows []storyRow
 	for rows.Next() {
-		var rowID int
-		var proto []byte
-		if err := rows.Scan(&rowID, &proto); err != nil {
+		var row storyRow
+		if err := rows.Scan(&row.id, &row.proto); err != nil {
 			return nil, err
 		}
+		sourceRows = append(sourceRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, row := range sourceRows {
+		rowID, proto := row.id, row.proto
 		costumeID, err := requiredScalar(proto, 1)
 		if err != nil {
 			return nil, fmt.Errorf("story costume group %d row %d: %w", groupID, rowID, err)

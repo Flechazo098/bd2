@@ -18,6 +18,13 @@ const (
 // mission. The caller supplies quest unlock state; locked and scheduled event
 // missions cannot become eligible merely because they share the condition.
 func (s *Service) RecordEvent(conditionType, subType, count uint64, unlocked func(uint64, uint64) bool) error {
+	if observer, ok := s.eventHandler.(interface {
+		RecordEvent(uint64, uint64, uint64, func(uint64, uint64) bool) error
+	}); ok {
+		if err := observer.RecordEvent(conditionType, subType, count, unlocked); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.rolloverLocked(); err != nil {
@@ -30,6 +37,13 @@ func (s *Service) RecordEvent(conditionType, subType, count uint64, unlocked fun
 // progress map stores the period marker, so reconnects and restarts cannot
 // inflate weekly connection missions and no additional save format is needed.
 func (s *Service) RecordLogin(unlocked func(uint64, uint64) bool) error {
+	if observer, ok := s.eventHandler.(interface {
+		RecordLogin(func(uint64, uint64) bool) error
+	}); ok {
+		if err := observer.RecordLogin(unlocked); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.rolloverLocked(); err != nil {
@@ -44,6 +58,13 @@ func (s *Service) RecordLogin(unlocked func(uint64, uint64) bool) error {
 // CompleteSingleTargetEvent covers evidence of at least one occurrence, without
 // inventing a count or subtype for richer missions (e.g. a monster encounter win).
 func (s *Service) CompleteSingleTargetEvent(conditionType uint64, unlocked func(uint64, uint64) bool) error {
+	if observer, ok := s.eventHandler.(interface {
+		CompleteSingleTargetEvent(uint64, func(uint64, uint64) bool) error
+	}); ok {
+		if err := observer.CompleteSingleTargetEvent(conditionType, unlocked); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.rolloverLocked(); err != nil {

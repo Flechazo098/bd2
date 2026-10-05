@@ -21,7 +21,15 @@ import (
 	"bd2server/internal/server/authconfig"
 	"bd2server/internal/server/battle"
 	"bd2server/internal/server/bootstrap"
+	"bd2server/internal/server/calendar"
+	"bd2server/internal/server/commerce"
 	"bd2server/internal/server/deck"
+	"bd2server/internal/server/eventactions"
+	"bd2server/internal/server/eventexchange"
+	"bd2server/internal/server/eventgames"
+	"bd2server/internal/server/eventplay"
+	"bd2server/internal/server/events"
+	"bd2server/internal/server/eventtasks"
 	"bd2server/internal/server/feature"
 	"bd2server/internal/server/gacha"
 	"bd2server/internal/server/gameconfig"
@@ -37,7 +45,6 @@ import (
 	"bd2server/internal/server/readonly"
 	"bd2server/internal/server/resourcefetch"
 	"bd2server/internal/server/resourcepolicy"
-	"bd2server/internal/server/schedule"
 	"bd2server/internal/server/session"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/transport"
@@ -98,14 +105,12 @@ func serve(args []string) (serveErr error) {
 	gameDataOrigin := fs.String("game-data-origin", resourcepolicy.OfficialGameDataURL, "official GameData repair source override for development")
 	accountSeed := fs.String("account-seed", "", "versioned local account seed")
 	playerSeed := fs.String("player-seed", "", "versioned starter inventory and characters")
-	readonlySeed := fs.String("readonly-seed", "", "versioned server schedules and optional feature defaults")
+	readonlySeed := fs.String("readonly-seed", "", "versioned static protocol defaults")
 	mailSeed := fs.String("mail-seed", "", "versioned starter mailbox")
 	mailGrantSpool := fs.String("mail-grant-spool", "", "optional local JSON spool for idempotent dynamic system mail")
 	stateFile := fs.String("state", "", "account SQLite database override")
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
-	gachaScheduleSeed := fs.String("gacha-schedule-seed", "", "versioned dynamic gacha schedule")
-	seasonScheduleSeed := fs.String("schedule-seed", "", "versioned server content calendar")
 	devToolsConfig := fs.String("dev-tools-config", "", "development-tool settings JSON (defaults to DATA_DIR/dev-tools.json)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -113,6 +118,11 @@ func serve(args []string) (serveErr error) {
 	if err := configureLogging(os.Stderr, *logLevel, *logColor); err != nil {
 		return err
 	}
+	defer func() {
+		if err := gamedata.CloseDatabaseCache(); err != nil {
+			serveErr = errors.Join(serveErr, fmt.Errorf("close GameData query cache: %w", err))
+		}
+	}()
 	var versions versionconfig.Config
 	var err error
 	if *versionConfigPath == "" {
@@ -134,6 +144,15 @@ func serve(args []string) (serveErr error) {
 		}
 	}
 	versionconfig.Use(versions)
+	calendarDirectory := versions.Resolve("schedules")
+	calendars, err := calendar.LoadDirectory(calendarDirectory, versions.GameVersion, versions.GameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load project calendars: %w", err)
+	}
+	if calendars.RegularService == nil || calendars.MonsterHunt == nil || len(calendars.MonsterHunt.Seasons) == 0 {
+		return errors.New("project calendars require regular content and monster hunt schedules")
+	}
+	slog.Info("project calendars loaded", "directory", calendarDirectory, "revisions", calendars.Revisions, "events", len(calendars.Events))
 	if *gameConfigPath == "" {
 		*gameConfigPath, err = gameconfig.BesideExecutable()
 		if err != nil {
@@ -191,8 +210,7 @@ func serve(args []string) (serveErr error) {
 	seedRoot := versions.Resolve(versions.SeedDirectory)
 	for target, name := range map[*string]string{
 		accountSeed: "login_user.json", playerSeed: "starter_player.json", readonlySeed: "readonly.json",
-		mailSeed: "mail.json", deckSeed: "decks.json", worldSeed: "world.json", gachaScheduleSeed: "gacha_schedule.json",
-		seasonScheduleSeed: "schedule.json",
+		mailSeed: "mail.json", deckSeed: "decks.json", worldSeed: "world.json",
 	} {
 		if *target == "" {
 			*target = filepath.Join(seedRoot, name)
@@ -222,6 +240,9 @@ func serve(args []string) (serveErr error) {
 	if downloaded {
 		slog.Info("repaired GameData from official CDN", "archive", verifiedGameData.ArchivePath, "entries", verifiedGameData.EntryCount)
 	}
+	if err := calendars.ValidateDesign(gameData, *gameDataVersion); err != nil {
+		return fmt.Errorf("validate project calendar GameData references: %w", err)
+	}
 	login, err := account.Load(filepath.Clean(*accountSeed))
 	if err != nil {
 		return fmt.Errorf("load local account seed: %w", err)
@@ -233,10 +254,7 @@ func serve(args []string) (serveErr error) {
 	if login.Version != versions.GameVersion || starter.Version != versions.GameVersion {
 		return fmt.Errorf("game version %s requires matching account and player seeds (got %s and %s)", versions.GameVersion, login.Version, starter.Version)
 	}
-	gachaSchedule, err := gacha.LoadScheduleSeed(filepath.Clean(*gachaScheduleSeed), versions.GameVersion)
-	if err != nil {
-		return fmt.Errorf("load gacha schedule: %w", err)
-	}
+	gachaSchedule := calendars.GachaSeed
 	var scheduleGroupIDs, stepUpGroupIDs []uint64
 	for _, window := range gachaSchedule.Schedules {
 		scheduleGroupIDs = append(scheduleGroupIDs, window.GroupID)
@@ -311,10 +329,11 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load readonly server configuration: %w", err)
 	}
-	seasonSchedule, err := schedule.Load(filepath.Clean(*seasonScheduleSeed))
+	serverConfig, err = calendars.ApplyReadonly(serverConfig)
 	if err != nil {
-		return fmt.Errorf("load server content calendar: %w", err)
+		return fmt.Errorf("encode project calendars: %w", err)
 	}
+	seasonSchedule := calendars.RegularService
 	mailbox, err := mail.Load(filepath.Clean(*mailSeed))
 	if err != nil {
 		return fmt.Errorf("load starter mailbox: %w", err)
@@ -659,7 +678,266 @@ func serve(args []string) (serveErr error) {
 	if err := login.AttachHuntingAP(huntingService); err != nil {
 		return fmt.Errorf("attach persisted hunting AP: %w", err)
 	}
+	huntingAPDesign, err := gamedata.LoadHuntingAPDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load hunting AP reset: %w", err)
+	}
+	if err = huntingService.AttachAPRefresh(huntingAPDesign); err != nil {
+		return err
+	}
 	battleService.AttachHunting(huntingService)
+	huntingService.AttachEligibility(worldService.HuntingEligibility)
+	if err := worldService.AttachHuntingGround(huntingService); err != nil {
+		return err
+	}
+	eventRegistry := events.NewRegistry()
+	if err := eventRegistry.Replace(calendars.Events); err != nil {
+		return err
+	}
+	rewardGraph, err := gamedata.LoadRewardGraph(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event reward graph: %w", err)
+	}
+	rewardEquipment, err := gamedata.LoadRewardEquipmentCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load reward equipment: %w", err)
+	}
+	rewardCostumes, err := gamedata.LoadRewardCostumeCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load reward costumes: %w", err)
+	}
+	initialEventCurrency := map[uint64]uint64{}
+	for itemType, field := range events.AdditionalCurrencyFields {
+		value, _, readErr := wire.Varint(login.UserInfo, field)
+		if readErr != nil {
+			return readErr
+		}
+		initialEventCurrency[itemType] = value
+	}
+	eventEconomy, err := events.NewEconomy(gameplayStore, ownedItems, wallet, collection, ownedEquipment, rewardCostumes, rewardEquipment, rewardGraph, initialEventCurrency)
+	if err != nil {
+		return fmt.Errorf("load event economy: %w", err)
+	}
+	eventEconomy.AttachHuntingAP(huntingService)
+	if err = worldService.AttachResearchRuntime(gameData, *gameDataVersion, eventEconomy); err != nil {
+		return fmt.Errorf("attach field research: %w", err)
+	}
+	prestigeSkins, err := gamedata.LoadPrestigeSkins(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load reward prestige skins: %w", err)
+	}
+	eventEconomy.AttachPrestigeSkins(prestigeSkins)
+	ownedEventItems, err := gamedata.LoadOwnedEventItemDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event inventory design: %w", err)
+	}
+	eventEconomy.AttachOwnedItemDesign(ownedEventItems)
+	eventAPCaps, eventAPReset, err := gamedata.LoadEventAPDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event AP reset: %w", err)
+	}
+	if err = eventEconomy.AttachAPRefresh(eventAPCaps, eventAPReset); err != nil {
+		return err
+	}
+	if err = login.AttachAdditionalCurrencies(eventEconomy); err != nil {
+		return err
+	}
+	huntingService.AttachRewards(func(identity string, rewards []gamedata.Reward) ([]byte, error) {
+		return eventEconomy.Apply(identity, nil, rewards)
+	})
+	cashDesign, err := gamedata.LoadCashCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load cash products: %w", err)
+	}
+	cashCatalog, err := commerce.NewCatalog(versions.GameVersion, cashDesign, gameRules.Purchases)
+	if err != nil {
+		return fmt.Errorf("configure cash products: %w", err)
+	}
+	cashEntitlementDesign, err := gamedata.LoadCashEntitlementDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load cash entitlement design: %w", err)
+	}
+	cashRewards, err := gamedata.LoadCashRewardResolver(gameData, *gameDataVersion, rewardGraph)
+	if err != nil {
+		return fmt.Errorf("load cash product rewards: %w", err)
+	}
+	cashEconomy, err := commerce.NewEntitlementEconomy(gameplayStore, eventEconomy, cashRewards, ownedItems, cashEntitlementDesign)
+	if err != nil {
+		return fmt.Errorf("load cash entitlements: %w", err)
+	}
+	cashEconomy.SetClock(time.Now, eventAPReset.ResetSeconds-9*3600)
+	cashService, err := commerce.NewService(cashCatalog, gameplayStore, cashEconomy)
+	if err != nil {
+		return fmt.Errorf("load cash purchase state: %w", err)
+	}
+	clearPackageDesign, err := gamedata.LoadClearPackageCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load clear-package rewards: %w", err)
+	}
+	clearPackages, err := commerce.NewClearPackages(gameplayStore, clearPackageDesign, cashEconomy, ownedItems)
+	if err != nil {
+		return fmt.Errorf("load clear-package claims: %w", err)
+	}
+	clearPackages.AttachProgress(worldService.CashPackagePackCleared, nil)
+	cashService.SetClock(time.Now, eventAPReset.ResetSeconds-9*3600)
+	if err := cashService.AttachPackageRules(cashDesign.Packages); err != nil {
+		return fmt.Errorf("attach cash package progression: %w", err)
+	}
+	if err := cashService.AttachShopSeed(serverConfig); err != nil {
+		return fmt.Errorf("attach cash product availability: %w", err)
+	}
+	cashService.AttachLegacyCounts(gachaService)
+	cashService.AttachDelegate(func(key gamedata.CashProductKey, request []byte) ([]byte, bool, error) {
+		known := key.GroupID == infiniteGacha.ProductGroupID && key.ProductID == infiniteGacha.ProductID && key.SaleGroup == infiniteGacha.SaleGroup
+		for _, group := range regularGacha.Groups() {
+			if key.GroupID == group.CashProductGroupID && key.ProductID == group.CashProductID && key.SaleGroup == group.CashSalesGroup {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return nil, false, nil
+		}
+		_, response, handled, err := gachaService.Handle("/CashShopBuy", request)
+		if err != nil || !handled {
+			return nil, handled, err
+		}
+		bundle, _, err := wire.Bytes(response, 1)
+		return bundle, true, err
+	})
+	if err := login.AttachPurchaseCounts(cashService); err != nil {
+		return fmt.Errorf("attach cash purchase counts: %w", err)
+	}
+	eventTasksDesign, err := gamedata.LoadEventTasksDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event tasks design: %w", err)
+	}
+	eventTasksService, err := eventtasks.Open(gameplayStore, eventTasksDesign, eventRegistry, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load event tasks state: %w", err)
+	}
+	newbieStep, _, err := wire.Varint(login.UserInfo, 39)
+	if err != nil {
+		return err
+	}
+	if err = eventTasksService.SetNewbieStep(newbieStep); err != nil {
+		return err
+	}
+	if err = login.AttachNewbieStep(eventTasksService); err != nil {
+		return err
+	}
+	eventTasksService.AttachCashAuthorization(func(passID, buyType uint64) bool {
+		for _, buy := range eventTasksDesign.PassBuys[passID] {
+			if buy.Type == buyType && buy.CashID != 0 {
+				return cashService.ConsumeEntitlement(gamedata.CashProductKey{GroupID: buy.CashGroup, ProductID: buy.CashID, SaleGroup: buy.CashSales})
+			}
+		}
+		return false
+	})
+	eventTasksService.AttachAttendancePremium(func(ticket uint64) bool {
+		for _, item := range ownedItems.All() {
+			if item.Type == 19 && item.ID == ticket && item.Count > 0 && (item.ExpiryTime == 0 || item.ExpiryTime > uint64(time.Now().UnixMilli())) {
+				return true
+			}
+		}
+		return false
+	})
+	loginPassDesign, err := gamedata.LoadLoginPassCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load login-pass rewards: %w", err)
+	}
+	loginPasses, err := commerce.NewLoginPasses(gameplayStore, loginPassDesign, cashEconomy, ownedItems, func(group uint64) bool {
+		for _, pack := range cashDesign.Packages {
+			if pack.PackageType == 7 && pack.ID == group && cashService.IsAvailable(gamedata.CashProductKey{GroupID: pack.GroupID, ProductID: pack.ID, SaleGroup: pack.SaleGroup}) {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		return fmt.Errorf("load login-pass progress: %w", err)
+	}
+	loginPasses.SetClock(time.Now, eventAPReset.ResetSeconds-9*3600)
+	eventTasksService.AttachUnlockResolver(missionUnlocked)
+	missionService.AttachEventHandler(eventTasksService)
+	if err = missionService.RecordLogin(missionUnlocked); err != nil {
+		return err
+	}
+	eventGamesService, err := eventgames.Open(gameplayStore, gameData, *gameDataVersion, eventRegistry, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load event games state: %w", err)
+	}
+	eventExchangeDesign, err := gamedata.LoadEventExchangeCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event exchange design: %w", err)
+	}
+	eventExchangeService, err := eventexchange.Open(gameplayStore, eventExchangeDesign, eventRegistry, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load event exchange state: %w", err)
+	}
+	boxService, err := events.OpenBoxes(gameplayStore, ownedItems, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load random box state: %w", err)
+	}
+	eventPlayService, err := eventplay.Open(gameplayStore, gameData, *gameDataVersion, eventRegistry, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load event play state: %w", err)
+	}
+	eventBattleChallenges, err := gamedata.LoadEventBattleChallenges(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event battle challenges: %w", err)
+	}
+	eventPlayService.AttachBattleChallenges(eventBattleChallenges)
+	eventPlayService.AttachHubCalendars(serverConfig)
+	battleService.AttachEventBattle(eventPlayService)
+	eventActionsDesign, err := gamedata.LoadEventActionsDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load event action design: %w", err)
+	}
+	eventActionsService, err := eventactions.Open(gameplayStore, eventActionsDesign, eventRegistry, eventEconomy)
+	if err != nil {
+		return fmt.Errorf("load event action state: %w", err)
+	}
+	eventActionsService.AttachFriendshipLevel(func(id uint64) uint64 {
+		for _, entry := range collection.FriendshipEntries() {
+			if entry.State != nil && entry.State.CostumeID == id {
+				return entry.State.Level
+			}
+		}
+		return 0
+	})
+	eventActionsService.AttachOwnedCharacter(func(index, id uint64) bool {
+		c, ok := worldService.CharacterService().Find(index)
+		return ok && c.ID == id
+	})
+	eventActionsService.AttachChargeInfo(func() ([]byte, error) {
+		rows, err := eventEconomy.ChargeInfo()
+		if err != nil {
+			return nil, err
+		}
+		huntingRows, err := huntingService.APChargeInfo()
+		if err != nil {
+			return nil, err
+		}
+		return append(rows, huntingRows...), nil
+	})
+	eventActionsService.AttachProgress(func(condition, sub, count uint64) error {
+		return missionService.RecordEvent(condition, sub, count, missionUnlocked)
+	})
+	eventPlayService.AttachProgress(func(condition, sub, count uint64) error {
+		return missionService.RecordEvent(condition, sub, count, missionUnlocked)
+	})
+	eventTasksService.AttachAssociatedMissionGroup(func(schedule events.Schedule) uint64 {
+		if group := eventActionsService.AssociatedMissionGroup(schedule); group != 0 {
+			return group
+		}
+		group, err := eventPlayService.AssociatedMissionGroup(schedule)
+		if err != nil {
+			slog.Error("event mission design unavailable", "event_uid", schedule.UID, "event_id", schedule.ID, "error", err)
+		}
+		return group
+	})
+	battleService.AttachEventBattle(eventActionsService)
 	battleService.AttachCurrentDifficulty(worldService.CurrentQuestDifficulty)
 	if err := worldService.AttachBattleActive(battleService.Active); err != nil {
 		return fmt.Errorf("attach world battle guard: %w", err)
@@ -676,6 +954,9 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("attach monster hunt preset slots: %w", err)
 	}
 	battleService.AttachMonsterHunt(monsterHuntService)
+	monsterHuntService.AttachRewards(func(identity string, rewards []gamedata.Reward) ([]byte, error) {
+		return eventEconomy.Apply(identity, nil, rewards)
+	})
 	recruitDesign, err := gamedata.LoadRecruitDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load recruitment GameData: %w", err)
@@ -750,7 +1031,19 @@ func serve(args []string) (serveErr error) {
 	if err := achievementObserver.SyncRecordedHistory(); err != nil {
 		return fmt.Errorf("restore recorded achievement history: %w", err)
 	}
+	eventTasksService.AttachGameplayProvider(worldService.GameplayAchievementProvider(achievementCounterDesign, achievementGrades))
 	game, err := session.NewServerWithProgress(login, progressState,
+		cashService,
+		clearPackages,
+		commerce.PackInfoHandler{World: worldService, Claims: clearPackages},
+		commerce.AttendanceHandler{Events: eventTasksService, Economy: cashEconomy, LoginPasses: loginPasses, Store: gameplayStore},
+		eventRegistry,
+		eventGamesService,
+		eventExchangeService,
+		boxService,
+		eventPlayService,
+		eventActionsService,
+		events.SkinHandler{Economy: eventEconomy},
 		battleService,
 		huntingService,
 		monsterHuntService,
@@ -774,6 +1067,7 @@ func serve(args []string) (serveErr error) {
 		gachaService,
 		achievementCounters,
 		missionService,
+		eventTasksService,
 		pictorialService,
 		seasonSchedule,
 		readonly.Service{Seed: serverConfig},
@@ -784,6 +1078,9 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := game.AttachResponseObserver(achievementObserver); err != nil {
 		return fmt.Errorf("attach achievement progress notifications: %w", err)
+	}
+	if err := game.AttachResponseObserver(eventTasksService); err != nil {
+		return err
 	}
 	if authService != nil {
 		if err := game.AttachLoginAuthenticator(authService); err != nil {
@@ -844,7 +1141,8 @@ func serve(args []string) (serveErr error) {
 	instanceID := hex.EncodeToString(instanceBytes)
 	handler := transport.HTTP{
 		Dispatcher: dispatcher, Raw: game, Authentication: authentication,
-		AuthenticationHandler: authHandler, ResourcePolicy: publicResources, Availability: availability, InstanceID: instanceID,
+		AuthenticationHandler: authHandler, ResourcePolicy: publicResources,
+		CommerceManifest: func() any { return cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID,
 	}.Handler()
 	server := &http.Server{
 		Addr:              *listen,

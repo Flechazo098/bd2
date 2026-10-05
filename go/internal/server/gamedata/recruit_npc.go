@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 )
 
 type RecruitNPC struct {
@@ -20,24 +18,11 @@ func LoadRecruitNPC(root, version string, packID int, npcID uint64) (RecruitNPC,
 	if packID <= 0 || npcID == 0 || npcID > math.MaxInt32 {
 		return RecruitNPC{}, fmt.Errorf("gamedata: invalid recruit NPC")
 	}
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 	if err != nil {
 		return RecruitNPC{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-recruit-npc-")
-	if err != nil {
-		return RecruitNPC{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err = os.WriteFile(path, plain, 0o600); err != nil {
-		return RecruitNPC{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return RecruitNPC{}, err
-	}
-	defer db.Close()
+	defer release()
 	npc, err := loadRecruitNPC(db, npcID)
 	if err != nil {
 		return RecruitNPC{}, err

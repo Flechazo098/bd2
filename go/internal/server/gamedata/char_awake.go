@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 )
 
 // CharAwakeCost is one exact CharAwakeGrowthTable material row. Type 4 is
@@ -49,24 +47,11 @@ type CharImprintTarget struct {
 }
 
 func LoadCharAwakeDesign(root, version string) (*CharAwakeDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-char-awake-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadCharAwakeDesign(db)
 }
 
@@ -199,13 +184,28 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 	if err != nil {
 		return nil, err
 	}
+	type stageRow struct {
+		id    uint64
+		proto []byte
+	}
+	var sourceRows []stageRow
 	for rows.Next() {
-		var id uint64
-		var proto []byte
-		if err := rows.Scan(&id, &proto); err != nil {
+		var row stageRow
+		if err := rows.Scan(&row.id, &row.proto); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		sourceRows = append(sourceRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, row := range sourceRows {
+		id, proto := row.id, row.proto
 		growthID, _ := packedInts(proto, 1)
 		grade, _ := packedInts(proto, 9)
 		growthGrade, _ := packedInts(proto, 10)

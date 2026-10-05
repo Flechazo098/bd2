@@ -30,6 +30,7 @@ type Options struct {
 	Versions            clientconfig.ReleaseVersions
 	LocalIdentityPlugin string
 	LoginUIPlugin       string
+	CashShopPlugin      string
 }
 
 type Request struct {
@@ -266,7 +267,7 @@ func (s *Studio) Patch(input Request) (Response, error) {
 
 func (s *Studio) Install(input Request) (Response, error) {
 	return s.perform("install plugins", func() (Response, error) {
-		result, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), s.options.Versions, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin)
+		result, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), s.options.Versions, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin)
 		if err != nil {
 			return Response{}, err
 		}
@@ -274,7 +275,7 @@ func (s *Studio) Install(input Request) (Response, error) {
 			return Response{}, err
 		}
 		message := "BD2 client plugins installed or updated"
-		if !result.LocalIdentity.Changed && !result.LoginUI.Changed {
+		if !result.LocalIdentity.Changed && !result.LoginUI.Changed && !result.CashShop.Changed {
 			message = "BD2 client plugins are already up to date; no DLL was rewritten"
 		}
 		return success(message, result), nil
@@ -312,7 +313,7 @@ func (s *Studio) Launch(input Request) (Response, error) {
 		if !installation.SupportedOnHost() {
 			return Response{}, fmt.Errorf("cannot launch a %s game client from this operating system", installation.Kind)
 		}
-		for _, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll"} {
+		for _, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll", "BD2CashShop.dll"} {
 			info, err := os.Stat(filepath.Join(installation.Plugins, name))
 			if err != nil || !info.Mode().IsRegular() {
 				return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)

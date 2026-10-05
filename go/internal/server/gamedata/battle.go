@@ -1,11 +1,8 @@
 package gamedata
 
 import (
-	"database/sql"
 	"encoding/binary"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"bd2server/internal/server/wire"
 	_ "modernc.org/sqlite"
@@ -38,24 +35,11 @@ func BattleRewards(root, version string, packID, monsterID int) ([]BattleReward,
 }
 
 func readBattleRewards(root, version string, packID, deckID, monsterID int) ([]BattleReward, error) {
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-battle-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	if monsterID != 0 {
 		var monster []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM FieldMonsterTable WHERE id=?", monsterID).Scan(&monster); err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 func TestInstallRequiresBepInExWithoutCopyingPlugin(t *testing.T) {
-	for _, spec := range []Spec{LocalIdentity, LoginUI} {
+	for _, spec := range []Spec{LocalIdentity, LoginUI, CashShop} {
 		t.Run(spec.FileName(), func(t *testing.T) {
 			gameDir := t.TempDir()
 			for path, data := range map[string][]byte{
@@ -41,7 +41,7 @@ func TestInstallRequiresBepInExWithoutCopyingPlugin(t *testing.T) {
 }
 
 func TestInstallCopiesUpdatesAndSkipsIdenticalPlugin(t *testing.T) {
-	for _, spec := range []Spec{LocalIdentity, LoginUI} {
+	for _, spec := range []Spec{LocalIdentity, LoginUI, CashShop} {
 		t.Run(spec.FileName(), func(t *testing.T) {
 			gameDir := t.TempDir()
 			for path, data := range map[string][]byte{
@@ -140,7 +140,7 @@ func TestInstallKeepsPluginsSeparate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, spec := range []Spec{LocalIdentity, LoginUI} {
+	for _, spec := range []Spec{LocalIdentity, LoginUI, CashShop} {
 		source := filepath.Join(t.TempDir(), spec.FileName())
 		if err := os.WriteFile(filepath.Join(filepath.Dir(source), GameNames.FileName()), []byte("names-v1"), 0o600); err != nil {
 			t.Fatal(err)
@@ -152,7 +152,7 @@ func TestInstallKeepsPluginsSeparate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, spec := range []Spec{LocalIdentity, LoginUI} {
+	for _, spec := range []Spec{LocalIdentity, LoginUI, CashShop} {
 		path := filepath.Join(gameDir, "BepInEx", "plugins", spec.FileName())
 		data, err := os.ReadFile(path)
 		if err != nil || string(data) != spec.FileName() {

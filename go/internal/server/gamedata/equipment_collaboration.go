@@ -3,32 +3,17 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 )
 
 // IncludeCollaborationURWeapons extends only the UR equipment ticket pool.
 // Limited costumes identify eligible owners; equipment IDs remain version data.
 func (c *EquipmentGachaCatalog) IncludeCollaborationURWeapons(root, version string) error {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return err
 	}
-	dir, err := os.MkdirTemp("", "bd2-collaboration-equipment-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	defer release()
 	return c.includeCollaborationURWeapons(db)
 }
 

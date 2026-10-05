@@ -1,11 +1,8 @@
 package gamedata
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,24 +21,11 @@ type RandomBoxDesign struct {
 // empty, weighted, malformed, cyclic, or resolves to a non-ItemDBInfo reward;
 // callers then fail closed when a client tries to open it.
 func LoadRandomBoxDesign(root, version string) (*RandomBoxDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-random-box-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 
 	groups := map[uint64][]BattleReward{}
 	rows, err := db.Query("SELECT id, ProtoBuf FROM RewardGroupTable")

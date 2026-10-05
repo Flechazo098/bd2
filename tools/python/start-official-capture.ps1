@@ -123,7 +123,7 @@ foreach ($unsafePlugin in @($identityPlugin, $loginUIPlugin)) {
     }
 }
 
-foreach ($unsafeName in @('BD2LocalIdentity.dll', 'BD2LoginUI.dll')) {
+foreach ($unsafeName in @('BD2LocalIdentity.dll', 'BD2LoginUI.dll', 'BD2CashShop.dll')) {
     $unexpectedPlugin = Get-ChildItem -LiteralPath (Join-Path $GameDir 'BepInEx') `
         -Recurse -File -Filter $unsafeName -ErrorAction SilentlyContinue
     if ($unexpectedPlugin) {

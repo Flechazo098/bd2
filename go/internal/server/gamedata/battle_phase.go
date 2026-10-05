@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"bd2server/internal/server/wire"
 )
@@ -19,24 +17,11 @@ func BattleDeckPhases(root, version string, packID int, monsterID, deckID uint64
 	if packID <= 0 || monsterID == 0 || deckID == 0 || monsterID > 2147483647 || deckID > 2147483647 {
 		return nil, fmt.Errorf("gamedata: invalid phase battle pack/monster/deck %d/%d/%d", packID, monsterID, deckID)
 	}
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-phase-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err := os.WriteFile(path, plain, 0600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return battleDeckPhasesFromDB(db, monsterID, deckID)
 }
 

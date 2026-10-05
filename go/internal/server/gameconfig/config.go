@@ -14,9 +14,22 @@ import (
 const FileName = "game.json"
 
 type Config struct {
-	SchemaVersion int         `json:"schema_version"`
-	Gacha         GachaConfig `json:"gacha"`
-	Story         StoryConfig `json:"story"`
+	SchemaVersion int             `json:"schema_version"`
+	Gacha         GachaConfig     `json:"gacha"`
+	Story         StoryConfig     `json:"story"`
+	Purchases     PurchasesConfig `json:"purchases"`
+}
+
+type PurchasesConfig struct {
+	DiamondRecharge DiamondRechargeConfig `json:"diamond_recharge"`
+}
+
+// Only paid-diamond recharge has a configurable price. All other cash goods
+// use their GameData-derived paid-diamond price.
+type DiamondRechargeConfig struct {
+	Currency               string `json:"currency"`
+	GoldPerPaidDiamond     int64  `json:"gold_per_paid_diamond"`
+	DiamondsPerPaidDiamond int64  `json:"diamonds_per_paid_diamond"`
 }
 
 // StartPackID is fixed for the server by its first successful initialization.
@@ -31,7 +44,9 @@ type GachaConfig struct {
 	IncludeCollaborationURWeapons bool `json:"include_collaboration_ur_weapons"`
 }
 
-func Default() Config { return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}} }
+func Default() Config {
+	return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}, Purchases: PurchasesConfig{DiamondRecharge: DiamondRechargeConfig{Currency: "free", GoldPerPaidDiamond: 1000, DiamondsPerPaidDiamond: 1}}}
+}
 
 // Load reads one explicit path. Older installations without the file retain
 // the default rules; an existing invalid file must never silently fall back.
@@ -96,6 +111,15 @@ func (c Config) Validate() error {
 	}
 	if c.Story.StartPackID != 1 && c.Story.StartPackID != 21 {
 		return fmt.Errorf("story.start_pack_id must be 1 or 21, got %d", c.Story.StartPackID)
+	}
+	r := c.Purchases.DiamondRecharge
+	switch r.Currency {
+	case "free", "gold", "diamonds", "ban", "":
+	default:
+		return fmt.Errorf("purchases.diamond_recharge.currency must be free, gold, diamonds, ban, or an empty string")
+	}
+	if r.GoldPerPaidDiamond < 1 || r.GoldPerPaidDiamond > 1_000_000_000 || r.DiamondsPerPaidDiamond < 1 || r.DiamondsPerPaidDiamond > 1_000_000_000 {
+		return fmt.Errorf("purchases.diamond_recharge conversion rates must be integers between 1 and 1000000000")
 	}
 	return nil
 }

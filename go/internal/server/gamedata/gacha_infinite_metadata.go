@@ -58,11 +58,21 @@ func loadInfiniteCashIdentity(db *sql.DB, rewardID uint64) (groupID, productID, 
 		return 0, 0, 0, err
 	}
 	defer rows.Close()
+	var products [][]byte
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
 			return
 		}
+		products = append(products, raw)
+	}
+	if err = rows.Err(); err != nil {
+		return
+	}
+	if err = rows.Close(); err != nil {
+		return
+	}
+	for _, raw := range products {
 		box, e := optionalScalar(raw, 14)
 		if e != nil {
 			return 0, 0, 0, e

@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -26,24 +24,11 @@ func LoadQuestDesign(root, version string, packID int) (map[int]QuestDesign, err
 	if packID <= 0 {
 		return nil, fmt.Errorf("gamedata: invalid quest pack %d", packID)
 	}
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-quests-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "quests.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadQuestDesignDB(db, packID)
 }
 
@@ -56,13 +41,29 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 		return nil, fmt.Errorf("gamedata: query QuestTable%d: %w", packID, err)
 	}
 	defer rows.Close()
-	result := make(map[int]QuestDesign)
+	type questRow struct {
+		id    int
+		proto []byte
+	}
+	var questRows []questRow
 	for rows.Next() {
-		var id int
-		var proto []byte
-		if err := rows.Scan(&id, &proto); err != nil {
+		var row questRow
+		if err := rows.Scan(&row.id, &row.proto); err != nil {
 			return nil, err
 		}
+		questRows = append(questRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Collection lookups reuse the database's single connection after the
+	// quest result set is closed.
+	result := make(map[int]QuestDesign)
+	for _, row := range questRows {
+		id, proto := row.id, row.proto
 		if id <= 0 {
 			continue
 		}

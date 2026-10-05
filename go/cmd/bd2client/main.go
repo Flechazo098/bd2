@@ -14,6 +14,7 @@ type clientRunOptions struct {
 	logExecutablePath   string
 	localIdentityPlugin string
 	loginUIPlugin       string
+	cashShopPlugin      string
 }
 
 func main() {
@@ -80,6 +81,7 @@ func runClient(args []string, options clientRunOptions) error {
 		Versions:            versions,
 		LocalIdentityPlugin: options.localIdentityPlugin,
 		LoginUIPlugin:       options.loginUIPlugin,
+		CashShopPlugin:      options.cashShopPlugin,
 	}); err != nil {
 		logger.Error("bd2client stopped with an error", "error", err)
 		return err

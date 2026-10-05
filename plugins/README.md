@@ -4,9 +4,10 @@
 
 - `LocalIdentity/`：连接根目录 `versions.json` 所选客户端与本地服务器；构建产物为 `BD2LocalIdentity.dll`。
 - `LoginUI/`：把客户端登录面板收敛为 Discord 与 Google 两个本服认证入口；构建产物为 `BD2LoginUI.dll`。
+- `CashShop/`：把现金商品改为服务端核算的付费钻石购买；充值商品遵守 `game.json` 的兑换配置，产物为 `BD2CashShop.dll`。
 - `CaptureEnvironment/`：独立原版对照客户端抓包使用；构建产物为 `BD2CaptureEnvironment.dll`。
 
-`LocalIdentity` 与 `LoginUI` 用于本地服客户端；`CaptureEnvironment` 用于独立原版抓包环境。原版抓包环境不得安装 `BD2LocalIdentity.dll` 或 `BD2LoginUI.dll`。
+`LocalIdentity`、`LoginUI` 与 `CashShop` 用于本地服客户端；`CaptureEnvironment` 用于独立原版抓包环境。原版抓包环境不得安装 `BD2LocalIdentity.dll`、`BD2LoginUI.dll` 或 `BD2CashShop.dll`。
 客户端、资源与插件版本都来自根目录 `versions.json`；MSBuild 在中间目录生成 C# 常量，源码不保存第二份版本值。
 
 SDK 和共享运行时已内嵌当前游戏版本的同一份名字表。源码构建只需客户端目录，无需提供官方映射。`.NET 8 SDK` 构建工具；插件为 `netstandard2.1`，运行时为 `netstandard2.0`。构建自动生成可读引用、完整源码和内嵌源码 PDB，编译插件、执行 reobf 并验证真实 DLL 的引用。首次生成耗时数分钟，三个插件和 Debug/Release 共用本机缓存；IDE 转到定义可以查看方法体，`Game Sources` 文件夹提供全量浏览与搜索。IDE 设置见 [完整源码导航](GameSdk/README.md#完整源码导航)。
@@ -18,6 +19,7 @@ SDK 和共享运行时已内嵌当前游戏版本的同一份名字表。源码�
 ```powershell
 dotnet build .\plugins\LocalIdentity\LocalIdentity.csproj -c Release -p:GameDir="<本地服客户端目录>"
 dotnet build .\plugins\LoginUI\LoginUI.csproj -c Release -p:GameDir="<本地服客户端目录>"
+dotnet build .\plugins\CashShop\CashShop.csproj -c Release -p:GameDir="<本地服客户端目录>"
 dotnet build .\plugins\CaptureEnvironment\CaptureEnvironment.csproj -c Release -p:GameDir="<原版客户端目录>"
 ```
 

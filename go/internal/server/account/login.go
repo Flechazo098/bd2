@@ -29,21 +29,45 @@ var (
 // deliberately absent. ResponseFields contains the remaining top-level
 // protobuf fields (such as client-notification state), never an HTTP envelope.
 type LoginSeed struct {
-	Version          string
-	PacketCode       int
-	UserInfo         []byte
-	ResponseFields   []byte
-	currencies       CurrencyProvider
-	purchaseCounts   PurchaseCountProvider
-	presetSlots      PresetSlotProvider
-	inventorySlots   InventorySlotProvider
-	firstGacha       FirstGachaProvider
-	friendshipAP     FriendshipAPProvider
-	lastPlayedPack   LastPlayedPackProvider
-	achievementExp   AchievementExperienceProvider
-	levelReward      LevelRewardProvider
-	huntingAP        HuntingAPProvider
-	monsterHuntSlots PresetSlotProvider
+	Version              string
+	PacketCode           int
+	UserInfo             []byte
+	ResponseFields       []byte
+	currencies           CurrencyProvider
+	purchaseCounts       PurchaseCountProvider
+	presetSlots          PresetSlotProvider
+	inventorySlots       InventorySlotProvider
+	firstGacha           FirstGachaProvider
+	friendshipAP         FriendshipAPProvider
+	lastPlayedPack       LastPlayedPackProvider
+	achievementExp       AchievementExperienceProvider
+	levelReward          LevelRewardProvider
+	huntingAP            HuntingAPProvider
+	monsterHuntSlots     PresetSlotProvider
+	additionalCurrencies interface {
+		AdditionalCurrencies() (map[int]uint64, error)
+	}
+	newbieStep interface{ NewbieStep() uint64 }
+}
+
+func (s *LoginSeed) AttachNewbieStep(provider interface{ NewbieStep() uint64 }) error {
+	if provider == nil {
+		return errors.New("account: missing newbie step provider")
+	}
+	s.newbieStep = provider
+	return nil
+}
+
+// AttachAdditionalCurrencies supplies balances owned by optional gameplay
+// domains without altering the stable wallet representation.
+func (s *LoginSeed) AttachAdditionalCurrencies(provider interface {
+	AdditionalCurrencies() (map[int]uint64, error)
+}) error {
+	if provider == nil {
+		return errors.New("account: missing additional currency provider")
+	}
+	s.additionalCurrencies = provider
+	return nil
 }
 
 func (s *LoginSeed) AttachMonsterHuntSlots(provider PresetSlotProvider) error {
@@ -414,6 +438,32 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.newbieStep != nil {
+		step := s.newbieStep.NewbieStep()
+		if step > math.MaxInt32 {
+			return nil, errors.New("account: newbie step exceeds protocol range")
+		}
+		var err error
+		user, _, err = wire.ReplaceVarint(user, 39, step)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.additionalCurrencies != nil {
+		values, err := s.additionalCurrencies.AdditionalCurrencies()
+		if err != nil {
+			return nil, err
+		}
+		for field, value := range values {
+			if value > math.MaxInt32 {
+				return nil, errors.New("account: additional currency exceeds protocol range")
+			}
+			user, _, err = wire.ReplaceVarint(user, field, value)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	if s.monsterHuntSlots != nil {
 		count := s.monsterHuntSlots.PresetSlotCount()
 		if count > math.MaxInt32 {

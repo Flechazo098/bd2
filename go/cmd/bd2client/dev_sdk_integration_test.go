@@ -20,7 +20,7 @@ func TestDevelopmentRunBuildsPluginsWithEmbeddedNames(t *testing.T) {
 	if len(args) != 0 {
 		t.Fatalf("unexpected runtime arguments: %v", args)
 	}
-	for _, path := range []string{options.localIdentityPlugin, options.loginUIPlugin} {
+	for _, path := range []string{options.localIdentityPlugin, options.loginUIPlugin, options.cashShopPlugin} {
 		if !clientDevelopmentFile(path) {
 			t.Fatalf("development plugin output missing: %s", path)
 		}

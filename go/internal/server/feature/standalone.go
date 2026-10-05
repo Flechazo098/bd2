@@ -4,19 +4,10 @@ package feature
 // features. An empty protobuf means the local account currently has no rows or
 // no active server schedule; it is not copied from a captured response.
 var standaloneDefaults = map[string]int{
-	"/EventScheduleInfo":   163,
-	"/LoginEvent":          0,
 	"/BalanceVersionCheck": 186,
-	"/ChargeCostInfo":      123,
 	"/EquipInfo":           34,
-	"/EventMissionInfo":    127,
 	"/MissionInfo":         118,
-	"/EventRewardHistory":  0,
-	"/PackEventStoryInfo":  220,
-	"/PackEventBattleInfo": 214,
 	"/FishingItemInfo":     459,
-	"/Attendance":          0,
-	"/AttendanceInfo":      0,
 	// No PvP decks, battle history or one-time reward claims have been saved.
 	// Their repeated-only protobufs encode these account states as empty, and
 	// the client's callbacks continue the arena-lobby entry sequence.

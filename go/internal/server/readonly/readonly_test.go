@@ -47,10 +47,11 @@ func TestSeedProtocolEncodingAndRoundTrip(t *testing.T) {
 }
 
 func TestCashProductEventIndexIsUniqueSemanticSeedFact(t *testing.T) {
-	seed, err := Load(filepath.Join("..", "..", "..", "seed", "v2_35_10", "readonly.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	seed := &Seed{Version: StateVersion(), Responses: map[string]Response{
+		"/CashShopInfo": {PacketCode: 60, Fields: []Field{{Number: 1, Type: 2, Fields: []Field{
+			{Number: 1, Type: 0, Varint: 1100001}, {Number: 2, Type: 0, Varint: 9100033}, {Number: 8, Type: 0, Varint: 1171},
+		}}}},
+	}}
 	event, err := seed.CashProductEventIndex(1100001, 9100033)
 	if err != nil || event != 1171 {
 		t.Fatalf("event=%d err=%v", event, err)

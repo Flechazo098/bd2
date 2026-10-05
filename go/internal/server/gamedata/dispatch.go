@@ -187,6 +187,19 @@ func (d *DispatchDesign) Roll(count uint64, draw func(uint64) (uint64, error)) (
 		budget--
 		if g.Drop == 1 {
 			for _, e := range g.Entries {
+				if e.Weight > 100 {
+					return fmt.Errorf("gamedata: direct dispatch percent exceeds 100")
+				}
+				v, err := draw(100)
+				if err != nil {
+					return err
+				}
+				if v >= 100 {
+					return fmt.Errorf("gamedata: sampler out of range")
+				}
+				if v >= e.Weight {
+					continue
+				}
 				if err := emit(e); err != nil {
 					return err
 				}

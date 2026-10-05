@@ -17,6 +17,9 @@ func TestLoadQuestFormationsDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// Match production's single-connection database lease so nested formation
+	// and costume lookups require source rows to be released first.
+	db.SetMaxOpenConns(1)
 	for _, statement := range []string{
 		"CREATE TABLE QuestTable21 (id INTEGER PRIMARY KEY, ProtoBuf BLOB NOT NULL)",
 		"CREATE TABLE CharGroupTable (id INTEGER NOT NULL, GroupId INTEGER NOT NULL, ProtoBuf BLOB NOT NULL)",

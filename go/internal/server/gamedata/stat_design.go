@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 
 	"bd2server/internal/server/wire"
 	_ "modernc.org/sqlite"
@@ -326,23 +324,5 @@ func fixed32Floats(proto []byte, number int) ([]float64, error) {
 }
 
 func openStatDatabase(root, version string) (*sql.DB, func(), error) {
-	plain, err := ReadQuestDatabase(root, version)
-	if err != nil {
-		return nil, nil, err
-	}
-	dir, err := os.MkdirTemp("", "bd2-stats-")
-	if err != nil {
-		return nil, nil, err
-	}
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	return db, func() { _ = db.Close(); _ = os.RemoveAll(dir) }, nil
+	return OpenDatabase(root, version, "common")
 }

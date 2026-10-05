@@ -45,11 +45,12 @@ internal static class LoginController
 
     internal static void ClearPCLocalDataPostfix()
     {
+        Log?.LogInfo("event='Saved login clearing' reason=pc-local-data-cleared" + SessionDiagnostics.Context());
         AccessTokens.Clear();
         EstablishedGameSession = false;
         RuntimeProbeFailures = 0;
         ServerInstanceID = null;
-        DeleteCurrentRefresh();
+        DeleteCurrentRefresh("pc-local-data-cleared");
     }
 
     internal static bool SendMaintenancePrefix(object __instance, bool __0)
@@ -101,7 +102,7 @@ internal static class LoginController
         }
         catch (Exception ex)
         {
-            Log?.LogError("Could not request the server authentication policy: " + ex);
+            Log?.LogError("Authentication policy request failed: exception=" + ex.GetType().Name);
             return false;
         }
     }
@@ -121,7 +122,7 @@ internal static class LoginController
             }
             if (!request.Success)
             {
-                Log?.LogWarning("Authentication policy request failed: " + request.Error);
+                Log?.LogWarning("Authentication policy request failed: http=" + request.StatusCode);
                 bool transient = request.StatusCode == 0 || request.StatusCode == 429 || request.StatusCode >= 500;
                 if (transient && attempt < 2)
                 {
@@ -199,23 +200,35 @@ internal static class LoginController
                 return;
             }
             FinishRecovery(false, "no usable credential is available");
-            ShowLoginPanel(introUI);
+            ShowLoginPanel(introUI, "recovery-secure-store-unsupported");
             return;
         }
-        if (ServerLoginPreferences.IsAutoLogin(NormalizedServerOrigin()) &&
-            ServerLoginPreferences.UseAutoLoginPC(NormalizedServerOrigin()) &&
-            CanAttemptAutomaticLogin())
+        string origin = NormalizedServerOrigin();
+        bool automatic = ServerLoginPreferences.IsAutoLogin(origin);
+        bool checkbox = ServerLoginPreferences.UseAutoLoginPC(origin);
+        bool supported = RefreshCredentials.IsSupported;
+        bool automaticKeyPresent = PlayerPrefs.HasKey(ServerLoginPreferences.Key("BD2LoginV1_IsAutoLogin_", origin));
+        bool checkboxKeyPresent = PlayerPrefs.HasKey(ServerLoginPreferences.Key("BD2LoginV1_StandaloneAutoLogin_", origin));
+        bool contains = CanAttemptAutomaticLogin(out string inspectionReason);
+        Log?.LogInfo("event='Automatic login decision' origin=" + origin +
+            " autoLogin=" + automatic + " useAutoLoginPC=" + checkbox +
+            " autoLoginKeyPresent=" + automaticKeyPresent + " useAutoLoginPCKeyPresent=" + checkboxKeyPresent +
+            " secureStoreSupported=" + supported + " credentialPresent=" + contains +
+            " inspection=" + inspectionReason);
+        if (automatic && checkbox && contains)
         {
             LoginInProgress = true;
             StartIntroCoroutine(introUI, RefreshSession(introUI));
         }
         else
         {
-            ShowLoginPanel(introUI);
+            ShowLoginPanel(introUI, !supported ? "secure-store-unsupported" :
+                !automatic ? (automaticKeyPresent ? "auto-login-disabled" : "auto-login-setting-missing") :
+                !checkbox ? (checkboxKeyPresent ? "pc-auto-login-disabled" : "pc-auto-login-setting-missing") : inspectionReason);
         }
     }
 
-    private static void ShowLoginPanel(object introUI)
+    private static void ShowLoginPanel(object introUI, string reason)
     {
         // The official manual-login branch cancels the 10-second startup watchdog.
         // Browser authentication waits for the user and must not retain that timer.
@@ -226,7 +239,7 @@ internal static class LoginController
         ConfigureLoginPanel(introUI);
         Type stateType = SetIntroState.GetParameters()[0].ParameterType;
         SetIntroState.Invoke(introUI, new[] { Enum.ToObject(stateType, 1) });
-        Log?.LogInfo("Waiting for server-authorized third-party authentication");
+        Log?.LogInfo("event='Login required' reason=" + reason + " origin=" + NormalizedServerOrigin());
     }
 
     internal static void OpenLogin(object introUI, string provider)
@@ -255,7 +268,7 @@ internal static class LoginController
         }
         catch (Exception ex)
         {
-            Log?.LogError("Could not start " + provider + " authentication: " + ex.Message);
+            Log?.LogError("Could not start " + provider + " authentication: exception=" + ex.GetType().Name);
         }
     }
 
@@ -273,7 +286,7 @@ internal static class LoginController
             if (!request.Success)
             {
                 LoginInProgress = false;
-                Log?.LogError("Could not create login transaction: " + request.Error);
+                Log?.LogError("Could not create login transaction: http=" + request.StatusCode);
                 yield break;
             }
             DeviceStart start;
@@ -319,7 +332,7 @@ internal static class LoginController
                 if (!request.Success)
                 {
                     LoginInProgress = false;
-                    Log?.LogError("Login transaction failed: " + request.Error);
+                    Log?.LogError("Login transaction failed: http=" + request.StatusCode);
                     yield break;
                 }
                 TokenResult result;
@@ -387,7 +400,7 @@ internal static class LoginController
                 }
                 else
                 {
-                    DeleteCurrentRefresh();
+                    DeleteCurrentRefresh("interactive-auto-login-disabled");
                     result.refresh_token = null;
                 }
                 AccessTokens.Set(result.access_token, NormalizedServerOrigin(), result.provider, result.access_expires_in);
@@ -399,10 +412,10 @@ internal static class LoginController
             {
                 result.access_token = null;
                 result.refresh_token = null;
-                Log?.LogError("Could not finish interactive login: " + ex.Message);
+                Log?.LogError("event='Interactive login failed' reason=completion-failed exception=" + ex.GetType().Name);
                 AccessTokens.Clear();
                 LoginInProgress = false;
-                ShowLoginPanel(introUI);
+                ShowLoginPanel(introUI, "interactive-completion-failed");
             }
         };
         try
@@ -429,6 +442,7 @@ internal static class LoginController
                 yield break;
             }
             InvalidDataException invalid = null;
+            string invalidReason = "saved-credential-invalid";
             Exception transient = null;
             try
             {
@@ -437,10 +451,12 @@ internal static class LoginController
             catch (InvalidDataException ex)
             {
                 invalid = ex;
+                invalidReason = ex.Data["login_reason"] as string ?? invalidReason;
             }
             catch (FileNotFoundException ex)
             {
                 invalid = new InvalidDataException("saved automatic-login credential was not found", ex);
+                invalidReason = "credential-missing";
             }
             catch (Exception ex)
             {
@@ -448,22 +464,22 @@ internal static class LoginController
             }
             if (invalid != null)
             {
-                Log?.LogError("Saved automatic login is invalid: " + invalid.Message);
-                ClearSavedLogin();
+                Log?.LogError("event='Refresh failed' reason=" + invalidReason + " exception=" + invalid.GetType().Name);
+                ClearSavedLogin(invalidReason);
                 if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
                 {
                     FinishRecovery(false, "saved automatic-login credential is invalid", generation);
                 }
-                ShowLoginPanel(introUI);
+                ShowLoginPanel(introUI, invalidReason);
                 yield break;
             }
             if (transient != null)
             {
-                Log?.LogWarning("Secure automatic-login storage is temporarily unavailable: " + transient.Message);
+                Log?.LogWarning("event='Refresh failed' reason=secure-store-unavailable exception=" + transient.GetType().Name);
                 if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
                 {
                     LoginInProgress = false;
-                    ShowLoginPanel(introUI);
+                    ShowLoginPanel(introUI, "secure-store-unavailable");
                     yield break;
                 }
                 yield return new WaitForSecondsRealtime(2f);
@@ -489,25 +505,25 @@ internal static class LoginController
                 bool credentialRejected = (request.StatusCode == 401 || request.StatusCode == 409) && request.RefreshInvalid;
                 if (credentialRejected)
                 {
-                    Log?.LogWarning("Automatic-login credential rejected: HTTP=" + request.StatusCode +
+                    Log?.LogWarning("event='Refresh failed' reason=credential-rejected http=" + request.StatusCode +
                         ", refreshInvalid=" + request.RefreshInvalid + ", classification=invalid-credential");
                     refreshToken = null;
                     attemptID = null;
-                    ClearSavedLogin();
+                    ClearSavedLogin("refresh-credential-rejected");
                     if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
                     {
                         FinishRecovery(false, "saved automatic-login credential was rejected", generation);
                     }
-                    ShowLoginPanel(introUI);
+                    ShowLoginPanel(introUI, "refresh-credential-rejected");
                     yield break;
                 }
                 if (!request.Success)
                 {
-                    Log?.LogWarning("Automatic login temporarily unavailable; the same refresh attempt will be retried: " + request.Error);
+                    Log?.LogWarning("event='Refresh failed' reason=http-failure http=" + request.StatusCode);
                     if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
                     {
                         LoginInProgress = false;
-                        ShowLoginPanel(introUI);
+                        ShowLoginPanel(introUI, "refresh-http-failure");
                         yield break;
                     }
                 }
@@ -521,7 +537,7 @@ internal static class LoginController
                     }
                     catch (Exception ex)
                     {
-                        Log?.LogWarning("Automatic login returned an unreadable response; the same refresh attempt will be retried: " + ex.GetType().Name);
+                        Log?.LogWarning("event='Refresh failed' reason=unreadable-response http=" + request.StatusCode + " exception=" + ex.GetType().Name);
                     }
                     if (ValidRefreshResult(result) && ProviderEnabled(result.provider))
                     {
@@ -530,6 +546,7 @@ internal static class LoginController
                             StoreRefresh(result);
                             if (result.access_expires_in <= 30)
                             {
+                                Log?.LogInfo("event='Refresh retry' reason=access-token-near-expiry http=" + request.StatusCode);
                                 result.access_token = null;
                                 saved = PrepareRefreshAttempt();
                                 refreshToken = saved.pending_refresh_token;
@@ -549,11 +566,11 @@ internal static class LoginController
                         {
                             result.access_token = null;
                             result.refresh_token = null;
-                            Log?.LogWarning("Could not persist the rotated automatic-login credential; the committed attempt will be retrieved again: " + ex.Message);
+                            Log?.LogWarning("event='Refresh failed' reason=rotation-storage-failed http=" + request.StatusCode + " exception=" + ex.GetType().Name);
                             if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
                             {
                                 LoginInProgress = false;
-                                ShowLoginPanel(introUI);
+                                ShowLoginPanel(introUI, "refresh-rotation-storage-failed");
                                 yield break;
                             }
                         }
@@ -563,11 +580,11 @@ internal static class LoginController
                             yield break;
                         }
                     }
-                    Log?.LogWarning("Automatic login returned incomplete credentials; the same refresh attempt will be retried");
+                    Log?.LogWarning("event='Refresh failed' reason=incomplete-credentials http=" + request.StatusCode);
                     if (Volatile.Read(ref SessionRecoveryInProgress) == 0)
                     {
                         LoginInProgress = false;
-                        ShowLoginPanel(introUI);
+                        ShowLoginPanel(introUI, "refresh-incomplete-credentials");
                         yield break;
                     }
                 }
@@ -601,19 +618,23 @@ internal static class LoginController
         owner.StartCoroutine(routine ?? throw new ArgumentNullException(nameof(routine)));
     }
 
-    private static bool CanAttemptAutomaticLogin()
+    private static bool CanAttemptAutomaticLogin(out string reason)
     {
         if (!RefreshCredentials.IsSupported)
         {
+            reason = "secure-store-unsupported";
             return false;
         }
         try
         {
-            return RefreshCredentials.Contains(NormalizedServerOrigin());
+            bool contains = RefreshCredentials.Contains(NormalizedServerOrigin());
+            reason = contains ? "credential-present" : "credential-missing";
+            return contains;
         }
         catch (Exception ex)
         {
-            Log?.LogWarning("Could not inspect the secure automatic-login credential: " + ex.Message);
+            reason = "credential-inspection-failed";
+            Log?.LogWarning("event='Credential inspection failed' exception=" + ex.GetType().Name);
             return false;
         }
     }
@@ -630,6 +651,7 @@ internal static class LoginController
             expires_at = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + result.refresh_expires_in
         };
         RefreshCredentials.Save(origin, credential);
+        Log?.LogInfo("event='Credential stored' reason=refresh-rotation origin=" + origin);
         credential.refresh_token = null;
         result.refresh_token = null;
     }
@@ -642,11 +664,16 @@ internal static class LoginController
             !ProviderEnabled(credential.provider) || string.IsNullOrEmpty(credential.refresh_token) ||
             credential.expires_at <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
         {
+            string reason = credential == null ? "credential-missing" :
+                credential.expires_at <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? "saved-credential-expired" : "saved-credential-invalid";
+            Log?.LogWarning("event='Refresh failed' reason=" + reason);
             if (credential != null)
             {
                 credential.refresh_token = null;
             }
-            throw new InvalidDataException("saved automatic-login credential is invalid, expired, or belongs to another server");
+            var invalid = new InvalidDataException("saved automatic-login credential is invalid, expired, or belongs to another server");
+            invalid.Data["login_reason"] = reason;
+            throw invalid;
         }
         return credential;
     }
@@ -663,6 +690,7 @@ internal static class LoginController
             credential.pending_attempt_id = System.Guid.NewGuid().ToString("N");
             credential.pending_refresh_token = credential.refresh_token;
             RefreshCredentials.Save(origin, credential);
+            Log?.LogInfo("event='Credential stored' reason=refresh-attempt-prepared origin=" + origin);
         }
         return credential;
     }
@@ -685,27 +713,31 @@ internal static class LoginController
         return Encoding.UTF8.GetBytes("{\"refresh_token\":\"" + token + "\",\"attempt_id\":\"" + attemptID + "\"}");
     }
 
-    private static void ClearSavedLogin()
+    private static void ClearSavedLogin(string reason)
     {
+        Log?.LogInfo("event='Saved login clearing' reason=" + reason + SessionDiagnostics.Context());
         AccessTokens.Clear();
         ServerLoginPreferences.SetAutoLogin(NormalizedServerOrigin(), false);
         ServerLoginPreferences.SetUseAutoLoginPC(NormalizedServerOrigin(), false);
-        DeleteCurrentRefresh();
+        DeleteCurrentRefresh(reason);
     }
 
-    private static void DeleteCurrentRefresh()
+    private static void DeleteCurrentRefresh(string reason)
     {
         if (ServerRoot == null || RefreshCredentials == null || !RefreshCredentials.IsSupported)
         {
+            Log?.LogInfo("event='Credential deletion skipped' reason=" + reason + " originAvailable=" + (ServerRoot != null) +
+                " secureStoreSupported=" + (RefreshCredentials != null && RefreshCredentials.IsSupported));
             return;
         }
         try
         {
             RefreshCredentials.Delete(NormalizedServerOrigin());
+            Log?.LogInfo("event='Credential deleted' reason=" + reason + " origin=" + NormalizedServerOrigin());
         }
         catch (Exception ex)
         {
-            Log?.LogWarning("Could not delete the secure automatic-login credential: " + ex.Message);
+            Log?.LogWarning("event='Credential deletion failed' reason=" + reason + " exception=" + ex.GetType().Name);
         }
     }
 

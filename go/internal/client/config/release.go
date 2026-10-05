@@ -33,6 +33,7 @@ type ReleaseVersions struct {
 		LocalIdentity      string `json:"local_identity"`
 		CaptureEnvironment string `json:"capture_environment"`
 		LoginUI            string `json:"login_ui"`
+		CashShop           string `json:"cash_shop"`
 	} `json:"plugins"`
 }
 

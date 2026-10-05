@@ -20,6 +20,7 @@ namespace Bd2LoginUI;
 internal static class SessionRecovery
 {
     internal static int SessionRecoveryInProgress;
+    internal static bool ApplicationQuitting;
     private static RecoveryHost Owner;
     private static SecureGameRelay GameRelay;
     private static readonly List<WeakReference<UnityWebRequest>> GameRequests = new List<WeakReference<UnityWebRequest>>();
@@ -113,7 +114,12 @@ internal static class SessionRecovery
         {
             Lifetime.Cancel();
             Lifetime.Dispose();
-            Log?.LogWarning("Login recovery coroutine host was destroyed");
+            if (ApplicationQuitting)
+                Log?.LogInfo("Login recovery host stopped: reason=application-quit");
+            else if (!EstablishedGameSession && Volatile.Read(ref SessionRecoveryInProgress) == 0)
+                Log?.LogInfo("Login recovery host destroyed before game login; it will be recreated on IntroUI initialization");
+            else
+                Log?.LogWarning("Login recovery host unexpectedly destroyed:" + SessionDiagnostics.Context());
         }
     }
 
@@ -155,6 +161,17 @@ internal static class SessionRecovery
             {
                 return;
             }
+            try
+            {
+              if (request.result != UnityWebRequest.Result.Success || request.responseCode >= 400)
+                SessionDiagnostics.Record("event=game-http-failure path=" + requestUri.AbsolutePath +
+                    " http_status=" + request.responseCode + " result=" + request.result +
+                    " access_expired=" + (request.GetResponseHeader("X-BD2-Access-Expired") == "1") +
+                    " session_expired=" + (request.GetResponseHeader("X-BD2-Session-Expired") == "1") +
+                    " reconnect=" + (request.GetResponseHeader("X-BD2-Reconnect") == "1") +
+                    " transport_failure=" + (request.GetResponseHeader("X-BD2-Transport-Failure") == "1"));
+            }
+            catch { /* Keep actual HTTP recovery independent of diagnostics. */ }
             if (request.result == UnityWebRequest.Result.Success && request.responseCode >= 200 && request.responseCode < 300)
                 LastGameSuccess = Time.realtimeSinceStartup;
             else if (IsGameTransportFailure(request))
@@ -213,12 +230,12 @@ internal static class SessionRecovery
             EnsureRecoveryHost();
             if (Interlocked.CompareExchange(ref SessionRecoveryInProgress, 1, 0) == 0)
             {
-                Log?.LogWarning("Starting automatic game-session recovery: " + reason);
+                Log?.LogWarning("Starting automatic game-session recovery: reason=" + reason + SessionDiagnostics.Context());
                 ShowRecoveryOverlay("正在重新连接服务器……\nReconnecting to server…");
             }
             else
             {
-                Log?.LogWarning("Restarting automatic game-session recovery: " + reason);
+                Log?.LogWarning("Restarting automatic game-session recovery: reason=" + reason + SessionDiagnostics.Context());
             }
             ScheduleRecoveryRestart();
             return true;
@@ -230,10 +247,23 @@ internal static class SessionRecovery
         }
     }
 
-    internal static bool ExponentialBackoffPrefix(object __0)
+    internal static bool ExponentialBackoffPrefix(object __0, object __1)
     {
         try
         {
+            try
+            {
+              if (__0 != null && IsConfiguredServerFailure(__0))
+              {
+                const BindingFlags requestFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                object failed = __0.GetType().GetGameProperty("PacketData", requestFlags)?.GetValue(__0, null);
+                string path = failed?.GetType().GetGameProperty("SendPath", requestFlags)?.GetValue(failed, null) as string;
+                object observedRetries = failed?.GetType().GetGameProperty("RetryCount", requestFlags)?.GetValue(failed, null);
+                SessionDiagnostics.Record("event=game-request-backoff path=" + SessionDiagnostics.Path(path) + " retry_count=" + observedRetries +
+                    " error_code=" + SessionDiagnostics.Code(__1) + " reason=" + SessionDiagnostics.ErrorReason(__1));
+              }
+            }
+            catch { /* Diagnostics must not change backoff or recovery decisions. */ }
             try
             {
                 const BindingFlags diagnosticFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -525,8 +555,9 @@ internal static class SessionRecovery
 
     internal static bool SuppressNetworkErrorDuringRecovery(object __0, object __1)
     {
-        Log?.LogWarning("Client network error: type=" + __0 + ", code=" + __1 +
-            ", recovering=" + (Volatile.Read(ref SessionRecoveryInProgress) != 0));
+        SessionDiagnostics.Record("event=client-network-error error_code=" + SessionDiagnostics.Code(__0) +
+            " reason=" + SessionDiagnostics.ErrorReason(__0) + " service_code=" + SessionDiagnostics.Code(__1) +
+            " suppressed=" + (Volatile.Read(ref SessionRecoveryInProgress) != 0));
         return Volatile.Read(ref SessionRecoveryInProgress) == 0;
     }
 

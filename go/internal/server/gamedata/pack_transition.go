@@ -1,10 +1,7 @@
 package gamedata
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // PackTransition is the authoritative story edge in PackTable. It is kept
@@ -18,24 +15,11 @@ func LoadPackTransition(root, version string, packID int) (PackTransition, error
 	if packID <= 0 {
 		return PackTransition{}, fmt.Errorf("gamedata: invalid pack transition id %d", packID)
 	}
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return PackTransition{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-pack-transition-")
-	if err != nil {
-		return PackTransition{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return PackTransition{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return PackTransition{}, err
-	}
-	defer db.Close()
+	defer release()
 	var raw []byte
 	if err := db.QueryRow("SELECT ProtoBuf FROM PackTable WHERE id=?", packID).Scan(&raw); err != nil {
 		return PackTransition{}, fmt.Errorf("gamedata: pack %d: %w", packID, err)

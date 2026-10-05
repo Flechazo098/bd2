@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // PromotionCost is one exact CharGrowthTable.ClassupItem{Type,Id,Count} row.
@@ -26,24 +24,11 @@ type PromotionGrowthResult struct {
 // stage cap the client sends its class-up materials through CharGrowth, then
 // detects a promotion by comparing the response character ID to the old ID.
 func CharacterPromotion(root, version string, charID int, level, exp uint64) (uint64, []PromotionCost, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return 0, nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-promotion-")
-	if err != nil {
-		return 0, nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return 0, nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return 0, nil, err
-	}
-	defer db.Close()
+	defer release()
 	return characterPromotion(db, charID, level, exp)
 }
 
@@ -54,24 +39,11 @@ func CharacterPromotion(root, version string, charID int, level, exp uint64) (ui
 // CharTable.NextCharId chain; each prefix cost is then subtracted from the
 // submitted resources and only the remainder contributes EXP.
 func CharacterGrowthPromotions(root, version string, charID int, level, exp uint64, submitted []PromotionCost) (PromotionGrowthResult, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return PromotionGrowthResult{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-promotion-growth-")
-	if err != nil {
-		return PromotionGrowthResult{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return PromotionGrowthResult{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return PromotionGrowthResult{}, err
-	}
-	defer db.Close()
+	defer release()
 	return characterGrowthPromotions(db, charID, level, exp, submitted)
 }
 

@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 
 	_ "modernc.org/sqlite"
@@ -19,24 +17,11 @@ func CharacterGrowth(root, version string, charID int, level, exp uint64, materi
 	if charID <= 0 || level == 0 || len(materials) == 0 {
 		return 0, 0, nil, fmt.Errorf("gamedata: invalid character growth input")
 	}
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return 0, 0, nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-growth-")
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return 0, 0, nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	defer db.Close()
+	defer release()
 
 	var charProto []byte
 	if err := db.QueryRow("SELECT ProtoBuf FROM CharTable WHERE id=?", charID).Scan(&charProto); err != nil {
