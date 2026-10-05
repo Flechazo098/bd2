@@ -362,6 +362,90 @@ func TestEnsureStarterLimitedCostumesIsDurablyIdempotent(t *testing.T) {
 	}
 }
 
+func TestStarterPrestigeSkinMailClaimsAndPersistsOwnershipOnce(t *testing.T) {
+	storage := stateio.NewMemory()
+	service, _, _ := spoolTestService(t, storage)
+	sentAt := time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)
+	skins := []uint64{101, 202}
+	if err := service.EnsureStarterPrestigeSkins(skins, sentAt); err != nil {
+		t.Fatal(err)
+	}
+	id := service.issued[starterPrestigeSkinIdentity]
+	if id == 0 || len(service.dynamic) != 1 {
+		t.Fatalf("gift missing: issued=%v dynamic=%v", service.issued, service.dynamic)
+	}
+	original := append([]byte(nil), service.dynamic[id].encode()...)
+	if err := service.EnsureStarterPrestigeSkins(skins, sentAt.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	service, inventory, _ := spoolTestService(t, storage)
+	if service.issued[starterPrestigeSkinIdentity] != id || len(service.dynamic) != 1 || !bytes.Equal(original, service.dynamic[id].encode()) {
+		t.Fatal("retry or restart changed the unclaimed gift")
+	}
+	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, id)
+	code, response, handled, err := service.Handle("/MailOpen", request)
+	if err != nil || !handled || code != 132 {
+		t.Fatalf("MailOpen: code=%d handled=%v err=%v", code, handled, err)
+	}
+	bundle, found, err := wire.Bytes(response, 1)
+	if err != nil || !found {
+		t.Fatalf("reward bundle: found=%v err=%v", found, err)
+	}
+	// Check the actual client-visible ItemDBInfo, including the inventory
+	// indices which must remain stable when this mail is claimed again.
+	assertSkins := func(payload []byte) map[uint64]uint64 {
+		t.Helper()
+		indices := make(map[uint64]uint64)
+		for _, item := range historyEntries(t, payload) {
+			index, _, _ := wire.Varint(item, 1)
+			design, _, _ := wire.Varint(item, 2)
+			typ, _, _ := wire.Varint(item, 3)
+			count, _, _ := wire.Varint(item, 4)
+			if index == 0 || typ != 45 || count != 1 || (design != skins[0] && design != skins[1]) || indices[design] != 0 {
+				t.Fatalf("invalid or duplicate skin ItemDBInfo: index=%d design=%d type=%d count=%d", index, design, typ, count)
+			}
+			indices[design] = index
+		}
+		if len(indices) != len(skins) {
+			t.Fatalf("skin ownership=%v", indices)
+		}
+		return indices
+	}
+	granted := assertSkins(bundle)
+	assertOwnership := func(inv *player.Inventory) {
+		t.Helper()
+		_, info, handled, err := inv.Handle("/ItemInfo", wire.AppendVarint(nil, 1, 2))
+		if err != nil || !handled {
+			t.Fatalf("ItemInfo: handled=%v err=%v", handled, err)
+		}
+		owned := assertSkins(info)
+		for design, index := range granted {
+			if owned[design] != index {
+				t.Fatalf("skin %d inventory index changed: got=%d want=%d", design, owned[design], index)
+			}
+		}
+	}
+	assertOwnership(inventory)
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnership(inventory)
+	if err := service.EnsureStarterPrestigeSkins([]uint64{303}, sentAt.Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	service, inventory, _ = spoolTestService(t, storage)
+	if err := service.EnsureStarterPrestigeSkins([]uint64{404}, sentAt.Add(48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if service.issued[starterPrestigeSkinIdentity] != id || len(service.dynamic) != 1 || !bytes.Equal(original, service.dynamic[id].encode()) || !containsID(service.state.Opened, id) {
+		t.Fatal("restart lost the claimed gift ledger or replaced its frozen attachments")
+	}
+	if _, _, _, err := service.Handle("/MailOpen", request); err != nil {
+		t.Fatal(err)
+	}
+	assertOwnership(inventory)
+}
+
 func historyEntries(t *testing.T, response []byte) [][]byte {
 	t.Helper()
 	var entries [][]byte
