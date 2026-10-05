@@ -786,6 +786,14 @@ func serve(args []string) (serveErr error) {
 	if err := cashService.AttachShopSeed(serverConfig); err != nil {
 		return fmt.Errorf("attach cash product availability: %w", err)
 	}
+	cashBonusDesign, err := gamedata.LoadCashBonusCatalog(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load cash bonus design: %w", err)
+	}
+	cashBonuses, err := commerce.NewCashBonuses(gameplayStore, cashEconomy, cashService, cashBonusDesign, cashDesign.Packages)
+	if err != nil {
+		return fmt.Errorf("load cash bonus claims: %w", err)
+	}
 	cashService.AttachLegacyCounts(gachaService)
 	cashService.AttachDelegate(func(key gamedata.CashProductKey, request []byte) ([]byte, bool, error) {
 		known := key.GroupID == infiniteGacha.ProductGroupID && key.ProductID == infiniteGacha.ProductID && key.SaleGroup == infiniteGacha.SaleGroup
@@ -1034,6 +1042,7 @@ func serve(args []string) (serveErr error) {
 	eventTasksService.AttachGameplayProvider(worldService.GameplayAchievementProvider(achievementCounterDesign, achievementGrades))
 	game, err := session.NewServerWithProgress(login, progressState,
 		cashService,
+		cashBonuses,
 		clearPackages,
 		commerce.PackInfoHandler{World: worldService, Claims: clearPackages},
 		commerce.AttendanceHandler{Events: eventTasksService, Economy: cashEconomy, LoginPasses: loginPasses, Store: gameplayStore},

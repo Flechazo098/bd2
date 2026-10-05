@@ -651,6 +651,26 @@ func (s *Service) purchaseCountDBInfos() ([][]byte, error) {
 	return out, nil
 }
 func (s *Service) PurchaseCountDBInfos() [][]byte { v, _ := s.purchaseCountDBInfos(); return v }
+
+// LifetimePurchaseTotal derives cumulative bonuses from committed purchases,
+// including previous reset periods, without keeping a second purchase counter.
+func (s *Service) LifetimePurchaseTotal(keys []gamedata.CashProductKey) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.load()
+	if err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, k := range keys {
+		n := v.Counts[skuKey(k)].Lifetime
+		if n > math.MaxInt32-total {
+			return 0, fmt.Errorf("commerce: bonus purchase count overflow")
+		}
+		total += n
+	}
+	return total, nil
+}
 func (s *Service) HasPurchased(k gamedata.CashProductKey) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

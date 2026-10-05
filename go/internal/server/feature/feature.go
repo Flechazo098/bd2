@@ -22,7 +22,6 @@ var ErrInvalidRequest = errors.New("feature: invalid protobuf request")
 var emptyResponses = map[string]int{
 	"/AvatarShopWishListInfo":          470,
 	"/CafeteriaInfo":                   351,
-	"/CashBonusInfo":                   588,
 	"/CharPartnerInfo":                 65,
 	"/CommunityRewardInfo":             289,
 	"/DailyStoryInfo":                  538,

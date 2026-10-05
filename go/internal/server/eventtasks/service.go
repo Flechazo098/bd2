@@ -687,7 +687,10 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		}
 		all, id, rt := scalar(b, 2) != 0, scalar(b, 4), scalar(b, 5)
 		if rt > 1 {
-			return nil, errors.New("eventtasks: invalid pass reward kind")
+			return nil, fmt.Errorf("eventtasks: invalid pass reward kind pass=%d level=%d reward_type=%d all=%t", v.ID, id, rt, all)
+		}
+		if rt == 1 && !p.Premium {
+			return nil, fmt.Errorf("eventtasks: premium pass required pass=%d level=%d reward_type=%d all=%t", v.ID, id, rt, all)
 		}
 		var rewards []gamedata.Reward
 		var claims []string
@@ -699,34 +702,36 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			if !eligible || !all && lv.ID != id {
 				continue
 			}
-			for typ := uint64(0); typ <= 1; typ++ {
-				if !all && typ != rt || typ == 1 && !p.Premium {
-					continue
-				}
-				ck := key(lv.ID, typ)
-				if p.Claimed[ck] {
-					continue
-				}
-				r := lv.Basic
-				if typ == 1 {
-					r = lv.Premium
-				}
-				if r.Type > 0 && r.Count > 0 {
-					rewards = append(rewards, r)
-				}
-				claims = append(claims, ck)
+			// IsAll selects levels within RewardType. The native one-click flow
+			// sends an all-basic request followed by a separate all-premium one.
+			ck := key(lv.ID, rt)
+			if p.Claimed[ck] {
+				continue
 			}
+			r := lv.Basic
+			if rt == 1 {
+				r = lv.Premium
+			}
+			if r.Type > 0 && r.Count > 0 {
+				rewards = append(rewards, r)
+			}
+			claims = append(claims, ck)
 		}
-		if len(claims) == 0 {
-			return nil, errors.New("eventtasks: pass reward not eligible")
+		if len(claims) == 0 && !all {
+			return nil, fmt.Errorf("eventtasks: pass reward not eligible pass=%d level=%d reward_type=%d all=%t exp=%d premium=%t", v.ID, id, rt, all, p.Exp, p.Premium)
 		}
-		bundle, e := s.economy.Apply(identity, nil, rewards)
-		if e != nil {
-			return nil, e
+		var bundle []byte
+		if len(claims) > 0 {
+			bundle, e = s.economy.Apply(identity, nil, rewards)
+			if e != nil {
+				return nil, fmt.Errorf("eventtasks: pass reward grant failed pass=%d level=%d reward_type=%d all=%t: %w", v.ID, id, rt, all, e)
+			}
 		}
 		for _, k := range claims {
 			p.Claimed[k] = true
 		}
+		// An already-claimed all-basic phase must still succeed so the client
+		// can proceed to all-premium. Include a non-null empty reward bundle.
 		out := wire.AppendBytes(nil, 1, bundle)
 		if d.NewbieStep > 0 {
 			complete := true
@@ -747,8 +752,9 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			}
 			if complete && s.state.NewbieStep == d.NewbieStep {
 				s.state.NewbieStep++
-				out = wire.AppendVarint(out, 2, s.state.NewbieStep)
 			}
+			// The native receiver assigns this field even on an incomplete step.
+			out = wire.AppendVarint(out, 2, s.state.NewbieStep)
 		}
 		return out, nil
 	case "/PassBuy":
