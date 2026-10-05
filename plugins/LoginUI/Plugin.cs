@@ -93,6 +93,7 @@ public sealed class Plugin : BaseUnityPlugin
 
             Harmony harmony = new Harmony(Guid);
             SessionDiagnostics.Install(harmony);
+            EventRequestDiagnostics.Install(harmony);
             harmony.Patch(awake, postfix: new HarmonyMethod(typeof(SessionRecovery), nameof(IntroAwakePostfix)));
             HarmonyMethod maintenancePrefix = new HarmonyMethod(typeof(LoginController), nameof(SendMaintenancePrefix));
             maintenancePrefix.after = new[] { "bd2.localidentity" };
