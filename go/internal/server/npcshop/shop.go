@@ -34,15 +34,16 @@ type snapshot struct {
 	Receipts map[string]receipt `json:"receipts"`
 }
 type Service struct {
-	mu         sync.Mutex
-	design     gamedata.NPCShopDesign
-	store      stateio.Store
-	economy    Economy
-	items      *player.Inventory
-	available  func(uint64) bool
-	now        func() time.Time
-	session    func() string
-	reputation func(uint64) (uint64, uint64, error)
+	mu             sync.Mutex
+	design         gamedata.NPCShopDesign
+	store          stateio.Store
+	economy        Economy
+	items          *player.Inventory
+	available      func(uint64) bool
+	now            func() time.Time
+	session        func() string
+	reputation     func(uint64) (uint64, uint64, error)
+	talentDiscount func(uint64, uint64) (uint64, error)
 }
 
 func New(d gamedata.NPCShopDesign, store stateio.Store, e Economy, items *player.Inventory, available func(uint64) bool) (*Service, error) {
@@ -64,6 +65,28 @@ func (s *Service) BeginSession(id string) {
 // GameData-derived shop discount. Normal reputation is the initial fallback.
 func (s *Service) SetReputationSource(source func(uint64) (uint64, uint64, error)) {
 	s.reputation = source
+}
+func (s *Service) SetTalentDiscountSource(source func(uint64, uint64) (uint64, error)) {
+	s.talentDiscount = source
+}
+func (s *Service) talentDiscountFor(shop gamedata.NPCShop) (uint64, error) {
+	if s.talentDiscount == nil {
+		return 0, nil
+	}
+	var best uint64
+	for _, npc := range s.design.ShopNPCs[shop.ID] {
+		n, e := s.talentDiscount(shop.PackID, npc)
+		if e != nil {
+			return 0, e
+		}
+		if n > 100 {
+			return 0, fmt.Errorf("npcshop: invalid talent discount")
+		}
+		if n > best {
+			best = n
+		}
+	}
+	return best, nil
 }
 func (s *Service) reputationFor(pack uint64) (uint64, uint64, error) {
 	if s.reputation != nil {
@@ -191,7 +214,15 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	if path == "/ShopOpen" {
 		var b []byte
 		packs := map[uint64]bool{}
+		isTalent := false
 		for _, r := range s.design.Shops {
+			if s.available(r.PackID) {
+				discount, e := s.talentDiscountFor(r)
+				if e != nil {
+					return 0, nil, true, e
+				}
+				isTalent = isTalent || discount > 0
+			}
 			if !packs[r.PackID] && s.available(r.PackID) {
 				packs[r.PackID] = true
 				state, _, err := s.reputationFor(r.PackID)
@@ -202,6 +233,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				p = wire.AppendVarint(p, 2, state)
 				b = wire.AppendBytes(b, 1, p)
 			}
+		}
+		if isTalent {
+			b = wire.AppendVarint(b, 2, 1)
 		}
 		return code, b, true, nil
 	}
@@ -294,6 +328,10 @@ func (s *Service) buy(request []byte, v *snapshot) ([]gamedata.Reward, []gamedat
 		if state == 0 || discount > 100 {
 			return nil, nil, nil, fmt.Errorf("npcshop: unavailable reputation")
 		}
+		talentDiscount, e := s.talentDiscountFor(r)
+		if e != nil {
+			return nil, nil, nil, e
+		}
 		rows, e := messages(g, 2)
 		if e != nil || len(rows) == 0 {
 			return nil, nil, nil, fmt.Errorf("npcshop: empty product list")
@@ -321,7 +359,14 @@ func (s *Service) buy(request []byte, v *snapshot) ([]gamedata.Reward, []gamedat
 				return nil, nil, nil, fmt.Errorf("npcshop: sold out product %d", id)
 			}
 			price := uint64(float32(p.Price.Count*expected) / 100)
-			if discount > 0 {
+			if talentDiscount > 0 {
+				if p.NoBargain == 1 {
+					return nil, nil, nil, fmt.Errorf("npcshop: product excluded during bargaining")
+				}
+				// ShopUI.RefreshProductsPrice uses the base price for talent
+				// bargaining, replacing both market variation and reputation.
+				price = uint64(float32(p.Price.Count) * (float32(100-talentDiscount) / 100))
+			} else if discount > 0 {
 				price = uint64(float32(price*(100-discount)) / 100)
 			}
 			if price > math.MaxInt32/n || p.Reward.Count > math.MaxInt32/n {

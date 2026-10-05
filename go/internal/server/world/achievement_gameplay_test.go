@@ -28,6 +28,26 @@ func (s gameplayEquipment) All() []player.Equipment { return s.s.equipment }
 type gameplayItems struct{ s *gameplayTestSource }
 
 func (s gameplayItems) All() []player.Item { return s.s.items }
+func TestTemporaryPartyMembersCannotGrantPermanentAcquisitionAchievements(t *testing.T) {
+	source := &gameplayTestSource{}
+	p := &OwnedGameplayAchievementProvider{Characters: source}
+	before, e := p.Snapshot()
+	if e != nil {
+		t.Fatal(e)
+	}
+	source.characters = []player.Character{{ID: 10, InvenIndex: player.CharmCharacterIndexBase + 1, Level: 1}, {ID: 11, InvenIndex: player.StoryCharacterIndexBase + 1, Level: 1}, {ID: 12, InvenIndex: 77, Level: 1}}
+	after, e := p.Snapshot()
+	if e != nil {
+		t.Fatal(e)
+	}
+	events, e := p.Events("/TalentSkillUse", nil, nil, before, after)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(after.Characters) != 1 || len(events) != 1 || events[0].Type != 19 || events[0].Count != 1 {
+		t.Fatalf("temporary ownership inflated achievements: %+v", events)
+	}
+}
 func TestGameplayAchievementProjectsChangesWithoutFakeHistoricalGets(t *testing.T) {
 	design := &gamedata.AchievementCounterDesign{Groups: map[int][]int{701: {0}, 702: {0}, 703: {0}, 704: {0}, 705: {0}}, Conditions: map[int]gamedata.AchievementCondition{701: {Type: 7, SubType: 4}, 702: {Type: 22}, 703: {Type: 26}, 704: {Type: 55}, 705: {Type: 14, SubType: 909}}}
 	service, err := NewAchievementService(design, stateio.NewMemory())

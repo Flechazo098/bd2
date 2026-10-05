@@ -41,6 +41,7 @@ type LoginSeed struct {
 	friendshipAP         FriendshipAPProvider
 	lastPlayedPack       LastPlayedPackProvider
 	achievementExp       AchievementExperienceProvider
+	autoReviveSettings   interface{ AutoReviveSettings() (bool, uint64, error) }
 	levelReward          LevelRewardProvider
 	huntingAP            HuntingAPProvider
 	monsterHuntSlots     PresetSlotProvider
@@ -606,7 +607,11 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		}
 	}
 	user = wire.AppendBytes(user, 3, sessionKey)
-	return append(wire.AppendBytes(nil, 1, user), s.ResponseFields...), nil
+	projected, projectionErr := s.projectAutoRevive(user)
+	if projectionErr != nil {
+		return nil, projectionErr
+	}
+	return append(wire.AppendBytes(nil, 1, projected), s.ResponseFields...), nil
 }
 
 func replaceRepeatedBytes(data []byte, number int, values [][]byte) ([]byte, error) {

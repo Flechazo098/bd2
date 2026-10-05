@@ -125,7 +125,12 @@ func loadDispatchBox(db *sql.DB, id uint64, seen map[uint64]bool) (*dispatchGrou
 	if err != nil {
 		return nil, err
 	}
-	if err = db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", gid).Scan(&raw); err != nil {
+	return loadDispatchRewardGroup(db, gid, seen)
+}
+func loadDispatchRewardGroup(db *sql.DB, gid uint64, seen map[uint64]bool) (*dispatchGroup, error) {
+	var raw []byte
+	err := db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", gid).Scan(&raw)
+	if err != nil {
 		return nil, err
 	}
 	g := &dispatchGroup{}

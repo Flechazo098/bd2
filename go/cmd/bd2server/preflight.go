@@ -147,6 +147,30 @@ func preflight(args []string) error {
 	if _, err := gamedata.LoadCostumeBurstDesign(gameData, versions.GameDataVersion); err != nil {
 		return err
 	}
+	if _, err := gamedata.LoadTalentUseDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight talent skill design: %w", err)
+	}
+	if _, err := gamedata.LoadFieldSettingsDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight field character settings: %w", err)
+	}
+	if _, err := gamedata.LoadItemCraftDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight item craft design: %w", err)
+	}
+	if _, err := gamedata.LoadTalentDispatchDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight talent dispatch design: %w", err)
+	}
+	if _, err := gamedata.LoadFieldBuffDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight field damage design: %w", err)
+	}
+	if _, err := gamedata.LoadPackRecoveryPolicy(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight automatic recovery policy: %w", err)
+	}
+	if _, err := gamedata.LoadSkyWayOverwhelm(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight overwhelm design: %w", err)
+	}
+	if _, err := gamedata.LoadNPCShopDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight NPC shop design: %w", err)
+	}
 	return nil
 }
 

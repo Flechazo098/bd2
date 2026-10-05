@@ -35,7 +35,14 @@ type Service struct {
 	hunting            HuntingRuntime
 	monsterHunt        MonsterHuntRuntime
 	eventBattles       []EventBattleRuntime
+	fieldMonsters      FieldMonsterRuntime
 }
+type FieldMonsterRuntime interface {
+	BeginFieldMonsterBattle(int, uint64, uint64) (string, bool, error)
+	CompleteFieldMonsterBattle(int, uint64, string) ([]byte, error)
+}
+
+func (s *Service) AttachFieldMonsters(runtime FieldMonsterRuntime) { s.fieldMonsters = runtime }
 
 // EventBattleRuntime owns event stage eligibility, costs and settlement while
 // the normal battle service transports the client's turn simulation.
@@ -85,23 +92,24 @@ func (s *Service) AttachHunting(runtime HuntingRuntime) {
 }
 
 type battleState struct {
-	entered      bool
-	index        uint64
-	round        uint64
-	monster      uint64
-	deck         uint64
-	pack         int
-	mode         uint64
-	enterReceipt string
-	initialBlue  [][]byte
-	phases       []gamedata.BattlePhase
-	phase        int
-	phaseStarted bool
-	phaseSeq     uint64
-	phaseReply   []byte
-	endSeq       uint64
-	endRequest   []byte
-	endReply     []byte
+	entered       bool
+	index         uint64
+	round         uint64
+	monster       uint64
+	deck          uint64
+	pack          int
+	mode          uint64
+	enterReceipt  string
+	fieldInstance string
+	initialBlue   [][]byte
+	phases        []gamedata.BattlePhase
+	phase         int
+	phaseStarted  bool
+	phaseSeq      uint64
+	phaseReply    []byte
+	endSeq        uint64
+	endRequest    []byte
+	endReply      []byte
 }
 
 // BeginSession discards an unfinished battle when LoginUser creates a new
@@ -292,6 +300,14 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 		}
 		var phases []gamedata.BattlePhase
+		fieldInstance := ""
+		if mode == 2 && eventRuntime == nil && s.fieldMonsters != nil && monster != 0 {
+			instance, _, e := s.fieldMonsters.BeginFieldMonsterBattle(packID, monster, deck)
+			if e != nil {
+				return 0, nil, true, e
+			}
+			fieldInstance = instance
+		}
 		if !isMonsterHunt(mode) && eventRuntime == nil && (s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0)) {
 			loader := s.loadPhases
 			if loader == nil {
@@ -328,6 +344,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		state.mode = mode
 		seq, _, _ := wire.Varint(request, 1)
 		state.enterReceipt = fmt.Sprintf("%s:%d", s.activeSession, seq)
+		state.fieldInstance = fieldInstance
 		state.phases, state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = phases, 0, false, 0, nil
 		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
@@ -522,7 +539,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if rewardErr != nil {
 				return 0, nil, true, fmt.Errorf("battle: pack %d monster %d deck %d rewards: %w", state.pack, state.monster, state.deck, rewardErr)
 			}
-			items, grantErr := s.inventory.GrantOnce(fmt.Sprintf("pack%d:monster%d:deck%d", state.pack, state.monster, state.deck), rewards)
+			rewardIdentity := fmt.Sprintf("pack%d:monster%d:deck%d", state.pack, state.monster, state.deck)
+			if state.fieldInstance != "" {
+				rewardIdentity = state.fieldInstance
+			}
+			items, grantErr := s.inventory.GrantOnce(rewardIdentity, rewards)
 			if grantErr != nil {
 				return 0, nil, true, grantErr
 			}
@@ -533,6 +554,13 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if len(bundle) != 0 {
 				response = wire.AppendBytes(response, 5, bundle)
 				rewardBundle = true
+			}
+			if state.fieldInstance != "" {
+				monsterRow, e := s.fieldMonsters.CompleteFieldMonsterBattle(state.pack, state.monster, state.fieldInstance)
+				if e != nil {
+					return 0, nil, true, e
+				}
+				response = wire.AppendBytes(response, 4, monsterRow)
 			}
 		}
 		if result == 1 && state.monster != 0 && s.onMonsterWin != nil {

@@ -62,8 +62,10 @@ func (s *EquipmentInventory) makeEquipment(request []byte) (int, []byte, bool, e
 	if err != nil {
 		return 0, nil, true, fmt.Errorf("player: persist made equipment: %w", err)
 	}
-	if _, err := s.characters.AddTalentExperience(characterIndex, gain, maximum); err != nil {
-		return 0, nil, true, err
+	if gain > 0 {
+		if _, err := s.characters.AddTalentExperience(characterIndex, gain, maximum); err != nil {
+			return 0, nil, true, err
+		}
 	}
 	var response []byte
 	for _, entry := range created {
@@ -290,8 +292,10 @@ func (s *EquipmentInventory) makeToBreakAuto(request []byte) (int, []byte, bool,
 	for _, entry := range created {
 		indices = append(indices, entry.InvenIndex)
 	}
-	if _, err := s.characters.AddTalentExperience(characterIndex, gain, maximum); err != nil {
-		return 0, nil, true, err
+	if gain > 0 {
+		if _, err := s.characters.AddTalentExperience(characterIndex, gain, maximum); err != nil {
+			return 0, nil, true, err
+		}
 	}
 	result, err := s.runUpgradeToBreak(indices, target, "equip-making-break-reward:"+s.sessionID+":"+strconv.FormatUint(seq, 10))
 	if err != nil {

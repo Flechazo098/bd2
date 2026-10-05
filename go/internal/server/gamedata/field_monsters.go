@@ -9,9 +9,12 @@ import (
 // FieldMonsterDesign keeps the regeneration group requested by MonsterInfo,
 // not the unrelated event monster group used by FieldEventSpawnReward.
 type FieldMonsterDesign struct {
-	ID, GroupID, QuestID int
-	BattleDeck           uint64
-	LifeSeconds          uint64
+	ID, GroupID, QuestID                                    int
+	BattleDeck                                              uint64
+	BattleDecks                                             []uint64
+	LifeSeconds                                             uint64
+	RegenSeconds, ResetType, Type, FieldBuff, UseBattleSkip uint64
+	Reward                                                  Reward
 }
 
 func LoadFieldMonsters(root, version string, pack int) ([]FieldMonsterDesign, error) {
@@ -43,6 +46,17 @@ func loadFieldMonsters(db *sql.DB) ([]FieldMonsterDesign, error) {
 			return nil, fmt.Errorf("gamedata: malformed monster regeneration %d", id)
 		}
 		g := FieldMonsterDesign{GroupID: id}
+		for f, dst := range map[int]*uint64{7: &g.RegenSeconds, 9: &g.ResetType} {
+			v, e := optionalScalar(raw, f)
+			if e != nil {
+				rows.Close()
+				return nil, e
+			}
+			*dst = v
+		}
+		if g.ResetType > 2 {
+			return nil, fmt.Errorf("gamedata: unknown monster reset type")
+		}
 		if len(q) > 0 {
 			g.QuestID = int(q[0])
 		}
@@ -77,17 +91,26 @@ func loadFieldMonsters(db *sql.DB) ([]FieldMonsterDesign, error) {
 		if e1 != nil || e2 != nil || len(group) > 1 {
 			return nil, fmt.Errorf("gamedata: malformed field monster %d", id)
 		}
-		if len(group) == 0 || group[0] == 0 {
-			continue
-		}
-		g, ok := groups[int(group[0])]
-		if !ok {
-			return nil, fmt.Errorf("gamedata: monster %d references missing regeneration %d", id, group[0])
+		g := FieldMonsterDesign{}
+		if len(group) > 0 && group[0] > 0 {
+			var ok bool
+			g, ok = groups[int(group[0])]
+			if !ok {
+				return nil, fmt.Errorf("gamedata: monster %d references missing regeneration %d", id, group[0])
+			}
 		}
 		g.ID = id
+		for f, dst := range map[int]*uint64{30: &g.Type, 6: &g.FieldBuff, 31: &g.UseBattleSkip, 27: &g.Reward.Count, 28: &g.Reward.ID, 29: &g.Reward.Type} {
+			v, e := optionalScalar(raw, f)
+			if e != nil {
+				return nil, e
+			}
+			*dst = v
+		}
 		if len(decks) > 0 {
 			g.BattleDeck = decks[0]
 		}
+		g.BattleDecks = append([]uint64(nil), decks...)
 		result = append(result, g)
 	}
 	return result, rows.Err()

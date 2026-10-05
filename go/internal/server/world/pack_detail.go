@@ -25,18 +25,33 @@ func (s *Service) handlePackDetail(request []byte) (int, []byte, bool, error) {
 	if err != nil {
 		return 0, nil, true, err
 	}
-	if len(design.RegenMonsterIDs) > 0 {
-		// Empty monster state means defeated to the client. Until regeneration
-		// has a persisted domain, do not invent active flags or claim history.
-		return 0, nil, true, fmt.Errorf("%w: PackDetailInfo pack %d requires regenerating monster state", ErrInvalidRequest, packID)
+	filter := map[int]bool{}
+	for _, id := range design.RegenMonsterIDs {
+		filter[id] = true
 	}
 	ids, err := s.openedFieldObjects(packID)
 	if err != nil {
 		return 0, nil, true, err
 	}
 	response := []byte{}
+	if len(filter) > 0 {
+		rows, e := s.monsterRows(packID, filter)
+		if e != nil {
+			return 0, nil, true, e
+		}
+		for _, row := range rows {
+			response = wire.AppendBytes(response, 1, row)
+		}
+	}
 	for _, id := range ids {
 		response = wire.AppendBytes(response, 2, wire.AppendVarint(nil, 1, uint64(id)))
+	}
+	research, e := s.state.ResearchObjects(packID)
+	if e != nil {
+		return 0, nil, true, e
+	}
+	for _, id := range research {
+		response = wire.AppendVarint(response, 3, uint64(id))
 	}
 	return 627, response, true, nil
 }

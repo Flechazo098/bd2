@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/wire"
 	"bytes"
 	"testing"
+	"time"
 )
 
 // This regression exercises the missing field entry route with duplicate packed
@@ -55,12 +56,14 @@ func TestMonsterInfoRegenerationGroupsAndQuestGate(t *testing.T) {
 
 func TestMonsterLifetimeSurvivesReaderRestartWithoutRenewal(t *testing.T) {
 	s := testService()
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	s.monsterNow = func() time.Time { return now }
 	store := stateio.NewMemory()
 	if err := s.AttachFieldMonsterState(store); err != nil {
 		t.Fatal(err)
 	}
 	s.monsterLoader = func(int) ([]gamedata.FieldMonsterDesign, error) {
-		return []gamedata.FieldMonsterDesign{{ID: 9, GroupID: 7, LifeSeconds: 30}}, nil
+		return []gamedata.FieldMonsterDesign{{ID: 9, GroupID: 7, LifeSeconds: 30, RegenSeconds: 10}}, nil
 	}
 	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 7)
 	_, first, _, err := s.Handle("/MonsterInfo", request)
@@ -69,14 +72,13 @@ func TestMonsterLifetimeSurvivesReaderRestartWithoutRenewal(t *testing.T) {
 	}
 	s2 := testService()
 	s2.monsterLoader = s.monsterLoader
+	s2.monsterNow = s.monsterNow
 	s2.AttachFieldMonsterState(store)
 	_, again, _, err := s2.Handle("/MonsterInfo", request)
 	if err != nil || !bytes.Equal(first, again) {
 		t.Fatal("restart renewed finite monster lifetime")
 	}
-	if err := store.Save("fieldmonsters", []byte(`{"21/0/9":1}`)); err != nil {
-		t.Fatal(err)
-	}
+	now = now.Add(31 * time.Second)
 	_, expired, _, err := s2.Handle("/MonsterInfo", request)
 	if err != nil {
 		t.Fatal(err)
@@ -85,8 +87,18 @@ func TestMonsterLifetimeSurvivesReaderRestartWithoutRenewal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	active, _, _ := wire.Varint(row, 6)
-	if active != 0 {
-		t.Fatal("expired monster revived by reading info")
+	respawn, _, _ := wire.Varint(row, 3)
+	if respawn <= uint64(now.UnixMilli()) {
+		t.Fatal("expired monster did not wait for regeneration")
+	}
+	now = now.Add(10 * time.Second)
+	_, revived, _, err := s2.Handle("/MonsterInfo", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _, _ = wire.Bytes(revived, 1)
+	respawn, _, _ = wire.Varint(row, 3)
+	if respawn != 0 {
+		t.Fatal("regeneration time did not create the next instance")
 	}
 }

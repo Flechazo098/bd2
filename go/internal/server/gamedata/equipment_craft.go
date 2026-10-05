@@ -205,7 +205,12 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 			rows.Close()
 			return nil, err
 		}
-		need, _ := packedInts(raw, 6)
+		need, err := packedInts(raw, 6)
+		if err != nil || len(need) > 1 {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: malformed equipment talent growth %d/%d", group, level)
+		}
+		design.TalentNeed[[2]uint64{group, level}] = 0
 		if len(need) == 1 {
 			design.TalentNeed[[2]uint64{group, level}] = need[0]
 		}
