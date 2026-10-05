@@ -1,0 +1,255 @@
+package commerce
+
+import (
+	"bd2server/internal/server/calendar"
+	"bd2server/internal/server/events"
+	"bd2server/internal/server/gameconfig"
+	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/hunting"
+	"bd2server/internal/server/player"
+	"bd2server/internal/server/readonly"
+	"bd2server/internal/server/stateio"
+	"bd2server/internal/server/wire"
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
+	root := os.Getenv("BD2_REAL_GAMEDATA")
+	if root == "" {
+		t.Skip("BD2_REAL_GAMEDATA not configured")
+	}
+	catalog, err := gamedata.LoadCashCatalog(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := gamedata.LoadCashRewardResolver(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entitlements, err := gamedata.LoadCashEntitlementDesign(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Infinite draw products grant the user's confirmed preview, rather than
+	// the placeholder cash box. Validate their dedicated design and route.
+	db, release, err := gamedata.OpenDatabase(root, "20260923193640", "common")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowsDB, err := db.Query("SELECT id,ProtoBuf FROM GachaGroupTable")
+	if err != nil {
+		release()
+		t.Fatal(err)
+	}
+	type drawGroup struct{ id, gacha uint64 }
+	var groups []drawGroup
+	for rowsDB.Next() {
+		var id uint64
+		var raw []byte
+		if err := rowsDB.Scan(&id, &raw); err != nil {
+			t.Fatal(err)
+		}
+		typ, _, _ := wire.Varint(raw, 17)
+		sub, _, _ := wire.Varint(raw, 16)
+		if typ == 1 && sub == 5 {
+			gacha, _, _ := wire.Varint(raw, 33)
+			groups = append(groups, drawGroup{id, gacha})
+		}
+	}
+	if err := rowsDB.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rowsDB.Close()
+	release()
+	policy, err := NewCatalog("2.35.10", catalog, gameconfig.Default().Purchases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shop, err := NewService(policy, stateio.NewMemory(), &purchaseEconomy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := readonly.Load(filepath.Join("..", "..", "..", "seed", "v2_35_10", "readonly.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calendars, err := calendar.LoadDirectory(filepath.Join("..", "..", "..", "..", "schedules"), "2.35.10", "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err = calendars.ApplyReadonly(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shop.SetClock(func() time.Time { return time.Date(2026, 10, 5, 5, 0, 0, 0, time.UTC) }, 0)
+	if err := shop.AttachShopSeed(seed); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := gamedata.LoadRewardGraph(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	costumes, err := gamedata.LoadRewardCostumeCatalog(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	equipment, err := gamedata.LoadRewardEquipmentCatalog(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skins, err := gamedata.LoadPrestigeSkins(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownedDesign, err := gamedata.LoadOwnedEventItemDesign(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newEconomy := func() (*EntitlementEconomy, *player.Wallet) {
+		store := stateio.NewMemory()
+		items, err := player.OpenInventory(store, &player.Starter{Version: "2.35.10"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wallet, err := player.OpenWallet(store, player.Currency{Jewelry: 100000000, FreeJewelry: 100000000, Gold: 100000000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		collection, err := player.OpenCollectionStore(store, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownedEquipment, err := player.OpenEquipmentInventory(store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, persist := range []func() error{items.EnsurePersisted, wallet.EnsurePersisted, collection.EnsurePersisted, ownedEquipment.EnsurePersisted} {
+			if err := persist(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		base, err := events.NewEconomy(store, items, wallet, collection, ownedEquipment, costumes, equipment, graph, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base.AttachPrestigeSkins(skins)
+		base.AttachOwnedItemDesign(ownedDesign)
+		ap, err := hunting.Open(store, root, "20260923193640", items, wallet, func() (int, error) { return 21, nil }, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base.AttachHuntingAP(ap)
+		e, err := NewEntitlementEconomy(store, base, resolver, items, entitlements)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e, wallet
+	}
+	delegated := map[gamedata.CashProductKey]bool{}
+	retired := map[gamedata.CashProductKey]bool{}
+	for _, group := range groups {
+		d, err := gamedata.LoadInfiniteGachaForSchedules(root, "20260923193640", []uint64{group.id})
+		if err != nil && strings.Contains(err.Error(), "infinite cash product missing") {
+			// Early infinite draws retain placeholder gold/count=0 boxes in this
+			// version. They are historical timed products, not grantable purchases.
+			found := false
+			for _, p := range catalog.Products {
+				if p.Key.ProductID != group.gacha {
+					continue
+				}
+				found = true
+				if p.TimeLimitType == 0 || shop.IsAvailable(p.Key) {
+					t.Fatalf("retired infinite product %+v is purchasable without a valid preview design", p.Key)
+				}
+				retired[p.Key] = true
+			}
+			if !found {
+				t.Fatalf("infinite group=%d has no matching retired product", group.id)
+			}
+			continue
+		}
+		if err != nil || d == nil || d.Count == 0 {
+			t.Fatalf("infinite draw group=%d cannot grant confirmed preview: %v", group.id, err)
+		}
+		delegated[gamedata.CashProductKey{GroupID: d.ProductGroupID, ProductID: d.ProductID, SaleGroup: d.SaleGroup}] = true
+	}
+	cash, recharge, delegateCount, retiredCount := 0, 0, 0, 0
+	for _, p := range catalog.Products {
+		if p.PriceType != 1 {
+			continue
+		}
+		cash++
+		if p.Recharge {
+			recharge++
+		}
+		if delegated[p.Key] {
+			delegateCount++
+			continue
+		}
+		if retired[p.Key] {
+			retiredCount++
+			continue
+		}
+		if p.RandomBoxID == 0 {
+			t.Errorf("cash product %+v has no reward box", p.Key)
+			continue
+		}
+		for _, box := range []uint64{p.RandomBoxID, p.BonusRandomBoxID} {
+			if box == 0 {
+				continue
+			}
+			leaves, err := resolver.ResolveGranted([]gamedata.BattleReward{{Type: 9, ID: box, Count: 1}})
+			if err != nil || len(leaves) == 0 {
+				t.Errorf("cash product %+v box=%d cannot grant rewards: %v", p.Key, box, err)
+				continue
+			}
+			for _, r := range leaves {
+				if r.Type == 19 && entitlements.TicketTypes[r.ID] == 0 || r.Type == 62 && !entitlements.AvatarSets[r.ID] {
+					t.Errorf("cash product %+v has unknown entitlement %+v", p.Key, r)
+				}
+			}
+		}
+		// Exercise the same grant and debit modules used by CashShopBuy against
+		// isolated in-memory accounts; no real save or authenticated API is touched.
+		q, err := policy.Quote(p.Key, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var costs []gamedata.Reward
+		if q.Cost > 0 {
+			costs = []gamedata.Reward{{Type: q.ItemType, Count: q.Cost}}
+		}
+		rewards := []gamedata.Reward{{Type: 9, ID: p.RandomBoxID, Count: 1}}
+		if p.BonusRandomBoxID != 0 {
+			rewards = append(rewards, gamedata.Reward{Type: 9, ID: p.BonusRandomBoxID, Count: 1})
+		}
+		e, wallet := newEconomy()
+		bundle, err := e.Apply("installed-audit", costs, rewards)
+		if err != nil || len(bundle) == 0 {
+			t.Errorf("cash product %+v failed real debit/grant: %v", p.Key, err)
+			continue
+		}
+		balance := wallet.Snapshot()
+		replay, err := e.Apply("installed-audit", costs, rewards)
+		if err != nil || !bytes.Equal(replay, bundle) || wallet.Snapshot() != balance {
+			t.Errorf("cash product %+v replay repeated debit/grant: %v", p.Key, err)
+		}
+	}
+	if cash != 614 || recharge != 14 || delegateCount != 3 || retiredCount != 5 {
+		t.Fatalf("cash coverage changed: cash=%d recharge=%d delegated=%d retired=%d", cash, recharge, delegateCount, retiredCount)
+	}
+	bonus, err := gamedata.LoadCashBonusCatalog(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := bonus.Groups[1]
+	if len(rows) != 3 || rows[0].RequireCount != 2 || rows[0].Reward.Count != 2 || rows[1].RequireCount != 6 || rows[1].Reward.Count != 15 || rows[2].RequireCount != 8 || rows[2].Reward.Count != 30 {
+		t.Fatalf("cash bonus thresholds or rewards changed: %+v", rows)
+	}
+	t.Logf("validated %d cash rows: %d recharge variants, %d preview designs, %d unavailable historical draws; checked other reward boxes and typed ticket/skin entitlements", cash, recharge, delegateCount, retiredCount)
+}
