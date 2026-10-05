@@ -23,9 +23,9 @@ func runDevelopmentCommand(args []string) (bool, error) {
 	}
 	serveArgs := append([]string(nil), args[2:]...)
 	serveArgs = appendDefaultFlag(serveArgs, "--version-config", filepath.Join(root, "versions.json"))
-	serveArgs = appendDefaultFlag(serveArgs, "--authentication-config", filepath.Join(root, "authentication.json"))
-	serveArgs = appendDefaultFlag(serveArgs, "--resource-config", filepath.Join(root, "resources.json"))
-	serveArgs = appendDefaultFlag(serveArgs, "--game-config", filepath.Join(root, "game.json"))
+	serveArgs = appendDefaultFlag(serveArgs, "--authentication-config", filepath.Join(root, ".build", "config", "authentication.json"))
+	serveArgs = appendDefaultFlag(serveArgs, "--resource-config", filepath.Join(root, ".build", "config", "resources.json"))
+	serveArgs = appendDefaultFlag(serveArgs, "--game-config", filepath.Join(root, ".build", "config", "game.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--data-dir", filepath.Join(root, "data"))
 	serveArgs = appendDefaultFlag(serveArgs, "--state", filepath.Join(root, "data", "state", "state.db"))
 	return true, serve(serveArgs)
@@ -38,9 +38,7 @@ func findDevelopmentRoot() (string, error) {
 	}
 	for directory := filepath.Clean(working); ; directory = filepath.Dir(directory) {
 		if regularDevelopmentFile(filepath.Join(directory, "versions.json")) &&
-			regularDevelopmentFile(filepath.Join(directory, "go", "go.mod")) &&
-			regularDevelopmentFile(filepath.Join(directory, "authentication.json")) &&
-			regularDevelopmentFile(filepath.Join(directory, "resources.json")) {
+			regularDevelopmentFile(filepath.Join(directory, "go", "go.mod")) {
 			return directory, nil
 		}
 		parent := filepath.Dir(directory)

@@ -127,7 +127,7 @@ master key 必须长期稳定：
 
 ## 5. 编辑服务器配置
 
-编辑与 `bd2server` 可执行文件同目录的 `authentication.json`。Discord 和 Google 都启用时：
+首次运行时会在 `bd2server` 可执行文件旁生成 `local` 模式的默认配置。开发入口使用 `.build/config/authentication.json`；Docker 镜像默认使用 `/app/data/config/authentication.json`。启用 OAuth 前编辑生成的文件并配置环境变量，然后重启。Discord 和 Google 都启用时：
 
 ```json
 {

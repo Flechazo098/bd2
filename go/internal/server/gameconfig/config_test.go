@@ -74,14 +74,14 @@ func TestStartingChapterConfiguration(t *testing.T) {
 	}
 }
 
-func TestMissingFileDefaultsWithoutCreating(t *testing.T) {
+func TestMissingFileCreatesDefaults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	cfg, err := Load(path)
 	if err != nil || cfg != Default() {
 		t.Fatalf("config = %+v, error = %v", cfg, err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("Load created missing config: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Load did not create missing config: %v", err)
 	}
 }
 

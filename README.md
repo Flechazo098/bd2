@@ -76,7 +76,7 @@ BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows
 
 认证策略由 `bd2server.exe` 同目录的 `authentication.json` 权威决定。`mode=local`（默认）不依赖第三方登录，单人本地服保持不动，联机服可设为 `oauth` 来让玩家通过 Discord/Google 登录。
 
-游戏规则统一使用服务端同目录的 `game.json`，修改后重启生效；开发入口读取仓库根目录的文件。联动 UR 专武是否加入 UR 必得装备券池及升级保留配置的方法见 [服务端游戏规则配置](GAME_CONFIGURATION.md)。
+`authentication.json`、`resources.json` 和 `game.json` 不随发布包分发，首次运行时在服务端可执行文件旁生成默认文件，已有文件不会覆盖。开发入口使用 `.build/config/` 中的三个配置。游戏规则修改后重启生效，详细见 [服务端游戏规则配置](GAME_CONFIGURATION.md)。
 
 服务端日志默认输出 INFO 及以上级别，仅终端启用颜色：TRACE 灰、DEBUG 青、INFO 绿、WARN 黄、ERROR 红。可用 `serve --log-level debug --log-color auto` 调整，或设置 `BD2_LOG_LEVEL` 和 `BD2_LOG_COLOR` 环境变量；显式命令行参数优先。级别支持 `trace/debug/info/warn/error`，颜色支持 `auto/always/never`。`auto` 下文件和重定向保持纯文本，`NO_COLOR` 或 `TERM=dumb` 也会关闭颜色；如需在 Docker 日志流中显示颜色，可显式选择 `always`。
 
