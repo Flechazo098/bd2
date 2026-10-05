@@ -692,6 +692,9 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("read initial hunting AP: %w", err)
 	}
 	gameplayStore := stateio.EntrySnapshotStore{Entries: stateRepository, Domain: "missions", Bucket: "gameplay"}
+	if err := costumePotentialService.AttachConnectStore(gameplayStore); err != nil {
+		return fmt.Errorf("attach costume potential connection state: %w", err)
+	}
 	if err := worldService.AttachFieldMonsterState(gameplayStore); err != nil {
 		return fmt.Errorf("attach field monster state: %w", err)
 	}

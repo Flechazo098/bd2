@@ -23,6 +23,8 @@ type CostumePotentialDesign struct {
 	CostumeUnique   map[uint64]uint64
 	CharacterGrade  map[uint64]uint64
 	CharacterUnique map[uint64]uint64
+	CharacterTypes  map[uint64]uint64
+	CostumeActive   map[uint64]bool
 }
 
 func LoadCostumePotentialDesign(root, version string) (*CostumePotentialDesign, error) {
@@ -36,6 +38,31 @@ func LoadCostumePotentialDesign(root, version string) (*CostumePotentialDesign, 
 
 func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 	d := &CostumePotentialDesign{Nodes: map[uint64]map[uint64]CostumePotentialNode{}, CostumeUnique: map[uint64]uint64{}, CharacterGrade: map[uint64]uint64{}, CharacterUnique: map[uint64]uint64{}}
+	d.CharacterTypes = map[uint64]uint64{}
+	d.CostumeActive = map[uint64]bool{}
+	groups, err := db.Query("SELECT id,ProtoBuf FROM CostumeNodeGroupTable")
+	if err != nil {
+		return nil, err
+	}
+	for groups.Next() {
+		var id uint64
+		var raw []byte
+		if err = groups.Scan(&id, &raw); err != nil {
+			groups.Close()
+			return nil, err
+		}
+		active, e := optionalScalar(raw, 3)
+		if e != nil || active > 1 {
+			groups.Close()
+			return nil, fmt.Errorf("gamedata: invalid potential active group")
+		}
+		d.CostumeActive[id] = active == 1
+	}
+	if err = groups.Err(); err != nil {
+		groups.Close()
+		return nil, err
+	}
+	groups.Close()
 	rows, err := db.Query("SELECT groupId,id,ProtoBuf FROM CostumeNodeTable ORDER BY groupId,id")
 	if err != nil {
 		return nil, err
@@ -125,6 +152,12 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 			return nil, err
 		}
 		grade, _ := packedInts(proto, 10)
+		typeID, e := optionalScalar(proto, 19)
+		if e != nil {
+			rows.Close()
+			return nil, e
+		}
+		d.CharacterTypes[id] = typeID
 		unique, _ := packedInts(proto, 20)
 		if len(grade) == 1 && len(unique) == 1 {
 			d.CharacterGrade[id] = grade[0]
