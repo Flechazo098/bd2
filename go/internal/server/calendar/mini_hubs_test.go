@@ -68,4 +68,14 @@ func TestMiniHubPublishedRoutesValidateIndependentEnumsAndWindows(t *testing.T) 
 	if err := s.validateMiniHubBindings(design); err == nil {
 		t.Fatal("quiz borrowed global bingo event type")
 	}
+	design.Tables["PackEventListTable"][0] = row(6, 7, 10, 42, 11, 11, 9, 13, 7, 99)
+	s = fresh()
+	s.EventHubs[0].Settings = []HubSetting{{Slot: 11, ProgressType: 13, EventUIDs: []uint64{10000032}}}
+	if err := s.validateMiniHubBindings(design); err != nil {
+		t.Fatalf("independent quiz content UID rejected: %v", err)
+	}
+	s.EventHubs[0].Settings[0].EventUIDs = []uint64{21}
+	if err := s.validateMiniHubBindings(design); err == nil {
+		t.Fatal("quiz content UID collided with global event")
+	}
 }

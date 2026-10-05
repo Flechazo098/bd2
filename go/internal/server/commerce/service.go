@@ -41,18 +41,20 @@ type purchaseState struct {
 	Counts   map[string]purchaseCount   `json:"counts"`
 }
 type Service struct {
-	mu           sync.Mutex
-	catalog      *Catalog
-	store        stateio.Store
-	economy      Economy
-	now          func() time.Time
-	resetSeconds int64
-	delegate     PurchaseDelegate
-	hook         PurchaseHook
-	legacy       CountProvider
-	shopProducts [][]byte
-	shopWindows  map[gamedata.CashProductKey][2]uint64
-	predecessors map[gamedata.CashProductKey][]gamedata.CashProductKey
+	mu               sync.Mutex
+	catalog          *Catalog
+	store            stateio.Store
+	economy          Economy
+	now              func() time.Time
+	resetSeconds     int64
+	delegate         PurchaseDelegate
+	hook             PurchaseHook
+	legacy           CountProvider
+	shopProducts     [][]byte
+	shopWindows      map[gamedata.CashProductKey][2]uint64
+	eventShopWindows map[gamedata.CashProductKey][][2]uint64
+	eventShopGroups  map[uint64]bool
+	predecessors     map[gamedata.CashProductKey][]gamedata.CashProductKey
 }
 
 func NewService(catalog *Catalog, store stateio.Store, economy Economy) (*Service, error) {
@@ -179,6 +181,15 @@ func (s *Service) AttachShopSeed(seed *readonly.Seed) error {
 	return nil
 }
 func (s *Service) available(d gamedata.CashProductDesign) bool {
+	if s.eventShopGroups[d.Key.GroupID] {
+		now := uint64(s.now().UnixMilli())
+		for _, w := range s.eventShopWindows[d.Key] {
+			if w[0] <= now && now < w[1] {
+				return true
+			}
+		}
+		return false
+	}
 	w, ok := s.shopWindows[d.Key]
 	if !ok {
 		return d.TimeLimitType == 0
@@ -196,8 +207,8 @@ func (s *Service) shopInfo() []byte {
 		g, _, _ := wire.Varint(raw, 1)
 		id, _, _ := wire.Varint(raw, 2)
 		sale, _, _ := wire.Varint(raw, 3)
-		d, ok := s.catalog.Design(gamedata.CashProductKey{GroupID: g, ProductID: id, SaleGroup: sale})
-		if ok && s.available(d) {
+		_, ok := s.catalog.Design(gamedata.CashProductKey{GroupID: g, ProductID: id, SaleGroup: sale})
+		if ok {
 			response = wire.AppendBytes(response, 1, raw)
 		}
 	}
@@ -396,9 +407,13 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		}
 	}
 	if native && !cash {
-		return 0, nil, false, nil
+		for _, line := range lines {
+			if !s.eventShopGroups[line.Key.GroupID] {
+				return 0, nil, false, nil
+			}
+		}
 	}
-	if native {
+	if native && cash {
 		return 61, nil, true, fmt.Errorf("commerce: mixed cash and native purchase")
 	}
 	h := sha256.Sum256(request)
@@ -436,9 +451,22 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		if !s.available(d) {
 			return 61, nil, true, fmt.Errorf("commerce: product is not currently available")
 		}
-		q, err := s.catalog.Quote(l.Key, l.Count)
-		if err != nil {
-			return 61, nil, true, err
+		var q Product
+		if d.PriceType == 1 {
+			var err error
+			q, err = s.catalog.Quote(l.Key, l.Count)
+			if err != nil {
+				return 61, nil, true, err
+			}
+		} else {
+			if d.PriceType == 0 || d.PriceCount == 0 {
+				return 61, nil, true, fmt.Errorf("commerce: invalid native price")
+			}
+			cost, err := boundedProduct(d.PriceCount, l.Count)
+			if err != nil {
+				return 61, nil, true, err
+			}
+			q = Product{Enabled: true, ItemType: d.PriceType, Cost: cost}
 		}
 		if !q.Enabled {
 			return 61, nil, true, fmt.Errorf("commerce: product disabled")
@@ -470,7 +498,10 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		designs[i] = d
 		quotes[i] = q
 	}
-	if e = validateAcceptedQuote(request, quotes); e != nil {
+	if cash {
+		e = validateAcceptedQuote(request, quotes)
+	}
+	if e != nil {
 		return 61, nil, true, e
 	}
 	var bundle []byte
@@ -479,24 +510,28 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		operation := fmt.Sprintf("%s:%d", identity, i)
 		var costs []gamedata.Reward
 		if q.Cost > 0 {
-			var typ uint64
-			switch q.Currency {
-			case "paid_diamonds":
-				typ = 2
-			case "diamonds":
-				typ = 3
-			case "gold":
-				typ = 4
-			default:
-				return 61, nil, true, fmt.Errorf("commerce: unknown currency %q", q.Currency)
+			if d.PriceType != 1 {
+				costs = []gamedata.Reward{{Type: d.PriceType, ID: d.PriceID, Count: q.Cost}}
+			} else {
+				var typ uint64
+				switch q.Currency {
+				case "paid_diamonds":
+					typ = 2
+				case "diamonds":
+					typ = 3
+				case "gold":
+					typ = 4
+				default:
+					return 61, nil, true, fmt.Errorf("commerce: unknown currency %q", q.Currency)
+				}
+				costs = []gamedata.Reward{{Type: typ, Count: q.Cost}}
 			}
-			costs = []gamedata.Reward{{Type: typ, Count: q.Cost}}
 		}
 		var special []byte
 		handled := false
 		// Delegate must only select known special products. Parent account transaction
 		// guarantees its grant and the subsequent debit commit together.
-		if s.delegate != nil {
+		if s.delegate != nil && d.PriceType == 1 {
 			special, handled, e = s.delegate(l.Key, request)
 			if e != nil {
 				return 61, nil, true, e

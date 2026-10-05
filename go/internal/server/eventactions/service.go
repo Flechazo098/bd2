@@ -50,19 +50,21 @@ type snapshot struct {
 	Receipts                           map[string]receipt
 }
 type Service struct {
-	mu         sync.Mutex
-	store      stateio.Store
-	design     *gamedata.EventActionsDesign
-	registry   events.Resolver
-	economy    Economy
-	state      snapshot
-	now        func() time.Time
-	session    string
-	friendship func(uint64) uint64
-	chargeInfo func() ([]byte, error)
-	owned      func(uint64, uint64) bool
-	progress   func(uint64, uint64, uint64) error
-	voteTotals func(uint64, uint64) (map[uint64]uint64, error)
+	mu          sync.Mutex
+	store       stateio.Store
+	design      *gamedata.EventActionsDesign
+	registry    events.Resolver
+	economy     Economy
+	state       snapshot
+	now         func() time.Time
+	session     string
+	friendship  func(uint64) uint64
+	chargeInfo  func() ([]byte, error)
+	owned       func(uint64, uint64) bool
+	progress    func(uint64, uint64, uint64) error
+	voteTotals  func(uint64, uint64) (map[uint64]uint64, error)
+	miniContent MiniContentResolver
+	miniDesign  *gamedata.MiniContentDesign
 }
 
 func Open(store stateio.Store, d *gamedata.EventActionsDesign, r events.Resolver, e Economy) (*Service, error) {
@@ -193,6 +195,12 @@ func (s *Service) Handle(path string, b []byte) (int, []byte, bool, error) {
 	if path == "/CafeteriaEventNpcInteractionReward" {
 		code, ok = 414, true
 	}
+	if path == "/DailyStoryInfo" {
+		code, ok = 538, true
+	}
+	if path == "/DailyStoryClear" {
+		code, ok = 539, true
+	}
 	if !ok {
 		return 0, nil, false, nil
 	}
@@ -261,6 +269,8 @@ func (s *Service) spawnWire(p *spawn) []byte {
 }
 func (s *Service) handle(path string, b []byte, identity string) ([]byte, error) {
 	switch path {
+	case "/DailyStoryInfo", "/DailyStoryClear":
+		return s.dailyStory(path, b, identity)
 	case "/CafeteriaEventNpcInteractionReward":
 		return s.cafeteriaReward(b, identity)
 	case "/ChargeCostInfo":
@@ -436,7 +446,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		return out, nil
 	case "/NpcQuizInfo":
 		uid := val(b, 2)
-		v, e := s.registry.Resolve(uid)
+		v, e := s.resolveQuiz(uid)
 		if e != nil {
 			return nil, e
 		}
@@ -455,7 +465,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		return out, nil
 	case "/NpcQuizClear":
 		uid, g, id := val(b, 2), val(b, 3), val(b, 4)
-		v, e := s.registry.Resolve(uid)
+		v, e := s.resolveQuiz(uid)
 		if e != nil {
 			return nil, e
 		}

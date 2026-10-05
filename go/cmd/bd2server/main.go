@@ -732,6 +732,21 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load event inventory design: %w", err)
 	}
 	eventEconomy.AttachOwnedItemDesign(ownedEventItems)
+	avatarRewards, err := gamedata.LoadAvatarRewardDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load avatar rewards: %w", err)
+	}
+	eventEconomy.AttachAvatarRewards(avatarRewards)
+	buffDesign, err := gamedata.LoadBuffRewardDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load permanent buff rewards: %w", err)
+	}
+	buffRewards, err := events.OpenBuffRewards(gameplayStore, buffDesign)
+	if err != nil {
+		return fmt.Errorf("load permanent buff ownership: %w", err)
+	}
+	eventEconomy.AttachBuffRewards(buffRewards)
+	pictorialService.AttachPermanentBuffs(buffRewards.SnapshotBuffs)
 	eventAPCaps, eventAPReset, err := gamedata.LoadEventAPDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load event AP reset: %w", err)
@@ -785,6 +800,9 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := cashService.AttachShopSeed(serverConfig); err != nil {
 		return fmt.Errorf("attach cash product availability: %w", err)
+	}
+	if err := cashService.AttachEventShopSchedules(cashDesign, calendars.Events); err != nil {
+		return fmt.Errorf("attach event shop availability: %w", err)
 	}
 	cashBonusDesign, err := gamedata.LoadCashBonusCatalog(gameData, *gameDataVersion)
 	if err != nil {
@@ -909,6 +927,13 @@ func serve(args []string) (serveErr error) {
 	eventActionsService, err := eventactions.Open(gameplayStore, eventActionsDesign, eventRegistry, eventEconomy)
 	if err != nil {
 		return fmt.Errorf("load event action state: %w", err)
+	}
+	miniContent, err := gamedata.LoadMiniContentDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load mini event content: %w", err)
+	}
+	if err = eventActionsService.AttachMiniContent(eventPlayService, miniContent); err != nil {
+		return fmt.Errorf("attach mini event content: %w", err)
 	}
 	eventActionsService.AttachFriendshipLevel(func(id uint64) uint64 {
 		for _, entry := range collection.FriendshipEntries() {

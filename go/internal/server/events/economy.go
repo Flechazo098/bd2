@@ -38,22 +38,24 @@ type economySnapshot struct {
 // Economy dispatches verified static rewards to their owning domains. It is
 // called inside the same account transaction as the gameplay operation.
 type Economy struct {
-	ownedDesign  map[uint64]map[uint64]bool
-	mu           sync.Mutex
-	store        stateio.Store
-	items        *player.Inventory
-	wallet       *player.Wallet
-	collection   *player.CollectionStore
-	equipment    *player.EquipmentInventory
-	costumes     player.CostumeDesignSource
-	options      equipmentRoller
-	graph        rewardResolver
-	hunting      HuntingAP
-	prestige     map[uint64]uint64
-	apCaps       map[uint64]uint64
-	resetSeconds int64
-	now          func() time.Time
-	initial      map[uint64]uint64
+	ownedDesign   map[uint64]map[uint64]bool
+	avatarRewards *gamedata.AvatarRewardDesign
+	buffRewards   *BuffRewards
+	mu            sync.Mutex
+	store         stateio.Store
+	items         *player.Inventory
+	wallet        *player.Wallet
+	collection    *player.CollectionStore
+	equipment     *player.EquipmentInventory
+	costumes      player.CostumeDesignSource
+	options       equipmentRoller
+	graph         rewardResolver
+	hunting       HuntingAP
+	prestige      map[uint64]uint64
+	apCaps        map[uint64]uint64
+	resetSeconds  int64
+	now           func() time.Time
+	initial       map[uint64]uint64
 }
 
 func NewEconomy(store stateio.Store, items *player.Inventory, wallet *player.Wallet, collection *player.CollectionStore, equipment *player.EquipmentInventory, costumes player.CostumeDesignSource, options equipmentRoller, graph rewardResolver, initial map[uint64]uint64) (*Economy, error) {
@@ -73,7 +75,9 @@ func NewEconomy(store stateio.Store, items *player.Inventory, wallet *player.Wal
 
 // AdditionalCurrencyFields maps EElementType to its UserDBInfo field. These
 // balances use a gameplay entry, leaving the frozen wallet schema unchanged.
-var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 43: 48, 44: 54, 60: 60}
+var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 38: 42, 39: 44, 40: 45, 43: 48, 44: 54, 54: 61, 60: 60, 70: 71}
+
+func (e *Economy) AttachAvatarRewards(d *gamedata.AvatarRewardDesign) { e.avatarRewards = d }
 
 func (e *Economy) AttachHuntingAP(h HuntingAP) { e.hunting = h }
 func (e *Economy) AdditionalCurrencies() (map[int]uint64, error) {
@@ -134,7 +138,7 @@ func extraCurrency(t uint64) bool { _, ok := AdditionalCurrencyFields[t]; return
 func apCurrency(t uint64) bool    { return t == 21 || t == 23 }
 func inventoryType(t uint64) bool {
 	switch t {
-	case 5, 7, 8, 9, 13, 14, 17, 19, 25, 26, 27, 29, 34, 45, 46, 47, 49:
+	case 5, 7, 8, 9, 13, 14, 17, 19, 25, 26, 27, 29, 34, 45, 46, 47, 49, 50, 61, 69:
 		return true
 	}
 	return false
@@ -275,7 +279,11 @@ func (e *Economy) consumeAndGrant(identity string, consumed []player.Item, rewar
 	if err != nil {
 		return nil, err
 	}
-	var walletRewards, apRewards []gamedata.Reward
+	expanded, err = e.avatarRewards.Expand(expanded)
+	if err != nil {
+		return nil, err
+	}
+	var walletRewards, apRewards, buffItems []gamedata.Reward
 	var itemRewards []gamedata.BattleReward
 	var costumes []uint64
 	var equips []player.Equipment
@@ -303,6 +311,12 @@ func (e *Economy) consumeAndGrant(identity string, consumed []player.Item, rewar
 			}
 			s.Balances[r.Type] += r.Count
 			bundle = wire.AppendBytes(bundle, 1, player.ItemWire(player.Item{Type: r.Type, Count: r.Count}))
+		case r.Type == 63:
+			if e.buffRewards == nil {
+				return nil, fmt.Errorf("events: buff reward runtime unavailable")
+			}
+			buffItems = append(buffItems, gamedata.Reward(r))
+			bundle = wire.AppendBytes(bundle, 6, player.ItemWire(player.Item{Type: r.Type, ID: r.ID, Count: r.Count}))
 		case r.Type == 11:
 			if _, ok := e.costumes.Character(r.ID); !ok || r.Count > 1000 {
 				return nil, fmt.Errorf("events: unknown or excessive costume reward %d", r.ID)
@@ -332,9 +346,15 @@ func (e *Economy) consumeAndGrant(identity string, consumed []player.Item, rewar
 				equips = append(equips, entry)
 			}
 		case inventoryType(r.Type):
-			if r.Type == 47 || r.Type == 49 {
+			if r.Type == 47 || r.Type == 69 {
 				if !e.ownedDesign[r.Type][r.ID] {
 					return nil, fmt.Errorf("events: unknown owned item design %d:%d", r.Type, r.ID)
+				}
+			}
+			if r.Type == 49 || r.Type == 50 || r.Type == 61 {
+				valid := e.avatarRewards != nil && e.avatarRewards.Items[r.Type][r.ID]
+				if !valid && !e.ownedDesign[r.Type][r.ID] {
+					return nil, fmt.Errorf("events: unknown avatar member %d:%d", r.Type, r.ID)
 				}
 			}
 			if r.Type == 45 {
@@ -348,6 +368,11 @@ func (e *Economy) consumeAndGrant(identity string, consumed []player.Item, rewar
 			itemRewards = append(itemRewards, r)
 		default:
 			return nil, fmt.Errorf("events: unsupported reward type %d", r.Type)
+		}
+	}
+	if len(buffItems) > 0 {
+		if err = e.buffRewards.Validate(buffItems); err != nil {
+			return nil, err
 		}
 	}
 	if err = e.wallet.CanExchange(walletCosts, walletRewards); err != nil {
@@ -372,6 +397,11 @@ func (e *Economy) consumeAndGrant(identity string, consumed []player.Item, rewar
 	}
 	if len(apCosts)+len(apRewards) > 0 {
 		if err = e.hunting.ExchangeAPOnce(identity+":ap", apCosts, apRewards); err != nil {
+			return nil, err
+		}
+	}
+	if len(buffItems) > 0 {
+		if err = e.buffRewards.GrantOnce(identity+":buff-items", buffItems); err != nil {
 			return nil, err
 		}
 	}

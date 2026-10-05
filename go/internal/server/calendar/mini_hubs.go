@@ -60,6 +60,21 @@ func (s *Set) validateMiniHubBindings(design *gamedata.EventPlayCatalog) error {
 				return fmt.Errorf("calendar: mini hub %d slot %d content type %d, want %d", hub.HubID, binding.Slot, binding.ProgressType, contentType)
 			}
 			eventType, supported := gamedata.MiniHubEventType(contentType)
+			// Mini stories and NPC quizzes have their own slot UID namespace,
+			// distinct from Define_EventType (13 there means bingo). Their group
+			// and availability derive from this static slot and the hub window.
+			if contentType == 13 || contentType == 14 {
+				if len(binding.EventUIDs) != 1 || binding.EventUIDs[0] == 0 {
+					return fmt.Errorf("calendar: mini hub %d slot %d requires one local content UID", hub.HubID, binding.Slot)
+				}
+				if _, collision := uid[binding.EventUIDs[0]]; collision {
+					return fmt.Errorf("calendar: mini hub %d slot %d content UID collides with global event", hub.HubID, binding.Slot)
+				}
+				if value(slot, 4) != 0 {
+					return fmt.Errorf("calendar: mini hub %d story/quiz slot has invalid end type", hub.HubID)
+				}
+				continue
+			}
 			if !supported {
 				return fmt.Errorf("calendar: mini hub %d slot %d content type %d has no supported scheduled route", hub.HubID, binding.Slot, contentType)
 			}
