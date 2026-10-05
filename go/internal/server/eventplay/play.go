@@ -59,6 +59,7 @@ type Service struct {
 	rooms            RoomRuntime
 	onProgress       func(uint64, uint64, uint64) error
 	hubCalendars     *readonly.Seed
+	fieldBindings    []FieldBinding
 }
 
 func Open(store stateio.Store, root, version string, registry events.Resolver, economy Rewards) (*Service, error) {

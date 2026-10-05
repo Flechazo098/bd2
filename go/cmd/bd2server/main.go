@@ -956,6 +956,12 @@ func serve(args []string) (serveErr error) {
 	}
 	eventPlayService.AttachBattleChallenges(eventBattleChallenges)
 	eventPlayService.AttachHubCalendars(serverConfig)
+	if err := eventPlayService.AttachFieldBindingsFile(filepath.Join(filepath.Dir(*worldSeed), "event_field_bindings.json")); err != nil {
+		return fmt.Errorf("attach hidden field bindings: %w", err)
+	}
+	if err := worldService.AttachEventFieldPacks(eventPlayService); err != nil {
+		return fmt.Errorf("attach event field packs: %w", err)
+	}
 	battleService.AttachEventBattle(eventPlayService)
 	eventActionsDesign, err := gamedata.LoadEventActionsDesign(gameData, *gameDataVersion)
 	if err != nil {

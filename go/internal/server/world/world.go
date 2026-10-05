@@ -181,6 +181,7 @@ type Service struct {
 	packJamDesign      *gamedata.PackJamDesign
 	packJamMu          sync.Mutex
 	fieldPacks         map[int]gamedata.FieldPack
+	eventFieldPacks    EventFieldPackSource
 	fieldObjects       map[int]gamedata.FieldObjectDesign
 	fieldObjectLoader  func(int) (gamedata.FieldObjectDesign, error)
 	fieldReset         gamedata.FieldResetSchedule
@@ -262,7 +263,15 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if err != nil || !found || seq == 0 {
 			return 0, nil, true, errors.New("world: PackInfo missing sequence")
 		}
-		return 4, s.accountPackInfo(), true, nil
+		response := s.accountPackInfo()
+		rows, err := s.eventPackInfoRows()
+		if err != nil {
+			return 0, nil, true, err
+		}
+		for _, row := range rows {
+			response = wire.AppendBytes(response, 1, row)
+		}
+		return 4, response, true, nil
 	case "/CharInfo":
 		seq, found, err := wire.Varint(request, 1)
 		if err != nil || !found || seq == 0 {
@@ -343,6 +352,11 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		pack, err := requestPack(request)
 		if err != nil {
 			return 0, nil, true, err
+		}
+		if eventPack, found, err := s.resolveEventFieldPack(pack); err != nil {
+			return 0, nil, true, err
+		} else if found {
+			return s.enterEventFieldPack(eventPack)
 		}
 		if !s.packUnlocked(pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
@@ -441,6 +455,9 @@ func requestQuest(request []byte) (int, int, error) {
 }
 
 func (s *Service) questsFor(packID int) (map[int]gamedata.QuestDesign, bool) {
+	if _, found, err := s.resolveEventFieldPack(packID); err == nil && found {
+		return map[int]gamedata.QuestDesign{}, true
+	}
 	if _, exists := s.fieldPacks[packID]; exists {
 		return map[int]gamedata.QuestDesign{}, true
 	}
@@ -453,6 +470,11 @@ func (s *Service) questsFor(packID int) (map[int]gamedata.QuestDesign, bool) {
 
 // packUnlocked uses installed ContentOpen rules and real account tickets.
 func (s *Service) packUnlocked(packID int) bool {
+	if pack, found, err := s.resolveEventFieldPack(packID); err != nil {
+		return false
+	} else if found {
+		return s.eventPackPurchased(pack.ID)
+	}
 	if pack, exists := s.fieldPacks[packID]; exists {
 		return s.fieldPackUnlocked(pack)
 	}

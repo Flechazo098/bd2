@@ -1,0 +1,6 @@
+{
+  "version": "2.35.10",
+  "bindings": [
+    {"pack_id": 20000, "event_type": 20, "content_open_type": 20}
+  ]
+}
