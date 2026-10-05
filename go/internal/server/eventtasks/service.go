@@ -57,6 +57,7 @@ type snapshot struct {
 type Service struct {
 	provider          world.GameplayAchievementProvider
 	before            world.GameplayAchievementSnapshot
+	beforeMissions    map[missionNoticeKey]uint64
 	mu                sync.Mutex
 	store             stateio.Store
 	design            *gamedata.EventTasksDesign

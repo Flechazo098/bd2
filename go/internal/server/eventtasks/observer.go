@@ -8,6 +8,9 @@ import (
 
 func (s *Service) BeginSession(id string) { s.SetSession(id) }
 func (s *Service) BeforeDispatch(string, []byte) error {
+	s.mu.Lock()
+	s.beforeMissions = s.visibleMissionValues()
+	s.mu.Unlock()
 	if s.provider == nil {
 		return nil
 	}
@@ -72,7 +75,7 @@ func (s *Service) AfterDispatch(path string, request, response []byte) ([]byte, 
 			}
 		}
 	}
-	return s.Notify()
+	return s.notifyMissionChanges()
 }
 
 func (s *Service) CompleteSingleTargetEvent(condition uint64, unlocked func(uint64, uint64) bool) error {
