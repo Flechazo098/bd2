@@ -86,6 +86,7 @@ public sealed class Plugin : BaseUnityPlugin
             Patch(typeof(GachaProductButtonElement), "Set", nameof(GachaPrice), true, 6);
             PatchGeneratedReceiver("<SendLoginPassRequest>b__0", nameof(LoginPassRewards));
             PatchGeneratedReceiver("<SendEventRewardRequest>b__0", nameof(EventRewards));
+            PassRewardPresentation.Install(harmony);
             MethodInfo attendance = typeof(EventPacket).GetGameMethod("RecvAttendanceResponse", All, null,
                 new[] { typeof(IMessage), typeof(int), typeof(int) }, null);
             if (attendance == null) throw new MissingMethodException("EventPacket.RecvAttendanceResponse(IMessage,int,int)");
