@@ -12,11 +12,12 @@ import (
 // RewardGraph resolves random-box nodes; costume/equipment leaves retain
 // their design IDs for the owning grant domain.
 type RewardGraph struct {
-	mu     sync.Mutex
-	boxes  map[uint64]uint64
-	direct map[uint64]bool
-	groups map[uint64][]byte
-	sample func(uint64) (uint64, error)
+	mu      sync.Mutex
+	boxes   map[uint64]uint64
+	direct  map[uint64]bool
+	special map[uint64]bool
+	groups  map[uint64][]byte
+	sample  func(uint64) (uint64, error)
 }
 
 func LoadRewardGraph(root, version string) (*RewardGraph, error) {
@@ -25,7 +26,7 @@ func LoadRewardGraph(root, version string) (*RewardGraph, error) {
 		return nil, e
 	}
 	defer done()
-	g := &RewardGraph{boxes: map[uint64]uint64{}, direct: map[uint64]bool{}, groups: map[uint64][]byte{}}
+	g := &RewardGraph{boxes: map[uint64]uint64{}, direct: map[uint64]bool{}, special: map[uint64]bool{}, groups: map[uint64][]byte{}}
 	g.sample = func(n uint64) (uint64, error) {
 		if n == 0 {
 			return 0, fmt.Errorf("gamedata: empty reward pool")
@@ -57,7 +58,15 @@ func LoadRewardGraph(root, version string) (*RewardGraph, error) {
 			rows.Close()
 			return nil, err
 		}
-		g.direct[id] = drop == 1
+		// RBD_DIRECT owns the box itself; RBD_OPEN grants its selected contents.
+		// Design also contains special mode 10 boxes; only the verified OPEN
+		// mode is automatically expanded, other modes retain their entity.
+		if drop != 0 && drop != 1 && drop != 10 {
+			rows.Close()
+			return nil, fmt.Errorf("gamedata: unsupported random box drop type %d", drop)
+		}
+		g.direct[id] = drop != 0
+		g.special[id] = drop == 10
 		g.boxes[id] = gid
 	}
 	e = rows.Err()
@@ -88,13 +97,17 @@ func (g *RewardGraph) SetSampler(f func(uint64) (uint64, error)) {
 	g.sample = f
 }
 func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
+	return g.resolve(rewards, true)
+}
+
+func (g *RewardGraph) resolve(rewards []BattleReward, openRoots bool) ([]BattleReward, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	budget := uint64(100000)
 	totals := map[[2]uint64]uint64{}
 	seen := map[uint64]bool{}
-	var emit func(BattleReward) error
-	emit = func(r BattleReward) error {
+	var emit func(BattleReward, bool) error
+	emit = func(r BattleReward, forceOpen bool) error {
 		if r.Count == 0 || r.Count > math.MaxInt32 || r.Type == 0 {
 			return fmt.Errorf("gamedata: invalid reward graph quantity/type")
 		}
@@ -102,7 +115,18 @@ func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
 			return fmt.Errorf("gamedata: reward graph operation limit")
 		}
 		budget--
-		if r.Type != 9 {
+		if r.Type == 9 {
+			if forceOpen && g.special[r.ID] {
+				return fmt.Errorf("gamedata: special random box %d cannot use generic opening", r.ID)
+			}
+			if _, ok := g.boxes[r.ID]; !ok {
+				return fmt.Errorf("gamedata: unknown random box %d", r.ID)
+			}
+			if _, ok := g.direct[r.ID]; !ok {
+				return fmt.Errorf("gamedata: missing random box drop type %d", r.ID)
+			}
+		}
+		if r.Type != 9 || !forceOpen && g.direct[r.ID] {
 			k := [2]uint64{r.Type, r.ID}
 			if totals[k] > math.MaxInt32-r.Count {
 				return fmt.Errorf("gamedata: reward graph overflow")
@@ -163,7 +187,7 @@ func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
 					if x >= weights[i] {
 						continue
 					}
-					if e = emit(child); e != nil {
+					if e = emit(child, false); e != nil {
 						return e
 					}
 				}
@@ -192,7 +216,7 @@ func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
 				}
 				for j, w := range weights {
 					if x < w {
-						if e = emit(children[j]); e != nil {
+						if e = emit(children[j], false); e != nil {
 							return e
 						}
 						break
@@ -204,7 +228,7 @@ func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
 		return nil
 	}
 	for _, r := range rewards {
-		if e := emit(r); e != nil {
+		if e := emit(r, openRoots); e != nil {
 			return nil, e
 		}
 	}
@@ -221,19 +245,8 @@ func (g *RewardGraph) Resolve(rewards []BattleReward) ([]BattleReward, error) {
 	return out, nil
 }
 
-// ResolveGranted preserves manually opened boxes; only RbdDirect boxes expand.
+// ResolveGranted opens RBD_OPEN wrappers at every level, preserving RBD_DIRECT
+// boxes as inventory items. Resolve force-opens only explicitly requested roots.
 func (g *RewardGraph) ResolveGranted(rewards []BattleReward) ([]BattleReward, error) {
-	var out []BattleReward
-	for _, r := range rewards {
-		if r.Type == 9 && !g.direct[r.ID] {
-			out = append(out, r)
-			continue
-		}
-		expanded, e := g.Resolve([]BattleReward{r})
-		if e != nil {
-			return nil, e
-		}
-		out = append(out, expanded...)
-	}
-	return out, nil
+	return g.resolve(rewards, false)
 }

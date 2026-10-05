@@ -40,7 +40,7 @@ func (c *CashRewardResolver) ResolveGranted(rewards []BattleReward) ([]BattleRew
 			return fmt.Errorf("gamedata: invalid cash reward/budget")
 		}
 		budget--
-		if r.Type != 9 || !force && !c.direct[r.ID] {
+		if r.Type != 9 || !force && c.direct[r.ID] {
 			out = append(out, r)
 			return nil
 		}
