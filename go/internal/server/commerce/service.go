@@ -560,7 +560,7 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		var err error
 		if delivery, ok := s.economy.(interface {
 			ApplyPurchase(string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
-		}); ok && d.PriceType == 1 {
+		}); ok {
 			b, err = delivery.ApplyPurchase(operation, costs, rewards)
 		} else {
 			b, err = s.economy.Apply(operation, costs, rewards)
