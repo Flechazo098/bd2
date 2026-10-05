@@ -88,6 +88,7 @@ public sealed class Plugin : BaseUnityPlugin
             PatchGeneratedReceiver("<SendEventRewardRequest>b__0", nameof(EventRewards));
             PassRewardPresentation.Install(harmony);
             RewardBuffRefresh.Install(harmony);
+            PrestigeSkinRewardPresentation.Install(harmony, Log);
             MethodInfo attendance = typeof(EventPacket).GetGameMethod("RecvAttendanceResponse", All, null,
                 new[] { typeof(IMessage), typeof(int), typeof(int) }, null);
             if (attendance == null) throw new MissingMethodException("EventPacket.RecvAttendanceResponse(IMessage,int,int)");
