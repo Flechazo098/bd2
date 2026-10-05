@@ -670,6 +670,20 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("read initial hunting AP: %w", err)
 	}
 	gameplayStore := stateio.EntrySnapshotStore{Entries: stateRepository, Domain: "missions", Bucket: "gameplay"}
+	contentOpeningDesign, err := gamedata.LoadContentOpeningDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load content opening GameData: %w", err)
+	}
+	contentOpenService, err := player.NewContentOpenService(contentOpeningDesign, ownedItems, gameplayStore, func() (uint64, error) {
+		experience, err := missionService.AchievementExperience()
+		if err != nil {
+			return 0, err
+		}
+		return levelDesign.Level(experience), nil
+	})
+	if err != nil {
+		return fmt.Errorf("load content opening state: %w", err)
+	}
 	huntingService, err := hunting.Open(gameplayStore, gameData, *gameDataVersion, ownedItems, wallet,
 		worldService.CurrentPackID, freeHuntingAP, bonusHuntingAP)
 	if err != nil {
@@ -1115,6 +1129,7 @@ func serve(args []string) (serveErr error) {
 		costumePotentialService,
 		costumeBurstService,
 		friendshipService,
+		contentOpenService,
 		masterTitleService,
 		recruitService,
 		foodService,
