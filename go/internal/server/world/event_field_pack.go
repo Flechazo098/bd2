@@ -15,6 +15,15 @@ type EventFieldPackSource interface {
 	ListEventFieldPacks() ([]gamedata.EventFieldPack, error)
 }
 
+// PackAvailable exposes the same account/calendar authorization to NPC
+// services without letting them infer access from the client's pack number.
+func (s *Service) PackAvailable(id uint64) bool {
+	if id == 0 || id > uint64(^uint32(0)>>1) {
+		return false
+	}
+	return s.packUnlocked(int(id))
+}
+
 func (s *Service) AttachEventFieldPacks(source EventFieldPackSource) error {
 	if source == nil {
 		return fmt.Errorf("world: nil event field pack source")

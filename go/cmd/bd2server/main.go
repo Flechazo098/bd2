@@ -39,6 +39,8 @@ import (
 	"bd2server/internal/server/mail"
 	"bd2server/internal/server/missions"
 	"bd2server/internal/server/monsterhunt"
+	"bd2server/internal/server/npcinn"
+	"bd2server/internal/server/npcshop"
 	"bd2server/internal/server/pictorial"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/progress"
@@ -47,6 +49,7 @@ import (
 	"bd2server/internal/server/resourcepolicy"
 	"bd2server/internal/server/session"
 	"bd2server/internal/server/stateio"
+	"bd2server/internal/server/todayquest"
 	"bd2server/internal/server/transport"
 	"bd2server/internal/server/versionconfig"
 	"bd2server/internal/server/wire"
@@ -670,6 +673,9 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("read initial hunting AP: %w", err)
 	}
 	gameplayStore := stateio.EntrySnapshotStore{Entries: stateRepository, Domain: "missions", Bucket: "gameplay"}
+	if err := worldService.AttachFieldMonsterState(gameplayStore); err != nil {
+		return fmt.Errorf("attach field monster state: %w", err)
+	}
 	contentOpeningDesign, err := gamedata.LoadContentOpeningDesign(gameData, *gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load content opening GameData: %w", err)
@@ -733,6 +739,41 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load event economy: %w", err)
 	}
 	eventEconomy.AttachHuntingAP(huntingService)
+	if err := worldService.ConfigureNPCRuntime(gameData, *gameDataVersion, gameplayStore); err != nil {
+		return fmt.Errorf("configure NPC world runtime: %w", err)
+	}
+	innService, err := npcinn.New(gameplayStore, worldService.CharacterService(), wallet, worldService.InnContext,
+		func() (uint64, error) {
+			experience, err := missionService.AchievementExperience()
+			if err != nil {
+				return 0, err
+			}
+			return levelDesign.Level(experience), nil
+		}, battleService.Active)
+	if err != nil {
+		return fmt.Errorf("load inn recovery: %w", err)
+	}
+	npcShopDesign, err := gamedata.LoadNPCShopDesign(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load NPC shop design: %w", err)
+	}
+	npcShopService, err := npcshop.New(npcShopDesign, gameplayStore, eventEconomy, ownedItems, worldService.PackAvailable)
+	if err != nil {
+		return fmt.Errorf("load NPC shop state: %w", err)
+	}
+	npcShopService.SetReputationSource(worldService.NPCShopReputation)
+	commissionDesign, err := gamedata.LoadTodayQuests(gameData, *gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load NPC commission design: %w", err)
+	}
+	commissionService, err := todayquest.Open(gameplayStore, commissionDesign, eventEconomy, ownedItems, worldService.CommissionPackUnlocked)
+	if err != nil {
+		return fmt.Errorf("load NPC commission state: %w", err)
+	}
+	commissionService.CompleteReputation = worldService.CompleteNPCReputation
+	if err := worldService.AttachTodayQuests(commissionService); err != nil {
+		return fmt.Errorf("attach NPC commissions: %w", err)
+	}
 	if err = worldService.AttachResearchRuntime(gameData, *gameDataVersion, eventEconomy); err != nil {
 		return fmt.Errorf("attach field research: %w", err)
 	}
@@ -1002,7 +1043,10 @@ func serve(args []string) (serveErr error) {
 		return append(rows, huntingRows...), nil
 	})
 	eventActionsService.AttachProgress(func(condition, sub, count uint64) error {
-		return missionService.RecordEvent(condition, sub, count, missionUnlocked)
+		if err := missionService.RecordEvent(condition, sub, count, missionUnlocked); err != nil {
+			return err
+		}
+		return eventTasksService.RecordEvent(condition, sub, count, missionUnlocked)
 	})
 	eventPlayService.AttachProgress(func(condition, sub, count uint64) error {
 		return missionService.RecordEvent(condition, sub, count, missionUnlocked)
@@ -1096,6 +1140,10 @@ func serve(args []string) (serveErr error) {
 	if err := missionService.AttachAchievementProgress(achievementCounters); err != nil {
 		return fmt.Errorf("attach achievement completion validation: %w", err)
 	}
+	commissionService.CompleteAchievement = func(identity string) error {
+		_, err := achievementCounters.RecordEvent(identity, 17, 0, 1)
+		return err
+	}
 	if err := login.AttachAchievementExperience(missionService); err != nil {
 		return fmt.Errorf("attach persisted achievement experience: %w", err)
 	}
@@ -1124,6 +1172,8 @@ func serve(args []string) (serveErr error) {
 		boxService,
 		eventPlayService,
 		eventActionsService,
+		npcShopService,
+		innService,
 		events.SkinHandler{Economy: eventEconomy},
 		battleService,
 		huntingService,

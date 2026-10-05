@@ -893,7 +893,7 @@ func (s *Service) RecordEvent(condition, sub, count uint64, unlocked func(uint64
 			continue
 		}
 		for _, t := range s.design.Missions {
-			if t.Type != condition || t.SubType != 0 && t.SubType != sub || !s.availableTask(v, t) {
+			if t.Type != condition || t.SubType != 0 && t.SubType != sub || condition == 349 && t.SubType != sub || !s.availableTask(v, t) {
 				continue
 			}
 			if (t.UnlockPack > 0 || t.UnlockQuest > 0) && (unlocked == nil || !unlocked(t.UnlockPack, t.UnlockQuest)) {

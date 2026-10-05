@@ -17,6 +17,7 @@ import (
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/progress"
 	"bd2server/internal/server/stateio"
+	"bd2server/internal/server/todayquest"
 	"bd2server/internal/server/versionconfig"
 	"bd2server/internal/server/wire"
 )
@@ -136,6 +137,7 @@ func Load(seedPath, gameDataRoot, gameDataVersion string, storage stateio.Store,
 		return nil, err
 	}
 	service.attachPackDetailDesign(gameDataRoot, gameDataVersion)
+	service.attachFieldMonsterDesign(gameDataRoot, gameDataVersion)
 	return service, nil
 }
 
@@ -169,6 +171,7 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	todayQuests        *todayquest.Service
 	huntingGround      interface{ EnsureForPack(int) ([]byte, error) }
 	battleActive       func() bool
 	questDifficulties  map[int]map[int]bool
@@ -184,6 +187,9 @@ type Service struct {
 	eventFieldPacks    EventFieldPackSource
 	fieldObjects       map[int]gamedata.FieldObjectDesign
 	fieldObjectLoader  func(int) (gamedata.FieldObjectDesign, error)
+	monsterLoader      func(int) ([]gamedata.FieldMonsterDesign, error)
+	monsterStore       stateio.Store
+	npcReputation      *npcReputationRuntime
 	fieldReset         gamedata.FieldResetSchedule
 	researchDesigns    map[int]gamedata.FieldResearchDesign
 	researchLoader     func(int) (gamedata.FieldResearchDesign, error)
@@ -237,7 +243,14 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
+	if s.todayQuests != nil {
+		if code, body, handled, err := s.todayQuests.Handle(path, request); handled {
+			return code, body, handled, err
+		}
+	}
 	switch path {
+	case "/MonsterInfo":
+		return s.handleMonsterInfo(request)
 	case "/QuestUpdate":
 		return s.handleQuestUpdate(request)
 	case "/FieldObjectInfo":
@@ -673,6 +686,15 @@ func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 	}
 	slog.Info("world: deliver field position", "pack", packID, "map", mapID, "restored", restored)
 	out = wire.AppendString(out, 4, position)
+	if s.npcReputation != nil {
+		rows, err := s.npcReputationRows(packID)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out = wire.AppendBytes(out, 9, row)
+		}
+	}
 	// The remaining starter-only records were observed in the official
 	// starter-pack response. They represent reputation, hunting-ground, statue,
 	// and reward state, not generic defaults, so a newly entered later pack must
@@ -682,6 +704,9 @@ func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 		return wire.AppendBytes(out, 12, visit), nil
 	}
 	for _, state := range s.seed.InitialReputations {
+		if s.npcReputation != nil {
+			break
+		}
 		row := wire.AppendVarint(nil, 1, state.GroupID)
 		row = wire.AppendVarint(row, 2, state.State)
 		if state.ElapsedSeconds != 0 {

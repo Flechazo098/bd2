@@ -90,8 +90,22 @@ func (s *Service) handleQuestSelection(path string, request []byte) (int, []byte
 		for _, quest := range s.activeSideQuestWires(pack) {
 			out = wire.AppendBytes(out, 1, quest)
 		}
+		var todayCleared []int
+		if s.todayQuests != nil {
+			rows, ids, err := s.todayQuests.Info(pack)
+			if err != nil {
+				return 0, nil, true, err
+			}
+			todayCleared = ids
+			for _, row := range rows {
+				out = wire.AppendBytes(out, 1, row)
+			}
+		}
 		var cleared []byte
 		for _, id := range s.state.ClearedQuests(pack, s.questDifficulty(pack)) {
+			cleared = binary.AppendUvarint(cleared, uint64(id))
+		}
+		for _, id := range todayCleared {
 			cleared = binary.AppendUvarint(cleared, uint64(id))
 		}
 		if len(cleared) > 0 {

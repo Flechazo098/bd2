@@ -184,6 +184,7 @@ func (s *Service) roll() {
 		s.state.Day = day
 		s.state.DailyNormal = 0
 		s.state.DailySpecial = 0
+		s.state.Spawns = map[uint64]*spawn{}
 		s.state.CafeteriaCurrency = 0
 		s.state.CafeteriaLast = map[string]int64{}
 		s.state.NormalVoted = map[string]bool{}
@@ -283,7 +284,10 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		if _, e := s.resolve(uid, 21); e != nil {
 			return nil, e
 		}
-		out := wire.AppendBytes(nil, 1, s.spawnWire(s.state.Spawns[uid]))
+		var out []byte
+		if p := s.state.Spawns[uid]; p != nil {
+			out = wire.AppendBytes(out, 1, s.spawnWire(p))
+		}
 		out = wire.AppendVarint(out, 2, s.state.DailyNormal)
 		out = wire.AppendVarint(out, 3, s.state.DailySpecial)
 		return out, nil
@@ -297,10 +301,13 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		if !ok || g != v.ID {
 			return nil, errors.New("eventactions: invalid spawn event")
 		}
+		if err := s.spawnWindow(r); err != nil {
+			return nil, err
+		}
 		if p := s.state.Spawns[v.UID]; p != nil {
 			defaults, _ := s.design.Row("FieldEventDefaultTable", 9, 0)
 			expired := defaults.V(12) > 0 && s.now().UnixMilli()-p.Start >= int64(defaults.V(12))*1000
-			if expired {
+			if expired && (p.Group != g || p.ID != id) {
 				delete(s.state.Spawns, v.UID)
 			} else {
 				if p.Group != g || p.ID != id {
@@ -332,15 +339,21 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		}
 		ck := key(g, id)
 		if p.Caught[ck] {
-			return nil, errors.New("eventactions: monster already caught")
+			// A new transport sequence must not turn a confirmed catch into
+			// either another grant or an error/recovery loop.
+			return wire.AppendBytes(nil, 1, nil), nil
 		}
 		defaults, _ := s.design.Row("FieldEventDefaultTable", 9, 0)
-		if defaults.V(12) > 0 && s.now().UnixMilli()-p.Start > int64(defaults.V(12))*1000 {
+		if defaults.V(12) > 0 && s.now().UnixMilli()-p.Start >= int64(defaults.V(12))*1000 {
 			return nil, errors.New("eventactions: spawn time expired")
 		}
 		special := r.V(2) != 0
-		if special && s.state.DailySpecial >= defaults.V(5) || !special && s.state.DailyNormal >= defaults.V(4) {
-			return nil, errors.New("eventactions: daily catch limit")
+		limited := special && s.state.DailySpecial >= defaults.V(5) || !special && s.state.DailyNormal >= defaults.V(4)
+		if limited {
+			// Participation remains available after the daily reward quota.
+			// Completing the capture without a grant also prevents client retries.
+			p.Caught[ck] = true
+			return wire.AppendBytes(nil, 1, nil), nil
 		}
 		reward, ok := s.design.SpawnRewards[[2]uint64{r.V(5), r.V(1)}]
 		if !ok || reward.Count == 0 {
@@ -357,7 +370,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			s.state.DailyNormal++
 		}
 		if s.progress != nil {
-			if e = s.progress(349, 0, 1); e != nil {
+			if e = s.progress(349, r.V(2), 1); e != nil {
 				return nil, e
 			}
 		}

@@ -31,6 +31,7 @@ func setup(t *testing.T) (*Service, *economyStub, stateio.Store) {
 	}
 	d := &gamedata.EventActionsDesign{Tables: map[string][]gamedata.EventActionRow{"VotingEventTable": {row(map[int]uint64{6: 1, 10: 1, 14: 1, 7: 1, 8: 6001, 9: 8, 1: 1, 2: 6002, 3: 8})}, "VotingCandidateTable": {row(map[int]uint64{1: 1, 2: 9})}, "VotingRoundTable": {row(map[int]uint64{2: 1, 3: 1})}, "TacticsBingoGroupTable": {row(map[int]uint64{3: 1, 1: 5, 4: 2})}, "TacticsBingoTable": {row(map[int]uint64{4: 5, 5: 1, 2: 99})}, "FieldSpawnEventTable": {row(map[int]uint64{4: 1, 5: 1, 2: 1})}, "FieldEventMonsterTable": {row(map[int]uint64{3: 1, 4: 1, 1: 3001, 5: 3009})}, "FieldEventDefaultTable": {row(map[int]uint64{4: 10, 5: 2, 12: 40})}}, SpawnRewards: map[[2]uint64]gamedata.Reward{{3009, 3001}: {Type: 4, Count: 10000}}}
 	economy := &economyStub{}
+	d.Tables["FieldSpawnEventTable"][0].Text = map[int]string{7: "12:00:00", 1: "12:10:00"}
 	store := stateio.NewMemory()
 	s, e := Open(store, d, r, economy)
 	if e != nil {
