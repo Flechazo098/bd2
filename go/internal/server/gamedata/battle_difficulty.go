@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // BattleDeckForDifficulty mirrors QuicklyQuestHelper.GetBattleDeckIdByDifficulty
@@ -23,25 +21,7 @@ func openPackDatabase(root, version string, packID int) (*sql.DB, func(), error)
 	if packID <= 0 {
 		return nil, nil, fmt.Errorf("gamedata: invalid battle pack %d", packID)
 	}
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
-	if err != nil {
-		return nil, nil, err
-	}
-	dir, err := os.MkdirTemp("", "bd2-difficulty-")
-	if err != nil {
-		return nil, nil, err
-	}
-	path := filepath.Join(dir, "pack.db")
-	if err := os.WriteFile(path, plain, 0600); err != nil {
-		os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		os.RemoveAll(dir)
-		return nil, nil, err
-	}
-	return db, func() { db.Close(); os.RemoveAll(dir) }, nil
+	return OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 }
 
 func battleDeckForDifficultyFromDB(db *sql.DB, deckID, difficulty uint64) (uint64, error) {

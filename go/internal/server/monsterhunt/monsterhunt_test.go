@@ -1,6 +1,7 @@
 package monsterhunt
 
 import (
+	"bd2server/internal/server/calendar"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/readonly"
@@ -20,6 +21,14 @@ func installed(t *testing.T) (*Service, *stateio.Memory) {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
 	}
 	seed, e := readonly.Load(filepath.Join("..", "..", "..", "seed", "v2_35_10", "readonly.json"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	calendars, e := calendar.LoadDirectory(filepath.Join("..", "..", "..", "..", "schedules"), "2.35.10", "20260923193640")
+	if e != nil {
+		t.Fatal(e)
+	}
+	seed, e = calendars.ApplyReadonly(seed)
 	if e != nil {
 		t.Fatal(e)
 	}

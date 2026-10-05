@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)] [string]$Config,
     [Parameter(Mandatory)] [string]$Output,
-    [Parameter(Mandatory)] [ValidateSet('local_identity', 'capture_environment', 'login_ui')] [string]$Plugin
+    [Parameter(Mandatory)] [ValidateSet('local_identity', 'capture_environment', 'login_ui', 'cash_shop')] [string]$Plugin
 )
 
 $ErrorActionPreference = 'Stop'

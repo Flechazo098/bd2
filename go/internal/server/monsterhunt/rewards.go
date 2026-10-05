@@ -56,6 +56,13 @@ func (s *Service) rankRewards(d *gamedata.MonsterHunt, group uint64) []gamedata.
 	return selected.Rewards
 }
 func (s *Service) grant(identity string, rewards []gamedata.BattleReward) ([]byte, error) {
+	if s.rewardGrant != nil {
+		rs := make([]gamedata.Reward, len(rewards))
+		for i, r := range rewards {
+			rs[i] = gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}
+		}
+		return s.rewardGrant(identity, rs)
+	}
 	var currency []gamedata.Reward
 	var stack []gamedata.BattleReward
 	for _, r := range rewards {

@@ -169,6 +169,7 @@ func (s *Service) setCurrentPack(packID int) {
 }
 
 type Service struct {
+	huntingGround      interface{ EnsureForPack(int) ([]byte, error) }
 	battleActive       func() bool
 	questDifficulties  map[int]map[int]bool
 	startingPackID     int
@@ -183,22 +184,28 @@ type Service struct {
 	fieldObjects       map[int]gamedata.FieldObjectDesign
 	fieldObjectLoader  func(int) (gamedata.FieldObjectDesign, error)
 	fieldReset         gamedata.FieldResetSchedule
-	squadLevel         func() (uint64, error)
-	seed               Seed
-	state              *progress.Store
-	starter            *player.Starter
-	equipment          *player.EquipmentInventory
-	inventory          *player.Inventory
-	wallet             *player.Wallet
-	characters         *player.CharacterStore
-	collection         *player.CollectionStore
-	decks              *deck.Store
-	quests             map[int]gamedata.QuestDesign
-	transition         gamedata.PackTransition
-	packs              map[int]map[int]gamedata.QuestDesign
-	transitions        map[int]gamedata.PackTransition
-	activePackMu       sync.RWMutex
-	activePack         int
+	researchDesigns    map[int]gamedata.FieldResearchDesign
+	researchLoader     func(int) (gamedata.FieldResearchDesign, error)
+	researchCharacters map[uint64]bool
+	researchEconomy    interface {
+		Apply(string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
+	}
+	squadLevel   func() (uint64, error)
+	seed         Seed
+	state        *progress.Store
+	starter      *player.Starter
+	equipment    *player.EquipmentInventory
+	inventory    *player.Inventory
+	wallet       *player.Wallet
+	characters   *player.CharacterStore
+	collection   *player.CollectionStore
+	decks        *deck.Store
+	quests       map[int]gamedata.QuestDesign
+	transition   gamedata.PackTransition
+	packs        map[int]map[int]gamedata.QuestDesign
+	transitions  map[int]gamedata.PackTransition
+	activePackMu sync.RWMutex
+	activePack   int
 }
 
 func (s *Service) AttachCollection(collection *player.CollectionStore) error {
@@ -225,6 +232,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		return s.handleFieldObjectInfo(request)
 	case "/FieldObjectReward":
 		return s.handleFieldObjectReward(request)
+	case "/FieldObjectResearch":
+		return s.handleFieldResearch(request)
+	case "/PackRewardObjectCount":
+		return s.handlePackRewardCounts(request)
 	case "/QuestInfo", "/QuestAccept", "/QuestGiveUp":
 		return s.handleQuestSelection(path, request)
 	case "/PackBuy":
@@ -562,6 +573,22 @@ func (s *Service) packInfo() ([]byte, error) {
 }
 
 func (s *Service) packInfoFor(packID int) ([]byte, error) {
+	out, err := s.basePackInfoFor(packID)
+	if err != nil || s.huntingGround == nil {
+		return out, err
+	}
+	ground, err := s.huntingGround.EnsureForPack(packID)
+	if err != nil {
+		return nil, err
+	}
+	if len(ground) == 0 {
+		return out, nil
+	}
+	out, _, err = wire.ReplaceBytes(out, 12, ground)
+	return out, err
+}
+
+func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 	var out []byte
 	if active := s.firstUnclearedQuestFor(packID); active != 0 {
 		quest := s.questInfoWire(packID, active)

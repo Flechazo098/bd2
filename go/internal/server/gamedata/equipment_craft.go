@@ -61,13 +61,30 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 	if err != nil {
 		return nil, err
 	}
+	type makingRow struct {
+		id  uint64
+		raw []byte
+	}
+	var makingRows []makingRow
 	for rows.Next() {
-		var id uint64
-		var raw []byte
-		if err := rows.Scan(&id, &raw); err != nil {
+		var row makingRow
+		if err := rows.Scan(&row.id, &row.raw); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		makingRows = append(makingRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Recipes perform nested random-box, reward and equipment queries only
+	// after the source result set releases the single database connection.
+	for _, row := range makingRows {
+		id, raw := row.id, row.raw
 		counts, _ := packedInts(raw, 4)
 		materialIDs, _ := packedInts(raw, 5)
 		materialTypes, _ := packedInts(raw, 6)
@@ -78,44 +95,31 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		if len(counts) == 0 || len(counts) != len(materialIDs) || len(counts) != len(materialTypes) ||
 			len(resultCounts) != 1 || resultCounts[0] != 1 || len(boxIDs) != 1 ||
 			len(resultTypes) != 1 || resultTypes[0] != 9 || len(talentLevels) != 1 || talentLevels[0] == 0 {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making recipe %d malformed", id)
 		}
 		var box []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM RandomBoxTable WHERE id=?", boxIDs[0]).Scan(&box); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making recipe %d random box: %w", id, err)
 		}
 		groups, _ := packedInts(box, 9)
 		if len(groups) != 1 || groups[0] == 0 {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making random box %d malformed", boxIDs[0])
 		}
 		results, equipmentOnly, err := classifyEquipmentRewardPool(db, groups[0])
 		if err != nil || !equipmentOnly || len(results) == 0 {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making recipe %d reward group: %w", id, err)
 		}
 		recipe := EquipmentCraftRecipe{ID: id, ResultCount: resultCounts[0], TalentLevel: talentLevels[0], Results: results}
 		for i := range counts {
 			if counts[i] == 0 || materialIDs[i] == 0 || materialTypes[i] == 0 {
-				rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment making recipe %d invalid material", id)
 			}
 			recipe.Costs = append(recipe.Costs, PromotionCost{Type: materialTypes[i], ID: materialIDs[i], Count: counts[i]})
 		}
 		if err := design.loadEquipmentPool(db, results); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making recipe %d: %w", id, err)
 		}
 		design.Recipes[id] = recipe
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 
 	talents := make(map[uint64]equipmentMakingTalent)

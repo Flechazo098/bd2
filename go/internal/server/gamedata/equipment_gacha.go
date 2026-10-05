@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"os"
-	"path/filepath"
 	"sort"
 )
 
@@ -62,24 +60,11 @@ type EquipmentOptionChoice struct{ GroupID, ID uint64 }
 // LoadEquipmentGachaGroups loads only groups selected by a captured dynamic
 // schedule. Presence in GameData alone does not mean a banner is open.
 func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*EquipmentGachaCatalog, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-equipment-gacha-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	c := &EquipmentGachaCatalog{Gachas: map[uint64]EquipmentGacha{}, groups: map[uint64]EquipmentGachaGroup{}, byGacha: map[uint64]uint64{}, equipment: map[uint64]EquipmentDesign{}}
 	for _, groupID := range groupIDs {
 		var raw []byte
@@ -146,6 +131,11 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 	if err != nil {
 		return nil, err
 	}
+	type ticketCandidate struct {
+		id, count, reward uint64
+		tickets           []uint64
+	}
+	var candidates []ticketCandidate
 	for rows.Next() {
 		var id uint64
 		var raw []byte
@@ -164,7 +154,18 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		if len(count) != 1 || count[0] == 0 || len(reward) != 1 || len(tickets) == 0 || len(price) != 0 || len(kind) != 0 {
 			continue
 		}
-		pool, equipmentOnly, err := classifyEquipmentRewardPool(db, reward[0])
+		candidates = append(candidates, ticketCandidate{id, count[0], reward[0], append([]uint64(nil), tickets...)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		id := candidate.id
+		pool, equipmentOnly, err := classifyEquipmentRewardPool(db, candidate.reward)
 		if err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("gamedata: ticket gacha %d: %w", id, err)
@@ -172,7 +173,7 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		if !equipmentOnly {
 			continue
 		}
-		g := EquipmentGacha{ID: id, Count: int(count[0]), TicketIDs: append([]uint64(nil), tickets...), Pool: pool, TicketOnly: true}
+		g := EquipmentGacha{ID: id, Count: int(candidate.count), TicketIDs: candidate.tickets, Pool: pool, TicketOnly: true}
 		c.Gachas[id] = g
 		for _, item := range pool {
 			if err := c.loadEquipmentTree(db, item); err != nil {

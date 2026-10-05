@@ -23,6 +23,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void OnApplicationQuit()
     {
+        ApplicationQuitting = true;
         DisposeGameRelay();
         PlatformControlHttp.Shutdown();
     }
@@ -91,6 +92,7 @@ public sealed class Plugin : BaseUnityPlugin
             }
 
             Harmony harmony = new Harmony(Guid);
+            SessionDiagnostics.Install(harmony);
             harmony.Patch(awake, postfix: new HarmonyMethod(typeof(SessionRecovery), nameof(IntroAwakePostfix)));
             HarmonyMethod maintenancePrefix = new HarmonyMethod(typeof(LoginController), nameof(SendMaintenancePrefix));
             maintenancePrefix.after = new[] { "bd2.localidentity" };

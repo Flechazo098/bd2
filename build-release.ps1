@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$GameDir,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$SchedulesOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,7 @@ $versionConfig = Join-Path $root 'versions.json'
 $authenticationConfig = Join-Path $root 'authentication.json'
 $resourceConfig = Join-Path $root 'resources.json'
 $gameConfig = Join-Path $root 'game.json'
+$scheduleDirectory = Join-Path $root 'schedules'
 
 try {
     $releaseVersions = Get-Content -LiteralPath $versionConfig -Raw | ConvertFrom-Json -ErrorAction Stop
@@ -26,6 +28,32 @@ try {
 }
 $serverArchive = Join-Path $buildRoot ("bd2server-{0}-windows-x64.zip" -f $releaseVersions.server_version)
 $clientArchive = Join-Path $buildRoot ("bd2client-{0}-windows-x64.zip" -f $releaseVersions.client_version)
+
+# Hash both filenames and contents so schedule releases evolve independently of
+# the server executable and distinguish additions, removals and renamed files.
+$scheduleFiles = @(Get-ChildItem -LiteralPath $scheduleDirectory -File -Filter '*.bd2schedule' | Sort-Object Name)
+if ($scheduleFiles.Count -eq 0) { throw "No project schedule files found at $scheduleDirectory" }
+$scheduleManifest = ($scheduleFiles | ForEach-Object {
+    "{0}:{1}" -f $_.Name, (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+}) -join "`n"
+$scheduleHasher = [Security.Cryptography.SHA256]::Create()
+try {
+    $scheduleHash = ([BitConverter]::ToString($scheduleHasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($scheduleManifest)))).Replace('-', '').ToLowerInvariant().Substring(0, 12)
+} finally { $scheduleHasher.Dispose() }
+$scheduleRelease = Join-Path $buildRoot ("bd2schedules-{0}-{1}" -f $releaseVersions.game_version, $scheduleHash)
+
+function Write-ScheduleRelease {
+    New-Item -ItemType Directory -Force -Path $scheduleRelease | Out-Null
+    foreach ($scheduleFile in $scheduleFiles) {
+        Copy-Item -LiteralPath $scheduleFile.FullName -Destination $scheduleRelease -Force
+    }
+    Write-Host "Built schedule release files: $scheduleRelease"
+}
+
+if ($SchedulesOnly) {
+    Write-ScheduleRelease
+    return
+}
 
 if ([string]::IsNullOrWhiteSpace($GameDir)) {
     $developmentConfigPath = Join-Path $goRoot 'config.json'
@@ -89,7 +117,8 @@ try {
 
 $clientPlugins = @(
     @{ Name = 'LocalIdentity'; Project = Join-Path $root 'plugins\LocalIdentity\LocalIdentity.csproj'; Output = Join-Path $root 'plugins\LocalIdentity\bin\Release\netstandard2.1\BD2LocalIdentity.dll'; FileName = 'BD2LocalIdentity.dll' },
-    @{ Name = 'LoginUI'; Project = Join-Path $root 'plugins\LoginUI\LoginUI.csproj'; Output = Join-Path $root 'plugins\LoginUI\bin\Release\netstandard2.1\BD2LoginUI.dll'; FileName = 'BD2LoginUI.dll' }
+    @{ Name = 'LoginUI'; Project = Join-Path $root 'plugins\LoginUI\LoginUI.csproj'; Output = Join-Path $root 'plugins\LoginUI\bin\Release\netstandard2.1\BD2LoginUI.dll'; FileName = 'BD2LoginUI.dll' },
+    @{ Name = 'CashShop'; Project = Join-Path $root 'plugins\CashShop\CashShop.csproj'; Output = Join-Path $root 'plugins\CashShop\bin\Release\netstandard2.1\BD2CashShop.dll'; FileName = 'BD2CashShop.dll' }
 )
 foreach ($plugin in $clientPlugins) {
     $pluginBuildArgs = @('build', $plugin.Project, '-c', 'Release', "-p:GameDir=$GameDir", '--nologo')
@@ -108,6 +137,11 @@ foreach ($plugin in $clientPlugins) {
 }
 
 Copy-Item -LiteralPath (Join-Path $goRoot 'seed') -Destination $serverGoDir -Recurse -Force
+$serverScheduleDirectory = Join-Path $serverPackage 'schedules'
+New-Item -ItemType Directory -Force -Path $serverScheduleDirectory | Out-Null
+foreach ($scheduleFile in $scheduleFiles) {
+    Copy-Item -LiteralPath $scheduleFile.FullName -Destination $serverScheduleDirectory -Force
+}
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $serverPackage 'versions.json') -Force
 Copy-Item -LiteralPath $authenticationConfig -Destination (Join-Path $serverPackage 'authentication.json') -Force
 Copy-Item -LiteralPath $resourceConfig -Destination (Join-Path $serverPackage 'resources.json') -Force

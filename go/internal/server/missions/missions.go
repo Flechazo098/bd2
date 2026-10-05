@@ -46,6 +46,9 @@ func (s *Service) AttachAchievementProgress(source AchievementProgressSource) er
 }
 
 type Service struct {
+	eventHandler interface {
+		Handle(string, []byte) (int, []byte, bool, error)
+	}
 	levelRewards        *gamedata.AchievementLevelDesign
 	levelReward         uint64
 	achievementProgress AchievementProgressSource
@@ -217,6 +220,37 @@ func (s *Service) applyCompletionDependencies(next *snapshot, completed gamedata
 }
 
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
+	if s.eventHandler != nil && path == "/MissionUpdate" {
+		regular, event, err := splitMissionUpdates(request)
+		if err != nil {
+			return 119, nil, true, err
+		}
+		if len(event) > 0 {
+			if len(regular) > 0 {
+				s.mu.Lock()
+				err = s.validateRegularUpdates(regular)
+				s.mu.Unlock()
+				if err != nil {
+					return 119, nil, true, err
+				}
+			}
+			if _, _, handled, err := s.eventHandler.Handle(path, event); err != nil || !handled {
+				if err == nil {
+					err = ErrInvalidRequest
+				}
+				return 119, nil, true, err
+			}
+			if len(regular) == 0 {
+				return 119, nil, true, nil
+			}
+			request = regular
+		}
+	}
+	if s.eventHandler != nil && path == "/MissionClear" {
+		if code, response, handled, err := s.eventHandler.Handle(path, request); handled {
+			return code, response, handled, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.rolloverLocked(); err != nil {
@@ -253,6 +287,84 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	default:
 		return 0, nil, false, nil
 	}
+}
+
+// Each update carries its own event identity; a client can acknowledge regular
+// and scheduled missions together in one request.
+func splitMissionUpdates(request []byte) (regular, event []byte, err error) {
+	if err = requireSeq(request); err != nil {
+		return
+	}
+	seq, _, _ := wire.Varint(request, 1)
+	err = wire.Walk(request, func(f wire.Field) error {
+		if f.Number != 2 {
+			return nil
+		}
+		if f.Type != 2 {
+			return ErrInvalidRequest
+		}
+		uid, e := scalar(f.Value, 4)
+		if e != nil {
+			return e
+		}
+		if uid == 0 {
+			if len(regular) == 0 {
+				regular = wire.AppendVarint(nil, 1, seq)
+			}
+			regular = wire.AppendBytes(regular, 2, f.Value)
+		} else {
+			if len(event) == 0 {
+				event = wire.AppendVarint(nil, 1, seq)
+			}
+			event = wire.AppendBytes(event, 2, f.Value)
+		}
+		return nil
+	})
+	return
+}
+
+func (s *Service) validateRegularUpdates(request []byte) error {
+	return wire.Walk(request, func(f wire.Field) error {
+		if f.Number != 2 {
+			return nil
+		}
+		if f.Type != 2 {
+			return ErrInvalidRequest
+		}
+		group, err := scalar(f.Value, 1)
+		if err != nil || group == 0 {
+			return ErrInvalidRequest
+		}
+		id, err := scalar(f.Value, 2)
+		if err != nil || id == 0 {
+			return ErrInvalidRequest
+		}
+		if _, err = scalar(f.Value, 3); err != nil {
+			return ErrInvalidRequest
+		}
+		matches := 0
+		for key := range s.design.Missions {
+			if key.GroupType != 2 && key.GroupID == group && key.ID == id {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return ErrInvalidRequest
+		}
+		return nil
+	})
+}
+
+// AttachEventHandler delegates scheduled event operations before regular
+// mission processing. The event service validates calendar and player state.
+func (s *Service) AttachEventHandler(handler interface {
+	Handle(string, []byte) (int, []byte, bool, error)
+}) error {
+	if handler == nil {
+		return errors.New("missions: nil event handler")
+	}
+	s.eventHandler = handler
+	return nil
 }
 
 func dailyPeriod(now time.Time) string { return now.UTC().Format("2006-01-02") }

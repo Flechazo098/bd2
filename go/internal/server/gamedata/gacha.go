@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"os"
-	"path/filepath"
 	"sort"
 
 	_ "modernc.org/sqlite"
@@ -971,24 +969,11 @@ func isPermanentEquipmentGachaGroup(raw []byte) bool {
 // selected by a captured schedule. Resemara is owned by LoadInfiniteGacha and
 // is intentionally omitted from both ordinary catalogs.
 func ClassifyActiveGachaGroups(root, version string, groupIDs []uint64) (costume, equipment []uint64, err error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-gacha-classify-")
-	if err != nil {
-		return nil, nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, nil, err
-	}
-	defer db.Close()
+	defer release()
 	seen := map[uint64]bool{}
 	for _, id := range groupIDs {
 		if seen[id] {
@@ -1026,24 +1011,11 @@ func ClassifyActiveGachaGroups(root, version string, groupIDs []uint64) (costume
 }
 
 func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupIDs []uint64) (*RegularGachaCatalog, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-regular-gacha-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	catalog := &RegularGachaCatalog{
 		Gachas: map[uint64]RegularGacha{}, characters: make(map[uint64]CharacterDesign),
 		groups: map[uint64]GachaGroupDesign{}, byGacha: map[uint64]uint64{}, fixed: map[uint64]GachaFixedDesign{}, grades: map[uint64]uint64{},
@@ -1218,6 +1190,15 @@ func loadGachaStepUp(db *sql.DB, groupID uint64) (GachaStepUpDesign, error) {
 		if id != step.Step || step.Step != uint64(len(out.Steps)+1) || step.GroupID == 0 || step.GachaID == 0 {
 			return GachaStepUpDesign{}, fmt.Errorf("gamedata: malformed step-up group %d row %d", groupID, id)
 		}
+		out.Steps = append(out.Steps, step)
+	}
+	if err := rows.Err(); err != nil {
+		return GachaStepUpDesign{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return GachaStepUpDesign{}, err
+	}
+	for _, step := range out.Steps {
 		var child []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM GachaGroupTable WHERE id=?", step.GroupID).Scan(&child); err != nil {
 			return GachaStepUpDesign{}, fmt.Errorf("gamedata: step-up child group %d: %w", step.GroupID, err)
@@ -1228,10 +1209,6 @@ func loadGachaStepUp(db *sql.DB, groupID uint64) (GachaStepUpDesign, error) {
 		if len(types) != 1 || types[0] != 1 || len(subTypes) != 1 || subTypes[0] != 4 || len(tenIDs) != 1 || tenIDs[0] != step.GachaID {
 			return GachaStepUpDesign{}, fmt.Errorf("gamedata: step-up group %d child %d does not reference gacha %d", groupID, step.GroupID, step.GachaID)
 		}
-		out.Steps = append(out.Steps, step)
-	}
-	if err := rows.Err(); err != nil {
-		return GachaStepUpDesign{}, err
 	}
 	if len(out.Steps) == 0 {
 		return GachaStepUpDesign{}, fmt.Errorf("gamedata: step-up group %d is empty", groupID)
@@ -1398,13 +1375,6 @@ func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
 		if !oneLoaded && !tenLoaded {
 			continue
 		}
-		if group.CashProductGroupID != 0 && group.CashProductID != 0 {
-			var err error
-			group.CashRewards, err = loadGachaCashRewards(db, group)
-			if err != nil {
-				return err
-			}
-		}
 		c.groups[id] = group
 		if oneLoaded {
 			c.byGacha[group.OneTimeGachaID] = id
@@ -1416,7 +1386,17 @@ func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, group := range c.groups {
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for id, group := range c.groups {
+		if group.CashProductGroupID != 0 && group.CashProductID != 0 {
+			group.CashRewards, err = loadGachaCashRewards(db, group)
+			if err != nil {
+				return err
+			}
+			c.groups[id] = group
+		}
 		if group.FixedID == 0 {
 			continue
 		}
@@ -1658,24 +1638,11 @@ func NewInfiniteGachaDesignWithRates(count int, fiveStarIDs, fourStarIDs, threeS
 }
 
 func LoadInfiniteGachaForSchedules(root, version string, groups []uint64) (*InfiniteGachaDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-gacha-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 
 	infiniteGroupID, infiniteGachaID, err := loadInfiniteGachaIdentity(db, groups)
 	if err != nil {

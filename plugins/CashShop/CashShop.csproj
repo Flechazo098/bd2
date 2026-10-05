@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>BD2CashShop</AssemblyName>
+    <RootNamespace>Bd2CashShop</RootNamespace>
+    <BD2PluginVersionKey>cash_shop</BD2PluginVersionKey>
+    <BD2GameVersion>2.35.10</BD2GameVersion>
+  </PropertyGroup>
+  <ItemGroup>
+
+    <Reference Include="BepInEx">
+      <HintPath>$(BD2BepInExDir)\core\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BD2BepInExDir)\core\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(BD2ManagedDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro"><HintPath>$(BD2ManagedDir)/Unity.TextMeshPro.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(BD2ManagedDir)/UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Google.Protobuf"><HintPath>$(BD2ManagedDir)/Google.Protobuf.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

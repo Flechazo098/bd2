@@ -61,7 +61,6 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("performance overlay suppression", () => ClientPresentation.InstallPerformanceOverlaySuppression(harmony));
             TryInstall("maintenance timeout guard", () => ClientDiagnostics.InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => LocalAccountPolicy.InstallAgeGatePersistence(harmony));
-            TryInstall("local purchase bypass", () => LocalAccountPolicy.InstallLocalPurchaseBypass(harmony));
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");
         }

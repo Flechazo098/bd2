@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // PresetDesign is the normal party preset configuration in GameDefaultTable.
@@ -26,24 +24,11 @@ func (d PresetDesign) Validate() error {
 }
 
 func LoadPresetDesign(root, version string) (*PresetDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-presets-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadPresetDesign(db)
 }
 

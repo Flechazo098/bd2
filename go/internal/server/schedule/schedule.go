@@ -4,11 +4,8 @@ package schedule
 
 import (
 	"bd2server/internal/server/versionconfig"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
-	"os"
 
 	"bd2server/internal/server/wire"
 )
@@ -42,23 +39,6 @@ type Service struct {
 	CalculateMilliseconds uint64          `json:"calculate_milliseconds"`
 	Contents              []Content       `json:"contents"`
 	Regular               []RegularSeason `json:"regular"`
-}
-
-// Load reads this server's versioned calendar policy. It does not infer live
-// official seasons from today's clock or from static reward design tables.
-func Load(path string) (*Service, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("schedule: read seed: %w", err)
-	}
-	var s Service
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, fmt.Errorf("schedule: decode seed: %w", err)
-	}
-	if err := s.Validate(); err != nil {
-		return nil, err
-	}
-	return &s, nil
 }
 
 func (s *Service) Validate() error {

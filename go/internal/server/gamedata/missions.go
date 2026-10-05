@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -56,24 +54,11 @@ type AchievementDesign struct {
 // current database. Event missions intentionally remain outside this reader:
 // their eligibility depends on an active server schedule, not just GameData.
 func LoadMissionDesign(root, version string) (*MissionDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-mission-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadMissionDesignDB(db)
 }
 

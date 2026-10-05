@@ -19,6 +19,7 @@ WORKDIR /app
 COPY --from=build /out/bd2server /app/bd2server
 COPY versions.json authentication.json resources.json game.json /app/
 COPY go/seed /app/go/seed
+COPY schedules /app/schedules
 RUN mkdir -p /app/data && chown 10001:10001 /app/data
 
 USER 10001:10001

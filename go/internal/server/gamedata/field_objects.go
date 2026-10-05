@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // FieldObjectDesign retains the client table identities, including unsupported
@@ -21,24 +19,11 @@ type FieldRewardObject struct {
 }
 
 func LoadFieldObjects(root, version string, pack int) (FieldObjectDesign, error) {
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", pack))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", pack))
 	if err != nil {
 		return FieldObjectDesign{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-field-objects-")
-	if err != nil {
-		return FieldObjectDesign{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err = os.WriteFile(path, plain, 0600); err != nil {
-		return FieldObjectDesign{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return FieldObjectDesign{}, err
-	}
-	defer db.Close()
+	defer release()
 	common, closeDB, err := openStatDatabase(root, version)
 	if err != nil {
 		return FieldObjectDesign{}, err

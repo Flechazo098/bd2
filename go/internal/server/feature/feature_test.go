@@ -8,9 +8,6 @@ import (
 )
 
 func TestHandleAuditedEmptyResponses(t *testing.T) {
-	if got := len(EmptyPacketCodes()); got != 29 {
-		t.Fatalf("audited empty-response registry has %d paths, want 29", got)
-	}
 	for path, wantCode := range EmptyPacketCodes() {
 		t.Run(path, func(t *testing.T) {
 			gotCode, gotProto, ok, err := Handle(path, wire.AppendVarint(nil, 1, 42))
@@ -22,6 +19,11 @@ func TestHandleAuditedEmptyResponses(t *testing.T) {
 }
 
 func TestHandleRejectsUnknownAndInvalidRequests(t *testing.T) {
+	for _, path := range []string{"/EventScheduleInfo", "/LoginEvent", "/ChargeCostInfo", "/EventMissionInfo", "/EventRewardHistory", "/PackEventStoryInfo", "/PackEventBattleInfo", "/Attendance", "/AttendanceInfo", "/FireWorksInfo", "/FriendshipSpecialEpisodeInfo", "/MiniEventHubInfo", "/PrestigeSkinInfo"} {
+		if _, _, ok, err := Handle(path, wire.AppendVarint(nil, 1, 1)); ok || err != nil {
+			t.Fatalf("stateful event route %s has stateless fallback", path)
+		}
+	}
 	for _, path := range []string{"/HuntDispatchInfo", "/HuntingGroundInfo", "/HuntingGroundInfoList", "/HuntingGroundEnter", "/UserLevelReward", "/FieldObjectInfo", "/WaypointInfo", "/WaypointSave", "/WaypointUse", "/AchievementInfo", "/AchievementUpdate", "/RecipeInfo", "/PackInfo", "/DeckInfo", "/RootSortIdInfo"} {
 		if _, _, handled, err := Handle(path, wire.AppendVarint(nil, 1, 1)); handled || err != nil {
 			t.Fatalf("stateful route %s still has a stateless success fallback", path)
@@ -63,7 +65,6 @@ func TestEmptyPacketCodesReturnsCopy(t *testing.T) {
 
 func TestStandaloneNativeDefaults(t *testing.T) {
 	for path, want := range map[string]int{
-		"/EventScheduleInfo":       163,
 		"/EquipInfo":               34,
 		"/TodayQuestInfo":          64,
 		"/UpdateAgeGate":           0,

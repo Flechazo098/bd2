@@ -4,8 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 )
 
 // WaypointPack uses the per-pack FieldWaypointTable and common PackTable.
@@ -43,24 +41,11 @@ func LoadWaypointPack(root, version string, packID uint64) (WaypointPack, error)
 			*target = values[0]
 		}
 	}
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 	if err != nil {
 		return WaypointPack{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-waypoint-")
-	if err != nil {
-		return WaypointPack{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err = os.WriteFile(path, plain, 0600); err != nil {
-		return WaypointPack{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return WaypointPack{}, err
-	}
-	defer db.Close()
+	defer release()
 	design.Points, err = loadWaypointPoints(db)
 	return design, err
 }

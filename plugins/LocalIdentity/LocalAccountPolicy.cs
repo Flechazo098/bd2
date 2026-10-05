@@ -5,7 +5,6 @@ using System.Reflection;
 using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
-using System.Linq;
 
 namespace Bd2LocalIdentity;
 
@@ -80,84 +79,5 @@ internal static class LocalAccountPolicy
             continuation?.Invoke();
         };
     }
-
-    internal static void InstallLocalPurchaseBypass(Harmony harmony)
-    {
-        Type platformRuler = typeof(gamfs.Platform.PlatformRuler);
-        MethodInfo getProducts = platformRuler?
-            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            .SingleOrDefault(method =>
-                method.IsGameMethod(nameof(gamfs.Platform.PlatformRuler.GetProductAsync)) &&
-                method.GetParameters().Length == 6 &&
-                method.GetParameters()[0].ParameterType == typeof(string[]) &&
-                method.GetParameters()[3].ParameterType == typeof(Action) &&
-                method.GetParameters()[4].ParameterType == typeof(Action<int, int, string>) &&
-                method.GetParameters()[5].ParameterType == typeof(bool));
-        if (getProducts == null)
-        {
-            throw new MissingMethodException("PlatformRuler.GetProductAsync was not found");
-        }
-        harmony.Patch(
-            getProducts,
-            prefix: new HarmonyMethod(typeof(LocalAccountPolicy), nameof(GetProductsPrefix)));
-
-        Type platformManager = typeof(gamfs.Platform.PlatformManager);
-        MethodInfo purchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-            .SingleOrDefault(method => method.IsGameMethod(nameof(gamfs.Platform.PlatformManager.Purchase)) &&
-                method.GetParameters().Length == 3 &&
-                method.GetParameters()[0].ParameterType == typeof(string) &&
-                method.GetParameters()[2].ParameterType == typeof(Action));
-        MethodInfo finishPurchase = platformManager?.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-            .SingleOrDefault(method => method.IsGameMethod(nameof(gamfs.Platform.PlatformManager.FinishPurchase)) &&
-                method.GetParameters().Length == 2 &&
-                method.GetParameters()[0].ParameterType == typeof(string) &&
-                method.GetParameters()[1].ParameterType == typeof(long));
-        if (purchase == null || finishPurchase == null)
-            throw new MissingMethodException("PlatformManager purchase methods were not found");
-        harmony.Patch(purchase, prefix: new HarmonyMethod(
-            typeof(LocalAccountPolicy), nameof(LocalPurchasePrefix)));
-        harmony.Patch(finishPurchase, prefix: new HarmonyMethod(
-            typeof(LocalAccountPolicy), nameof(FinishLocalPurchasePrefix)));
-        Log?.LogInfo("Local purchase price lookup disabled");
-        Log?.LogInfo("Infinite reroll confirmation is local/free; all other paid purchases are blocked");
-    }
-
-    private static bool GetProductsPrefix(Action __3)
-    {
-        // A private server has no Neon/GPG commerce identity. Treat price
-        // prefetch as complete so startup can continue without contacting the
-        // production payment API. No purchase result or currency is forged.
-        __3?.Invoke();
-        return false;
-    }
-
-    private static bool LocalPurchasePrefix(string __0, object __1, Action __2)
-    {
-        // Product 9100033 is the infinite-reroll confirmation. The
-        // local server grants the last preview through CashShopBuy without
-        // contacting Neon/GPG. No other real-money product is authorized.
-        if (__0 == "brd2_limited_pack_660" || __0 == "brd2_limited_pack_660_ios")
-        {
-            object result = new gamfs.Platform.PurchaseData(__0, 1L,
-                "bd2-local-free-infinite", "bd2-local-free-receipt");
-            Log?.LogInfo("Approved local/free infinite-reroll confirmation");
-            (__1 as Delegate)?.DynamicInvoke(result);
-            return false;
-        }
-        Log?.LogWarning("Blocked unsupported paid product: " + (__0 ?? "<null>"));
-        __2?.Invoke();
-        return false;
-    }
-
-    private static bool FinishLocalPurchasePrefix(string __0)
-    {
-        if (__0 == "bd2-local-free-infinite")
-        {
-            Log?.LogInfo("Finished local/free infinite-reroll confirmation");
-            return false;
-        }
-        return true;
-    }
-
 
 }

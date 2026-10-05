@@ -5,3 +5,5 @@
 !authentication.json
 !resources.json
 !game.json
+!schedules/
+!schedules/**

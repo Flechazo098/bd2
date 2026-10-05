@@ -1,11 +1,8 @@
 package gamedata
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -19,24 +16,11 @@ type LimitedCostumeCatalog struct {
 }
 
 func LoadLimitedCostumes(root, version string) (*LimitedCostumeCatalog, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-limited-costumes-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	rows, err := db.Query("SELECT id FROM LimitedCostumeTable ORDER BY id")
 	if err != nil {
 		return nil, err
@@ -51,18 +35,24 @@ func LoadLimitedCostumes(root, version string) (*LimitedCostumeCatalog, error) {
 		if costumeID == 0 {
 			return nil, errors.New("gamedata: limited costume has zero id")
 		}
-		design, err := loadGachaCharacterDesign(db, costumeID)
-		if err != nil {
-			return nil, fmt.Errorf("gamedata: limited costume %d: %w", costumeID, err)
-		}
 		catalog.ids = append(catalog.ids, costumeID)
-		catalog.characters[costumeID] = design
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// Release the single connection before character loading performs queries.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	if len(catalog.ids) == 0 {
 		return nil, errors.New("gamedata: limited costume catalog is empty")
+	}
+	for _, costumeID := range catalog.ids {
+		design, err := loadGachaCharacterDesign(db, costumeID)
+		if err != nil {
+			return nil, fmt.Errorf("gamedata: limited costume %d: %w", costumeID, err)
+		}
+		catalog.characters[costumeID] = design
 	}
 	return catalog, nil
 }

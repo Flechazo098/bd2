@@ -50,6 +50,7 @@ type ResourcePolicy struct {
 type InstallResult struct {
 	LocalIdentity plugin.Result `json:"local_identity"`
 	LoginUI       plugin.Result `json:"login_ui"`
+	CashShop      plugin.Result `json:"cash_shop"`
 }
 
 func Inspect(gameDir string, versions clientconfig.ReleaseVersions) (GameStatus, error) {
@@ -117,6 +118,7 @@ func InstallPlugins(
 	versions clientconfig.ReleaseVersions,
 	localIdentitySource string,
 	loginUISource string,
+	cashShopSource string,
 ) (InstallResult, error) {
 	status, err := Inspect(gameDir, versions)
 	if err != nil {
@@ -136,6 +138,10 @@ func InstallPlugins(
 	if err != nil {
 		return InstallResult{}, err
 	}
+	cashSource, err := plugin.ResolvePackaged(plugin.CashShop, cashShopSource)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	local, err := plugin.Install(plugin.LocalIdentity, gameDir, localSource)
 	if err != nil {
 		return InstallResult{}, err
@@ -144,7 +150,11 @@ func InstallPlugins(
 	if err != nil {
 		return InstallResult{}, err
 	}
-	return InstallResult{LocalIdentity: local, LoginUI: login}, nil
+	cash, err := plugin.Install(plugin.CashShop, gameDir, cashSource)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	return InstallResult{LocalIdentity: local, LoginUI: login, CashShop: cash}, nil
 }
 
 func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (ResourcePolicy, error) {

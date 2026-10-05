@@ -9,15 +9,14 @@ import (
 
 	"bd2server/internal/server/account"
 	"bd2server/internal/server/authconfig"
+	"bd2server/internal/server/calendar"
 	"bd2server/internal/server/deck"
-	"bd2server/internal/server/gacha"
 	"bd2server/internal/server/gameconfig"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/readonly"
 	"bd2server/internal/server/resourcepolicy"
-	calendarschedule "bd2server/internal/server/schedule"
 	"bd2server/internal/server/versionconfig"
 )
 
@@ -105,16 +104,24 @@ func preflight(args []string) error {
 	if _, err := deck.LoadSeed(filepath.Join(seedRoot, "decks.json")); err != nil {
 		return err
 	}
-	if _, err := readonly.Load(filepath.Join(seedRoot, "readonly.json")); err != nil {
-		return err
-	}
-	if _, err := calendarschedule.Load(filepath.Join(seedRoot, "schedule.json")); err != nil {
-		return fmt.Errorf("load server content calendar: %w", err)
-	}
-	schedule, err := gacha.LoadScheduleSeed(filepath.Join(seedRoot, "gacha_schedule.json"), versions.GameVersion)
+	defaults, err := readonly.Load(filepath.Join(seedRoot, "readonly.json"))
 	if err != nil {
 		return err
 	}
+	calendars, err := calendar.LoadDirectory(versions.Resolve("schedules"), versions.GameVersion, versions.GameDataVersion)
+	if err != nil {
+		return err
+	}
+	if calendars.RegularService == nil || calendars.MonsterHunt == nil || len(calendars.MonsterHunt.Seasons) == 0 {
+		return fmt.Errorf("project calendars require regular content and monster hunt schedules")
+	}
+	if _, err := calendars.ApplyReadonly(defaults); err != nil {
+		return err
+	}
+	if err := calendars.ValidateDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight project calendar GameData references: %w", err)
+	}
+	schedule := calendars.GachaSeed
 	var groups, steps []uint64
 	for _, window := range schedule.Schedules {
 		groups = append(groups, window.GroupID)

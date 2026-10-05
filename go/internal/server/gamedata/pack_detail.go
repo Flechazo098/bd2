@@ -3,8 +3,6 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // PackDetailDesign identifies the monsters whose state is consumed by the
@@ -15,24 +13,11 @@ func LoadPackDetailDesign(root, version string, packID int) (PackDetailDesign, e
 	if packID <= 0 {
 		return PackDetailDesign{}, fmt.Errorf("gamedata: invalid detail pack %d", packID)
 	}
-	plain, err := ReadDatabase(root, version, fmt.Sprintf("pack%d", packID))
+	db, release, err := OpenDatabase(root, version, fmt.Sprintf("pack%d", packID))
 	if err != nil {
 		return PackDetailDesign{}, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-pack-detail-")
-	if err != nil {
-		return PackDetailDesign{}, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "pack.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return PackDetailDesign{}, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return PackDetailDesign{}, err
-	}
-	defer db.Close()
+	defer release()
 	return loadPackDetailDesign(db)
 }
 

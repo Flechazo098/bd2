@@ -13,6 +13,7 @@ func TestQuestCollectionsFollowChangedPackQuestAndItemIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
 	for _, sqlText := range []string{"CREATE TABLE QuestTable77(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE CollectionTable(id INTEGER,ProtoBuf BLOB)"} {
 		if _, err := db.Exec(sqlText); err != nil {
 			t.Fatal(err)

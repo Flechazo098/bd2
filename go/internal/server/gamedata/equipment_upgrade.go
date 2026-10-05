@@ -6,8 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 )
 
 type EquipmentUpgradeLevel struct {
@@ -29,24 +27,11 @@ type EquipmentUpgradeDesign struct {
 }
 
 func LoadEquipmentUpgradeDesign(root, version string) (*EquipmentUpgradeDesign, error) {
-	plain, err := ReadQuestDatabase(root, version)
+	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "bd2-equipment-upgrade-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "common.db")
-	if err := os.WriteFile(path, plain, 0o600); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer release()
 	return loadEquipmentUpgradeDesign(db)
 }
 

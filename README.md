@@ -60,7 +60,7 @@ BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows
 - 选择并验证 Brown Dust II 安装目录。
 - 填写服务器 origin 和端口，自动写入游戏目录下的 `BepInEx/config/bd2.client.json`。
 - 应用带原文件备份的客户端入口补丁。
-- 检查 BepInEx 后安装或更新 `BD2LocalIdentity.dll`、`BD2LoginUI.dll` 及其共享运行时 `BD2.GameNames.dll`。
+- 检查 BepInEx 后安装或更新 `BD2LocalIdentity.dll`、`BD2LoginUI.dll`、`BD2CashShop.dll` 及其共享运行时 `BD2.GameNames.dll`。
 - 选择官方 CDN、服务器资源源或本地已下载资源。
 
 服主同步官方资源、自建静态 CDN 或配置缓存反代的步骤见 [资源与 CDN 配置指南](RESOURCES.md)。

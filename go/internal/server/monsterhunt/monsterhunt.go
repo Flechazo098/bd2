@@ -25,7 +25,10 @@ import (
 const BattleMode uint64 = 8
 const PracticeMode uint64 = 24
 
-type season struct{ ID, Hunt, Start, End, Calculate, RankGroup uint64 }
+type season struct {
+	ID, Hunt, Start, End, Calculate, RankGroup uint64
+	Independent                                bool
+}
 type user struct {
 	Season, Hunt, Level, StartHP, HighestHP, CurrentDamage, DailyDamage, HighestDate, DailyLevel, DailyDate uint64
 	Played, Claimed                                                                                         bool
@@ -59,6 +62,7 @@ type Service struct {
 	now                 func() time.Time
 	active              map[string]encounter
 	load                func(uint64) (*gamedata.MonsterHunt, error)
+	rewardGrant         func(string, []gamedata.Reward) ([]byte, error)
 }
 
 func Open(storage stateio.Store, root, version string, seed *readonly.Seed, inventory *player.Inventory, wallet *player.Wallet) (*Service, error) {
@@ -99,6 +103,8 @@ func Open(storage stateio.Store, root, version string, seed *readonly.Seed, inve
 				c.Hunt = v.Varint
 			case 4:
 				c.Calculate = v.Varint
+			case 6:
+				c.Independent = v.Varint != 0
 			case 7:
 				c.RankGroup = v.Varint
 			}
@@ -169,6 +175,9 @@ func Open(storage stateio.Store, root, version string, seed *readonly.Seed, inve
 	}
 	return s, nil
 }
+func (s *Service) AttachRewards(grant func(string, []gamedata.Reward) ([]byte, error)) {
+	s.rewardGrant = grant
+}
 func (s *Service) AttachCharacters(c *player.CharacterStore) { s.characters = c }
 func (s *Service) AttachPresetRuntime(c *player.CharacterStore, e *player.EquipmentInventory, col *player.CollectionStore) error {
 	if c == nil || e == nil || col == nil {
@@ -197,17 +206,81 @@ func (s *Service) BeginSession(id string) {
 	// Encounters are keyed by session-specific receipts and survive repeated activation.
 }
 func (s *Service) current() season {
-	c := s.seasons[0]
-	for _, v := range s.seasons {
-		if v.ID > c.ID {
-			c = v
+	// Future rows are public calendar data, not an instruction to switch the
+	// player's current hunt before its window begins. Regular client schedules
+	// have a single slot; independent hunts use their separate client list.
+	now := uint64(s.now().UnixMilli())
+	var regular []season
+	for _, c := range s.seasons {
+		if !c.Independent {
+			regular = append(regular, c)
 		}
 	}
-	return c
+	if len(regular) == 0 {
+		regular = s.seasons
+	}
+	return selectSeason(regular, now)
+}
+
+func selectSeason(rows []season, now uint64) season {
+	var active, begun, future season
+	for _, c := range rows {
+		if c.Start <= now {
+			if begun.ID == 0 || c.Start > begun.Start || c.Start == begun.Start && c.ID > begun.ID {
+				begun = c
+			}
+			if now < c.End && (active.ID == 0 || c.Start > active.Start || c.Start == active.Start && c.ID > active.ID) {
+				active = c
+			}
+		} else if future.ID == 0 || c.Start < future.Start || c.Start == future.Start && c.ID < future.ID {
+			future = c
+		}
+	}
+	if active.ID != 0 {
+		return active
+	}
+	if begun.ID != 0 {
+		return begun
+	}
+	return future
+}
+
+func (s *Service) scheduleInfo(req []byte) (int, []byte, bool, error) {
+	current := s.current()
+	response := s.seed.Responses["/MonsterHuntScheduleInfo"]
+	fields := make([]readonly.Field, 0, len(response.Fields))
+	for _, field := range response.Fields {
+		if field.Number == 1 && field.Type == 2 {
+			var id uint64
+			independent := false
+			for _, f := range field.Fields {
+				if f.Number == 1 {
+					for _, v := range f.Fields {
+						if v.Number == 1 {
+							id = v.Varint
+						}
+					}
+				}
+				if f.Number == 6 {
+					independent = f.Varint != 0
+				}
+			}
+			if !independent && id != current.ID {
+				continue
+			}
+		}
+		fields = append(fields, field)
+	}
+	// Keep the entire loaded calendar immutable; projection only affects this
+	// response so subsequent requests can cross a season boundary without reload.
+	projected := &readonly.Seed{Version: s.seed.Version, Responses: map[string]readonly.Response{
+		"/MonsterHuntScheduleInfo": {PacketCode: response.PacketCode, Fields: fields},
+	}}
+	return projected.Handle("/MonsterHuntScheduleInfo", req)
 }
 func (s *Service) playing(c season) bool {
 	n := uint64(s.now().UnixMilli())
-	return n >= c.Start && n <= c.End
+	return n >= c.Start && n < c.End
 }
 func (s *Service) getUser(c season) (user, error) {
 	u, ok := s.state.Users[strconv.FormatUint(c.ID, 10)]
@@ -333,6 +406,9 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 		}
 		return code, r.Response, true, nil
 	}
+	if path == "/MonsterHuntScheduleInfo" {
+		return s.scheduleInfo(req)
+	}
 	c := s.current()
 	u, e := s.getUser(c)
 	if e != nil {
@@ -344,8 +420,6 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 	var updateReceipt string
 	var updateEncounter encounter
 	switch path {
-	case "/MonsterHuntScheduleInfo":
-		return s.seed.Handle(path, req)
 	case "/MonsterHuntUserInfo":
 		out = wire.AppendBytes(nil, 1, s.encodeUser(u, c))
 		if u.Played {

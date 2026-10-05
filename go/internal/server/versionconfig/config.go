@@ -41,6 +41,7 @@ type PluginVersions struct {
 	LocalIdentity      string `json:"local_identity"`
 	CaptureEnvironment string `json:"capture_environment"`
 	LoginUI            string `json:"login_ui"`
+	CashShop           string `json:"cash_shop"`
 }
 
 // Load reads one explicit version file. Unknown fields and trailing JSON are

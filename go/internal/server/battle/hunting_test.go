@@ -1,6 +1,7 @@
 package battle
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -61,7 +62,8 @@ func TestHuntingBattleUsesLockedEncounterAndSessionReceipt(t *testing.T) {
 	if bundle, found, _ := wire.Bytes(response, 5); !found || len(bundle) == 0 {
 		t.Fatal("missing hunting reward")
 	}
-	if _, _, _, err := s.Handle("/BattleEnd", end); err == nil {
-		t.Fatal("completed battle settled twice")
+	settlements := h.settlements
+	if _, retry, _, err := s.Handle("/BattleEnd", end); err != nil || !bytes.Equal(retry, response) || h.settlements != settlements {
+		t.Fatal("completed battle retry settled twice or lost response")
 	}
 }

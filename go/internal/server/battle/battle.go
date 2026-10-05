@@ -4,6 +4,7 @@
 package battle
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,6 +34,30 @@ type Service struct {
 	commitHealth       func(map[uint64]uint64) error
 	hunting            HuntingRuntime
 	monsterHunt        MonsterHuntRuntime
+	eventBattles       []EventBattleRuntime
+}
+
+// EventBattleRuntime owns event stage eligibility, costs and settlement while
+// the normal battle service transports the client's turn simulation.
+type EventBattleRuntime interface {
+	HandlesBattle(mode uint64) bool
+	EnterBattle(request []byte, receipt string) ([]byte, error)
+	CompleteBattle(request []byte, receipt string) ([]byte, error)
+}
+
+func (s *Service) AttachEventBattle(runtime EventBattleRuntime) {
+	if runtime != nil {
+		s.eventBattles = append(s.eventBattles, runtime)
+	}
+}
+
+func (s *Service) eventBattle(mode uint64) EventBattleRuntime {
+	for _, runtime := range s.eventBattles {
+		if runtime.HandlesBattle(mode) {
+			return runtime
+		}
+	}
+	return nil
 }
 
 type MonsterHuntRuntime interface {
@@ -74,6 +99,9 @@ type battleState struct {
 	phaseStarted bool
 	phaseSeq     uint64
 	phaseReply   []byte
+	endSeq       uint64
+	endRequest   []byte
+	endReply     []byte
 }
 
 // BeginSession discards an unfinished battle when LoginUser creates a new
@@ -216,6 +244,14 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		monster, _, _ := wire.Varint(request, 3)
 		var huntResponse []byte
+		eventRuntime := s.eventBattle(mode)
+		if eventRuntime != nil {
+			seq, _, _ := wire.Varint(request, 1)
+			huntResponse, err = eventRuntime.EnterBattle(request, fmt.Sprintf("%s:%d", s.activeSession, seq))
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: enter event: %w", err)
+			}
+		}
 		if isMonsterHunt(mode) {
 			if s.monsterHunt == nil {
 				return 0, nil, true, errors.New("battle: monster hunt runtime unavailable")
@@ -256,7 +292,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 		}
 		var phases []gamedata.BattlePhase
-		if !isMonsterHunt(mode) && (s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0)) {
+		if !isMonsterHunt(mode) && eventRuntime == nil && (s.loadPhases != nil || (s.gameDataRoot != "" && packID > 0 && monster != 0)) {
 			loader := s.loadPhases
 			if loader == nil {
 				loader = gamedata.BattleDeckPhases
@@ -368,6 +404,13 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		response = wire.AppendVarint(response, 3, seed)
 		return 14, response, true, nil
 	case "/BattleEnd":
+		endSeq, _, _ := wire.Varint(request, 1)
+		if state.endSeq == endSeq && state.endRequest != nil {
+			if !bytes.Equal(state.endRequest, request) {
+				return 0, nil, true, errors.New("battle: changed settlement retry")
+			}
+			return 15, append([]byte(nil), state.endReply...), true, nil
+		}
 		if !state.entered {
 			return 0, nil, true, errors.New("battle: end before enter")
 		}
@@ -379,6 +422,16 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, errors.New("battle: victory before final phase start")
 		}
 		response := wire.AppendVarint(nil, 1, result)
+		if eventRuntime := s.eventBattle(state.mode); eventRuntime != nil {
+			extra, err := eventRuntime.CompleteBattle(request, state.enterReceipt)
+			if err != nil {
+				return 0, nil, true, fmt.Errorf("battle: settle event: %w", err)
+			}
+			response = append(response, extra...)
+			state.rememberEnd(request, response)
+			state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
+			return 15, response, true, nil
+		}
 		if isMonsterHunt(state.mode) {
 			// Monster Hunt owns its remaining HP, progression and daily/season
 			// rewards. Field HP and ordinary pack rewards must not settle here.
@@ -387,6 +440,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				return 0, nil, true, fmt.Errorf("battle: settle monster hunt: %w", err)
 			}
 			response = append(response, extra...)
+			state.rememberEnd(request, response)
 			state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
 			return 15, response, true, nil
 		}
@@ -497,6 +551,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			}
 			response = wire.AppendBytes(response, field, nil)
 		}
+		state.rememberEnd(request, response)
 		state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
 		return 15, response, true, nil
 	case "/BattleExit":
@@ -504,6 +559,12 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		return 388, nil, true, nil
 	}
 	panic("unreachable")
+}
+
+func (state *battleState) rememberEnd(request, response []byte) {
+	state.endSeq, _, _ = wire.Varint(request, 1)
+	state.endRequest = append([]byte(nil), request...)
+	state.endReply = append([]byte(nil), response...)
 }
 
 func (s *Service) stateLocked() *battleState {

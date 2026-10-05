@@ -41,7 +41,7 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 	if strings.HasPrefix(path, "/HuntDispatch") {
 		return s.handleDispatch(path, req, session)
 	}
-	return s.Handle(path, req)
+	return s.handleGroundSession(path, req, session)
 }
 func (s *Service) handleDispatch(path string, req []byte, session string) (int, []byte, bool, error) {
 	code := map[string]int{"/HuntDispatchInfo": 189, "/HuntDispatchStart": 190, "/HuntDispatchEnd": 191, "/HuntDispatchRewardPreview": 194, "/HuntDispatch": 0}[path]
@@ -50,6 +50,9 @@ func (s *Service) handleDispatch(path string, req []byte, session string) (int, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e := s.refreshAP(); e != nil {
+		return code, nil, true, e
+	}
 	seq, found, err := wire.Varint(req, 1)
 	if err != nil || !found || seq == 0 {
 		return code, nil, true, fmt.Errorf("hunting: missing sequence")
@@ -264,11 +267,30 @@ func (s *Service) handleDispatch(path string, req []byte, session string) (int, 
 			ds.Jobs[jobKey] = job
 			out = wire.AppendBytes(out, 1, dispatchJobWire(job))
 		} else {
+			beforeFree, beforeBonus := s.state.Free, s.state.Bonus
 			bundle, e := s.dispatchGrant("dispatch:"+key, rewards)
 			if e != nil {
 				return code, nil, true, e
 			}
 			out = wire.AppendBytes(out, 1, bundle)
+			if s.state.Free >= beforeFree {
+				next.Free += s.state.Free - beforeFree
+			} else {
+				delta := beforeFree - s.state.Free
+				if next.Free < delta {
+					return code, nil, true, fmt.Errorf("hunting: AP grant conflict")
+				}
+				next.Free -= delta
+			}
+			if s.state.Bonus >= beforeBonus {
+				next.Bonus += s.state.Bonus - beforeBonus
+			} else {
+				delta := beforeBonus - s.state.Bonus
+				if next.Bonus < delta {
+					return code, nil, true, fmt.Errorf("hunting: AP grant conflict")
+				}
+				next.Bonus -= delta
+			}
 		}
 		if e = s.persist(next); e != nil {
 			return code, nil, true, e
@@ -316,6 +338,31 @@ func dispatchPreview(rs []gamedata.BattleReward) []byte {
 	return out
 }
 func (s *Service) dispatchGrant(identity string, rs []gamedata.BattleReward) ([]byte, error) {
+	if s.grant != nil {
+		var rewards []gamedata.Reward
+		var ap []gamedata.BattleReward
+		for _, r := range rs {
+			if r.Type == 21 || r.Type == 23 {
+				ap = append(ap, r)
+			} else {
+				rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			}
+		}
+		s.mu.Unlock()
+		bundle, err := s.grant(identity, rewards)
+		s.mu.Lock()
+		if err != nil {
+			return nil, err
+		}
+		bundle = append(bundle, dispatchPreview(ap)...)
+		for _, r := range ap {
+			v := wire.AppendVarint(nil, 3, r.Type)
+			v = wire.AppendVarint(v, 4, r.Count)
+			bundle = wire.AppendBytes(bundle, 1, v)
+		}
+		return bundle, nil
+	}
+
 	var currency []gamedata.Reward
 	var items []gamedata.BattleReward
 	for _, r := range rs {
