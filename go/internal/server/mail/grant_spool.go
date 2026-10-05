@@ -43,6 +43,8 @@ type compensation struct {
 	identity, title, body string
 	sentAt                time.Time
 	rewards               []gamedata.Reward
+	templateID            uint64
+	isCash                bool
 }
 
 func (g compensation) validate() error {

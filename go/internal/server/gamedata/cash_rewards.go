@@ -30,18 +30,49 @@ func LoadCashRewardResolver(root, version string, shared ...*RewardGraph) (*Cash
 	// The shared immutable design maps are initialized completely at startup.
 	return &CashRewardResolver{graph: graph, boxes: graph.boxes, direct: graph.direct, groups: graph.groups}, nil
 }
+
+// CashMailReward is a fully selected attachment set using the game's localized mail template.
+type CashMailReward struct {
+	TemplateID uint64
+	Rewards    []BattleReward
+}
+type CashDelivery struct {
+	Direct []BattleReward
+	Mail   []CashMailReward
+}
+
 func (c *CashRewardResolver) ResolveGranted(rewards []BattleReward) ([]BattleReward, error) {
+	plan, err := c.resolve(rewards, false)
+	return plan.Direct, err
+}
+func (c *CashRewardResolver) ResolveDelivery(rewards []BattleReward) (CashDelivery, error) {
+	return c.resolve(rewards, true)
+}
+func (c *CashRewardResolver) resolve(rewards []BattleReward, delivery bool) (CashDelivery, error) {
 	budget := uint64(100000)
 	visiting := map[uint64]bool{}
-	var out []BattleReward
-	var emit func(BattleReward, bool) error
-	emit = func(r BattleReward, force bool) error {
+	var out CashDelivery
+	appendReward := func(r BattleReward, template uint64) {
+		if template == 0 {
+			out.Direct = append(out.Direct, r)
+			return
+		}
+		for i := range out.Mail {
+			if out.Mail[i].TemplateID == template {
+				out.Mail[i].Rewards = append(out.Mail[i].Rewards, r)
+				return
+			}
+		}
+		out.Mail = append(out.Mail, CashMailReward{TemplateID: template, Rewards: []BattleReward{r}})
+	}
+	var emit func(BattleReward, bool, uint64) error
+	emit = func(r BattleReward, force bool, template uint64) error {
 		if budget == 0 || r.Count == 0 || r.Count > math.MaxInt32 || r.Type == 0 {
 			return fmt.Errorf("gamedata: invalid cash reward/budget")
 		}
 		budget--
 		if r.Type != 9 || !force && c.direct[r.ID] {
-			out = append(out, r)
+			appendReward(r, template)
 			return nil
 		}
 		if visiting[r.ID] || len(visiting) >= 32 {
@@ -55,6 +86,13 @@ func (c *CashRewardResolver) ResolveGranted(rewards []BattleReward) ([]BattleRew
 		if !ok {
 			return fmt.Errorf("gamedata: unknown cash reward group %d", gid)
 		}
+		if delivery && template == 0 {
+			var err error
+			template, err = optionalScalar(raw, 7)
+			if err != nil {
+				return err
+			}
+		}
 		drop, err := optionalScalar(raw, 2)
 		if err != nil {
 			return err
@@ -64,7 +102,9 @@ func (c *CashRewardResolver) ResolveGranted(rewards []BattleReward) ([]BattleRew
 			if err != nil {
 				return err
 			}
-			out = append(out, selected...)
+			for _, leaf := range selected {
+				appendReward(leaf, template)
+			}
 			return nil
 		}
 		if drop != 1 {
@@ -88,15 +128,15 @@ func (c *CashRewardResolver) ResolveGranted(rewards []BattleReward) ([]BattleRew
 				return fmt.Errorf("gamedata: cash reward overflow")
 			}
 			child.Count *= r.Count
-			if err = emit(child, false); err != nil {
+			if err = emit(child, false, template); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, r := range rewards {
-		if err := emit(r, true); err != nil {
-			return nil, err
+		if err := emit(r, true, 0); err != nil {
+			return CashDelivery{}, err
 		}
 	}
 	return out, nil

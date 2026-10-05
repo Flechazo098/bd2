@@ -13,7 +13,6 @@ func TestBootstrapProtocolDefaults(t *testing.T) {
 		code  int
 		proto []byte
 	}{
-		{"/CashMailInfo", 140, []byte{0x18, 0}},
 		{"/AvatarInfo", 467, []byte{0x0a, 0}},
 		{"/GuildRaidSeasonReward", 310, []byte{0x0a, 0}},
 	} {

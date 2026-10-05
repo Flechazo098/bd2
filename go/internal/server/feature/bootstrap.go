@@ -7,9 +7,6 @@ import "bd2server/internal/server/wire"
 // entities (inventory, characters, quests, decks) are deliberately excluded.
 func initialResponse(path string) (int, []byte, bool) {
 	switch path {
-	case "/CashMailInfo":
-		// MaxInvenIndex is explicitly present even with zero cash mails.
-		return 140, wire.AppendVarint(nil, 3, 0), true
 	case "/AvatarInfo":
 		return 467, wire.AppendBytes(nil, 1, nil), true
 	case "/GuildRaidSeasonReward":

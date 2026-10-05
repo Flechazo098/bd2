@@ -39,3 +39,32 @@ func TestLoginPassTopLevelWrapperExpandsAndNestedManualGiftStaysOwned(t *testing
 		t.Fatalf("login pass wrapper=%+v err=%v", got, err)
 	}
 }
+
+func TestCashDeliverySeparatesNestedMailAndKeepsEntitlementAndManualBox(t *testing.T) {
+	group := func(mail uint64, rewards []BattleReward) []byte {
+		raw := wire.AppendVarint(nil, 2, 1)
+		if mail > 0 {
+			raw = wire.AppendVarint(raw, 7, mail)
+		}
+		for _, r := range rewards {
+			raw = wire.AppendVarint(raw, 6, r.Type)
+			raw = wire.AppendVarint(raw, 5, r.ID)
+			raw = wire.AppendVarint(raw, 4, r.Count)
+			raw = wire.AppendVarint(raw, 8, 100)
+		}
+		return raw
+	}
+	c := &CashRewardResolver{boxes: map[uint64]uint64{1: 10, 2: 20, 3: 30}, direct: map[uint64]bool{3: true}, groups: map[uint64][]byte{
+		10: group(0, []BattleReward{{Type: 19, ID: 36, Count: 1}, {Type: 9, ID: 2, Count: 1}}),
+		20: group(40, []BattleReward{{Type: 2, Count: 150}, {Type: 9, ID: 3, Count: 1}}),
+	}}
+	plan, err := c.ResolveDelivery([]BattleReward{{Type: 9, ID: 1, Count: 2}})
+	if err != nil || len(plan.Direct) != 1 || plan.Direct[0].Type != 19 || plan.Direct[0].Count != 2 || len(plan.Mail) != 1 || plan.Mail[0].TemplateID != 40 || len(plan.Mail[0].Rewards) != 2 || plan.Mail[0].Rewards[0].Count != 300 || plan.Mail[0].Rewards[1].ID != 3 {
+		t.Fatalf("delivery=%+v err=%v", plan, err)
+	}
+	// Claim expansion retains the old behavior for callers that don't purchase.
+	leaves, err := c.ResolveGranted([]BattleReward{{Type: 9, ID: 1, Count: 1}})
+	if err != nil || len(leaves) != 3 {
+		t.Fatalf("ordinary resolve=%+v err=%v", leaves, err)
+	}
+}
