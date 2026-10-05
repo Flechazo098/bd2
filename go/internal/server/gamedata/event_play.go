@@ -8,6 +8,7 @@ import (
 // EventPlayCatalog keeps the installed static rows for event gameplay.
 type EventPlayCatalog struct {
 	Tables        map[string][][]byte
+	FieldPacks    map[int]EventFieldPack
 	root, version string
 }
 
@@ -18,6 +19,10 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 	}
 	defer done()
 	c := &EventPlayCatalog{Tables: map[string][][]byte{}, root: root, version: version}
+	c.FieldPacks, e = loadEventFieldPacks(db)
+	if e != nil {
+		return nil, e
+	}
 	names := []string{"PackEventHubTable", "PackEventListTable", "PackEventStoryGroupTable", "PackEventStoryTable", "PackEventBattleGroupTable", "PackEventBattleTable", "PackEventMiniGameTable", "FieldMiniGameRewardTable", "FieldMiniGameSpeedTable", "RhythmGameMusicTable", "RhythmGameGradeTable", "SichuanStageTable", "SichuanEventTable", "SichuanRewardTable", "HopscotchStageTable", "HopscotchRewardTable", "HopscotchDefaultTable", "FieldMiniGameSurvivalTable", "ActionGameDefaultTable", "ActionGameMissionTable", "ActionGameStageTable", "FieldMiniGameCharTable", "FieldMiniGameMapTable", "FieldMiniGameUpgradeTable", "FieldMiniGameUpgradeGroupTable", "FieldMiniGameSkillGroupTable", "FieldMiniGameSkillTable", "FieldMiniGameCharLevelTable", "FieldMiniGameMonsterTable", "FieldMiniGameSurvivalItemTable", "FieldMiniGameSurvivalBoxTable", "MGDRewardTable", "MGDWaveTable", "MGDDefaultTable"}
 	for _, name := range names {
 		rows, e := db.Query("SELECT ProtoBuf FROM " + name)

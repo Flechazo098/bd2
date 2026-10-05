@@ -33,7 +33,9 @@ func (s *Service) fieldObjectDesign(pack int) (gamedata.FieldObjectDesign, error
 	}
 	if _, story := s.packs[pack]; !story {
 		if _, field := s.fieldPacks[pack]; !field {
-			return gamedata.FieldObjectDesign{}, fmt.Errorf("%w: unknown field pack", ErrInvalidRequest)
+			if _, event, err := s.resolveEventFieldPack(pack); err != nil || !event {
+				return gamedata.FieldObjectDesign{}, fmt.Errorf("%w: unknown field pack", ErrInvalidRequest)
+			}
 		}
 	}
 	design, err := s.fieldObjectLoader(pack)

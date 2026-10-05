@@ -22,6 +22,16 @@ func (s *Service) handlePackBuy(request []byte) (int, []byte, bool, error) {
 	if err != nil {
 		return 0, nil, true, err
 	}
+	if pack, found, err := s.resolveEventFieldPack(id); err != nil {
+		return 0, nil, true, err
+	} else if found {
+		bundle, err := s.purchasePack(id, pack.BuyType, pack.BuyPrice, pack.BuyRewards, false)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		response := wire.AppendBytes(nil, 1, s.eventPackDBInfo(pack))
+		return 6, wire.AppendBytes(response, 2, bundle), true, nil
+	}
 	if !s.packUnlocked(id) {
 		return 0, nil, true, fmt.Errorf("%w: unavailable purchase pack %d", ErrInvalidRequest, id)
 	}
@@ -101,14 +111,22 @@ func (s *Service) grantPurchaseRewards(identity string, rewards []gamedata.Rewar
 }
 
 func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
-	if s.storyCatalog == nil || s.collection == nil || s.wallet == nil || s.inventory == nil {
+	if s.storyCatalog == nil {
 		return nil, fmt.Errorf("world: purchase services unavailable")
 	}
 	pack, exists := s.storyCatalog.Packs[id]
 	if !exists {
 		return nil, fmt.Errorf("%w: unknown purchase pack %d", ErrInvalidRequest, id)
 	}
-	buyRewards := pack.BuyRewards
+	return s.purchasePack(id, pack.BuyType, pack.BuyPrice, pack.BuyRewards, initial)
+}
+
+// purchasePack shares the same durable receipt and enclosing account transaction
+// across story and calendar-authorized hidden event packs.
+func (s *Service) purchasePack(id int, buyType, buyPrice uint64, buyRewards []gamedata.Reward, initial bool) ([]byte, error) {
+	if s.collection == nil || s.wallet == nil || s.inventory == nil {
+		return nil, fmt.Errorf("world: purchase services unavailable")
+	}
 	identity := packPurchaseIdentity(id)
 	if _, owned := s.collection.Grant(identity); owned {
 		return []byte{}, nil
@@ -118,19 +136,19 @@ func (s *Service) purchaseStoryPack(id int, initial bool) ([]byte, error) {
 			return nil, fmt.Errorf("world: unsupported pack purchase reward type %d", reward.Type)
 		}
 	}
-	if !initial && pack.BuyPrice != 0 {
+	if !initial && buyPrice != 0 {
 		var err error
-		switch pack.BuyType {
+		switch buyType {
 		case 2:
-			_, err = s.wallet.SpendJewelryOnce(identity+":price", pack.BuyPrice)
+			_, err = s.wallet.SpendJewelryOnce(identity+":price", buyPrice)
 		case 3:
-			_, err = s.wallet.SpendFreeJewelryOnce(identity+":price", pack.BuyPrice)
+			_, err = s.wallet.SpendFreeJewelryOnce(identity+":price", buyPrice)
 		case 4:
-			_, err = s.wallet.SpendGoldOnce(identity+":price", pack.BuyPrice)
+			_, err = s.wallet.SpendGoldOnce(identity+":price", buyPrice)
 		case 12:
-			_, err = s.wallet.SpendCatalystOnce(identity+":price", pack.BuyPrice)
+			_, err = s.wallet.SpendCatalystOnce(identity+":price", buyPrice)
 		default:
-			return nil, fmt.Errorf("%w: unsupported pack purchase currency%d", ErrInvalidRequest, pack.BuyType)
+			return nil, fmt.Errorf("%w: unsupported pack purchase currency%d", ErrInvalidRequest, buyType)
 		}
 		if err != nil {
 			return nil, err
