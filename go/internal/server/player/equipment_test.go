@@ -45,7 +45,6 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	if err != nil || !handled || code != 37 {
 		t.Fatalf("single upgrade code=%d handled=%v err=%v", code, handled, err)
 	}
-	assertEquipmentPrivateMessage(t, response)
 	encoded, found, err := wire.Bytes(response, 1)
 	if err != nil || !found {
 		t.Fatalf("single upgrade equipment: %v", err)
@@ -61,7 +60,6 @@ func TestEquipmentUpgradeAndSequenceUseGameDataCosts(t *testing.T) {
 	if err != nil || !handled || code != 176 {
 		t.Fatalf("sequence upgrade code=%d handled=%v err=%v", code, handled, err)
 	}
-	assertEquipmentPrivateMessage(t, response)
 	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeStopMaxLevel {
 		t.Fatalf("sequence result=%d", result)
 	}
@@ -127,7 +125,6 @@ func TestEquipmentSmeltingImprovesByTotalScoreAndReplaysWithoutSecondCharge(t *t
 	if err != nil || !handled || code != 105 {
 		t.Fatalf("smelting code=%d handled=%v err=%v", code, handled, err)
 	}
-	assertEquipmentPrivateMessage(t, response)
 	if result, found, _ := wire.Varint(response, 3); found || result != 0 {
 		t.Fatalf("successful smelting result=%d found=%v", result, found)
 	}
@@ -230,7 +227,6 @@ func TestEquipmentSequenceSmeltingRepeatsAndStopsAtTargetScore(t *testing.T) {
 	if err != nil || !handled || code != 177 {
 		t.Fatalf("sequence smelting code=%d handled=%v err=%v", code, handled, err)
 	}
-	assertEquipmentPrivateMessage(t, response)
 	if result, _, _ := wire.Varint(response, 3); result != equipUpgradeStopTargetLevel {
 		t.Fatalf("sequence smelting result=%d", result)
 	}
@@ -728,29 +724,13 @@ func TestEquipmentChangeReplacesOnlyMatchingGameDataSlot(t *testing.T) {
 	}
 }
 
-func assertEquipmentPrivateMessage(t *testing.T, response []byte) {
-	t.Helper()
-	entry, ok, err := wire.Bytes(response, 1)
-	if err != nil || !ok {
-		t.Fatal("equipment entry absent", err)
-	}
-	base, ok, err := wire.Bytes(entry, 5)
-	if err != nil || !ok {
-		t.Fatal("equipment base absent", err)
-	}
-	private, ok, err := wire.Bytes(base, 5)
-	if err != nil || !ok {
-		t.Fatal("native PrivateOption reference would be null", err)
-	}
-	if len(private) != 0 {
-		t.Fatal("ordinary equipment has unexpected private option")
-	}
-}
-
 func TestEquipmentWirePrivateObjectPresenceAndExplicitOption(t *testing.T) {
 	for _, private := range []*EquipmentOption{nil, {GroupID: 301, ID: 2}} {
 		entry := Equipment{ID: 943035, InvenIndex: 1, Rank: []uint64{1, 2, 3}, PrivateOption: private}
-		base, _, _ := wire.Bytes(EquipmentWire(entry), 5)
+		// EquipInfo and equipment reward bundles share this serializer with all
+		// enhancement/refinement responses.
+		encoded := EquipmentWire(entry)
+		base, _, _ := wire.Bytes(encoded, 5)
 		option, present, err := wire.Bytes(base, 5)
 		if err != nil || !present {
 			t.Fatal("PrivateOption was omitted", err)
@@ -765,7 +745,7 @@ func TestEquipmentWirePrivateObjectPresenceAndExplicitOption(t *testing.T) {
 			t.Fatal("explicit private option altered")
 		}
 		if entry.PrivateOption != private {
-			t.Fatal("wire generation mutated ownership")
+			t.Fatal("wire generation mutated saved ownership")
 		}
 	}
 }
