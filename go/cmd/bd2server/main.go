@@ -1173,11 +1173,13 @@ func serve(args []string) (serveErr error) {
 			return fmt.Errorf("ensure account limited-costume entitlement: %w", err)
 		}
 	}
-	if initializeAccount {
-		prestigeIDs := prestigeCatalog.Giftable(cashService.IsAvailable)
+	prestigeIDs := prestigeCatalog.Giftable(cashService.IsAvailable)
+	if len(prestigeIDs) != 0 {
 		if err := mailService.EnsureStarterPrestigeSkins(prestigeIDs, time.Now().UTC()); err != nil {
 			return fmt.Errorf("ensure account prestige-skin entitlement: %w", err)
 		}
+	}
+	if initializeAccount {
 		if err := ensureAccountStateInitialized(
 			progressState, deckStateStore, ownedItems, ownedEquipment,
 			worldService.CharacterService(), collection, wallet, inventorySlots, mailService, missionService,

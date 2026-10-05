@@ -49,16 +49,17 @@ var itemDBInfoTypes = map[uint64]bool{
 	19: true, // audited one-use content ticket; restricted below
 	27: true, // my-room item
 	29: true, // instant-use item
+	45: true, // prestige skin ownership, one copy per mail attachment
 }
 
 // Content tickets are one-use dictionary entries; only Gacha semantics are
 // supported by this mailbox, with IDs read from the current table.
 func supportedItemDBInfoReward(reward gamedata.Reward) bool {
-	return itemDBInfoTypes[reward.Type] && reward.ID != 0 && (reward.Type != 19 || reward.Count == 1)
+	return itemDBInfoTypes[reward.Type] && reward.ID != 0 && ((reward.Type != 19 && reward.Type != 45) || reward.Count == 1)
 }
 
 func (s *Service) supportedItemDBInfoReward(reward gamedata.Reward) bool {
-	return itemDBInfoTypes[reward.Type] && reward.ID != 0 && (reward.Type != 19 || reward.Count == 1 && s.contentTickets != nil && s.contentTickets.IDs[reward.ID])
+	return supportedItemDBInfoReward(reward) && (reward.Type != 19 || s.contentTickets != nil && s.contentTickets.IDs[reward.ID])
 }
 
 var currencyRewardTypes = map[uint64]bool{
@@ -950,9 +951,9 @@ func validateStarterLimitedCostumeMail(entry MailDBInfo, design player.CostumeDe
 	return nil
 }
 
-// EnsureStarterPrestigeSkins gives a newly initialized account the prestige
-// skins that are not on a currently purchasable cash page. The durable issued
-// identity makes this safe to retry across startup and transaction replay.
+// EnsureStarterPrestigeSkins gives an account its prestige-skin gift if it has
+// never been issued. Existing and new accounts use the same durable identity;
+// unclaimed or claimed mail never causes a second gift on restart.
 func (s *Service) EnsureStarterPrestigeSkins(designIDs []uint64, sentAt time.Time) error {
 	if s == nil {
 		return errors.New("mail: unavailable starter prestige-skin service")
@@ -974,7 +975,7 @@ func (s *Service) EnsureStarterPrestigeSkins(designIDs []uint64, sentAt time.Tim
 		seen[designID] = true
 		rewards = append(rewards, gamedata.Reward{Type: 45, ID: designID, Count: 1})
 	}
-	grant := compensation{identity: starterPrestigeSkinIdentity, title: "New Player Prestige Skins", body: "Prestige skins not currently available on the cash purchase page.", rewards: rewards, sentAt: sentAt}
+	grant := compensation{identity: starterPrestigeSkinIdentity, title: "Prestige Skin Gift", body: "Prestige skins not currently available on the cash purchase page.", rewards: rewards, sentAt: sentAt}
 	if err := grant.validate(); err != nil {
 		return err
 	}
