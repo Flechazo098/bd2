@@ -8,17 +8,22 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 )
 
 type CostumePotentialService struct {
-	design     *gamedata.CostumePotentialDesign
-	collection *CollectionStore
-	characters *CharacterStore
-	inventory  *Inventory
-	wallet     *Wallet
+	design         *gamedata.CostumePotentialDesign
+	collection     *CollectionStore
+	characters     *CharacterStore
+	inventory      *Inventory
+	wallet         *Wallet
+	connectStore   stateio.Store
+	connectSession string
+	connectMu      sync.Mutex
 }
 
 func NewCostumePotentialService(design *gamedata.CostumePotentialDesign, collection *CollectionStore, characters *CharacterStore, inventory *Inventory, wallet *Wallet) (*CostumePotentialService, error) {
@@ -104,6 +109,9 @@ func (s *CostumePotentialService) Contributions(character Character) ([]gamedata
 }
 
 func (s *CostumePotentialService) Handle(path string, request []byte) (int, []byte, bool, error) {
+	if path == "/CostumePotentialConnect" {
+		return s.connect(request)
+	}
 	if path != "/CostumeNodeActivation" {
 		return 0, nil, false, nil
 	}

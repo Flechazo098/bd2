@@ -147,6 +147,9 @@ func preflight(args []string) error {
 	if _, err := gamedata.LoadCostumeBurstDesign(gameData, versions.GameDataVersion); err != nil {
 		return err
 	}
+	if _, err := gamedata.LoadCostumePotentialDesign(gameData, versions.GameDataVersion); err != nil {
+		return fmt.Errorf("preflight costume potential design: %w", err)
+	}
 	if _, err := gamedata.LoadTalentUseDesign(gameData, versions.GameDataVersion); err != nil {
 		return fmt.Errorf("preflight talent skill design: %w", err)
 	}
