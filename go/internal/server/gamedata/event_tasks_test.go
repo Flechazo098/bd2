@@ -24,4 +24,8 @@ func TestInstalledEventTasks23510(t *testing.T) {
 	if d.MissionGroups[51].Type != 3 || len(d.MissionGroups[51].Groups) != 7 {
 		t.Fatal("daily-open groups lost")
 	}
+	buys := d.PassBuys[140]
+	if len(buys) != 2 || buys[0].Type != 0 || buys[0].LevelsGranted != 1 || buys[1].Type != 1 || buys[1].LevelsGranted != 3 {
+		t.Fatalf("pass level purchase bonuses lost: %+v", buys)
+	}
 }

@@ -692,8 +692,10 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		var claims []string
 		var threshold uint64
 		for _, lv := range s.design.PassLevels[d.LevelGroup] {
+			eligible := p.Exp >= threshold
+			// NextNeedExp advances from this level to the next; level 1 starts at 0.
 			threshold += lv.NeedExp
-			if p.Exp < threshold || !all && lv.ID != id {
+			if !eligible || !all && lv.ID != id {
 				continue
 			}
 			for typ := uint64(0); typ <= 1; typ++ {
@@ -766,44 +768,51 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		if chosen == nil {
 			return nil, errors.New("eventtasks: unknown pass purchase")
 		}
-		var level, threshold uint64
-		for _, lv := range s.design.PassLevels[s.design.Passes[v.ID].LevelGroup] {
-			threshold += lv.NeedExp
-			if p.Exp >= threshold {
-				level = lv.ID
+		d := s.design.Passes[v.ID]
+		if d.NewbieStep > s.state.NewbieStep {
+			return nil, fmt.Errorf("eventtasks: guide pass step locked pass=%d type=%d", v.ID, typ)
+		}
+		levels := s.design.PassLevels[d.LevelGroup]
+		if len(levels) == 0 {
+			return nil, fmt.Errorf("eventtasks: missing pass levels pass=%d type=%d", v.ID, typ)
+		}
+		starts := make([]uint64, len(levels))
+		levelIndex := 0
+		for i := 1; i < len(levels); i++ {
+			starts[i] = starts[i-1] + levels[i-1].NeedExp
+			if p.Exp >= starts[i] {
+				levelIndex = i
 			}
 		}
-		if level < chosen.UnlockLevel {
-			return nil, errors.New("eventtasks: pass purchase level locked")
-		}
-		// Private-server cash products follow the existing CashShopBuy policy:
-		// no external payment is charged. Premium activation is limited once per
-		// scheduled pass by durable Premium state. A supplied entitlement checker
-		// can restrict this policy for installations that integrate payments.
-		if chosen.CashID != 0 && s.authorizeCash != nil && !s.authorizeCash(v.ID, typ) {
-			return nil, errors.New("eventtasks: cash entitlement required")
+		if typ == 0 && levelIndex == len(levels)-1 {
+			return nil, fmt.Errorf("eventtasks: pass already at max level pass=%d type=%d", v.ID, typ)
 		}
 		if p.Premium && (typ == 1 || typ == 3) {
-			return nil, errors.New("eventtasks: premium already active")
+			return nil, fmt.Errorf("eventtasks: premium already active pass=%d type=%d", v.ID, typ)
+		}
+		// CashShopBuy charges paid diamonds and grants the pass ticket first.
+		// Activation consumes that purchase entitlement and the design ticket.
+		if chosen.CashID != 0 && (s.authorizeCash == nil || !s.authorizeCash(v.ID, typ)) {
+			return nil, fmt.Errorf("eventtasks: cash entitlement required pass=%d type=%d sku=%d/%d/%d", v.ID, typ, chosen.CashGroup, chosen.CashID, chosen.CashSales)
 		}
 		var costs []gamedata.Reward
 		if chosen.Cost.Count > 0 {
-			costs = append(costs, chosen.Cost)
+			cost := chosen.Cost
+			if typ == 0 {
+				// PassRootUI.GetLevelPassBuyWeight uses the current level.
+				cost.Count *= levels[levelIndex].ID
+			}
+			costs = append(costs, cost)
 		}
 		if _, e = s.economy.Apply(identity, costs, chosen.Rewards); e != nil {
-			return nil, e
+			return nil, fmt.Errorf("eventtasks: pass payment failed pass=%d type=%d: %w", v.ID, typ, e)
 		}
-		if typ == 0 {
-			levels := s.design.PassLevels[s.design.Passes[v.ID].LevelGroup]
-			var threshold uint64
-			for _, lv := range levels {
-				threshold += lv.NeedExp
-				if threshold > p.Exp {
-					p.Exp = threshold
-					break
-				}
-			}
-		} else if typ == 1 || typ == 3 {
+		if chosen.LevelsGranted > 0 {
+			target := uint64(levelIndex) + min(chosen.LevelsGranted, uint64(len(levels)-1-levelIndex))
+			// Preserve progress within the current level and discard surplus at MAX.
+			p.Exp = min(starts[target]+p.Exp-starts[levelIndex], starts[len(levels)-1])
+		}
+		if typ == 1 || typ == 3 {
 			p.Premium = true
 		}
 		return wire.AppendVarint(nil, 1, p.Exp), nil
