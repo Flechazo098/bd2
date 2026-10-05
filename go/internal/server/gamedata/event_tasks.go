@@ -30,9 +30,12 @@ type EventPassLevel struct {
 	Basic, Premium           Reward
 }
 type EventPassBuy struct {
-	ID, Type, UnlockLevel, CashGroup, CashID, CashSales uint64
-	Cost                                                Reward
-	Rewards                                             []Reward
+	ID, Type, CashGroup, CashID, CashSales uint64
+	// PassBuyTable.UnlockLevel is the number of levels granted by a purchase.
+	// LocalText 2403 displays it as "Pass Level +{0}", not a prerequisite.
+	LevelsGranted uint64
+	Cost          Reward
+	Rewards       []Reward
 }
 type EventTasksDesign struct {
 	Attendance        map[uint64]EventAttendance
@@ -201,7 +204,7 @@ func loadEventTasksDesign(db *sql.DB) (*EventTasksDesign, error) {
 	if e := each("PassBuyTable", func(p []byte) error {
 		r := EventPassBuy{}
 		var g uint64
-		if e := read(p, map[int]*uint64{7: &g, 8: &r.ID, 12: &r.Type, 13: &r.UnlockLevel, 4: &r.CashGroup, 5: &r.CashID, 6: &r.CashSales}); e != nil {
+		if e := read(p, map[int]*uint64{7: &g, 8: &r.ID, 12: &r.Type, 13: &r.LevelsGranted, 4: &r.CashGroup, 5: &r.CashID, 6: &r.CashSales}); e != nil {
 			return e
 		}
 		var e error

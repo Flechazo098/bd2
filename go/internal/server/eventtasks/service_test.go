@@ -6,6 +6,8 @@ import (
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 	"bytes"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,12 +15,15 @@ import (
 type economyStub struct {
 	calls   int
 	rewards []gamedata.Reward
+	costs   []gamedata.Reward
+	err     error
 }
 
-func (e *economyStub) Apply(_ string, _ []gamedata.Reward, r []gamedata.Reward) ([]byte, error) {
+func (e *economyStub) Apply(_ string, c []gamedata.Reward, r []gamedata.Reward) ([]byte, error) {
 	e.calls++
+	e.costs = append(e.costs, c...)
 	e.rewards = append(e.rewards, r...)
-	return []byte{10, 0}, nil
+	return []byte{10, 0}, e.err
 }
 func setup(t *testing.T) (*Service, *economyStub, stateio.Store) {
 	t.Helper()
@@ -154,6 +159,12 @@ func TestAttendanceNextGroupAndRepeatedChainReward(t *testing.T) {
 func TestPrivateServerPremiumCashPassOnceAndRestartReplay(t *testing.T) {
 	s, e, store := setup(t)
 	s.design.PassBuys = map[uint64][]gamedata.EventPassBuy{8: {{ID: 1, Type: 1, CashID: 42, Rewards: []gamedata.Reward{{Type: 4, Count: 10}}}}}
+	authorizations := 0
+	authorize := func(id, typ uint64) bool {
+		authorizations++
+		return id == 8 && typ == 1 && authorizations == 1
+	}
+	s.AttachCashAuthorization(authorize)
 	request := wire.AppendVarint(req(1), 2, 8)
 	request = wire.AppendVarint(request, 3, 1)
 	_, reply, _, err := s.Handle("/PassBuy", request)
@@ -169,6 +180,7 @@ func TestPrivateServerPremiumCashPassOnceAndRestartReplay(t *testing.T) {
 	}
 	reopened.now = s.now
 	reopened.SetSession("test")
+	reopened.AttachCashAuthorization(authorize)
 	_, again, _, err := reopened.Handle("/PassBuy", request)
 	if err != nil || !bytes.Equal(reply, again) || e.calls != 1 {
 		t.Fatal("cash pass replay duplicated reward")
@@ -177,5 +189,122 @@ func TestPrivateServerPremiumCashPassOnceAndRestartReplay(t *testing.T) {
 	duplicate = wire.AppendVarint(duplicate, 3, 1)
 	if _, _, _, err = reopened.Handle("/PassBuy", duplicate); err == nil || e.calls != 1 {
 		t.Fatal("premium cash purchase granted twice")
+	}
+	if authorizations != 1 {
+		t.Fatal("replay or duplicate consumed another cash entitlement")
+	}
+}
+
+func TestPassPurchasesGrantLevelsInsteadOfRequiringThem(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		typ, exp, grant, wantExp uint64
+		baseCost, wantCost       uint64
+		cash                     bool
+	}{
+		{"first level upgrade", 0, 0, 1, 20, 50, 50, false},
+		{"level weighted price", 0, 25, 1, 55, 50, 100, false},
+		{"three level upgrade", 0, 0, 3, 90, 150, 150, false},
+		{"premium from level one", 1, 0, 3, 90, 1000, 1000, false},
+		{"premium surplus capped", 1, 55, 3, 90, 1000, 1000, false},
+		{"cash premium grants levels", 3, 0, 3, 90, 1, 1, true},
+		{"cash premium at max", 3, 90, 3, 90, 1, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, e, _ := setup(t)
+			s.design.PassLevels[8] = []gamedata.EventPassLevel{{ID: 1, NeedExp: 20}, {ID: 2, NeedExp: 30}, {ID: 3, NeedExp: 40}, {ID: 4}}
+			buy := gamedata.EventPassBuy{ID: 1, Type: tc.typ, LevelsGranted: tc.grant, Cost: gamedata.Reward{Type: 3, Count: tc.baseCost}}
+			authorizations := 0
+			if tc.cash {
+				buy.CashID = 42
+				buy.Cost = gamedata.Reward{Type: 19, ID: 77, Count: 1}
+				s.AttachCashAuthorization(func(id, typ uint64) bool {
+					authorizations++
+					return id == 8 && typ == 3
+				})
+			}
+			s.design.PassBuys = map[uint64][]gamedata.EventPassBuy{8: {buy}}
+			p := s.pass(s.registry.List()[2])
+			p.Exp = tc.exp
+			request := wire.AppendVarint(req(1), 2, 8)
+			request = wire.AppendVarint(request, 3, tc.typ)
+			_, reply, _, err := s.Handle("/PassBuy", request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scalar(reply, 1) != tc.wantExp || p.Exp != tc.wantExp || p.Premium != (tc.typ == 1 || tc.typ == 3) {
+				t.Fatalf("wrong pass state %+v reply=%x", p, reply)
+			}
+			if e.calls != 1 || len(e.costs) != 1 || e.costs[0].Count != tc.wantCost || e.costs[0].Type != buy.Cost.Type {
+				t.Fatalf("wrong purchase charge %+v", e.costs)
+			}
+			_, replay, _, err := s.Handle("/PassBuy", request)
+			if err != nil || !bytes.Equal(reply, replay) || e.calls != 1 || tc.cash && authorizations != 1 {
+				t.Fatal("retry repeated payment or activation")
+			}
+		})
+	}
+}
+
+func TestPassPurchaseRejectsWithoutChangingProgress(t *testing.T) {
+	for _, tc := range []struct {
+		name, wantError string
+		typ, exp        uint64
+		cash, denied    bool
+		paymentError    bool
+	}{
+		{"level purchase at max", "pass already at max level", 0, 20, false, false, false},
+		{"cash checker missing", "cash entitlement required", 3, 0, true, false, false},
+		{"cash purchase missing", "cash entitlement required", 3, 0, true, true, false},
+		{"insufficient diamonds", "pass payment failed pass=8 type=1", 1, 0, false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, e, _ := setup(t)
+			s.design.PassLevels[8] = []gamedata.EventPassLevel{{ID: 1, NeedExp: 20}, {ID: 2}}
+			buy := gamedata.EventPassBuy{ID: 1, Type: tc.typ, LevelsGranted: 3, Cost: gamedata.Reward{Type: 3, Count: 1000}}
+			if tc.cash {
+				buy.CashID = 42
+			}
+			if tc.denied {
+				s.AttachCashAuthorization(func(uint64, uint64) bool { return false })
+			}
+			if tc.paymentError {
+				e.err = errors.New("insufficient currency")
+			}
+			s.design.PassBuys = map[uint64][]gamedata.EventPassBuy{8: {buy}}
+			s.pass(s.registry.List()[2]).Exp = tc.exp
+			request := wire.AppendVarint(req(1), 2, 8)
+			request = wire.AppendVarint(request, 3, tc.typ)
+			if _, _, _, err := s.Handle("/PassBuy", request); err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("expected %q, got %v", tc.wantError, err)
+			}
+			p := s.pass(s.registry.List()[2])
+			if p.Exp != tc.exp || p.Premium || len(s.state.Receipts) != 0 {
+				t.Fatalf("failed purchase changed state %+v", p)
+			}
+			if !tc.paymentError && e.calls != 0 {
+				t.Fatal("ineligible purchase reached payment")
+			}
+		})
+	}
+}
+
+func TestPassRewardsUseLevelStartExperience(t *testing.T) {
+	for _, tc := range []struct{ exp, wantClaims uint64 }{{0, 1}, {19, 1}, {20, 2}, {50, 3}} {
+		s, e, _ := setup(t)
+		s.design.PassLevels[8] = []gamedata.EventPassLevel{
+			{ID: 1, NeedExp: 20, Basic: gamedata.Reward{Type: 3, Count: 1}},
+			{ID: 2, NeedExp: 30, Basic: gamedata.Reward{Type: 3, Count: 2}},
+			{ID: 3, Basic: gamedata.Reward{Type: 3, Count: 3}},
+		}
+		s.pass(s.registry.List()[2]).Exp = tc.exp
+		request := wire.AppendVarint(req(1), 2, 1)
+		request = wire.AppendVarint(request, 3, 8)
+		if _, _, _, err := s.Handle("/PassReward", request); err != nil {
+			t.Fatal(err)
+		}
+		if uint64(len(e.rewards)) != tc.wantClaims {
+			t.Fatalf("exp=%d claimed %+v; wanted %d", tc.exp, e.rewards, tc.wantClaims)
+		}
 	}
 }
