@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"bd2server/internal/server/configfile"
 )
 
 const FileName = "authentication.json"
@@ -52,10 +54,15 @@ type Public struct {
 	Providers []string `json:"providers"`
 }
 
+func Default() Config { return Config{Mode: "local"} }
+
 func Load(path string) (Config, error) {
 	path, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("authconfig: resolve path: %w", err)
+	}
+	if err := configfile.Ensure(path, Default()); err != nil {
+		return Config{}, fmt.Errorf("authconfig: initialize %s: %w", path, err)
 	}
 	file, err := os.Open(path)
 	if err != nil {

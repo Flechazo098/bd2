@@ -16,9 +16,6 @@ $serverGoDir = Join-Path $serverPackage 'go'
 $serverStateDir = Join-Path $serverPackage 'data\state'
 $clientPluginDir = Join-Path $clientPackage 'plugins'
 $versionConfig = Join-Path $root 'versions.json'
-$authenticationConfig = Join-Path $root 'authentication.json'
-$resourceConfig = Join-Path $root 'resources.json'
-$gameConfig = Join-Path $root 'game.json'
 $scheduleDirectory = Join-Path $root 'schedules'
 
 try {
@@ -143,9 +140,6 @@ foreach ($scheduleFile in $scheduleFiles) {
     Copy-Item -LiteralPath $scheduleFile.FullName -Destination $serverScheduleDirectory -Force
 }
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $serverPackage 'versions.json') -Force
-Copy-Item -LiteralPath $authenticationConfig -Destination (Join-Path $serverPackage 'authentication.json') -Force
-Copy-Item -LiteralPath $resourceConfig -Destination (Join-Path $serverPackage 'resources.json') -Force
-Copy-Item -LiteralPath $gameConfig -Destination (Join-Path $serverPackage 'game.json') -Force
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $clientPackage 'versions.json') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RELEASE.md') -Destination (Join-Path $serverPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'AUTHENTICATION.md') -Destination (Join-Path $serverPackage 'AUTHENTICATION.md') -Force

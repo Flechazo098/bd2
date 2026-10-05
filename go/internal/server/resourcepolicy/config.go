@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"bd2server/internal/server/configfile"
 )
 
 const (
@@ -51,6 +53,9 @@ func Default() Config {
 // Load reads one explicit resources.json. Unknown fields and trailing JSON are
 // rejected so a misspelled URL key cannot silently fall back to another CDN.
 func Load(path string) (Config, error) {
+	if err := configfile.Ensure(path, Default()); err != nil {
+		return Config{}, fmt.Errorf("resource policy: initialize %s: %w", path, err)
+	}
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("resource policy: read %s: %w", path, err)

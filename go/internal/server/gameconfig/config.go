@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"bd2server/internal/server/configfile"
 )
 
 const FileName = "game.json"
@@ -48,13 +50,12 @@ func Default() Config {
 	return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}, Purchases: PurchasesConfig{DiamondRecharge: DiamondRechargeConfig{Currency: "free", GoldPerPaidDiamond: 1000, DiamondsPerPaidDiamond: 1}}}
 }
 
-// Load reads one explicit path. Older installations without the file retain
-// the default rules; an existing invalid file must never silently fall back.
+// Load generates defaults when missing and strictly validates existing files.
 func Load(path string) (Config, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if errors.Is(err, os.ErrNotExist) {
-		return Default(), nil
+	if err := configfile.Ensure(path, Default()); err != nil {
+		return Config{}, fmt.Errorf("game configuration: initialize %s: %w", path, err)
 	}
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Config{}, fmt.Errorf("game configuration: read %s: %w", path, err)
 	}
