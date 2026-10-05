@@ -258,6 +258,40 @@ func (s *Service) attendance(v events.Schedule) *attendance {
 	}
 	return a
 }
+
+// attendanceRewards is shared by automatic and explicit claims. Obtained is
+// the current cycle ledger; History is the client-visible historical ledger.
+func (s *Service) attendanceRewards(v events.Schedule, a *attendance, group, id uint64) []gamedata.Reward {
+	if a.Obtained[key(group, id)] {
+		return nil
+	}
+	if v.Type == 0 {
+		if group != a.Group {
+			return nil
+		}
+		for _, r := range s.design.AttendanceRewards[group] {
+			if r.ID != id || r.Day > a.Count {
+				continue
+			}
+			var rewards []gamedata.Reward
+			if r.Basic.Count > 0 {
+				rewards = append(rewards, r.Basic)
+			}
+			if ticket := s.design.Attendance[v.ID].Ticket; ticket != 0 && s.attendancePremium != nil && s.attendancePremium(ticket) && r.Premium.Count > 0 {
+				rewards = append(rewards, r.Premium)
+			}
+			return rewards
+		}
+	} else if v.Type == 1 && group == v.ID && id > 0 {
+		box, ok := s.design.LimitRewards[[2]uint64{group, id}]
+		date := time.UnixMilli(v.Start).UTC().AddDate(0, 0, int(id)-1).Format("2006-01-02")
+		_, logged := s.state.LoginDays[date]
+		if ok && box > 0 && logged && date == s.day() {
+			return []gamedata.Reward{{Type: 9, ID: box, Count: 1}}
+		}
+	}
+	return nil
+}
 func (s *Service) pass(v events.Schedule) *pass {
 	k := scheduleKey(v)
 	p := s.state.Passes[k]
@@ -343,11 +377,13 @@ func (s *Service) Handle(path string, req []byte) (int, []byte, bool, error) {
 	before, _ := json.Marshal(s.state)
 	out, err := s.handle(path, req, rk)
 	if err != nil {
+		s.state = snapshot{}
 		_ = json.Unmarshal(before, &s.state)
 		return code, nil, true, err
 	}
 	s.state.Receipts[rk] = receipt{ds, code, out}
 	if err = s.save(); err != nil {
+		s.state = snapshot{}
 		_ = json.Unmarshal(before, &s.state)
 		return code, nil, true, err
 	}
@@ -362,6 +398,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			s.state.LoginDays[today] = s.now().UnixMilli()
 		}
 		var out []byte
+		var granted []gamedata.Reward
 		for _, v := range s.registry.List() {
 			if !s.active(v) {
 				continue
@@ -430,14 +467,42 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 				}
 				out = wire.AppendBytes(out, 2, x)
 			}
-			for claim := range a.Obtained {
-				var group, id uint64
-				_, _ = fmt.Sscanf(claim, "%d/%d", &group, &id)
+			group := a.Group
+			var ids []uint64
+			if v.Type == 0 {
+				for _, r := range s.design.AttendanceRewards[group] {
+					ids = append(ids, r.ID)
+				}
+			} else {
+				group = v.ID
+				for k := range s.design.LimitRewards {
+					if k[0] == group {
+						ids = append(ids, k[1])
+					}
+				}
+			}
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			for _, id := range ids {
+				rewards := s.attendanceRewards(v, a, group, id)
+				if len(rewards) == 0 {
+					continue
+				}
+				granted = append(granted, rewards...)
+				a.Obtained[key(group, id)] = true
+				a.History[key(group, id)] = true
 				x := wire.AppendVarint(nil, 1, v.UID)
 				x = wire.AppendVarint(x, 2, group)
 				x = wire.AppendVarint(x, 3, id)
 				out = wire.AppendBytes(out, 5, x)
 			}
+		}
+		if len(granted) > 0 {
+			bundle, err := s.economy.Apply(identity, nil, granted)
+			if err != nil {
+				return nil, err
+			}
+			out = wire.AppendBytes(out, 1001, bundle)
+			out = wire.AppendString(out, 1002, identity)
 		}
 		return out, nil
 	case "/AttendanceInfo":
@@ -494,27 +559,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		if a.Obtained[ck] {
 			return nil, errors.New("eventtasks: attendance already received")
 		}
-		var rewards []gamedata.Reward
-		if v.Type == 0 {
-			if g != a.Group {
-				return nil, errors.New("eventtasks: wrong attendance group")
-			}
-			for _, r := range s.design.AttendanceRewards[g] {
-				if r.ID == id && r.Day <= a.Count {
-					rewards = append(rewards, r.Basic)
-					if ticket := s.design.Attendance[v.ID].Ticket; ticket != 0 && s.attendancePremium != nil && s.attendancePremium(ticket) && r.Premium.Count > 0 {
-						rewards = append(rewards, r.Premium)
-					}
-				}
-			}
-		} else {
-			box, ok := s.design.LimitRewards[[2]uint64{g, id}]
-			date := time.UnixMilli(v.Start).UTC().AddDate(0, 0, int(id)-1).Format("2006-01-02")
-			_, logged := s.state.LoginDays[date]
-			if ok && g == v.ID && logged && date == s.day() {
-				rewards = []gamedata.Reward{{Type: 9, ID: box, Count: 1}}
-			}
-		}
+		rewards := s.attendanceRewards(v, a, g, id)
 		if len(rewards) == 0 {
 			return nil, errors.New("eventtasks: attendance day unavailable")
 		}
