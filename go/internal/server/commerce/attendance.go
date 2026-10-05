@@ -47,6 +47,13 @@ func (h AttendanceHandler) HandleSession(path string, request []byte, session st
 	if err != nil || !handled {
 		return code, response, handled, err
 	}
+	// The event handler may already have granted ordinary attendance rewards.
+	// The client accepts exactly one reward envelope, so combine every grant in
+	// execution order under this wrapper's replay identity.
+	response, eventBundle, err := takeAttendanceRewardEnvelope(response)
+	if err != nil {
+		return code, nil, true, err
+	}
 	key := fmt.Sprintf("commerce_attendance:%x:%d", sha256.Sum256([]byte(session)), seq)
 	digest := fmt.Sprintf("%x", sha256.Sum256(request))
 	var receipt attendanceReceipt
@@ -71,11 +78,15 @@ func (h AttendanceHandler) HandleSession(path string, request []byte, session st
 		}
 	} else {
 		receipt.Digest = digest
-		receipt.Bundle, err = h.Economy.ClaimSubscriptions(key)
+		subscriptionBundle, err := h.Economy.ClaimSubscriptions(key)
 		if err != nil {
 			return code, nil, true, err
 		}
+		// Preserve events -> login pass -> subscription execution order and all
+		// repeated reward entries in the single client envelope.
+		receipt.Bundle = append(receipt.Bundle, eventBundle...)
 		receipt.Bundle = append(receipt.Bundle, loginBundle...)
+		receipt.Bundle = append(receipt.Bundle, subscriptionBundle...)
 		raw, err := json.Marshal(receipt)
 		if err != nil {
 			return code, nil, true, err
@@ -93,4 +104,39 @@ func (h AttendanceHandler) HandleSession(path string, request []byte, session st
 		response = wire.AppendString(response, 1002, key)
 	}
 	return code, response, true, nil
+}
+
+// Strip the child envelope before adding the combined one. Keep native and
+// unrelated unknown fields byte-for-byte; reject ambiguous child envelopes
+// rather than returning a response the client would silently ignore.
+func takeAttendanceRewardEnvelope(response []byte) ([]byte, []byte, error) {
+	var native, bundle []byte
+	var receipt string
+	var hasBundle, hasReceipt bool
+	err := wire.Walk(response, func(f wire.Field) error {
+		switch f.Number {
+		case 1001:
+			if f.Type != 2 || hasBundle {
+				return fmt.Errorf("commerce: ambiguous attendance reward bundle")
+			}
+			hasBundle = true
+			bundle = append([]byte(nil), f.Value...)
+		case 1002:
+			if f.Type != 2 || hasReceipt {
+				return fmt.Errorf("commerce: ambiguous attendance reward receipt")
+			}
+			hasReceipt = true
+			receipt = string(f.Value)
+		default:
+			native = append(native, response[f.Start:f.End]...)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if hasBundle != hasReceipt || hasReceipt && (receipt == "" || len(receipt) > 1024) {
+		return nil, nil, fmt.Errorf("commerce: incomplete attendance reward envelope")
+	}
+	return native, bundle, nil
 }

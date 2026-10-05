@@ -108,8 +108,8 @@ func TestAttendanceDailyCounterAndClaimEligibility(t *testing.T) {
 	claim = wire.AppendVarint(claim, 2, 1)
 	claim = wire.AppendVarint(claim, 3, 1)
 	claim = wire.AppendVarint(claim, 4, 1)
-	if _, _, _, err := s.Handle("/EventReward", claim); err != nil {
-		t.Fatal(err)
+	if _, _, _, err := s.Handle("/EventReward", claim); err == nil {
+		t.Fatal("automatic reward claimed again")
 	}
 	if e.calls != 1 {
 		t.Fatal("attendance reward missing")
@@ -145,8 +145,8 @@ func TestAttendanceNextGroupAndRepeatedChainReward(t *testing.T) {
 		claim := wire.AppendVarint(req(seq), 2, 1)
 		claim = wire.AppendVarint(claim, 3, group)
 		claim = wire.AppendVarint(claim, 4, 1)
-		if _, _, _, err := s.Handle("/EventReward", claim); err != nil {
-			t.Fatal(err)
+		if _, _, _, err := s.Handle("/EventReward", claim); err == nil {
+			t.Fatal("automatic cycle reward claimed again")
 		}
 		seq++
 		today = today.Add(24 * time.Hour)
