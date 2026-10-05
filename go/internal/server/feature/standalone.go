@@ -14,12 +14,10 @@ var standaloneDefaults = map[string]int{
 	"/PvpBattleDeckInfo":       87,
 	"/PvpBattleHistory":        97,
 	"/PvpBattleOnceRewardInfo": 277,
-	"/TodayQuestInfo":          64,
 	"/FieldDeckInfo":           273,
 	"/FriendRecommend":         211,
 	"/SupporterStatus":         438,
 	"/SupporterBattleInfo":     439,
-	"/InnOpen":                 109,
 }
 
 // commandSuccess contains idempotent local mutations whose response type is

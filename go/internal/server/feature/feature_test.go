@@ -66,7 +66,6 @@ func TestEmptyPacketCodesReturnsCopy(t *testing.T) {
 func TestStandaloneNativeDefaults(t *testing.T) {
 	for path, want := range map[string]int{
 		"/EquipInfo":               34,
-		"/TodayQuestInfo":          64,
 		"/UpdateAgeGate":           0,
 		"/ActiveMap":               0,
 		"/PvpBattleDeckInfo":       87,
