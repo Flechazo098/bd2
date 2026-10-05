@@ -254,9 +254,25 @@ func (s *Inventory) GrantOnce(identity string, rewards []gamedata.BattleReward) 
 	}
 	next := cloneOwnedSnapshot(s.owned)
 	newItems := make([]Item, 0, len(rewards))
+	// Skin rewards represent ownership; returning an existing skin would also
+	// replay the client's acquisition UI. Include the immutable starter seed.
+	ownedSkins := make(map[uint64]bool)
+	for _, items := range [][]Item{s.starter.Items, next.Items} {
+		for _, item := range items {
+			if item.Type == 45 && item.Count > 0 {
+				ownedSkins[item.ID] = true
+			}
+		}
+	}
 	for _, r := range rewards {
 		if r.ID == 0 || r.Type == 0 || r.Count == 0 {
 			return nil, errors.New("player: invalid battle reward")
+		}
+		if r.Type == 45 {
+			if ownedSkins[r.ID] {
+				continue
+			}
+			ownedSkins[r.ID] = true
 		}
 		item := Item{InvenIndex: next.NextIndex, ID: r.ID, Type: r.Type, Count: r.Count, TimeValue: uint64(time.Now().UnixMilli())}
 		next.NextIndex++
