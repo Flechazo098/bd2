@@ -48,6 +48,7 @@ type Service struct {
 	now              func() time.Time
 	resetSeconds     int64
 	delegate         PurchaseDelegate
+	specialProducts  map[gamedata.CashProductKey]bool
 	hook             PurchaseHook
 	legacy           CountProvider
 	shopProducts     [][]byte
@@ -406,15 +407,13 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 			}
 		}
 	}
-	if native && !cash {
-		for _, line := range lines {
-			if !s.eventShopGroups[line.Key.GroupID] {
-				return 0, nil, false, nil
-			}
-		}
-	}
 	if native && cash {
 		return 61, nil, true, fmt.Errorf("commerce: mixed cash and native purchase")
+	}
+	if !cash {
+		// Native BillingInfo contains display identifiers (often a product ID),
+		// not a unique payment receipt. Request identity provides replay safety.
+		billing = nil
 	}
 	h := sha256.Sum256(request)
 	digest := hex.EncodeToString(h[:])
@@ -451,6 +450,9 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		if !s.available(d) {
 			return 61, nil, true, fmt.Errorf("commerce: product is not currently available")
 		}
+		if s.specialProducts[l.Key] && (len(lines) != 1 || l.Count != 1) {
+			return 61, nil, true, fmt.Errorf("commerce: special purchase requires one product")
+		}
 		var q Product
 		if d.PriceType == 1 {
 			var err error
@@ -459,10 +461,7 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 				return 61, nil, true, err
 			}
 		} else {
-			if d.PriceType == 0 || d.PriceCount == 0 {
-				return 61, nil, true, fmt.Errorf("commerce: invalid native price")
-			}
-			cost, err := boundedProduct(d.PriceCount, l.Count)
+			cost, err := nativePrice(d, l.Count)
 			if err != nil {
 				return 61, nil, true, err
 			}
@@ -471,7 +470,7 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		if !q.Enabled {
 			return 61, nil, true, fmt.Errorf("commerce: product disabled")
 		}
-		if l.Count > 1 && d.BulkOrderAvailability == 0 {
+		if len(lines) > 1 && d.BulkOrderAvailability != 1 {
 			return 61, nil, true, fmt.Errorf("commerce: bulk purchase disabled")
 		}
 		n := s.count(v, d)
@@ -512,6 +511,13 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		if q.Cost > 0 {
 			if d.PriceType != 1 {
 				costs = []gamedata.Reward{{Type: d.PriceType, ID: d.PriceID, Count: q.Cost}}
+				if resolver, ok := s.economy.(nativeCostResolver); ok {
+					var err error
+					costs, err = resolver.NativePurchaseCosts(costs[0])
+					if err != nil {
+						return 61, nil, true, err
+					}
+				}
 			} else {
 				var typ uint64
 				switch q.Currency {
@@ -531,7 +537,7 @@ func (s *Service) buy(session string, request []byte) (int, []byte, bool, error)
 		handled := false
 		// Delegate must only select known special products. Parent account transaction
 		// guarantees its grant and the subsequent debit commit together.
-		if s.delegate != nil && d.PriceType == 1 {
+		if s.delegate != nil && (d.PriceType == 1 || s.specialProducts[l.Key]) {
 			special, handled, e = s.delegate(l.Key, request)
 			if e != nil {
 				return 61, nil, true, e

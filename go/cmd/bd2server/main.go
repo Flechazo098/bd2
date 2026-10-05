@@ -823,6 +823,15 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("load cash bonus claims: %w", err)
 	}
 	cashService.AttachLegacyCounts(gachaService)
+	cashSpecialProducts := []gamedata.CashProductKey{{GroupID: infiniteGacha.ProductGroupID, ProductID: infiniteGacha.ProductID, SaleGroup: infiniteGacha.SaleGroup}}
+	for _, group := range regularGacha.Groups() {
+		if group.CashProductGroupID != 0 && group.CashProductID != 0 {
+			cashSpecialProducts = append(cashSpecialProducts, gamedata.CashProductKey{GroupID: group.CashProductGroupID, ProductID: group.CashProductID, SaleGroup: group.CashSalesGroup})
+		}
+	}
+	if err := cashService.AttachSpecialProducts(cashSpecialProducts); err != nil {
+		return fmt.Errorf("attach special cash products: %w", err)
+	}
 	cashService.AttachDelegate(func(key gamedata.CashProductKey, request []byte) ([]byte, bool, error) {
 		known := key.GroupID == infiniteGacha.ProductGroupID && key.ProductID == infiniteGacha.ProductID && key.SaleGroup == infiniteGacha.SaleGroup
 		for _, group := range regularGacha.Groups() {
