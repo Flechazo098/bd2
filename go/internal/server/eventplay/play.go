@@ -154,6 +154,21 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 	}); e != nil {
 		return fail(e)
 	}
+	// Public hub calendars are derived afresh, never stored as account replies.
+	if path == "/EventHubInfo" || path == "/MiniEventHubInfo" || path == "/MiniGameHubInfo" {
+		if s.hubCalendars != nil && path == "/MiniGameHubInfo" {
+			return s.hubCalendars.Handle(path, req)
+		}
+		if s.hubCalendars != nil && path == "/EventHubInfo" {
+			out, err := s.publicEventHubs(req)
+			return code, out, true, err
+		}
+		if path == "/MiniEventHubInfo" {
+			out, err := s.miniEventHubs(req)
+			return code, out, true, err
+		}
+		return code, nil, true, nil
+	}
 	key := fmt.Sprintf("%s:%s:%d", session, path, seq)
 	if r, ok := s.state.Replies[key]; ok {
 		if !bytes.Equal(r.Request, req) {
@@ -171,11 +186,7 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 		out = summaryWire(&next, path == "/MiniGameUserRecordInfo")
 	case "/MiniGameRelayServerInfo":
 		return fail(fmt.Errorf("eventplay: native relay channels are not configured"))
-	case "/EventHubInfo", "/MiniEventHubInfo", "/MiniGameHubInfo":
-		if s.hubCalendars != nil && path != "/MiniEventHubInfo" {
-			return s.hubCalendars.Handle(path, req)
-		}
-		out, e = s.hubs(path)
+
 	case "/PackEventStoryInfo", "/PackEventBattleInfo":
 		uids, err := list(req, 2)
 		if err != nil {
@@ -273,72 +284,6 @@ func (s *Service) grant(identity string, rewards []gamedata.BattleReward) ([]byt
 		rs = append(rs, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
 	}
 	return s.economy.Apply(identity, nil, rs)
-}
-func (s *Service) hubs(path string) ([]byte, error) {
-	var out []byte
-	rows := s.registry.List()
-	sort.Slice(rows, func(i, j int) bool { return rows[i].UID < rows[j].UID })
-	for _, c := range rows {
-		if c.Type != 8 && c.Type != 11 {
-			continue
-		}
-		if path == "/MiniGameHubInfo" {
-			if c.Type != 11 {
-				continue
-			}
-			v := wire.AppendVarint(nil, 1, c.SubID)
-			v = wire.AppendVarint(v, 2, c.UID)
-			v = wire.AppendVarint(v, 3, 1)
-			out = wire.AppendBytes(out, 1, v)
-			continue
-		}
-		if path == "/MiniEventHubInfo" {
-			v := wire.AppendVarint(nil, 1, c.UID)
-			v = wire.AppendVarint(v, 2, c.ID)
-			v = wire.AppendVarint(v, 3, uint64(c.Start))
-			v = wire.AppendVarint(v, 4, uint64(c.End))
-			v = wire.AppendVarint(v, 5, uint64(c.End))
-			for _, child := range rows {
-				if child.UID == c.UID || child.SubID != c.ID {
-					continue
-				}
-				slot := wire.AppendVarint(nil, 1, child.SubID)
-				slot = wire.AppendVarint(slot, 2, child.Type)
-				slot = wire.AppendVarint(slot, 3, child.ID)
-				slot = wire.AppendVarint(slot, 4, child.UID)
-				slot = wire.AppendVarint(slot, 5, uint64(child.Start))
-				slot = wire.AppendVarint(slot, 6, uint64(child.End))
-				v = wire.AppendBytes(v, 6, slot)
-			}
-			out = wire.AppendBytes(out, 1, v)
-			continue
-		}
-		hub, e := s.design.Row("PackEventHubTable", 14, c.ID)
-		if e != nil {
-			return nil, e
-		}
-		_ = hub
-		v := wire.AppendVarint(nil, 1, c.UID)
-		v = wire.AppendVarint(v, 2, c.ID)
-		v = wire.AppendVarint(v, 3, uint64(c.Start))
-		v = wire.AppendVarint(v, 4, uint64(c.End))
-		v = wire.AppendVarint(v, 5, uint64(c.End))
-		for _, r := range s.design.Rows("PackEventListTable", 6, c.ID) {
-			typ, id, slot := num(r, 9), num(r, 7), num(r, 11)
-			for _, child := range rows {
-				if child.ID != id {
-					continue
-				}
-				setting := wire.AppendVarint(nil, 1, slot)
-				setting = wire.AppendVarint(setting, 2, typ)
-				setting = wire.AppendVarint(setting, 3, child.UID)
-				v = wire.AppendBytes(v, 6, setting)
-				break
-			}
-		}
-		out = wire.AppendBytes(out, 1, v)
-	}
-	return out, nil
 }
 func recordWire(r record) []byte {
 	b := wire.AppendVarint(nil, 1, r.UID)

@@ -86,6 +86,8 @@ type CashProduct struct {
 	EventIndex      uint64
 }
 type HubSetting struct {
+	// Mini hubs bind PackEventListTable.SlotIndex and HubContentType here.
+	// The response's slot ID is the separate static table Id, never SlotIndex.
 	Slot         uint64
 	ProgressType uint64
 	EventUIDs    []uint64
