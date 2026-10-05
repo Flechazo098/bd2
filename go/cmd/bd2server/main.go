@@ -824,6 +824,10 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("load event tasks state: %w", err)
 	}
+	if err := mailService.AttachAttendanceRewardEconomy(eventEconomy); err != nil {
+		return fmt.Errorf("attach attendance mail rewards: %w", err)
+	}
+	eventTasksService.AttachAttendanceMail(mailService)
 	newbieStep, _, err := wire.Varint(login.UserInfo, 39)
 	if err != nil {
 		return err
@@ -1090,6 +1094,9 @@ func serve(args []string) (serveErr error) {
 	}
 	if err := game.AttachResponseObserver(eventTasksService); err != nil {
 		return err
+	}
+	if err := game.AttachResponseObserver(mailService); err != nil {
+		return fmt.Errorf("attach new mail notifications: %w", err)
 	}
 	if authService != nil {
 		if err := game.AttachLoginAuthenticator(authService); err != nil {

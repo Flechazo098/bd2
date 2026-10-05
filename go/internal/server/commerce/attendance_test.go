@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/events"
 	"bd2server/internal/server/eventtasks"
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/wire"
 )
@@ -33,7 +34,7 @@ func (e *attendanceBalances) Apply(_ string, _ []gamedata.Reward, rewards []game
 	return bundle, nil
 }
 
-func TestAttendanceCombinesOrdinaryLoginPassAndSubscriptionInGrantOrder(t *testing.T) {
+func TestAttendanceMailsOrdinaryRewardsAndCombinesLoginPassAndSubscription(t *testing.T) {
 	e, items, _, _, now := entitlementFixture(t)
 	// eventtasks uses the production clock; align the commerce fixture with it
 	// while buying the subscription on the previous reset day.
@@ -57,6 +58,18 @@ func TestAttendanceCombinesOrdinaryLoginPassAndSubscriptionInGrantOrder(t *testi
 		t.Fatal(err)
 	}
 	tasks.SetSession("combined-session")
+	mailWallet, err := player.OpenWallet(e.store, player.Currency{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailbox, err := mail.OpenService(e.store, &mail.Starter{Version: "2.35.10", MailCount: 1}, items, mailWallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mailbox.AttachAttendanceRewardEconomy(e); err != nil {
+		t.Fatal(err)
+	}
+	tasks.AttachAttendanceMail(mailbox)
 	passes, err := NewLoginPasses(e.store, &gamedata.LoginPassCatalog{Groups: map[uint64][]gamedata.LoginPassReward{
 		20: {{ID: 1, TicketID: 77, Free: gamedata.Reward{Type: 3, Count: 11}}},
 	}}, e, items, func(uint64) bool { return true })
@@ -70,7 +83,7 @@ func TestAttendanceCombinesOrdinaryLoginPassAndSubscriptionInGrantOrder(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if balances.calls != 4 || balances.balance != 19 {
+	if balances.calls != 3 || balances.balance != 17 {
 		t.Fatalf("wrong combined grant: calls=%d balance=%d", balances.calls, balances.balance)
 	}
 	counts := map[int]int{}
@@ -94,15 +107,15 @@ func TestAttendanceCombinesOrdinaryLoginPassAndSubscriptionInGrantOrder(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) != 3 || snapshots[0] != 2 || snapshots[1] != 11 || snapshots[2] != 5 {
+	if len(snapshots) != 2 || snapshots[0] != 11 || snapshots[1] != 5 {
 		t.Fatalf("combined reward entries lost or reordered: %v", snapshots)
 	}
 	_, replay, _, err := h.HandleSession("/Attendance", request, "combined-session")
-	if err != nil || !bytes.Equal(response, replay) || balances.calls != 4 {
+	if err != nil || !bytes.Equal(response, replay) || balances.calls != 3 {
 		t.Fatal("combined retry changed rewards", err)
 	}
 	_, next, _, err := h.HandleSession("/Attendance", wire.AppendVarint(nil, 1, 2), "combined-session")
-	if err != nil || balances.calls != 4 {
+	if err != nil || balances.calls != 3 {
 		t.Fatal("fresh request granted again", err)
 	}
 	if _, ok, _ := wire.Bytes(next, 1001); ok {
@@ -110,6 +123,28 @@ func TestAttendanceCombinesOrdinaryLoginPassAndSubscriptionInGrantOrder(t *testi
 	}
 	if _, ok, _ := wire.Bytes(next, 5); ok {
 		t.Fatal("fresh request replays old attendance stamps")
+	}
+	_, mailInfo, _, err := mailbox.Handle("/MailInfo", wire.AppendVarint(nil, 1, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailCount := 0
+	var mailID uint64
+	if err := wire.Walk(mailInfo, func(f wire.Field) error {
+		if f.Number == 1 {
+			mailCount++
+			mailID, _, _ = wire.Varint(f.Value, 1)
+		}
+		return nil
+	}); err != nil || mailCount != 1 {
+		t.Fatalf("ordinary attendance did not issue exactly one mail: count=%d err=%v", mailCount, err)
+	}
+	open := wire.AppendVarint(wire.AppendVarint(nil, 1, 4), 2, mailID)
+	if _, _, _, err := mailbox.Handle("/MailOpen", open); err != nil {
+		t.Fatal(err)
+	}
+	if balances.calls != 4 || balances.balance != 19 {
+		t.Fatalf("ordinary reward must arrive only after opening mail: calls=%d balance=%d", balances.calls, balances.balance)
 	}
 }
 
