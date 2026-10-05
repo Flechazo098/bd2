@@ -239,22 +239,24 @@ type stateSnapshot struct {
 // delivery. Starter is immutable source data; mutable rows live in the player
 // state alongside the bounded core snapshot.
 type Service struct {
-	contentTickets *gamedata.GachaContentTicketDesign
-	mu             sync.Mutex
-	Starter        *Starter
-	seedPath       string
-	seedStamp      fileStamp
-	grantSpoolPath string
-	storage        stateio.AtomicEntryStore
-	inventory      *player.Inventory
-	wallet         *player.Wallet
-	collection     *player.CollectionStore
-	costumeDesign  player.CostumeDesignSource
-	state          stateSnapshot
-	dynamic        map[uint64]MailDBInfo
-	issued         map[string]uint64
-	history        map[uint64]MailDBInfo
-	now            func() time.Time
+	contentTickets    *gamedata.GachaContentTicketDesign
+	attendanceEconomy AttendanceRewardEconomy
+	beforeMailID      uint64
+	mu                sync.Mutex
+	Starter           *Starter
+	seedPath          string
+	seedStamp         fileStamp
+	grantSpoolPath    string
+	storage           stateio.AtomicEntryStore
+	inventory         *player.Inventory
+	wallet            *player.Wallet
+	collection        *player.CollectionStore
+	costumeDesign     player.CostumeDesignSource
+	state             stateSnapshot
+	dynamic           map[uint64]MailDBInfo
+	issued            map[string]uint64
+	history           map[uint64]MailDBInfo
+	now               func() time.Time
 }
 
 func (s *Service) AttachContentTickets(design *gamedata.GachaContentTicketDesign) error {
@@ -555,6 +557,20 @@ func (s *Service) open(request []byte) ([]byte, error) {
 			return nil, fmt.Errorf("mail: unknown mail %d", id)
 		}
 	}
+	// Validate the entire new attendance batch before any reward domain writes.
+	for _, entry := range selected {
+		if s.isAttendanceMail(entry.MailID) {
+			if s.attendanceEconomy == nil {
+				return nil, errors.New("mail: attendance reward economy unavailable")
+			}
+			if !containsID(s.state.Opened, entry.MailID) && uint64(s.now().UnixMilli()) >= entry.ExpiresAt {
+				return nil, errors.New("mail: attendance mail expired")
+			}
+			if err := s.validateAttendanceAttachments(mailAttachments(entry)); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	var bundle []byte
 	next := stateSnapshot{Version: s.state.Version, Opened: append([]uint64(nil), s.state.Opened...), NextDynamicMailID: s.state.NextDynamicMailID}
@@ -563,74 +579,82 @@ func (s *Service) open(request []byte) ([]byte, error) {
 	newHistory := make([]MailDBInfo, 0, len(selected))
 	for _, entry := range selected {
 		identity := fmt.Sprintf("mail:%d", entry.MailID)
-		rewards := make([]gamedata.Reward, len(entry.RewardTypes))
-		var items []gamedata.BattleReward
-		var costumeIDs []uint64
-		for i := range entry.RewardTypes {
-			reward := gamedata.Reward{Type: entry.RewardTypes[i], ID: entry.RewardIDs[i], Count: entry.RewardCounts[i]}
-			rewards[i] = reward
-			switch {
-			case currencyRewardTypes[reward.Type]:
-				currency := wire.AppendVarint(nil, 3, reward.Type)
-				currency = wire.AppendVarint(currency, 4, reward.Count)
-				bundle = wire.AppendBytes(bundle, 1, currency)
-			case reward.Type == 11:
-				if s.collection == nil || s.costumeDesign == nil || reward.ID == 0 || reward.Count == 0 || reward.Count > 6 {
-					return nil, errors.New("mail: costume reward service unavailable or reward invalid")
-				}
-				for copy := uint64(0); copy < reward.Count; copy++ {
-					costumeIDs = append(costumeIDs, reward.ID)
-				}
-			case reward.Type == 28:
-				// DataManager recognizes this type, but RewardDBInfoBundle
-				// carries MyRoomTrophyDBInfo in a separate field.  Encoding it as
-				// ItemDBInfo would make the local state and client model disagree.
-				return nil, errors.New("mail: my-room trophy rewards require MyRoomTrophyDBInfo")
-			default:
-				if !s.supportedItemDBInfoReward(reward) {
-					return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
-				}
-				if reward.ID == 0 || reward.Count == 0 {
-					return nil, errors.New("mail: invalid item reward")
-				}
-				items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
-			}
-		}
-		if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {
-			return nil, err
-		}
-		granted, err := s.inventory.GrantOnce(identity+":items", items)
-		if err != nil {
-			return nil, err
-		}
-		if len(granted) == 0 {
-			granted = s.inventory.GrantedItems(identity + ":items")
-		}
-		for _, item := range granted {
-			bundle = wire.AppendBytes(bundle, 1, player.ItemWire(item))
-			view := wire.AppendVarint(nil, 2, item.ID)
-			view = wire.AppendVarint(view, 3, item.Type)
-			view = wire.AppendVarint(view, 4, item.Count)
-			bundle = wire.AppendBytes(bundle, 6, view)
-		}
-		if len(costumeIDs) != 0 {
-			grant, err := s.collection.GrantCostumes(identity+":costumes", costumeIDs, s.costumeDesign)
+		if s.isAttendanceMail(entry.MailID) {
+			granted, err := s.attendanceEconomy.Apply(identity+":attendance", nil, mailAttachments(entry))
 			if err != nil {
 				return nil, err
 			}
-			var mileage uint64
-			for _, exchange := range grant.Exchanges {
-				if exchange.ExchangeItemType != 20 || ^uint64(0)-mileage < exchange.ExchangeCount {
-					return nil, errors.New("mail: unsupported costume overflow exchange")
+			bundle = append(bundle, granted...)
+		} else {
+			rewards := make([]gamedata.Reward, len(entry.RewardTypes))
+			var items []gamedata.BattleReward
+			var costumeIDs []uint64
+			for i := range entry.RewardTypes {
+				reward := gamedata.Reward{Type: entry.RewardTypes[i], ID: entry.RewardIDs[i], Count: entry.RewardCounts[i]}
+				rewards[i] = reward
+				switch {
+				case currencyRewardTypes[reward.Type]:
+					currency := wire.AppendVarint(nil, 3, reward.Type)
+					currency = wire.AppendVarint(currency, 4, reward.Count)
+					bundle = wire.AppendBytes(bundle, 1, currency)
+				case reward.Type == 11:
+					if s.collection == nil || s.costumeDesign == nil || reward.ID == 0 || reward.Count == 0 || reward.Count > 6 {
+						return nil, errors.New("mail: costume reward service unavailable or reward invalid")
+					}
+					for copy := uint64(0); copy < reward.Count; copy++ {
+						costumeIDs = append(costumeIDs, reward.ID)
+					}
+				case reward.Type == 28:
+					// DataManager recognizes this type, but RewardDBInfoBundle
+					// carries MyRoomTrophyDBInfo in a separate field.  Encoding it as
+					// ItemDBInfo would make the local state and client model disagree.
+					return nil, errors.New("mail: my-room trophy rewards require MyRoomTrophyDBInfo")
+				default:
+					if !s.supportedItemDBInfoReward(reward) {
+						return nil, fmt.Errorf("mail: unsupported reward type %d", reward.Type)
+					}
+					if reward.ID == 0 || reward.Count == 0 {
+						return nil, errors.New("mail: invalid item reward")
+					}
+					items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
 				}
-				mileage += exchange.ExchangeCount
 			}
-			if mileage != 0 {
-				if _, err := s.wallet.GrantMileageOnce(identity+":costume-overflow", mileage); err != nil {
+			if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {
+				return nil, err
+			}
+			granted, err := s.inventory.GrantOnce(identity+":items", items)
+			if err != nil {
+				return nil, err
+			}
+			if len(granted) == 0 {
+				granted = s.inventory.GrantedItems(identity + ":items")
+			}
+			for _, item := range granted {
+				bundle = wire.AppendBytes(bundle, 1, player.ItemWire(item))
+				view := wire.AppendVarint(nil, 2, item.ID)
+				view = wire.AppendVarint(view, 3, item.Type)
+				view = wire.AppendVarint(view, 4, item.Count)
+				bundle = wire.AppendBytes(bundle, 6, view)
+			}
+			if len(costumeIDs) != 0 {
+				grant, err := s.collection.GrantCostumes(identity+":costumes", costumeIDs, s.costumeDesign)
+				if err != nil {
 					return nil, err
 				}
+				var mileage uint64
+				for _, exchange := range grant.Exchanges {
+					if exchange.ExchangeItemType != 20 || ^uint64(0)-mileage < exchange.ExchangeCount {
+						return nil, errors.New("mail: unsupported costume overflow exchange")
+					}
+					mileage += exchange.ExchangeCount
+				}
+				if mileage != 0 {
+					if _, err := s.wallet.GrantMileageOnce(identity+":costume-overflow", mileage); err != nil {
+						return nil, err
+					}
+				}
+				bundle = appendCollectionRewardBundle(bundle, s.collection, grant)
 			}
-			bundle = appendCollectionRewardBundle(bundle, s.collection, grant)
 		}
 		if !containsID(next.Opened, entry.MailID) {
 			next.Opened = append(next.Opened, entry.MailID)

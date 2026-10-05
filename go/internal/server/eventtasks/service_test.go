@@ -25,6 +25,32 @@ func (e *economyStub) Apply(_ string, c []gamedata.Reward, r []gamedata.Reward) 
 	e.rewards = append(e.rewards, r...)
 	return []byte{10, 0}, e.err
 }
+
+type attendanceMailStub struct {
+	calls                 int
+	rewards               []gamedata.Reward
+	identity, title, body string
+	sentAt                time.Time
+	err                   error
+	issued                map[string]bool
+}
+
+func (m *attendanceMailStub) IssueAttachmentsOnce(identity, title, body string, rewards []gamedata.Reward, sentAt time.Time) error {
+	if m.err != nil {
+		return m.err
+	}
+	if m.issued == nil {
+		m.issued = map[string]bool{}
+	}
+	if m.issued[identity] {
+		return nil
+	}
+	m.issued[identity] = true
+	m.calls++
+	m.rewards = append(m.rewards, rewards...)
+	m.identity, m.title, m.body, m.sentAt = identity, title, body, sentAt
+	return nil
+}
 func setup(t *testing.T) (*Service, *economyStub, stateio.Store) {
 	t.Helper()
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
@@ -41,6 +67,7 @@ func setup(t *testing.T) (*Service, *economyStub, stateio.Store) {
 	}
 	s.now = func() time.Time { return now }
 	s.SetSession("test")
+	s.AttachAttendanceMail(&attendanceMailStub{})
 	return s, e, store
 }
 func req(seq uint64) []byte { return wire.AppendVarint(nil, 1, seq) }
@@ -94,7 +121,8 @@ func TestMissionRejectsFabricatedProgressAndReplaySurvivesRestart(t *testing.T) 
 	}
 }
 func TestAttendanceDailyCounterAndClaimEligibility(t *testing.T) {
-	s, e, _ := setup(t)
+	s, eco, _ := setup(t)
+	m := s.attendanceMail.(*attendanceMailStub)
 	if _, _, _, err := s.Handle("/Attendance", req(1)); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +139,7 @@ func TestAttendanceDailyCounterAndClaimEligibility(t *testing.T) {
 	if _, _, _, err := s.Handle("/EventReward", claim); err == nil {
 		t.Fatal("automatic reward claimed again")
 	}
-	if e.calls != 1 {
+	if eco.calls != 0 || m.calls != 1 {
 		t.Fatal("attendance reward missing")
 	}
 	again := wire.AppendVarint(nil, 1, 4)
@@ -122,7 +150,8 @@ func TestAttendanceDailyCounterAndClaimEligibility(t *testing.T) {
 }
 
 func TestAttendanceNextGroupAndRepeatedChainReward(t *testing.T) {
-	s, e, _ := setup(t)
+	s, eco, _ := setup(t)
+	m := s.attendanceMail.(*attendanceMailStub)
 	s.design.Attendance[1] = gamedata.EventAttendance{ID: 1, Group: 20}
 	s.design.AttendanceGroups = map[[2]uint64]gamedata.EventAttendanceGroup{{20, 5}: {Group: 20, ID: 5, Next: 6}, {20, 6}: {Group: 20, ID: 6, Next: 5}}
 	s.design.AttendanceRewards = map[uint64][]gamedata.EventAttendanceReward{5: {{Group: 5, ID: 1, Day: 1, Basic: gamedata.Reward{Type: 4, Count: 5}}}, 6: {{Group: 6, ID: 1, Day: 1, Basic: gamedata.Reward{Type: 4, Count: 6}}}}
@@ -151,7 +180,7 @@ func TestAttendanceNextGroupAndRepeatedChainReward(t *testing.T) {
 		seq++
 		today = today.Add(24 * time.Hour)
 	}
-	if e.calls != 3 || len(s.state.Attendance["1"].History) != 2 {
+	if eco.calls != 0 || m.calls != 3 || len(s.state.Attendance["1"].History) != 2 {
 		t.Fatal("repeated cycle reward or retained history missing")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"bd2server/internal/server/events"
 	"bd2server/internal/server/eventtasks"
 	"bd2server/internal/server/gamedata"
+	"bd2server/internal/server/mail"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/protocol"
 	"bd2server/internal/server/wire"
@@ -60,12 +62,13 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 		AttendanceRewards: map[uint64][]gamedata.EventAttendanceReward{1: {{ID: 1, Group: 1, Day: 1, Basic: gamedata.Reward{Type: 4, Count: 100}}}},
 		LimitRewards:      map[[2]uint64]uint64{{2, 1}: 987},
 	}
-	open := func() (*accountstate.Repository, *player.Wallet, *player.Inventory, *eventtasks.Service, *attendanceTransactionEconomy) {
+	open := func() (*accountstate.Repository, *player.Wallet, *player.Inventory, *eventtasks.Service, *mail.Service, *attendanceTransactionEconomy) {
 		t.Helper()
 		repo, err := accountstate.Open(path)
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = repo.Close() })
 		wallet, err := player.OpenWallet(repo, player.Currency{Gold: 12})
 		if err != nil {
 			t.Fatal(err)
@@ -79,11 +82,19 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return repo, wallet, inv, svc, eco
+		mailbox, err := mail.OpenService(repo, &mail.Starter{Version: "2.35.10", MailCount: 1}, inv, wallet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := mailbox.AttachAttendanceRewardEconomy(eco); err != nil {
+			t.Fatal(err)
+		}
+		svc.AttachAttendanceMail(mailbox)
+		return repo, wallet, inv, svc, mailbox, eco
 	}
-	makeServer := func(repo *accountstate.Repository, svc *eventtasks.Service) *Server {
+	makeServer := func(repo *accountstate.Repository, svc *eventtasks.Service, mailbox *mail.Service) *Server {
 		t.Helper()
-		server, err := NewServer(fakeLogin{}, svc, &mutatingDomain{store: repo})
+		server, err := NewServer(fakeLogin{}, svc, mailbox, &mutatingDomain{store: repo})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,9 +103,13 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 		}
 		return server
 	}
-	batch := func(server *Server, cookie string, seq uint64, fail bool) error {
+	batch := func(server *Server, cookie, endpoint string, seq uint64, fail bool) error {
 		t.Helper()
-		requests := []protocol.BatchRequest{{Path: "/Attendance", RequestData: base64.StdEncoding.EncodeToString(wire.AppendVarint(nil, 1, seq))}}
+		request := wire.AppendVarint(nil, 1, seq)
+		if endpoint == "/MailOpen" {
+			request = wire.AppendVarint(request, 2, 1)
+		}
+		requests := []protocol.BatchRequest{{Path: endpoint, RequestData: base64.StdEncoding.EncodeToString(request)}}
 		if fail {
 			requests = append(requests, protocol.BatchRequest{Path: "/InjectedFailure", RequestData: base64.StdEncoding.EncodeToString(wire.AppendVarint(nil, 1, seq+1))})
 		}
@@ -109,7 +124,30 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 		_, err = server.DispatchRaw("/BatchRequest", []byte(body), "s="+cookie)
 		return err
 	}
-	repo, wallet, inv, svc, eco := open()
+	mailState := func(repo *accountstate.Repository) map[string]any {
+		t.Helper()
+		result := map[string]any{}
+		core, err := repo.Load("mail")
+		if err != nil {
+			t.Fatal(err)
+		}
+		result["core"] = string(core)
+		for _, bucket := range []string{"dynamic", "issued", "history"} {
+			entries, err := repo.ListEntries("mail", bucket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result[bucket] = entries
+		}
+		return result
+	}
+	assertUnclaimed := func(wallet *player.Wallet, inv *player.Inventory) {
+		t.Helper()
+		if wallet.Snapshot().Gold != 12 || len(inv.All()) != 0 {
+			t.Fatalf("unclaimed mail credited rewards: wallet=%+v items=%+v", wallet.Snapshot(), inv.All())
+		}
+	}
+	repo, wallet, inv, svc, mailbox, eco := open()
 	if err := wallet.EnsurePersisted(); err != nil {
 		t.Fatal(err)
 	}
@@ -123,19 +161,20 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := makeServer(repo, svc)
+	beforeMail := mailState(repo)
+	server := makeServer(repo, svc, mailbox)
 	session := login(t, server)
-	if err := batch(server, session.Cookie, 2, true); err == nil {
+	if err := batch(server, session.Cookie, "/Attendance", 2, true); err == nil {
 		t.Fatal("failed attendance batch accepted")
 	}
-	if eco.calls != 1 {
-		t.Fatalf("attendance did not reach real economy before failure: calls=%d", eco.calls)
+	if eco.calls != 0 {
+		t.Fatalf("attendance credited economy instead of mailing rewards: calls=%d", eco.calls)
 	}
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
 	// Rollback fences the old domain objects; reopen every repository/domain.
-	repo, wallet, inv, svc, eco = open()
+	repo, wallet, inv, svc, mailbox, eco = open()
 	after, err := repo.Load("eventtasks")
 	if err != nil {
 		t.Fatal(err)
@@ -143,28 +182,102 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatalf("attendance progress, claim markers or receipts survived rollback: %s", after)
 	}
-	if wallet.Snapshot().Gold != 12 || len(inv.All()) != 0 {
-		t.Fatalf("rewards survived rollback: wallet=%+v items=%+v", wallet.Snapshot(), inv.All())
+	if !reflect.DeepEqual(mailState(repo), beforeMail) {
+		t.Fatal("attendance mail or issued ledger survived rollback")
 	}
-	server = makeServer(repo, svc)
+	assertUnclaimed(wallet, inv)
+	server = makeServer(repo, svc, mailbox)
 	session = login(t, server)
-	if err := batch(server, session.Cookie, 2, false); err != nil {
+	if err := batch(server, session.Cookie, "/Attendance", 2, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := batch(server, session.Cookie, 3, false); err != nil {
+	if err := batch(server, session.Cookie, "/Attendance", 3, false); err != nil {
 		t.Fatal(err)
 	}
-	if eco.calls != 1 {
-		t.Fatalf("new sequence duplicated attendance reward: calls=%d", eco.calls)
+	if eco.calls != 0 {
+		t.Fatalf("attendance mail prematurely credited economy: calls=%d", eco.calls)
+	}
+	assertUnclaimed(wallet, inv)
+	issuedMail := mailState(repo)
+	if len(issuedMail["dynamic"].(map[string][]byte)) != 1 || len(issuedMail["issued"].(map[string][]byte)) != 1 {
+		t.Fatal("attendance did not issue exactly one mail")
 	}
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, wallet, inv, _, _ = open()
+	repo, wallet, inv, svc, mailbox, eco = open()
+	server = makeServer(repo, svc, mailbox)
+	session = login(t, server)
+	if err := batch(server, session.Cookie, "/Attendance", 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(mailState(repo), issuedMail) {
+		t.Fatal("relogin duplicated attendance mail")
+	}
+	assertUnclaimed(wallet, inv)
+	if err := batch(server, session.Cookie, "/MailOpen", 3, true); err == nil {
+		t.Fatal("failed mailbox batch accepted")
+	}
+	if eco.calls != 1 {
+		t.Fatalf("mail claim did not reach real economy before rollback: calls=%d", eco.calls)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, wallet, inv, svc, mailbox, eco = open()
+	if !reflect.DeepEqual(mailState(repo), issuedMail) {
+		t.Fatal("mail claim/history persisted after failed batch")
+	}
+	assertUnclaimed(wallet, inv)
+	server = makeServer(repo, svc, mailbox)
+	session = login(t, server)
+	if err := batch(server, session.Cookie, "/MailOpen", 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := batch(server, session.Cookie, "/MailOpen", 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := batch(server, session.Cookie, "/MailOpen", 3, false); err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Snapshot().Gold != 112 || len(inv.All()) != 1 || inv.All()[0].Count != 1 {
+		t.Fatal("mail replay duplicated persisted rewards")
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, wallet, inv, svc, mailbox, eco = open()
 	defer repo.Close()
 	items := inv.All()
 	if wallet.Snapshot().Gold != 112 || len(items) != 1 || items[0].Type != 9 || items[0].ID != 987 || items[0].Count != 1 {
 		t.Fatalf("successful attendance not persisted exactly once: wallet=%+v items=%+v", wallet.Snapshot(), items)
+	}
+	for _, domain := range []string{"wallet", "items"} {
+		grants, err := repo.ListEntries(domain, "granted")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(grants) != 1 {
+			t.Fatalf("%s durable grant ledger duplicated or missing: %v", domain, grants)
+		}
+	}
+	claimedMail := mailState(repo)
+	var claimed struct {
+		Opened []uint64 `json:"opened"`
+	}
+	if err := json.Unmarshal([]byte(claimedMail["core"].(string)), &claimed); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(claimed.Opened, []uint64{1}) || len(claimedMail["history"].(map[string][]byte)) != 1 {
+		t.Fatal("mail claim/history was not persisted")
+	}
+	server = makeServer(repo, svc, mailbox)
+	session = login(t, server)
+	if err := batch(server, session.Cookie, "/MailOpen", 2, false); err != nil {
+		t.Fatal(err)
+	}
+	if wallet.Snapshot().Gold != 112 || len(inv.All()) != 1 || inv.All()[0].Count != 1 {
+		t.Fatal("reopened mail claim duplicated rewards")
 	}
 	var state struct {
 		Attendance map[string]struct {

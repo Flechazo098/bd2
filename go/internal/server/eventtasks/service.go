@@ -24,6 +24,13 @@ import (
 type Economy interface {
 	Apply(string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
 }
+
+// AttendanceMailIssuer delivers attendance attachments inside the parent
+// account transaction. Its durable identity prevents duplicate mail on replay.
+type AttendanceMailIssuer interface {
+	IssueAttachmentsOnce(identity, title, body string, rewards []gamedata.Reward, sentAt time.Time) error
+}
+
 type attendance struct {
 	Group, Count uint64
 	LastDay      string
@@ -69,6 +76,7 @@ type Service struct {
 	unlocked          func(uint64, uint64) bool
 	authorizeCash     func(uint64, uint64) bool
 	attendancePremium func(uint64) bool
+	attendanceMail    AttendanceMailIssuer
 	associated        func(events.Schedule) uint64
 }
 
@@ -134,6 +142,15 @@ func (s *Service) AttachUnlockResolver(f func(uint64, uint64) bool)            {
 func (s *Service) AttachCashAuthorization(f func(uint64, uint64) bool)         { s.authorizeCash = f }
 func (s *Service) AttachAttendancePremium(f func(uint64) bool)                 { s.attendancePremium = f }
 func (s *Service) AttachAssociatedMissionGroup(f func(events.Schedule) uint64) { s.associated = f }
+
+func (s *Service) AttachAttendanceMail(issuer AttendanceMailIssuer) { s.attendanceMail = issuer }
+
+func (s *Service) mailAttendance(identity string, rewards []gamedata.Reward) error {
+	if s.attendanceMail == nil {
+		return errors.New("eventtasks: attendance mailbox unavailable")
+	}
+	return s.attendanceMail.IssueAttachmentsOnce(identity, "Attendance Rewards", "Your attendance rewards are ready. Please claim the attachments in your mailbox.", rewards, s.now())
+}
 
 func (s *Service) SetNewbieStep(step uint64) error {
 	s.mu.Lock()
@@ -497,12 +514,9 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			}
 		}
 		if len(granted) > 0 {
-			bundle, err := s.economy.Apply(identity, nil, granted)
-			if err != nil {
+			if err := s.mailAttendance(identity, granted); err != nil {
 				return nil, err
 			}
-			out = wire.AppendBytes(out, 1001, bundle)
-			out = wire.AppendString(out, 1002, identity)
 		}
 		return out, nil
 	case "/AttendanceInfo":
@@ -563,18 +577,12 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		if len(rewards) == 0 {
 			return nil, errors.New("eventtasks: attendance day unavailable")
 		}
-		bundle, e := s.economy.Apply(identity, nil, rewards)
-		if e != nil {
-			return nil, e
+		if err := s.mailAttendance(identity, rewards); err != nil {
+			return nil, err
 		}
 		a.Obtained[ck] = true
 		a.History[ck] = true
-		// Frozen EventRewardResponse has no known fields. The owned-client plugin
-		// applies this actual grant once using the durable request receipt; Handle
-		// persists the complete response for replay before the account commits.
-		out := wire.AppendBytes(nil, 1001, bundle)
-		out = wire.AppendString(out, 1002, identity)
-		return out, nil
+		return nil, nil
 	case "/EventMissionInfo":
 		var out []byte
 		for _, v := range s.taskSchedules() {
