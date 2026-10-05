@@ -1,18 +1,16 @@
 # 服主资源与 CDN 配置指南
 
-`bd2server` 不要求 Windows 游戏目录，也不要求玩家的本地 ServerData 目录。服务端只会自动准备自身逻辑需要的 GameData。玩家在 `bd2client` 中有三种资源来源：
+`bd2server` 服务端只会自动准备自身逻辑需要的 GameData。玩家在 `bd2client` 中有三种资源来源：
 
 - **官方 CDN**：玩家直接从官方节点下载。
-- **服务器资源源**：客户端向游戏服务器查询资源 URL；服主可以在 URL 后部署自建镜像或官方 CDN 反代，两者使用同一种协议。
-- **本地资源目录**：客户端使用玩家已经下载的资源；目录选择和校验完全发生在玩家设备上。
+- **服务器资源源**：客户端向游戏服务器查询资源 URL；服主可以在 URL 后部署自建镜像或官方 CDN 反代都可，两者使用同一种协议。
+- **本地资源目录**：客户端使用玩家已经下载的资源。
 
 无论怎样，最终的资源都是要来到玩家的客户端的。
 
-`resources.json` 只配置 `official` 或 `server`。服务端不会接收、保存或返回玩家的本地资源路径。
+## 小服与 FRP
 
-## 朋友小服与 FRP
-
-推荐在 `resources.json` 中使用默认配置：
+可以在 `resources.json` 中使用默认配置：
 
 ```json
 {
@@ -20,7 +18,7 @@
 }
 ```
 
-玩家在 `bd2client.exe` 中选择“官方 CDN”。资源会由玩家直连官方节点，FRP 只承载认证和游戏 API，不承担数 GB 的 ServerData 流量。
+玩家在 `bd2client.exe` 中选择“官方 CDN”。这样我们的服务器只会承担平常游玩的游戏 API。
 
 ## 获取官方资源镜像
 
@@ -38,16 +36,9 @@ macOS/Linux（Bash 或 Zsh）：
 ./bd2server resources fetch --output '/srv/bd2-resources'
 ```
 
-命令会按照同目录 `versions.json` 中的版本：
+命令会按照同目录 `versions.json` 中的版本下载所需的数据。
 
-- 下载并验证 GameData、`design.version`、ZIP 结构与 CRC。
-- 下载 ServerData catalog，并只同步 catalog 实际引用的 bundle。
-- 拒绝不安全的 catalog 路径。
-- 跳过已经具有有效 `UnityFS` 签名的 bundle。
-- 使用同目录临时文件完成替换。
-- 生成 `resource-fetch-manifest.json`。
-
-ServerData 可能达到数 GB。命令不会在普通 `serve` 启动时自动下载整套 ServerData，避免意外消耗大量磁盘和流量。
+ServerData 会达到数 GB。注意合理分配，服务器启动时不会下载这些，只会下载所需的游戏数据文件。
 
 同步结果的目录结构是：
 
@@ -60,7 +51,7 @@ ServerData 可能达到数 GB。命令不会在普通 `serve` 启动时自动下
 
 ## 服务器资源源
 
-服主自建资源镜像与反代官方 CDN 对客户端来说没有区别：它们都提供两个可公开访问的 HTTP(S) 基础 URL。服务端统一使用 `server` 模式，不会向玩家暴露后端究竟是静态文件、对象存储、边缘 CDN 还是缓存反代。
+服主自建资源镜像与反代官方 CDN 对客户端来说没有区别：它们都提供两个可公开访问的 HTTP(S) 基础 URL。服务端统一使用 `server` 模式。
 
 把上述 `ServerData` 和 `GameData` 目录上传到对象存储、静态 Web 服务器或 CDN 时，资源 URL 必须保留目录层级，并允许普通 `GET` 请求。
 
@@ -83,11 +74,11 @@ Content-Type: application/json
 {"cdn_mode":"server"}
 ```
 
-服务端会返回经过校验的 URL、Bundle 版本和 GameData 版本。客户端拒绝模式或版本不一致的响应。
+服务端会返回经过校验的 URL、Bundle 版本和 GameData 版本。客户端会拒绝模式或版本不一致的响应。
 
 ### 反代官方 CDN
 
-如果服主不保存完整镜像，也可以把相同的 `server` 配置指向已有边缘 CDN 或带磁盘缓存的 Nginx。反代仍会消耗服主的回源/出口流量，不建议直接放在窄带 FRP 后面。
+如果服主不保存完整镜像，也可以把相同的 `server` 配置指向已有边缘 CDN 或带磁盘缓存的 Nginx。
 
 Nginx 参考配置：
 

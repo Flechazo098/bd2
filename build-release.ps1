@@ -143,7 +143,6 @@ Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $serverPackage 've
 Copy-Item -LiteralPath $versionConfig -Destination (Join-Path $clientPackage 'versions.json') -Force
 Copy-Item -LiteralPath (Join-Path $root 'RELEASE.md') -Destination (Join-Path $serverPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'AUTHENTICATION.md') -Destination (Join-Path $serverPackage 'AUTHENTICATION.md') -Force
-Copy-Item -LiteralPath (Join-Path $root 'RESOURCES.md') -Destination (Join-Path $serverPackage 'RESOURCES.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'GAME_CONFIGURATION.md') -Destination (Join-Path $serverPackage 'GAME_CONFIGURATION.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'docs\CLIENT.md') -Destination (Join-Path $clientPackage 'README.md') -Force
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $serverPackage 'LICENSE') -Force
