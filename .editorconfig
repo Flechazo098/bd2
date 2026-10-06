@@ -1,0 +1,9 @@
+root = true
+
+[.build/game-sdk/**/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+
+[data/dev/client-source-readable/**/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none

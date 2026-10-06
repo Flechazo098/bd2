@@ -3,6 +3,9 @@
   <PropertyGroup>
     <BD2PluginsDir>$(MSBuildThisFileDirectory)</BD2PluginsDir>
     <BD2RepositoryDir>$([System.IO.Path]::GetFullPath('$(BD2PluginsDir)..'))/</BD2RepositoryDir>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>8.0-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
   </PropertyGroup>
   <Import Project="$(BD2PluginsDir)Directory.Build.local.props" Condition="Exists('$(BD2PluginsDir)Directory.Build.local.props')" />
   <PropertyGroup>
