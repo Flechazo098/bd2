@@ -699,6 +699,7 @@ func serve(args []string) (serveErr error) {
 		return fmt.Errorf("attach field monster state: %w", err)
 	}
 	battleService.AttachFieldMonsters(worldService)
+	battleService.AttachFieldBuffConsume(worldService.ConsumeFieldBattleBuff)
 	if err := worldService.AttachFieldBuffRuntime(gameData, *gameDataVersion); err != nil {
 		return fmt.Errorf("attach field monster damage: %w", err)
 	}

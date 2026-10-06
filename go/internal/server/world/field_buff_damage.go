@@ -24,27 +24,9 @@ func (s *Service) applyMonsterFieldDamage(pack int, id uint64, identity string) 
 	if s.characters == nil || s.decks == nil {
 		return nil, fmt.Errorf("world: field health runtime unavailable")
 	}
-	entries := s.decks.CurrentFieldDeck()
-	indices := make([]uint64, 0, len(entries))
-	for _, entry := range entries {
-		indices = append(indices, entry.CharacterInvenIndex)
-	}
-	if r.TargetType == 0 {
-		party, e := s.ResolveStoryParty(pack, s.firstUnclearedQuestFor(pack))
-		if e != nil {
-			return nil, e
-		}
-		if len(party) > 0 && s.questDifficulty(pack) == 0 {
-			indices = []uint64{party[0].InvenIndex}
-		} else if s.decks.FieldControlType() == 0 || len(indices) == 0 {
-			indices = nil
-			for _, entry := range s.decks.CurrentDeck() {
-				indices = append(indices, entry.CharacterInvenIndex)
-			}
-		}
-		if len(indices) > 1 {
-			indices = indices[:1]
-		}
+	indices, e := s.fieldBuffTargets(pack, r.TargetType)
+	if e != nil {
+		return nil, e
 	}
 	var response [][]byte
 	for _, index := range indices {
@@ -81,4 +63,47 @@ func (s *Service) applyMonsterFieldDamage(pack int, id uint64, identity string) 
 		}
 	}
 	return response, nil
+}
+
+func (s *Service) fieldBuffTargets(pack int, target uint64) ([]uint64, error) {
+	if target > 2 || s.decks == nil {
+		return nil, fmt.Errorf("world: invalid field buff target")
+	}
+	var indices []uint64
+	if s.questDifficulty(pack) == 0 && s.storyRoster != nil {
+		if quest := s.firstUnclearedQuestFor(pack); quest != 0 {
+			party, err := s.ResolveStoryParty(pack, quest)
+			if err != nil {
+				return nil, err
+			}
+			for _, c := range party {
+				indices = append(indices, c.InvenIndex)
+			}
+		}
+	}
+	if len(indices) == 0 {
+		if s.decks.FieldControlType() == 0 || len(s.decks.CurrentFieldDeck()) == 0 {
+			for _, entry := range s.decks.CurrentDeck() {
+				indices = append(indices, entry.CharacterInvenIndex)
+			}
+		} else {
+			for _, entry := range s.decks.CurrentFieldDeck() {
+				indices = append(indices, entry.CharacterInvenIndex)
+			}
+		}
+	}
+	// The client animates either party target through the active field train;
+	// LEADER applies only to its first member, never all owned characters.
+	if target == 0 && len(indices) > 1 {
+		indices = indices[:1]
+	}
+	seen := map[uint64]bool{}
+	var unique []uint64
+	for _, id := range indices {
+		if !seen[id] {
+			unique = append(unique, id)
+			seen[id] = true
+		}
+	}
+	return unique, nil
 }

@@ -9,6 +9,7 @@ import (
 // reward graphs, so callers can reject them without inventing a reward.
 type FieldObjectDesign struct {
 	Objects   map[int]FieldRewardObject
+	Actions   map[int]FieldActionObject
 	Equipment *EquipmentGachaCatalog
 }
 type FieldRewardObject struct {
@@ -46,6 +47,13 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 			return design, err
 		}
 		obj := FieldRewardObject{GroupID: id}
+		for _, field := range []int{2, 3} {
+			v, e := packedInts(raw, field)
+			if e != nil || len(v) > 0 {
+				rows.Close()
+				return design, fmt.Errorf("gamedata: field object random buff graph %d requires authored selection rules", id)
+			}
+		}
 		for f, target := range map[int]*int{1: &obj.BuffID, 7: &obj.MonsterID, 8: &obj.QuestID, 9: &obj.ResetType, 12: &obj.Type} {
 			v, e := packedInts(raw, f)
 			if e != nil || len(v) > 1 {
@@ -132,7 +140,12 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 		}
 		design.Objects[id] = obj
 	}
-	return design, rows.Err()
+	if err = rows.Err(); err != nil {
+		return design, err
+	}
+	rows.Close()
+	design.Actions, err = loadFieldActionObjects(db)
+	return design, err
 }
 
 // DropType 0 makes DropCount weighted selections. DropType 1 checks each

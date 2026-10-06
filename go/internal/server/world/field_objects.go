@@ -5,7 +5,6 @@ import (
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/wire"
 	"fmt"
-	"time"
 )
 
 func (s *Service) WithFieldObjects(designs map[int]gamedata.FieldObjectDesign) *Service {
@@ -63,7 +62,7 @@ func (s *Service) openedFieldObjects(pack int) ([]int, error) {
 		if !ok {
 			return nil, fmt.Errorf("world: saved field object absent from design")
 		}
-		period, e := s.fieldObjectPeriod(obj)
+		period, e := s.fieldObjectPeriodFor(pack, obj)
 		if e != nil {
 			continue
 		}
@@ -82,7 +81,26 @@ func (s *Service) WithFieldResetSchedule(schedule gamedata.FieldResetSchedule) *
 	return s
 }
 func (s *Service) fieldObjectPeriod(obj gamedata.FieldRewardObject) (string, error) {
-	return s.fieldReset.Period(obj.ResetType, time.Now())
+	return s.fieldReset.Period(obj.ResetType, s.monsterTime())
+}
+func (s *Service) fieldObjectPeriodFor(pack int, obj gamedata.FieldRewardObject) (string, error) {
+	if obj.ResetType == 2 {
+		resolver, ok := s.eventFieldPacks.(interface {
+			FieldObjectEventPeriod(int) (string, int64, error)
+		})
+		if !ok {
+			return "", fmt.Errorf("%w: field event calendar unavailable", ErrInvalidRequest)
+		}
+		period, _, err := resolver.FieldObjectEventPeriod(pack)
+		if err != nil {
+			return "", err
+		}
+		if period == "" {
+			return "", fmt.Errorf("%w: field event inactive", ErrInvalidRequest)
+		}
+		return "event:" + period, nil
+	}
+	return s.fieldObjectPeriod(obj)
 }
 func (s *Service) handleFieldObjectInfo(request []byte) (int, []byte, bool, error) {
 	pack, err := requestPack(request)
@@ -100,6 +118,11 @@ func (s *Service) handleFieldObjectInfo(request []byte) (int, []byte, bool, erro
 	for _, id := range ids {
 		response = wire.AppendBytes(response, 1, wire.AppendVarint(nil, 1, uint64(id)))
 	}
+	actions, err := s.fieldActionInfo(pack)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	response = append(response, actions...)
 	return 28, response, true, nil
 }
 func (s *Service) handleFieldObjectReward(request []byte) (int, []byte, bool, error) {
@@ -115,11 +138,11 @@ func (s *Service) handleFieldObjectReward(request []byte) (int, []byte, bool, er
 	if err != nil || id == 0 || id > uint64(^uint32(0)>>1) {
 		return 0, nil, true, ErrInvalidRequest
 	}
-	bundle, err := s.openFieldObject(pack, int(group), int(id))
+	response, err := s.openFieldObjectResponse(pack, int(group), int(id))
 	if err != nil {
 		return 0, nil, true, err
 	}
-	return 29, wire.AppendBytes(nil, 1, bundle), true, nil
+	return 29, response, true, nil
 }
 func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	design, err := s.fieldObjectDesign(pack)
@@ -127,17 +150,13 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 		return nil, err
 	}
 	obj, exists := design.Objects[id]
-	if !exists || obj.GroupID != group || !s.packUnlocked(pack) || s.state.ActivePackID() != pack {
+	if !exists || obj.GroupID != group || !s.packUnlocked(pack) || !s.fieldObjectCurrentPack(pack) {
 		return nil, fmt.Errorf("%w: unavailable field object", ErrInvalidRequest)
 	}
-	if position, ok := s.state.Position(); ok && (position.PackID != pack || position.Position.MapID != obj.MapID) {
-		return nil, fmt.Errorf("%w: field object outside current map", ErrInvalidRequest)
+	if err := s.validateFieldObjectMap(pack, obj.MapID); err != nil {
+		return nil, err
 	}
-	if obj.BuffID != 0 || obj.MonsterID != 0 || obj.QuestID != 0 || len(obj.Rewards) == 0 {
-		return nil, fmt.Errorf("%w: unsupported field object reward graph/reset", ErrInvalidRequest)
-	}
-
-	period, err := s.fieldObjectPeriod(obj)
+	period, err := s.fieldObjectPeriodFor(pack, obj)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +166,14 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	}
 	if opened {
 		return []byte{}, nil
+	}
+	// Buff and dynamic-monster objects have no loot group. Their state change
+	// belongs to the same dispatcher transaction as this consumed-object marker.
+	if len(obj.Rewards) == 0 {
+		if obj.BuffID == 0 && obj.MonsterID == 0 && obj.QuestID == 0 && obj.Type != 5 && obj.Type != 6 {
+			return nil, fmt.Errorf("%w: empty field object", ErrInvalidRequest)
+		}
+		return nil, s.state.MarkFieldRewardOpened(pack, id, period)
 	}
 	if s.wallet == nil || s.inventory == nil {
 		return nil, fmt.Errorf("world: field reward stores unavailable")

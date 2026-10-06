@@ -5,7 +5,6 @@ import (
 	"bd2server/internal/server/progress"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
-	"bytes"
 	"testing"
 )
 
@@ -61,7 +60,9 @@ func TestResearchRequiresCurrentMapPersistsRewardAndCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, again, _, err := s.Handle("/FieldObjectResearch", req)
-	if err != nil || !bytes.Equal(first, again) || spy.calls != 1 {
+	_, firstReward, _ := wire.Bytes(first, 2)
+	_, repeatedReward, _ := wire.Bytes(again, 2)
+	if err != nil || !firstReward || repeatedReward || spy.calls != 1 {
 		t.Fatalf("replay duplicated reward or lost response: calls%d err%v", spy.calls, err)
 	}
 	counts := wire.AppendVarint(nil, 1, 11)

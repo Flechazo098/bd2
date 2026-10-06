@@ -70,7 +70,7 @@ func intsRequest(raw []byte, number int) ([]uint64, error) {
 }
 func (s *Service) handleFieldResearch(request []byte) (int, []byte, bool, error) {
 	seq, present, err := wire.Varint(request, 1)
-	if err != nil || !present || seq == 0 {
+	if err != nil || !present || seq == 0 || seq > 0x7fffffff {
 		return 59, nil, true, ErrInvalidRequest
 	}
 	pack, err := requestPack(request)
@@ -78,7 +78,7 @@ func (s *Service) handleFieldResearch(request []byte) (int, []byte, bool, error)
 		return 59, nil, true, err
 	}
 	id, _, err := wire.Varint(request, 3)
-	if err != nil || id == 0 || !s.packUnlocked(pack) || s.state.ActivePackID() != pack {
+	if err != nil || id == 0 || id > 0x7fffffff || !s.packUnlocked(pack) || !s.fieldObjectCurrentPack(pack) {
 		return 59, nil, true, ErrInvalidRequest
 	}
 	design, err := s.researchDesign(pack)
@@ -128,14 +128,16 @@ func (s *Service) handleFieldResearch(request []byte) (int, []byte, bool, error)
 	}
 	for _, v := range prior {
 		if v == int(id) {
-			items, found, e := s.state.ResearchObjectReply(pack, int(id))
+			_, found, e := s.state.ResearchObjectReply(pack, int(id))
 			if e != nil {
 				return 59, nil, true, e
 			}
 			if !found {
 				return 59, nil, true, fmt.Errorf("world: researched object reward receipt missing")
 			}
-			return 59, append(wire.AppendVarint(nil, 1, seq), items...), true, nil
+			// RewardItem is a delta. A fresh request for an already researched
+			// object must not credit that delta again on the client.
+			return 59, wire.AppendVarint(nil, 1, seq), true, nil
 		}
 	}
 	if s.researchEconomy == nil {
@@ -167,14 +169,18 @@ func (s *Service) handleFieldResearch(request []byte) (int, []byte, bool, error)
 	}
 	return 59, append(wire.AppendVarint(nil, 1, seq), items...), true, nil
 }
-func fieldCountType(obj gamedata.FieldRewardObject) uint64 {
-	if obj.Type == 3 {
-		return 2
+func matchesFieldCount(obj gamedata.FieldRewardObject, category uint64) bool {
+	// PackMapRewardInfo uses independent predicates; a normal or hidden box
+	// with a one-time reset belongs in both once and acquisition totals.
+	switch category {
+	case 2:
+		return obj.ResetType == 1 && obj.Type != 5
+	case 3:
+		return obj.Type == 1 || obj.Type == 3
+	case 4:
+		return obj.Type == 6 && obj.ResetType == 2
 	}
-	if obj.Type == 6 {
-		return 4
-	}
-	return 3
+	return false
 }
 func (s *Service) handlePackRewardCounts(request []byte) (int, []byte, bool, error) {
 	seq, present, err := wire.Varint(request, 1)
@@ -234,11 +240,13 @@ func (s *Service) handlePackRewardCounts(request []byte) (int, []byte, bool, err
 					return 226, nil, true, e
 				}
 				for _, o := range d.Objects {
-					if fieldCountType(o) != t {
+					if !matchesFieldCount(o, t) {
 						continue
 					}
-					max++
-					period, e := s.fieldObjectPeriod(o)
+					period, e := s.fieldObjectPeriodFor(pack, o)
+					if t != 4 || e == nil {
+						max++
+					}
 					if e != nil {
 						continue
 					}

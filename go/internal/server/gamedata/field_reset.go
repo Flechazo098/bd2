@@ -61,3 +61,18 @@ func (s FieldResetSchedule) Period(reset int, now time.Time) (string, error) {
 	}
 	return shifted.Format("2006-01-02"), nil
 }
+
+func (s FieldResetSchedule) Next(reset int, now time.Time) (time.Time, error) {
+	if reset != 0 && reset != 3 {
+		return time.Time{}, fmt.Errorf("gamedata: field reset has no calendar deadline")
+	}
+	shifted := now.UTC().Add(9*time.Hour - s.DailyReset)
+	start := time.Date(shifted.Year(), shifted.Month(), shifted.Day(), 0, 0, 0, 0, time.UTC)
+	if reset == 3 {
+		days := (int(shifted.Weekday()) - int(s.WeeklyDay) + 7) % 7
+		start = start.AddDate(0, 0, 7-days)
+	} else {
+		start = start.AddDate(0, 0, 1)
+	}
+	return start.Add(s.DailyReset - 9*time.Hour), nil
+}

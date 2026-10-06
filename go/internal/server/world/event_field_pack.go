@@ -88,6 +88,11 @@ func (s *Service) enterEventFieldPack(pack gamedata.EventFieldPack) (int, []byte
 		position = saved.RawJSON
 	}
 	response := wire.AppendString(nil, 4, position)
+	buffs, err := s.fieldBuffInfo()
+	if err != nil {
+		return 0, nil, true, err
+	}
+	response = append(response, buffs...)
 	// The common callback dereferences HuntingGroundInfo even in hidden packs.
 	// Use the domain-generated empty/current snapshot; never borrow the outside
 	// map's monsters or story progress.

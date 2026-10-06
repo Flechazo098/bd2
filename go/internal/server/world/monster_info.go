@@ -159,6 +159,13 @@ func (s *Service) monsterRows(pack int, filter map[int]bool) ([][]byte, error) {
 			continue
 		}
 		eligible := s.monsterEligible(pack, m)
+		if eligible {
+			available, err := s.rewardMonsterAvailable(pack, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			eligible = available
+		}
 		state := fieldMonsterState{}
 		if eligible {
 			state, e = s.monsterState(&v, pack, m)
@@ -226,6 +233,13 @@ func (s *Service) attachFieldMonsterDesign(root, version string) {
 	s.monsterMaps = func(pack int) (map[int][]int, error) { return gamedata.LoadFieldMonsterMaps(root, version, pack) }
 }
 func (s *Service) authorizeMonsterMap(pack, id int) error {
+	available, err := s.rewardMonsterAvailable(pack, id)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return fmt.Errorf("world: reward monster not summoned")
+	}
 	if s.monsterMaps == nil {
 		return nil
 	}
@@ -264,6 +278,15 @@ func (s *Service) findFieldMonster(pack, id int) (gamedata.FieldMonsterDesign, b
 // Scripted monsters without regeneration return handled=false.
 func (s *Service) BeginFieldMonsterBattle(pack int, id, deck uint64) (string, bool, error) {
 	m, found, e := s.findFieldMonster(pack, int(id))
+	if e == nil && found {
+		available, err := s.rewardMonsterAvailable(pack, int(id))
+		if err != nil {
+			return "", true, err
+		}
+		if !available {
+			return "", true, fmt.Errorf("world: reward monster not summoned")
+		}
+	}
 	if found && m.GroupID == 0 {
 		return "", false, nil
 	}
