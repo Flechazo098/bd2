@@ -7,6 +7,14 @@ import (
 )
 
 func (s *Service) BeginSession(id string) { s.SetSession(id) }
+func (s *Service) inventorySnapshot() (world.GameplayAchievementSnapshot, error) {
+	if provider, ok := s.provider.(interface {
+		InventorySnapshot() (world.GameplayAchievementSnapshot, error)
+	}); ok {
+		return provider.InventorySnapshot()
+	}
+	return s.provider.Snapshot()
+}
 func (s *Service) BeforeDispatch(string, []byte) error {
 	s.mu.Lock()
 	s.beforeMissions = s.visibleMissionValues()
@@ -15,13 +23,13 @@ func (s *Service) BeforeDispatch(string, []byte) error {
 		return nil
 	}
 	var e error
-	s.before, e = s.provider.Snapshot()
+	s.before, e = s.inventorySnapshot()
 	return e
 }
 func (s *Service) AttachGameplayProvider(p world.GameplayAchievementProvider) { s.provider = p }
 func (s *Service) AfterDispatch(path string, request, response []byte) ([]byte, error) {
 	if s.provider != nil {
-		after, e := s.provider.Snapshot()
+		after, e := s.inventorySnapshot()
 		if e != nil {
 			return nil, e
 		}
@@ -30,6 +38,8 @@ func (s *Service) AfterDispatch(path string, request, response []byte) ([]byte, 
 		_, seen := s.state.Receipts[rk]
 		s.mu.Unlock()
 		if !seen {
+			type delta struct{ condition, sub, count uint64 }
+			var deltas []delta
 			for kind, old := range s.before.Items {
 				current := after.Items[kind]
 				if current < old {
@@ -37,41 +47,47 @@ func (s *Service) AfterDispatch(path string, request, response []byte) ([]byte, 
 					if kind[1] == 0 {
 						condition = 11
 					}
-					if e = s.RecordEvent(condition, kind[0], old-current, s.unlocked); e != nil {
-						return nil, e
-					}
+					deltas = append(deltas, delta{condition, kind[0], old - current})
 				}
 			}
 			for kind, current := range after.Items {
 				old := s.before.Items[kind]
 				if current > old {
-					if e = s.RecordEvent(32, kind[0], current-old, s.unlocked); e != nil {
-						return nil, e
-					}
+					deltas = append(deltas, delta{32, kind[0], current - old})
 				}
 			}
 			for idx, current := range after.Equipment {
 				old, ok := s.before.Equipment[idx]
 				if ok && current.Level > old.Level {
-					if e = s.RecordEvent(14, 0, current.Level-old.Level, s.unlocked); e != nil {
-						return nil, e
-					}
+					deltas = append(deltas, delta{14, 0, current.Level - old.Level})
 				}
 			}
 			for idx, current := range after.Costumes {
 				old, ok := s.before.Costumes[idx]
 				if ok && current.Level > old.Level {
-					if e = s.RecordEvent(104, current.ID, current.Level-old.Level, s.unlocked); e != nil {
-						return nil, e
-					}
+					deltas = append(deltas, delta{104, current.ID, current.Level - old.Level})
 				}
 			}
-			s.mu.Lock()
-			s.state.Receipts[rk] = receipt{Digest: "observer"}
-			e = s.save()
-			s.mu.Unlock()
-			if e != nil {
-				return nil, e
+			if len(deltas) > 0 {
+				s.mu.Lock()
+				before, e := json.Marshal(s.state)
+				if e != nil {
+					s.mu.Unlock()
+					return nil, e
+				}
+				for _, d := range deltas {
+					s.recordEventLocked(d.condition, d.sub, d.count, s.unlocked)
+				}
+				s.state.Receipts[rk] = receipt{Digest: "observer"}
+				e = s.save()
+				if e != nil {
+					s.state = snapshot{}
+					_ = json.Unmarshal(before, &s.state)
+				}
+				s.mu.Unlock()
+				if e != nil {
+					return nil, e
+				}
 			}
 		}
 	}

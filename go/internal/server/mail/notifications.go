@@ -14,8 +14,14 @@ func (s *Service) BeforeDispatch(string, []byte) error {
 func (s *Service) AfterDispatch(string, []byte, []byte) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Allocation is monotonic. Without a new ID, no existing row can match
+	// the notification window, so read-only packets need not scan the inbox.
+	if s.state.NextDynamicMailID == s.beforeMailID {
+		return nil, nil
+	}
+	now := uint64(s.now().UnixMilli())
 	for id, entry := range s.dynamic {
-		if id >= s.beforeMailID && !containsID(s.state.Opened, id) && entry.ExpiresAt > uint64(s.now().UnixMilli()) {
+		if id >= s.beforeMailID && !containsID(s.state.Opened, id) && entry.ExpiresAt > now {
 			return wire.AppendVarint(nil, 1, 1), nil // Notify.IsNewMail
 		}
 	}
