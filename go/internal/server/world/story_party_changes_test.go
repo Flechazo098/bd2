@@ -24,23 +24,31 @@ func TestInstalledQuestClearProjectsPartyChangesOnly(t *testing.T) {
 	if root == "" {
 		t.Skip("set BD2_REAL_GAMEDATA for authored party transition regression")
 	}
-	roster, err := gamedata.LoadStoryCharacterCatalog(root, "20260923193640", []int{1, 21}, 996000)
+	catalog, err := gamedata.LoadStoryCatalog(root, "20260923193640")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pack := range []int{1, 21} {
+	var packs []int
+	for id := range catalog.Packs {
+		packs = append(packs, id)
+	}
+	sort.Ints(packs)
+	roster, err := gamedata.LoadStoryCharacterCatalog(root, "20260923193640", packs, 996000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pack := range packs {
 		t.Run(fmt.Sprintf("pack%d", pack), func(t *testing.T) {
-			formations, err := gamedata.LoadQuestFormations(root, "20260923193640", pack)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var ids []int
-			for id := range formations {
-				ids = append(ids, id)
-			}
-			sort.Ints(ids)
+			design := catalog.Packs[pack]
+			ids := append([]int(nil), design.MainQuestIDs...)
 			path := filepath.Join(t.TempDir(), "state.db")
-			seed := &player.Starter{Version: "2.35.10", Characters: []player.Character{{InvenIndex: 77, ID: 10, Level: 1, HP: 7, CostumeID: 101}}}
+			seed := &player.Starter{Version: "2.35.10", Characters: []player.Character{
+				{InvenIndex: 77, ID: 10, Level: 1, HP: 7, CostumeID: 101, TalentLevel: 1},
+				{InvenIndex: 78, ID: 20, Level: 1, HP: 7, CostumeID: 202, TalentLevel: 1},
+				{InvenIndex: 79, ID: 130, Level: 1, HP: 7, CostumeID: 1301, TalentLevel: 1},
+				{InvenIndex: 80, ID: 140, Level: 1, HP: 7, CostumeID: 1401, TalentLevel: 1},
+				{InvenIndex: 81, ID: 350, Level: 1, HP: 7, CostumeID: 3501, TalentLevel: 1},
+			}}
 			open := func() (*accountstate.Repository, *Service) {
 				t.Helper()
 				repo, err := accountstate.Open(path)
@@ -66,20 +74,35 @@ func TestInstalledQuestClearProjectsPartyChangesOnly(t *testing.T) {
 				if err = s.characters.EnsurePersisted(); err != nil {
 					t.Fatal(err)
 				}
+				var chosen []deck.DeckEntry
+				for i, c := range seed.Characters {
+					chosen = append(chosen, deck.DeckEntry{CharacterInvenIndex: c.InvenIndex, CostumeInvenIndex: uint64(i), Slot: uint64(i + 1)})
+				}
 				s.decks, err = deck.OpenStore(repo, deck.Seed{Version: "2.35.10", FieldDeck: []deck.FieldEntry{{Slot: 1, CharacterInvenIndex: 77}}})
 				if err != nil {
 					t.Fatal(err)
 				}
+				if len(s.decks.CurrentDeck()) == 0 {
+					if err = s.decks.SetStoryParty(chosen); err != nil {
+						t.Fatal(err)
+					}
+				}
 				s.quests = map[int]gamedata.QuestDesign{}
 				for _, id := range ids {
-					s.quests[id] = gamedata.QuestDesign{ID: id}
+					q := design.Quests[id]
+					s.quests[id] = gamedata.QuestDesign{ID: id, Type: q.Type, NextQuestID: q.NextQuestID, PriorQuestID: q.PriorQuestID}
 				}
-				attachTestStoryCatalog(s)
+				s.storyCatalog = &gamedata.StoryCatalog{Packs: map[int]gamedata.StoryPack{pack: {ID: pack, Quests: s.quests, MainQuestIDs: ids}}}
+				s.packs = map[int]map[int]gamedata.QuestDesign{pack: s.quests}
 				return repo, s
 			}
 			repo, s := open()
-			unchanged, joined := false, false
-			for i, id := range ids[:len(ids)-1] {
+			unchanged := false
+			for _, id := range ids {
+				next := design.Quests[id].NextQuestID
+				if next == 0 {
+					continue
+				}
 				before, err := s.ResolveStoryParty(pack, id)
 				if err != nil {
 					t.Fatal(err)
@@ -96,7 +119,7 @@ func TestInstalledQuestClearProjectsPartyChangesOnly(t *testing.T) {
 				if err = op.Commit(); err != nil {
 					t.Fatal(err)
 				}
-				after, err := s.ResolveStoryParty(pack, ids[i+1])
+				after, err := s.ResolveStoryParty(pack, next)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -122,11 +145,10 @@ func TestInstalledQuestClearProjectsPartyChangesOnly(t *testing.T) {
 						decks++
 					}
 					return nil
-				}); err != nil || !reflect.DeepEqual(got, want) || len(after) > 0 && decks != len(after) {
-					t.Fatalf("pack%d quest%d→%d joins=%v want=%v formation=%d/%d err=%v", pack, id, ids[i+1], got, want, decks, len(after), err)
+				}); err != nil || !reflect.DeepEqual(got, want) || len(after) > 0 && decks != len(after) || decks > 5 {
+					t.Fatalf("pack%d quest%d→%d joins=%v want=%v formation=%d/%d err=%v", pack, id, next, got, want, decks, len(after), err)
 				}
 				unchanged = unchanged || len(before) > 0 && len(want) == 0
-				joined = joined || len(want) > 0
 				if pack == 1 && id == 2 {
 					if len(got) != 0 {
 						t.Fatal("pack-1 gate quest repeated character acquisition")
@@ -140,12 +162,9 @@ func TestInstalledQuestClearProjectsPartyChangesOnly(t *testing.T) {
 						t.Fatal("quest transition healed or replaced existing character")
 					}
 				}
-				if unchanged && (pack == 1 && id >= 3 || pack == 21 && joined) {
-					break
-				}
 			}
-			if !unchanged || pack == 21 && !joined {
-				t.Fatal("authored regression did not exercise both stable and joining party transitions")
+			if !unchanged {
+				t.Fatal("authored regression did not exercise stable party transitions")
 			}
 		})
 	}

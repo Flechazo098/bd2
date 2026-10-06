@@ -7,8 +7,13 @@ import (
 	"fmt"
 )
 
-// ResolveStoryParty combines the authored temporary CharGroup members with
-// actual account instances named by StoryCharGroup costume rows.
+// A normal battle deck has five character slots (CommonPacket and DeckSave).
+const storyBattlePartySize = 5
+
+// ResolveStoryParty applies the authored temporary CharGroup members to the
+// saved battle party. StoryCharGroup costume designs only describe the field
+// story cast: FieldDeckPacket builds their cosmetic actors without inventory
+// identities, so they do not reserve battle slots, including placeholders.
 func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, error) {
 	if s.storyRoster == nil {
 		return nil, nil
@@ -26,6 +31,7 @@ func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, er
 	}
 	temporary := make([]player.Character, 0, len(designs))
 	reused := make([]player.Character, 0, len(designs))
+	var authoredOrder []uint64
 	for _, d := range designs {
 		var existing player.Character
 		for _, c := range s.characters.RawAll() {
@@ -36,119 +42,87 @@ func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, er
 		}
 		if existing.InvenIndex != 0 {
 			reused = append(reused, existing)
+			authoredOrder = append(authoredOrder, existing.InvenIndex)
 			continue
 		}
 		if packID <= 0 || packID >= 65536 || d.CharacterID == 0 || d.CharacterID >= 1<<32 || d.Level == 0 || d.Level >= 256 {
 			return nil, fmt.Errorf("world: story instance namespace overflow")
 		}
 		index := player.StoryCharacterIndexBase | uint64(packID)<<40 | d.CharacterID<<8 | d.Level
+		authoredOrder = append(authoredOrder, index)
 		temporary = append(temporary, player.Character{InvenIndex: index, ID: d.CharacterID, HP: d.HP, Level: d.Level, CostumeID: d.CostumeID, TalentLevel: d.InitialTalentLevel})
 	}
-	if s.characters == nil {
-		return nil, fmt.Errorf("world: story character store unavailable")
+	if len(designs) > storyBattlePartySize {
+		return nil, fmt.Errorf("world: pack%d quest%d character group%d exceeds battle capacity: %d", packID, questID, formation.CharGroupID, len(designs))
 	}
 	if err := s.characters.EnsureStoryCharacters(temporary); err != nil {
 		return nil, err
 	}
-	result := make([]player.Character, 0, len(temporary)+len(formation.StoryCostumes))
-	used := map[uint64]bool{}
+	authored := make(map[uint64]player.Character, len(designs))
 	for _, c := range reused {
 		current, ok := s.characters.Find(c.InvenIndex)
 		if !ok {
 			return nil, fmt.Errorf("world: saved story instance unavailable")
 		}
-		result = append(result, current)
-		used[current.InvenIndex] = true
+		authored[current.InvenIndex] = current
 	}
 	for _, c := range temporary {
 		current, ok := s.characters.Find(c.InvenIndex)
 		if !ok {
 			return nil, fmt.Errorf("world: story character was not saved")
 		}
-		result = append(result, current)
-		used[current.InvenIndex] = true
+		authored[current.InvenIndex] = current
 	}
-	// Placeholder entries are player-controlled party slots. Their costume
-	// and character cannot be inferred from the design placeholder itself.
-	for _, costume := range formation.StoryCostumes {
-		if s.seed.PlaceholderCostumeID != 0 && costume.CostumeID == s.seed.PlaceholderCostumeID {
-			continue
-		}
-		temporaryMember := false
-		for _, design := range designs {
-			if design.UniqueCharacterID == costume.UniqueCharacterID {
-				temporaryMember = true
+	owned := map[uint64]player.Character{}
+	for _, c := range s.visibleOwnedCharacters(s.characters.All()) {
+		banned := false
+		for _, row := range formation.Characters {
+			// PackManager.CalcBanCharUniqueId groups growth rows by ID/10.
+			if row.Banned && row.CharacterID/10 == c.ID/10 {
+				banned = true
 				break
 			}
 		}
-		if temporaryMember {
+		if banned {
 			continue
 		}
-		var ownedCostumes []player.Costume
-		if s.starter != nil {
-			ownedCostumes = append(ownedCostumes, s.starter.Costumes...)
-		}
-		if s.collection != nil {
-			ownedCostumes = append(ownedCostumes, s.collection.Costumes()...)
-		}
-		for _, c := range s.visibleOwnedCharacters(s.characters.All()) {
-			matched := c.CostumeID == costume.CostumeID
-			for _, owned := range ownedCostumes {
-				if owned.ID == costume.CostumeID && owned.UseChar == c.InvenIndex {
-					matched = true
-					c.CostumeID = owned.ID
-					c.UseCostume = owned.InvenIndex
-					break
-				}
-			}
-			if player.IsStoryCharacter(c) || used[c.InvenIndex] || !matched {
-				continue
-			}
-			result = append(result, c)
-			used[c.InvenIndex] = true
-			break
-		}
+		owned[c.InvenIndex] = c
 	}
-	// Fill authored player-controlled slots from the persisted field party,
-	// then the persisted battle party. Never synthesize the placeholder ID.
-	for _, costume := range formation.StoryCostumes {
-		if (s.seed.PlaceholderCostumeID == 0 || costume.CostumeID != s.seed.PlaceholderCostumeID) || s.decks == nil {
-			continue
-		}
-		var candidates []uint64
-		for _, entry := range s.decks.CurrentFieldDeck() {
-			candidates = append(candidates, entry.CharacterInvenIndex)
-		}
+	var candidates []uint64
+	if s.decks != nil {
 		for _, entry := range s.decks.CurrentDeck() {
 			candidates = append(candidates, entry.CharacterInvenIndex)
 		}
-		for _, index := range candidates {
-			if used[index] {
-				continue
+		// With no saved battle choice, the account's field party supplies its
+		// initial controlled members. A saved battle choice takes precedence.
+		if len(candidates) == 0 {
+			for _, entry := range s.decks.CurrentFieldDeck() {
+				candidates = append(candidates, entry.CharacterInvenIndex)
 			}
-			var controlled player.Character
-			for _, c := range s.visibleOwnedCharacters(s.characters.All()) {
-				if c.InvenIndex == index {
-					controlled = c
-					break
-				}
-			}
-			if controlled.InvenIndex == 0 {
-				continue
-			}
-			temporaryDesign := false
-			for _, d := range designs {
-				if d.CharacterID == controlled.ID {
-					temporaryDesign = true
-					break
-				}
-			}
-			if temporaryDesign {
-				continue
-			}
-			result = append(result, controlled)
+		}
+	}
+	result := make([]player.Character, 0, storyBattlePartySize)
+	used := map[uint64]bool{}
+	controlledSlots := storyBattlePartySize - len(authored)
+	for _, index := range candidates {
+		if used[index] {
+			continue
+		}
+		if c, ok := authored[index]; ok {
+			result = append(result, c)
 			used[index] = true
-			break
+			continue
+		}
+		if c, ok := owned[index]; ok && controlledSlots > 0 {
+			result = append(result, c)
+			used[index] = true
+			controlledSlots--
+		}
+	}
+	for _, index := range authoredOrder {
+		if !used[index] {
+			result = append(result, authored[index])
+			used[index] = true
 		}
 	}
 	return result, nil
@@ -166,10 +140,20 @@ func (s *Service) resolveActivePartyWires(packID, questID int) ([][]byte, [][]by
 	entries := make([]deck.DeckEntry, 0, len(party))
 	characters := make([][]byte, 0, len(party))
 	wires := make([][]byte, 0, len(party))
+	savedPositions := map[uint64]uint64{}
+	if s.decks != nil {
+		for _, entry := range s.decks.CurrentDeck() {
+			savedPositions[entry.CharacterInvenIndex] = entry.CostumeInvenIndex
+		}
+	}
 	for i, c := range party {
 		position := ^uint64(0)
 		if i < len(formation.DeckList) {
 			position = formation.DeckList[i]
+		} else if len(formation.DeckList) == 0 {
+			if saved, ok := savedPositions[c.InvenIndex]; ok {
+				position = saved
+			}
 		}
 		entry := deck.DeckEntry{CharacterInvenIndex: c.InvenIndex, CostumeInvenIndex: position, Slot: uint64(i + 1)}
 		entries = append(entries, entry)
@@ -179,7 +163,7 @@ func (s *Service) resolveActivePartyWires(packID, questID int) ([][]byte, [][]by
 	}
 	if s.decks != nil {
 		if err := s.decks.SetStoryParty(entries); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("world: save battle party pack%d quest%d charGroup%d storyCharGroup%d members%d: %w", packID, questID, formation.CharGroupID, formation.StoryCharGroupID, len(entries), err)
 		}
 	}
 	return characters, wires, nil
