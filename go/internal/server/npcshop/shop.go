@@ -4,6 +4,7 @@ package npcshop
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -44,6 +45,7 @@ type Service struct {
 	session        func() string
 	reputation     func(uint64) (uint64, uint64, error)
 	talentDiscount func(uint64, uint64) (uint64, error)
+	quotedSeed     *uint64
 }
 
 func New(d gamedata.NPCShopDesign, store stateio.Store, e Economy, items *player.Inventory, available func(uint64) bool) (*Service, error) {
@@ -58,7 +60,11 @@ func (s *Service) SetSessionSource(source func() string) { s.session = source }
 func (s *Service) BeginSession(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.session != nil && s.session() == id {
+		return
+	}
 	s.session = func() string { return id }
+	s.quotedSeed = nil
 }
 
 // SetReputationSource supplies the world's persisted pack reputation and
@@ -209,7 +215,9 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	}
 	if path == "/ShopInfo" {
 		b := s.allShops(v, 1)
-		return code, wire.AppendVarint(b, 2, s.seed()), true, nil
+		seed := s.seed()
+		s.quotedSeed = &seed
+		return code, wire.AppendVarint(b, 2, seed), true, nil
 	}
 	if path == "/ShopOpen" {
 		var b []byte
@@ -405,19 +413,32 @@ func (s *Service) sell(request []byte) ([]player.Item, []gamedata.Reward, error)
 	var rewards []gamedata.Reward
 	seen := map[uint64]bool{}
 	for _, b := range rows {
-		product, _ := scalar(b, 2)
-		n, _ := scalar(b, 3)
-		inven, _ := scalar(b, 1)
-		rate, _ := scalar(b, 4)
+		values := map[int]uint64{}
+		if err := wire.Walk(b, func(f wire.Field) error {
+			if f.Number < 1 || f.Number > 4 {
+				return nil
+			}
+			if _, duplicate := values[f.Number]; duplicate || f.Type != 0 {
+				return fmt.Errorf("npcshop: malformed sale item field %d", f.Number)
+			}
+			values[f.Number], _ = binary.Uvarint(f.Value)
+			return nil
+		}); err != nil {
+			return nil, nil, err
+		}
+		product, n, inven, rate := values[2], values[3], values[1], values[4]
 		p, ok := s.design.Sell[product]
 		item, owned := inventory[inven]
-		if !ok || !owned || seen[inven] || n == 0 || n > item.Count || p.Reward.Type != item.Type || p.Reward.ID != item.ID || item.KeepFlag != 0 {
+		if !ok || !p.InventorySellable() || !owned || seen[inven] || inven == 0 || inven > math.MaxInt64 || product > math.MaxInt32 || n == 0 || n > math.MaxInt32 || n > item.Count || p.Reward.Type != item.Type || p.Reward.ID != item.ID || item.KeepFlag != 0 {
 			return nil, nil, fmt.Errorf("npcshop: invalid sale item")
 		}
 		seen[inven] = true
 		expected := s.rate(p, id, 2)
 		if rate != expected {
-			return nil, nil, fmt.Errorf("npcshop: stale/invalid sell rate")
+			return nil, nil, fmt.Errorf("npcshop: stale/invalid sell rate: shop=%d product=%d rate=%d expected=%d seed=%d", id, product, rate, expected, s.marketSeed())
+		}
+		if expected > 0 && p.Price.Count > math.MaxInt32/expected {
+			return nil, nil, fmt.Errorf("npcshop: sale unit price overflow")
 		}
 		price := uint64(float32(p.Price.Count*expected) / 100)
 		if price > math.MaxInt32/n {
@@ -485,14 +506,17 @@ func (s *Service) rate(p gamedata.NPCProduct, shop, tab uint64) uint64 {
 	if p.PremiumPriceType == 1 && p.HighShop == shop && p.HighDay == uint64(s.now().UTC().Day()) {
 		return 100 + p.HighPremium
 	}
-	seed := s.seed() + shop + tab + p.Reward.Type + p.Reward.ID
+	seed := s.marketSeed() + shop + tab + p.Reward.Type + p.Reward.ID
 	a := seed
 	b := seed + 13*90
 	c := a ^ b ^ (a << 16) ^ (b << 15)
 	b = seed + 9*90
 	b ^= b >> 11
 	a = c ^ b
-	d := a ^ ((a << 5) & uint64(0xffffffffda442d24))
+	// WELL512's mask is the unsigned 32-bit pattern 0xDA442D24. The
+	// decompiler displays its signed int32 spelling, -633066204, inside
+	// an ulong cast; sign-extending that spelling changes the RNG result.
+	d := a ^ ((a << 5) & uint64(0xda442d24))
 	a = seed + 15*90
 	value := a ^ c ^ d ^ (a << 2) ^ (c << 18) ^ (b << 28)
 	lo := 100 - p.Discount
@@ -501,4 +525,13 @@ func (s *Service) rate(p gamedata.NPCProduct, shop, tab uint64) uint64 {
 		span = 1
 	}
 	return lo + value%span
+}
+
+// The client keeps ShopRandSeed until the next ShopInfo response. Advancing
+// the server clock alone must not change a price already displayed in its UI.
+func (s *Service) marketSeed() uint64 {
+	if s.quotedSeed != nil {
+		return *s.quotedSeed
+	}
+	return s.seed()
 }

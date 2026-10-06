@@ -20,6 +20,13 @@ type NPCProduct struct {
 	PremiumPriceType, HighPremium, HighDay, HighShop                uint64
 }
 
+// ShopInfo.GetShopSellProducts reads only Food and Resource inventory rows.
+// SellItemTable also has equipment prices; those definitions do not create
+// an ordinary ShopSell equipment entry point in the current client.
+func (p NPCProduct) InventorySellable() bool {
+	return p.Reward.Type == 5 || p.Reward.Type == 8
+}
+
 func LoadNPCShopDesign(root, version string) (NPCShopDesign, error) {
 	db, closeDB, err := openStatDatabase(root, version)
 	if err != nil {
@@ -139,6 +146,7 @@ func loadNPCShopDesign(db *sql.DB) (NPCShopDesign, error) {
 	if err != nil {
 		return d, err
 	}
+	sellKeys := map[[2]uint64]bool{}
 	err = friendshipRows(db, "SELECT id,ProtoBuf FROM SellItemTable ORDER BY id", func(id uint64, p []byte) error {
 		r := NPCProduct{}
 		for i, dst := range []*uint64{&r.ID, &r.Discount, &r.Premium, &r.Reward.Type, &r.Reward.ID, &r.Reward.Count, &r.Price.Type, &r.Price.ID, &r.Price.Count, &r.PremiumPriceType, &r.HighPremium, &r.HighDay, &r.HighShop} {
@@ -148,9 +156,14 @@ func loadNPCShopDesign(db *sql.DB) (NPCShopDesign, error) {
 			}
 			*dst = v
 		}
-		if r.ID != id || r.Reward.Count == 0 || r.Price.Count == 0 || r.Discount > 100 {
+		if id == 0 || r.ID != id || r.Reward.ID == 0 || r.Reward.Count != 1 || r.Price.Type == 0 || r.Price.Count == 0 || r.Discount > 100 {
 			return fmt.Errorf("gamedata: invalid sell product %d", id)
 		}
+		k := [2]uint64{r.Reward.Type, r.Reward.ID}
+		if sellKeys[k] {
+			return fmt.Errorf("gamedata: ambiguous sell definition %d:%d", k[0], k[1])
+		}
+		sellKeys[k] = true
 		d.Sell[id] = r
 		return nil
 	})
