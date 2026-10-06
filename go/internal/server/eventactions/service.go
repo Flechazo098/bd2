@@ -60,7 +60,6 @@ type Service struct {
 	session     string
 	friendship  func(uint64) uint64
 	chargeInfo  func() ([]byte, error)
-	owned       func(uint64, uint64) bool
 	progress    func(uint64, uint64, uint64) error
 	voteTotals  func(uint64, uint64) (map[uint64]uint64, error)
 	miniContent MiniContentResolver
@@ -134,7 +133,6 @@ func (s *Service) init() {
 func (s *Service) BeginSession(id string)                              { s.mu.Lock(); defer s.mu.Unlock(); s.session = id }
 func (s *Service) AttachFriendshipLevel(f func(uint64) uint64)         { s.friendship = f }
 func (s *Service) AttachChargeInfo(f func() ([]byte, error))           { s.chargeInfo = f }
-func (s *Service) AttachOwnedCharacter(f func(uint64, uint64) bool)    { s.owned = f }
 func (s *Service) AttachProgress(f func(uint64, uint64, uint64) error) { s.progress = f }
 
 // The current server owns one account save. Its real votes are the default
@@ -522,25 +520,8 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 		}
 		return out, nil
 	case "/TacticsBingoDeckSave":
-		seen := map[uint64]bool{}
-		count := 0
-		err := wire.Walk(b, func(f wire.Field) error {
-			if f.Number != 2 || f.Type != 2 {
-				return nil
-			}
-			idx, id := val(f.Value, 1), val(f.Value, 2)
-			if idx == 0 || id == 0 || seen[idx] || s.owned == nil || !s.owned(idx, id) || val(f.Value, 4) > 14 || val(f.Value, 5) == 0 {
-				return errors.New("eventactions: invalid tactics deck")
-			}
-			seen[idx] = true
-			count++
-			return nil
-		})
-		if err != nil {
+		if err := s.validateTacticsDeck(b); err != nil {
 			return nil, err
-		}
-		if count > 5 {
-			return nil, errors.New("eventactions: tactics deck too large")
 		}
 		s.state.Deck = append([]byte(nil), b...)
 		return nil, nil

@@ -1101,10 +1101,6 @@ func serve(args []string) (serveErr error) {
 		}
 		return 0
 	})
-	eventActionsService.AttachOwnedCharacter(func(index, id uint64) bool {
-		c, ok := worldService.CharacterService().Find(index)
-		return ok && c.ID == id
-	})
 	eventActionsService.AttachChargeInfo(func() ([]byte, error) {
 		rows, err := eventEconomy.ChargeInfo()
 		if err != nil {

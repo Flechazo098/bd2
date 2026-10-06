@@ -72,7 +72,7 @@ func (s *Service) fieldBuffTargets(pack int, target uint64) ([]uint64, error) {
 	var indices []uint64
 	if s.questDifficulty(pack) == 0 && s.storyRoster != nil {
 		if quest := s.firstUnclearedQuestFor(pack); quest != 0 {
-			party, err := s.ResolveStoryParty(pack, quest)
+			party, err := s.currentBattleParty()
 			if err != nil {
 				return nil, err
 			}

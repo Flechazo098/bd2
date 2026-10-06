@@ -45,6 +45,12 @@ func (s *Service) EnterBattle(req []byte, receipt string) ([]byte, error) {
 	if uid == 0 {
 		return nil, errors.New("eventactions: tactics event inactive")
 	}
+	if _, err := s.tacticsBlueParty(row.V(1)); err != nil {
+		return nil, err
+	}
+	// The client sends BattleEnter before the new scene's DeckSave. Its
+	// battle reset clears the prior stage's virtual party; do the same here.
+	s.state.Deck = nil
 	s.state.BattleUID, s.state.BattleStage, s.state.BattleDeck = uid, stage, deck
 	s.state.Receipts[s.session+":enter:"+receipt] = receiptRecord(nil, digest)
 	if e := s.save(); e != nil {
