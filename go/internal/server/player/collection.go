@@ -728,7 +728,10 @@ func (s *CollectionStore) grantCostumesSorted(identity string, costumeIDs, sortI
 			}
 			continue
 		}
-		characterIndex, characterExists := findCharacterByID(s.baseCharacters, next.Characters, characterDesign.ID)
+		characterIndex, characterExists, err := findCharacterByDesign(s.baseCharacters, next.Characters, characterDesign)
+		if err != nil {
+			return CollectionGrant{}, err
+		}
 		costumeIndex := next.NextCostumeIndex
 		next.NextCostumeIndex++
 		if !characterExists {
@@ -1160,18 +1163,23 @@ func findCostume(costumes []Costume, id uint64) (int, bool) {
 	return -1, false
 }
 
-func findCharacterByID(base, collection []Character, id uint64) (uint64, bool) {
-	for _, character := range base {
-		if character.ID == id {
-			return character.InvenIndex, true
+func findCharacterByDesign(base, collection []Character, design gamedata.CharacterDesign) (uint64, bool, error) {
+	var result uint64
+	for _, characters := range [][]Character{base, collection} {
+		for _, character := range characters {
+			matches := character.ID == design.ID
+			for _, id := range design.GrowthCharacterIDs {
+				matches = matches || character.ID == id
+			}
+			if matches {
+				if result != 0 && result != character.InvenIndex {
+					return 0, false, fmt.Errorf("player: duplicate owned character family for design %d; repair the save", design.ID)
+				}
+				result = character.InvenIndex
+			}
 		}
 	}
-	for _, character := range collection {
-		if character.ID == id {
-			return character.InvenIndex, true
-		}
-	}
-	return 0, false
+	return result, result != 0, nil
 }
 
 func cloneGrant(grant CollectionGrant) CollectionGrant {
