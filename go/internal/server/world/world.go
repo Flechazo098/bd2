@@ -450,6 +450,13 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			return 0, nil, true, fmt.Errorf("%w: quest %d is not active", ErrInvalidRequest, quest)
 		}
 		wasCleared := s.state.QuestCleared(quest, pack, s.questDifficultyFor(pack, quest))
+		var previousParty []player.Character
+		if design.Type == 0 && s.storyRoster != nil {
+			previousParty, err = s.ResolveStoryParty(pack, quest)
+			if err != nil {
+				return 0, nil, true, err
+			}
+		}
 		items, questEquipment, err := s.grantQuestRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)])
 		if err != nil {
 			return 0, nil, true, err
@@ -474,6 +481,10 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if next := s.nextQuestFor(pack, quest); next != 0 {
 				var err error
 				nextChars, _, err = s.resolveActivePartyWires(pack, next)
+				if err != nil {
+					return 0, nil, true, err
+				}
+				nextChars, err = storyPartyChanges(previousParty, nextChars)
 				if err != nil {
 					return 0, nil, true, err
 				}

@@ -221,6 +221,50 @@ func TestAlchemyConversionChargesProducedQuantity(t *testing.T) {
 	}
 }
 
+// Equipment making requests missing intermediate resources in one batch; the
+// amount can exceed the ordinary alchemy slider limit. Check settlement and
+// replay using the same SQLite transaction boundary as the request dispatcher.
+func TestAlchemyBatchSQLiteCanExceedOrdinaryCraftLimit(t *testing.T) {
+	repo, err := accountstate.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	s, items, chars, wallet := craftFixture(t, repo, 8)
+	rule := s.talents.Rules[[2]uint64{42, 2}]
+	rule.Values[0] = 1
+	s.talents.Rules[[2]uint64{42, 2}] = rule
+	request := craftRequest(items, 102, 2, gamedata.BattleReward{Type: 8, ID: 2, Count: 2}, gamedata.BattleReward{Type: 8, ID: 1, Count: 20})
+	if _, _, _, err = s.Handle("/Alchemy", request); err == nil {
+		t.Fatal("ordinary alchemy exceeded its slider limit")
+	}
+	op, err := repo.BeginOperation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, response, _, err := s.Handle("/AlchemyBatch", request)
+	if err != nil {
+		_ = op.Rollback()
+		t.Fatal(err)
+	}
+	if err = op.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := chars.Find(77)
+	if craftCount(items, 8, 3) != 2 || wallet.Snapshot().Catalyst != 84 || c.TalentExp != 20 {
+		t.Fatalf("batch settlement items=%+v currency=%+v producer=%+v", items.All(), wallet.Snapshot(), c)
+	}
+	next, reloadedItems, reloadedChars, reloadedWallet := craftFixture(t, repo, 8)
+	_, replay, _, err := next.Handle("/AlchemyBatch", request)
+	if err != nil || !bytes.Equal(response, replay) {
+		t.Fatalf("persisted replay response=%x err=%v", replay, err)
+	}
+	c, _ = reloadedChars.Find(77)
+	if craftCount(reloadedItems, 8, 3) != 2 || reloadedWallet.Snapshot().Catalyst != 84 || c.TalentExp != 20 {
+		t.Fatal("persisted replay changed settlement")
+	}
+}
+
 type failCraftReceipt struct{ stateio.Store }
 
 func (s failCraftReceipt) Save(name string, b []byte) error {

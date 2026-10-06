@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"bd2server/internal/server/accountstate"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/wire"
@@ -158,6 +159,65 @@ func TestGrowthResourceIDCannotMasqueradeAsCollectionItem(t *testing.T) {
 	entries, buffs, err := (&Service{Design: design, Owned: owned}).Snapshot()
 	if err != nil || len(entries) != 0 || len(buffs) != 0 {
 		t.Fatalf("resource incorrectly unlocked pictorial entries=%v buffs=%v err=%v", entries, buffs, err)
+	}
+}
+
+func TestLearnedRecipePictorialAndBuffSurviveSQLiteRestart(t *testing.T) {
+	root := os.Getenv("BD2_REAL_GAMEDATA")
+	if root == "" {
+		t.Skip("set BD2_REAL_GAMEDATA for current recipe collection regression")
+	}
+	design, err := gamedata.LoadPictorialDesign(root, "20260923193640")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Current CookingPictorialBookTable row 1 points at recipe 101; the
+	// client EElementType.CookingRecipe is 7, while 14 is an unrelated use item.
+	path := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	items, err := player.OpenInventory(repo, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = items.GrantOnce("unrelated-use-item", []gamedata.BattleReward{{Type: 14, ID: 101, Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := &ownedState{items: items.All()}
+	service := &Service{Design: design, Owned: owned}
+	before, _, err := service.Snapshot()
+	if err != nil || len(before) != 0 {
+		t.Fatalf("use item unlocked a recipe collection: %v %v", before, err)
+	}
+	_, err = items.GrantOnce("learned-recipe", []gamedata.BattleReward{{Type: 7, ID: 101, Count: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err = player.OpenInventory(repo, &player.Starter{Version: "2.35.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned.items = items.All()
+	entries, buffs, err := service.Snapshot()
+	if err != nil || len(entries) != 1 || entries[0].GroupID != gamedata.PictorialCooking || entries[0].ID != 1 || len(buffs) != 1 {
+		t.Fatalf("recipe collection after restart: %v buffs=%v err=%v", entries, buffs, err)
+	}
+	for _, route := range []string{"/PictorialBookInfo", "/AllCharRefresh"} {
+		_, body, handled, err := service.Handle(route, wire.AppendVarint(nil, 1, 1))
+		if err != nil || !handled || len(body) == 0 {
+			t.Fatalf("learned recipe projection %s: %x %v", route, body, err)
+		}
 	}
 }
 
