@@ -6,31 +6,31 @@
 
 ## 开发构建
 
-开发时在两个终端中分别从 `go` 目录运行：
+开发时在两个终端中分别运行：
 
 ```powershell
-go run .\cmd\bd2server --dev run
+.\bd2w runServer
 ```
 
 ```powershell
-go run .\cmd\bd2client --dev run
+.\bd2w runClient
 ```
 
 客户端窗口在插件准备完成后打开。首次生成完整游戏源码或者在 SDK / 游戏更新后可能等待数分钟，后续启动复用共享缓存。
 
-将 `go\config.example.json` 重命名为 `confg.json`，将 `game_directory` 改为本机 Brown Dust II 安装目录。仍可在 `run` 后使用 `--game-dir` 临时覆盖。
+将 `go/config.example.json` 复制为 `go/config.json`，将 `game_directory` 改为本机 Brown Dust II 安装目录。仍可在 `run` 后使用 `--game-dir` 临时覆盖。
 
 发布脚本统一使用 `-tags release` 编译。
 
 ## 发布包
 
 ```powershell
-.\build-release.ps1
+.\bd2w build
+.\bd2w build -GameDir 'D:\Brown Dust II' -SkipTests
+.\bd2w build -SchedulesOnly
 ```
 
-脚本只适用于 Windows ，输出在 `.build\bd2server-{gameversion}+server.{serverversion}-windows-x64.zip` 和 `.build\bd2client-{gameversion}+client.{clientversion}-windows-x64.zip`。
-
-macOS/Linux 需自行编写所需脚本。
+默认执行测试与静态检查；`-SkipTests` 跳过这些检查；`-SchedulesOnly` 只导出活动日历编排信息。
 
 ## 客户端插件项目
 
