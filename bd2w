@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) suffix=.exe ;; *) suffix= ;; esac
+tool_dir="$root/.build/tools"
+tool="$tool_dir/bd2w$suffix"
+
+# Bootstrap only when the cached executable is absent. Build/run live in Go.
+if [ ! -f "$tool" ]; then
+    mkdir -p "$tool_dir"
+    lock="$tool_dir/.bootstrap.lock"
+    attempts=0
+    while [ ! -f "$tool" ]; do
+        if mkdir "$lock" 2>/dev/null; then
+            temporary="$tool_dir/.bd2w-$$$suffix"
+            trap 'rm -f "$temporary"; rmdir "$lock" 2>/dev/null || true' 0
+            trap 'exit 130' INT TERM
+            if [ ! -f "$tool" ]; then
+                printf 'bd2w: compiling the build tool for first use...\n'
+                (
+                    cd "$root/go"
+                    GOCACHE="$root/go/.cache/go-build"
+                    GOOS=$(go env GOHOSTOS)
+                    GOARCH=$(go env GOHOSTARCH)
+                    CGO_ENABLED=0
+                    export GOCACHE GOOS GOARCH CGO_ENABLED
+                    go build -buildvcs=false -trimpath -o "$temporary" ./build
+                )
+                mv "$temporary" "$tool"
+            fi
+            rmdir "$lock"
+            trap - 0 INT TERM
+            break
+        fi
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 120 ]; then
+            printf 'bd2w: bootstrap lock still held at %s; check the first launcher.\n' "$lock" >&2
+            exit 1
+        fi
+        sleep 1
+    done
+fi
+exec "$tool" "$@"
