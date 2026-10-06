@@ -42,6 +42,7 @@ type LoginSeed struct {
 	lastPlayedPack       LastPlayedPackProvider
 	achievementExp       AchievementExperienceProvider
 	autoReviveSettings   interface{ AutoReviveSettings() (bool, uint64, error) }
+	portrait             interface{ PortraitCostume() uint64 }
 	levelReward          LevelRewardProvider
 	huntingAP            HuntingAPProvider
 	monsterHuntSlots     PresetSlotProvider
@@ -607,6 +608,16 @@ func (s *LoginSeed) Login(request, sessionKey []byte) ([]byte, error) {
 		}
 	}
 	user = wire.AppendBytes(user, 3, sessionKey)
+	if s.portrait != nil {
+		portrait := s.portrait.PortraitCostume()
+		if portrait > math.MaxInt32 {
+			return nil, fmt.Errorf("account: portrait costume overflow")
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 14, portrait); err != nil {
+			return nil, err
+		}
+	}
 	projected, projectionErr := s.projectAutoRevive(user)
 	if projectionErr != nil {
 		return nil, projectionErr
