@@ -8,9 +8,10 @@ import (
 // FieldObjectDesign retains the client table identities, including unsupported
 // reward graphs, so callers can reject them without inventing a reward.
 type FieldObjectDesign struct {
-	Objects   map[int]FieldRewardObject
-	Actions   map[int]FieldActionObject
-	Equipment *EquipmentGachaCatalog
+	Objects     map[int]FieldRewardObject
+	Actions     map[int]FieldActionObject
+	Equipment   *EquipmentGachaCatalog
+	RewardGraph *RewardGraph
 }
 type FieldRewardObject struct {
 	ID, MapID, GroupID, Type, ResetType, QuestID, BuffID, MonsterID int
@@ -34,6 +35,11 @@ func LoadFieldObjects(root, version string, pack int) (FieldObjectDesign, error)
 }
 func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 	design := FieldObjectDesign{Objects: map[int]FieldRewardObject{}, Equipment: &EquipmentGachaCatalog{equipment: map[uint64]EquipmentDesign{}}}
+	graph, err := loadRewardGraph(common)
+	if err != nil {
+		return design, err
+	}
+	design.RewardGraph = graph
 	groups := map[int]FieldRewardObject{}
 	rows, err := db.Query("SELECT id,ProtoBuf FROM FieldRewardObjectGroupTable")
 	if err != nil {
@@ -95,12 +101,10 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 				}
 				for i := range ids {
 					obj.Rewards = append(obj.Rewards, BattleReward{ID: ids[i], Type: types[i], Count: counts[i]})
-					if types[i] == 10 {
-						if e := design.Equipment.loadEquipmentTree(common, WeightedEquipment{ID: ids[i]}); e != nil {
-							rows.Close()
-							return design, e
-						}
-					}
+				}
+				if e := design.validateLoot(common, obj.Rewards); e != nil {
+					rows.Close()
+					return design, e
 				}
 			} else {
 				rows.Close()
@@ -152,6 +156,81 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 // component's percentage independently; its DropCount may be proto default zero.
 func (o FieldRewardObject) Draw() ([]BattleReward, error) {
 	return o.draw(cryptoDraw)
+}
+
+// Validate every OPEN branch before the catalog is installed, including zero
+// weight leaves. DIRECT boxes keep their inventory identity and need no roll.
+func (d FieldObjectDesign) validateLoot(db *sql.DB, rewards []BattleReward) error {
+	visiting := map[uint64]bool{}
+	budget := 100000
+	var visit func(BattleReward) error
+	visit = func(r BattleReward) error {
+		budget--
+		if budget < 0 || r.Count == 0 || r.Count > uint64(^uint32(0)>>1) {
+			return fmt.Errorf("gamedata: invalid field loot quantity/budget")
+		}
+		switch r.Type {
+		case 2, 3, 4, 12, 20:
+			return nil
+		case 5, 7, 8, 13, 14, 17, 19, 27, 29:
+			if r.ID == 0 {
+				return fmt.Errorf("gamedata: invalid field loot item")
+			}
+			return nil
+		case 10:
+			if r.ID == 0 || r.Count > 100 {
+				return fmt.Errorf("gamedata: invalid field loot equipment")
+			}
+			return d.Equipment.loadEquipmentTree(db, WeightedEquipment{ID: r.ID})
+		case 9:
+			g := d.RewardGraph
+			gid, exists := g.boxes[r.ID]
+			if !exists || r.ID == 0 {
+				return fmt.Errorf("gamedata: missing field loot box %d", r.ID)
+			}
+			if g.direct[r.ID] {
+				return nil
+			}
+			if visiting[r.ID] || len(visiting) >= 32 {
+				return fmt.Errorf("gamedata: cyclic field loot box %d", r.ID)
+			}
+			raw, exists := g.groups[gid]
+			if !exists {
+				return fmt.Errorf("gamedata: missing field loot group %d", gid)
+			}
+			children, e := eventGameRewards(raw, 6, 5, 4)
+			weights, e2 := packedInts(raw, 8)
+			drop, e3 := optionalScalar(raw, 2)
+			count, e4 := optionalScalar(raw, 1)
+			if e != nil || e2 != nil || e3 != nil || e4 != nil || len(children) == 0 || len(children) != len(weights) || drop > 1 || drop == 0 && (count == 0 || count > 100) {
+				return fmt.Errorf("gamedata: malformed field loot group %d", gid)
+			}
+			var total uint64
+			visiting[r.ID] = true
+			defer delete(visiting, r.ID)
+			for i, child := range children {
+				if ^uint64(0)-total < weights[i] || drop == 1 && weights[i] > 100 {
+					return fmt.Errorf("gamedata: invalid field loot ratios %d", gid)
+				}
+				total += weights[i]
+				if e := visit(child); e != nil {
+					return e
+				}
+			}
+			if drop == 0 && total == 0 {
+				return fmt.Errorf("gamedata: empty field loot distribution %d", gid)
+			}
+			return nil
+		default:
+			return fmt.Errorf("gamedata: unsupported field loot type %d", r.Type)
+		}
+	}
+	for _, r := range rewards {
+		if err := visit(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o FieldRewardObject) draw(draw func(uint64) (uint64, error)) ([]BattleReward, error) {

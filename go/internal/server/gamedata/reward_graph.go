@@ -2,6 +2,7 @@ package gamedata
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"fmt"
 	"math"
 	"math/big"
@@ -26,6 +27,10 @@ func LoadRewardGraph(root, version string) (*RewardGraph, error) {
 		return nil, e
 	}
 	defer done()
+	return loadRewardGraph(db)
+}
+
+func loadRewardGraph(db *sql.DB) (*RewardGraph, error) {
 	g := &RewardGraph{boxes: map[uint64]uint64{}, direct: map[uint64]bool{}, special: map[uint64]bool{}, groups: map[uint64][]byte{}}
 	g.sample = func(n uint64) (uint64, error) {
 		if n == 0 {

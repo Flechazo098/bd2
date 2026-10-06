@@ -23,17 +23,20 @@ func TestFieldObjectLoadIndependentEquipmentAndRandomBox(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, table := range []string{"RewardGroupTable", "EquipmentTable"} {
+	for _, table := range []string{"RewardGroupTable", "EquipmentTable", "RandomBoxTable"} {
 		if _, err := common.Exec("CREATE TABLE " + table + "(id INTEGER, ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := common.Exec("INSERT INTO RandomBoxTable VALUES(?,?)", 88, wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 9, 88)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := common.Exec("CREATE TABLE EquipmentOptionTable(GroupId INTEGER, id INTEGER, ProtoBuf BLOB)"); err != nil {
 		t.Fatal(err)
 	}
-	group := wire.AppendVarint(nil, 10, 66)
-	group = wire.AppendVarint(group, 12, 8) // A newly introduced object kind must not need an allowlist.
-	if _, err := pack.Exec("INSERT INTO FieldRewardObjectGroupTable VALUES(?,?)", 55, group); err != nil {
+	objectGroup := wire.AppendVarint(nil, 10, 66)
+	objectGroup = wire.AppendVarint(objectGroup, 12, 8) // A newly introduced object kind must not need an allowlist.
+	if _, err := pack.Exec("INSERT INTO FieldRewardObjectGroupTable VALUES(?,?)", 55, objectGroup); err != nil {
 		t.Fatal(err)
 	}
 	object := wire.AppendVarint(nil, 3, 55)
@@ -72,6 +75,41 @@ func TestFieldObjectLoadIndependentEquipmentAndRandomBox(t *testing.T) {
 	main, _, _, err := d.Equipment.RollOptions(77)
 	if err != nil || len(main) != 1 || main[0].GroupID != 99 || main[0].ID != 7 {
 		t.Fatalf("options=%+v err=%v", main, err)
+	}
+	// A missing dropType uses the client's proto default RBD_OPEN. Keep a
+	// nested DIRECT box but prepare the wrapped equipment's option catalog.
+	if _, err := common.Exec("UPDATE RandomBoxTable SET ProtoBuf=? WHERE id=88", wire.AppendVarint(nil, 9, 89)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := common.Exec("INSERT INTO RandomBoxTable VALUES(?,?)", 90, wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 9, 90)); err != nil {
+		t.Fatal(err)
+	}
+	wrapped := group(0, 1, []BattleReward{{Type: 10, ID: 77, Count: 1}, {Type: 9, ID: 90, Count: 1}}, []uint64{1, 1})
+	if _, err := common.Exec("INSERT INTO RewardGroupTable VALUES(?,?)", 89, wrapped); err != nil {
+		t.Fatal(err)
+	}
+	d, err = loadFieldObjects(pack, common)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.RewardGraph.SetSampler(func(uint64) (uint64, error) { return 0, nil })
+	resolved, err := d.RewardGraph.ResolveGranted([]BattleReward{{Type: 9, ID: 88, Count: 1}})
+	if err != nil || len(resolved) != 1 || resolved[0].Type != 10 || resolved[0].ID != 77 {
+		t.Fatalf("OPEN equipment=%+v err=%v", resolved, err)
+	}
+	d.RewardGraph.SetSampler(func(n uint64) (uint64, error) { return n - 1, nil })
+	resolved, err = d.RewardGraph.ResolveGranted([]BattleReward{{Type: 9, ID: 88, Count: 1}})
+	if err != nil || len(resolved) != 1 || resolved[0].Type != 9 || resolved[0].ID != 90 {
+		t.Fatalf("nested DIRECT box=%+v err=%v", resolved, err)
+	}
+	// Invalid options in an unselected/zero-weight OPEN branch must reject the
+	// catalog before a draw or any owned-item receipt can be written.
+	wrapped = group(0, 1, []BattleReward{{Type: 10, ID: 77, Count: 1}, {Type: 10, ID: 999, Count: 1}}, []uint64{1, 0})
+	if _, err := common.Exec("UPDATE RewardGroupTable SET ProtoBuf=? WHERE id=89", wrapped); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadFieldObjects(pack, common); err == nil {
+		t.Fatal("invalid unselected OPEN equipment branch accepted")
 	}
 }
 
