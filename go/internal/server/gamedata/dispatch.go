@@ -99,7 +99,7 @@ func LoadDispatchDesign(root, version string, group, id uint64) (*DispatchDesign
 			return nil, e
 		}
 		for _, r := range rs {
-			d.Rewards = append(d.Rewards, BattleReward{r.Type, r.ID, r.Count})
+			d.Rewards = append(d.Rewards, BattleReward{r.Type, r.ID, r.Count}) //nolint:staticcheck // S1016
 			if r.Type == 9 {
 				g, e := loadDispatchBox(db, r.ID, map[uint64]bool{})
 				if e != nil {
@@ -238,7 +238,7 @@ func (d *DispatchDesign) Roll(count uint64, draw func(uint64) (uint64, error)) (
 		}
 		return nil
 	}
-	for i := uint64(0); i < count; i++ {
+	for range count {
 		for _, r := range d.Rewards {
 			if r.Type == 9 {
 				for n := uint64(0); n < r.Count; n++ {

@@ -2,32 +2,6 @@ package gamedata
 
 import "fmt"
 
-func validateRegularCostumeRates(pool []WeightedCostume) error {
-	if len(pool) != 3 {
-		return fmt.Errorf("expected three rarity branches, got %d", len(pool))
-	}
-	want := [...]uint64{officialFiveStarRate, officialFourStarRate, officialRateScale - officialFiveStarRate - officialFourStarRate}
-	for i, item := range pool {
-		if item.Weight != want[i] {
-			return fmt.Errorf("branch %d weight=%d want=%d", i, item.Weight, want[i])
-		}
-	}
-	return nil
-}
-
-func validateFixedPickupRemainderRates(pool []WeightedCostume) error {
-	if len(pool) != 3 {
-		return fmt.Errorf("expected three rarity branches, got %d", len(pool))
-	}
-	want := [...]uint64{officialFiveStarRate, officialFourStarRate, officialRateScale - officialFiveStarRate - officialFourStarRate}
-	for i, item := range pool {
-		if item.Weight != want[i] {
-			return fmt.Errorf("branch %d weight=%d want=%d", i, item.Weight, want[i])
-		}
-	}
-	return nil
-}
-
 // validateOfficialPickupRates prevents a GameData/schema regression from
 // silently changing the published costume pickup rates. The two five-star
 // branches are pickup 1.5% plus the ordinary five-star pool 1.5%.

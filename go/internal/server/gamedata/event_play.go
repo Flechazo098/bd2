@@ -33,13 +33,13 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 		for rows.Next() {
 			var raw []byte
 			if e = rows.Scan(&raw); e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			c.Tables[name] = append(c.Tables[name], append([]byte(nil), raw...))
 		}
 		e = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if e != nil {
 			return nil, e
 		}

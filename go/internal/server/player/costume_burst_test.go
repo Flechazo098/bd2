@@ -234,7 +234,11 @@ func TestCostumeBurstSQLiteRollbackIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	reloadedInventory, err := OpenInventory(reopened, starter)
 	if err != nil {
 		t.Fatal(err)

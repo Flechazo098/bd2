@@ -16,7 +16,11 @@ func TestLoadQuestFormationsDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	// Match production's single-connection database lease so nested formation
 	// and costume lookups require source rows to be released first.
 	db.SetMaxOpenConns(1)

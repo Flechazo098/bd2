@@ -40,10 +40,14 @@ func (r *Repository) InitializationState(accountDomains ...string) (Initializati
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return InitializationCorrupt, err
 		}
 		found = append(found, name)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return InitializationCorrupt, err
 	}
 	if err := rows.Close(); err != nil {
 		return InitializationCorrupt, err

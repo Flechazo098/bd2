@@ -33,7 +33,11 @@ func TestLoginPortraitUsesSQLiteSelectionAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	d, err = deck.OpenStore(r, seed)
 	if err != nil {
 		t.Fatal(err)

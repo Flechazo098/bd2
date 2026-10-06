@@ -71,7 +71,7 @@ func TestTenPullGuaranteesGradeFourWhenAllNormalRollsAreGradeThree(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		if roll[i] != 3001 {
 			t.Fatalf("slot %d=%d want grade-3", i, roll[i])
 		}

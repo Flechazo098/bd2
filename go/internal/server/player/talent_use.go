@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -419,7 +420,7 @@ func (s *TalentUseService) PackInfo(pack int) ([]byte, error) {
 	for g := range v.Skills {
 		groups = append(groups, g)
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+	slices.Sort(groups)
 	var b []byte
 	for _, g := range groups {
 		state := v.Skills[g]

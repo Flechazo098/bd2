@@ -93,7 +93,7 @@ func TestWaypointTravelChargesOnceAndRejectsInvalidBeforeSpending(t *testing.T) 
 		}
 	}
 	valid := waypointReq(6, 1, 1, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		code, _, _, err := s.Handle("/WaypointUse", valid)
 		if err != nil || code != 33 {
 			t.Fatalf("travel %d %v", code, err)

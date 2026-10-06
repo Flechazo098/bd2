@@ -57,9 +57,8 @@ func TestGroupsAndConcurrentDerivedLoggers(t *testing.T) {
 	h, _ := NewHandler(&out, Options{Color: ColorAlways})
 	logger := slog.New(h).With("service", "server").WithGroup("request").With("id", 7)
 	var workers sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		workers.Add(1)
-		go func() { defer workers.Done(); logger.Info("handled", slog.Group("result", "ok", true)) }()
+	for range 50 {
+		workers.Go(func() { logger.Info("handled", slog.Group("result", "ok", true)) })
 	}
 	workers.Wait()
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
@@ -78,7 +77,11 @@ func TestAutoRedirectedOutputIsPlain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	h, _ := NewHandler(file, Options{})
 	slog.New(h).Warn("redirected")
 	if _, err := file.Seek(0, 0); err != nil {

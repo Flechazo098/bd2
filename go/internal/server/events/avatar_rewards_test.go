@@ -29,12 +29,18 @@ func TestAvatarSetBatchPersistsMembersAndRollsBackWithAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = op.Rollback()
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eco, items, wallet := economyFixture(t, repo, &economyGraph{})
 	eco.AttachAvatarRewards(avatarDesign())
 	if len(items.All()) != 0 || wallet.Snapshot().Gold != 5 {

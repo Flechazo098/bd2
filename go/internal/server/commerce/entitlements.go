@@ -126,7 +126,7 @@ func (e *EntitlementEconomy) applyPrepared(identity string, costs, rewards []gam
 	}
 	input := make([]gamedata.BattleReward, len(rewards))
 	for i, r := range rewards {
-		input[i] = gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count}
+		input[i] = gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count} //nolint:staticcheck // S1016
 	}
 	leaves := input
 	if !resolved {
@@ -184,10 +184,7 @@ func (e *EntitlementEconomy) applyPrepared(identity string, costs, rewards []gam
 				return nil, fmt.Errorf("commerce: subscription reward schedule missing")
 			}
 			now := e.now().UnixMilli()
-			expiry := int64(e.items.ContentTicketExpiry(r.ID))
-			if expiry < now {
-				expiry = now
-			}
+			expiry := max(int64(e.items.ContentTicketExpiry(r.ID)), now)
 			if r.Count > uint64((math.MaxInt64-expiry)/(30*86400000)) {
 				return nil, fmt.Errorf("commerce: subscription expiry overflow")
 			}
@@ -201,7 +198,7 @@ func (e *EntitlementEconomy) applyPrepared(identity string, costs, rewards []gam
 			sub.Expiry = expiry
 			s.Subscriptions[key] = sub
 		default:
-			regular = append(regular, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			regular = append(regular, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 			if r.Type == 19 && e.design.TicketTypes[r.ID] == 3 && len(e.design.Attendance[r.ID]) > 0 {
 				key := strconv.FormatUint(r.ID, 10)
 				if _, exists := s.Subscriptions[key]; !exists {
@@ -314,10 +311,7 @@ func (e *EntitlementEconomy) MergeAttendance(response []byte) ([]byte, error) {
 		}
 		if typ := e.design.AttendanceTypes[ticket]; typ != 0 {
 			rewards := []byte{}
-			n := sub.Claimed
-			if n > uint64(len(e.design.Attendance[ticket])) {
-				n = uint64(len(e.design.Attendance[ticket]))
-			}
+			n := min(sub.Claimed, uint64(len(e.design.Attendance[ticket])))
 			for i := uint64(1); i <= n; i++ {
 				rewards = wire.AppendVarint(rewards, 1, i)
 			}

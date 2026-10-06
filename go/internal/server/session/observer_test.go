@@ -42,11 +42,19 @@ func TestObserverNotificationsAndFailuresShareRequestTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	server, _ := NewServer(fakeLogin{}, fakeDomain{}, &mutatingDomain{store: repository})
-	server.AttachStateStore(repository)
+	if err := server.AttachStateStore(repository); err != nil {
+		t.Fatal(err)
+	}
 	observer := &testProgressObserver{store: repository}
-	server.AttachResponseObserver(observer)
+	if err := server.AttachResponseObserver(observer); err != nil {
+		t.Fatal(err)
+	}
 	logged := login(t, server)
 	requests := []protocol.BatchRequest{
 		{Path: "/EmptyInfo", RequestData: base64.StdEncoding.EncodeToString(wire.AppendVarint(nil, 1, 2))},
@@ -79,7 +87,11 @@ func TestObserverNotificationsAndFailuresShareRequestTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer verified.Close()
+	defer func() {
+		if err := verified.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var value []byte
 	err = verified.QueryRow("SELECT payload FROM domain_entry WHERE domain_name='missions' AND bucket='test_observation' AND entry_key='/MutateTwoFiles'").Scan(&value)
 	if err != nil || len(value) != 1 || value[0] != 3 {

@@ -13,9 +13,9 @@ namespace Bd2CaptureEnvironment;
 
 internal static class PacketCapture
 {
-    private static readonly object CorrelationLock = new object();
+    private static readonly object CorrelationLock = new();
     private static readonly Dictionary<string, Queue<PendingRequest>> PendingRequests =
-        new Dictionary<string, Queue<PendingRequest>>(StringComparer.Ordinal);
+        new(StringComparer.Ordinal);
     private static ManualLogSource Log;
     private static long Sequence;
     private sealed class PendingRequest
@@ -105,7 +105,7 @@ internal static class PacketCapture
     {
         const string suffix = "Request";
         if (typeName != null && typeName.EndsWith(suffix, StringComparison.Ordinal))
-            typeName = typeName.Substring(0, typeName.Length - suffix.Length);
+            typeName = typeName[..^suffix.Length];
         return NormalizePath(typeName);
     }
 
@@ -120,7 +120,7 @@ internal static class PacketCapture
         const string suffix = "Request";
         if (!string.IsNullOrEmpty(requestType) &&
             requestType.EndsWith(suffix, StringComparison.Ordinal))
-            return requestType.Substring(0, requestType.Length - suffix.Length) + "Response";
+            return requestType[..^suffix.Length] + "Response";
         return "Proto.Net." + path.TrimStart('/') + "Response";
     }
 

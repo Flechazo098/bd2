@@ -5,9 +5,8 @@ using System.Text;
 
 namespace Bd2LoginUI;
 
-internal sealed class NativeProxyConfigurationException : InvalidOperationException
+internal sealed class NativeProxyConfigurationException(string message) : InvalidOperationException(message)
 {
-    public NativeProxyConfigurationException(string message) : base(message) { }
 }
 
 internal sealed class NativeProxySettings
@@ -17,8 +16,8 @@ internal sealed class NativeProxySettings
     internal NativeProxySettings(string proxy, string configuration)
     {
         ProxyUrl = proxy;
-        using (var hash = SHA256.Create())
-            Key = Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(configuration + "\n" + proxy)));
+        using var hash = SHA256.Create();
+        Key = Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(configuration + "\n" + proxy)));
     }
 }
 
@@ -27,6 +26,7 @@ internal sealed class NativeProxySettings
 // system, Unity and standard HTTP proxy settings are never used as a fallback.
 internal static class NativeProxyPolicy
 {
+    private static readonly char[] InvalidProxyCharacters = ['?', '#', '@', '%'];
     private const string ProxyVariable = "BD2_CLIENT_PROXY_URL";
 
     public static NativeProxySettings Resolve(Uri destination)
@@ -42,17 +42,17 @@ internal static class NativeProxyPolicy
     private static string NormalizeProxy(string raw)
     {
         raw = raw.Trim();
-        if (raw.IndexOfAny(new[] { '?', '#', '@', '%' }) >= 0) throw InvalidProxy();
+        if (raw.IndexOfAny(InvalidProxyCharacters) >= 0) throw InvalidProxy();
         foreach (char value in raw)
             if (char.IsWhiteSpace(value) || char.IsControl(value)) throw InvalidProxy();
         if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri proxy) || proxy.Scheme != "http" ||
             string.IsNullOrEmpty(proxy.Host) || !string.IsNullOrEmpty(proxy.UserInfo) ||
             !string.IsNullOrEmpty(proxy.Query) || !string.IsNullOrEmpty(proxy.Fragment) || proxy.AbsolutePath != "/")
             throw InvalidProxy();
-        string authority = raw.Substring(raw.IndexOf("://", StringComparison.Ordinal) + 3).TrimEnd('/');
+        string authority = raw[(raw.IndexOf("://", StringComparison.Ordinal) + 3)..].TrimEnd('/');
         int separator = authority.LastIndexOf(':');
         if (separator <= 0) throw InvalidProxy();
-        string portText = authority.Substring(separator + 1);
+        string portText = authority[(separator + 1)..];
         foreach (char value in portText) if (value < '0' || value > '9') throw InvalidProxy();
         if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out int port) || port < 1 || port > 65535)
             throw InvalidProxy();
@@ -62,5 +62,5 @@ internal static class NativeProxyPolicy
     }
 
     private static NativeProxyConfigurationException InvalidProxy() =>
-        new NativeProxyConfigurationException("Client proxy must be an HTTP proxy address with an explicit port and no credentials or path");
+        new("Client proxy must be an HTTP proxy address with an explicit port and no credentials or path");
 }

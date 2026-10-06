@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -173,7 +174,7 @@ func key(v ...uint64) string {
 	var k string
 	for i, n := range v {
 		if i > 0 {
-			k += "/"
+			k += "/" //nolint:modernize // stringsbuilder
 		}
 		k += strconv.FormatUint(n, 10)
 	}
@@ -498,7 +499,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 					}
 				}
 			}
-			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			slices.Sort(ids)
 			for _, id := range ids {
 				rewards := s.attendanceRewards(v, a, group, id)
 				if len(rewards) == 0 {
@@ -549,7 +550,7 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 			var u uint64
 			_, _ = fmt.Sscanf(uid, "%d", &u)
 			for g, ids := range groups {
-				sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+				slices.Sort(ids)
 				x := wire.AppendVarint(nil, 1, u)
 				x = wire.AppendVarint(x, 2, g)
 				for _, id := range ids {

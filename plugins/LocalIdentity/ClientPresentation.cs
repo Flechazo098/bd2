@@ -26,7 +26,7 @@ internal static class ClientPresentation
             nameof(AppManager.SwitchToFullScreen),
             BindingFlags.Instance | BindingFlags.Public,
             null,
-            new[] { typeof(bool) },
+            [typeof(bool)],
             null);
         if (initializeResolution == null || SwitchToFullScreenMethod == null)
         {
@@ -45,7 +45,7 @@ internal static class ClientPresentation
             // Use the game's own FullScreenWindow path so the behaviour is
             // identical on Windows and macOS. This runs once during startup;
             // later user-initiated switches to windowed mode remain intact.
-            SwitchToFullScreenMethod?.Invoke(__instance, new object[] { false });
+            SwitchToFullScreenMethod?.Invoke(__instance, [false]);
         }
         catch (Exception ex)
         {
@@ -85,8 +85,8 @@ internal static class ClientPresentation
             throw new MissingMethodException("FPS_Check overlay methods were not found (client version mismatch)");
         }
 
-        HarmonyMethod skip = new HarmonyMethod(typeof(ClientPresentation), nameof(SkipPerformanceOverlay));
-        HarmonyMethod hide = new HarmonyMethod(typeof(ClientPresentation), nameof(HidePerformanceOverlayPostfix));
+        var skip = new HarmonyMethod(typeof(ClientPresentation), nameof(SkipPerformanceOverlay));
+        var hide = new HarmonyMethod(typeof(ClientPresentation), nameof(HidePerformanceOverlayPostfix));
         harmony.Patch(start, prefix: skip);
         harmony.Patch(render, prefix: skip);
         harmony.Patch(onEnable, postfix: hide);

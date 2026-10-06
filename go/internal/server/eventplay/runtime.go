@@ -5,6 +5,7 @@ import (
 	"bd2server/internal/server/wire"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 )
 
@@ -52,7 +53,7 @@ func (s *Service) endScore(f string, req []byte, a Run) (uint64, error) {
 			return 0, e
 		}
 		maxField := 8
-		if a.Mode == 1 {
+		if a.Mode == 1 { //nolint:staticcheck // QF1003
 			maxField = 2
 		} else if a.Mode == 2 {
 			maxField = 1
@@ -134,7 +135,7 @@ func (s *Service) progress(path string, req []byte, rk string, next *snapshot, k
 				return nil, fmt.Errorf("eventplay: object invalid or already scored")
 			}
 			a.Objects = append(a.Objects, id)
-			if v.Type == 1 {
+			if v.Type == 1 { //nolint:staticcheck // QF1003
 				a.Score += v.Point
 			} else if v.Type == 2 {
 				a.HP += v.Point
@@ -227,11 +228,6 @@ func (s *Service) progress(path string, req []byte, rk string, next *snapshot, k
 	return out, nil
 }
 func has(a []uint64, id uint64) bool {
-	for _, x := range a {
-		if x == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a, id)
 }
 func seqSeed(n uint64) uint64 { return n & 2147483647 }

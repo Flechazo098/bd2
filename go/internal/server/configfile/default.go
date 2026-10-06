@@ -30,7 +30,7 @@ func Ensure(path string, defaults any) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(file.Name())
+	defer func() { _ = os.Remove(file.Name()) }()
 	if _, err = file.Write(append(data, '\n')); err == nil {
 		err = file.Sync()
 	}

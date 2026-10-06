@@ -53,7 +53,7 @@ func TestDifficultySelectionPersistsAndRewardsRemainIndependent(t *testing.T) {
 	if _, _, _, err := s.Handle("/QuestAccept", selectionRequest(1, 21, 1)); err != nil {
 		t.Fatal(err)
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		if _, _, _, err := s.Handle("/QuestClear", selectionRequest(1, 21, 0)); err != nil {
 			t.Fatal(err)
 		}

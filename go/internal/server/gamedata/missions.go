@@ -87,7 +87,7 @@ func loadMissionRows(db *sql.DB, design *MissionDesign) error {
 	if err != nil {
 		return fmt.Errorf("gamedata: query MissionTable: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proto []byte
 		if err := rows.Scan(&proto); err != nil {
@@ -157,7 +157,7 @@ func loadSectionRows(db *sql.DB, design *MissionDesign) error {
 	if err != nil {
 		return fmt.Errorf("gamedata: query MissionSectionRewardTable: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proto []byte
 		if err := rows.Scan(&proto); err != nil {
@@ -196,7 +196,7 @@ func loadAchievementRows(db *sql.DB, design *MissionDesign) error {
 	if err != nil {
 		return fmt.Errorf("gamedata: query AchievementTable: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proto []byte
 		if err := rows.Scan(&proto); err != nil {

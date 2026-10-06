@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -382,7 +383,7 @@ func OpenService(storage stateio.Store, starter *Starter, inventory *player.Inve
 		}
 		s.state.NextDynamicMailID = starter.MaxMailID + 1
 	}
-	sort.Slice(s.state.Opened, func(i, j int) bool { return s.state.Opened[i] < s.state.Opened[j] })
+	slices.Sort(s.state.Opened)
 	for i := 1; i < len(s.state.Opened); i++ {
 		if s.state.Opened[i] == s.state.Opened[i-1] {
 			return nil, errors.New("mail: duplicate opened ID")
@@ -522,7 +523,7 @@ func (s *Service) info() []byte {
 	for id := range s.dynamic {
 		dynamicIDs = append(dynamicIDs, id)
 	}
-	sort.Slice(dynamicIDs, func(i, j int) bool { return dynamicIDs[i] < dynamicIDs[j] })
+	slices.Sort(dynamicIDs)
 	for _, id := range dynamicIDs {
 		if s.dynamic[id].IsCash || containsID(s.state.Opened, id) {
 			continue
@@ -643,7 +644,7 @@ func (s *Service) open(request []byte) ([]byte, error) {
 					if reward.ID == 0 || reward.Count == 0 {
 						return nil, errors.New("mail: invalid item reward")
 					}
-					items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+					items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 				}
 			}
 			if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {
@@ -699,7 +700,7 @@ func (s *Service) open(request []byte) ([]byte, error) {
 			newHistory = append(newHistory, history)
 		}
 	}
-	sort.Slice(next.Opened, func(i, j int) bool { return next.Opened[i] < next.Opened[j] })
+	slices.Sort(next.Opened)
 	if err := s.commitWithEntries(next, changes); err != nil {
 		return nil, err
 	}
@@ -1064,10 +1065,5 @@ func (s *Service) enqueueCompensations(grants []compensation) error {
 }
 
 func containsID(values []uint64, want uint64) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }

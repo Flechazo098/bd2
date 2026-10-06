@@ -12,13 +12,16 @@ namespace Bd2LocalIdentity;
 
 internal sealed class LocalResourceServer : IDisposable
 {
+    private static readonly string[] HeaderSeparators = ["\r\n"];
+    private static readonly char[] PathSeparators = ['/'];
+    private static readonly char[] QuerySeparators = ['?', '#'];
     private const int MaximumRequestHeaderBytes = 16 * 1024;
     private const int MaximumConcurrentRequests = 16;
 
     private readonly ManualLogSource log;
     private readonly TcpListener listener;
     private readonly Thread acceptThread;
-    private readonly Semaphore requestSlots = new Semaphore(MaximumConcurrentRequests, MaximumConcurrentRequests);
+    private readonly Semaphore requestSlots = new(MaximumConcurrentRequests, MaximumConcurrentRequests);
     private volatile bool disposed;
 
     private LocalResourceServer(ManualLogSource log, string rootDirectory)
@@ -48,7 +51,7 @@ internal sealed class LocalResourceServer : IDisposable
         string gameDataVersion)
     {
         string root = ValidateRoot(configuredDirectory, bundleVersion, gameDataVersion);
-        LocalResourceServer server = new LocalResourceServer(log, root);
+        var server = new LocalResourceServer(log, root);
         log.LogInfo("Local resource HTTP server listening on " + server.Origin);
         return server;
     }
@@ -182,7 +185,7 @@ internal sealed class LocalResourceServer : IDisposable
             return;
         }
 
-        string[] lines = header.Split(new[] { "\r\n" }, StringSplitOptions.None);
+        string[] lines = header.Split(HeaderSeparators, StringSplitOptions.None);
         string[] requestLine = lines[0].Split(' ');
         if (requestLine.Length != 3 || (requestLine[2] != "HTTP/1.1" && requestLine[2] != "HTTP/1.0"))
         {
@@ -204,7 +207,7 @@ internal sealed class LocalResourceServer : IDisposable
             return;
         }
 
-        using FileStream file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         long start = 0;
         long end = file.Length - 1;
         bool partial = false;
@@ -219,7 +222,7 @@ internal sealed class LocalResourceServer : IDisposable
         }
 
         long contentLength = file.Length == 0 ? 0 : end - start + 1;
-        StringBuilder response = new StringBuilder();
+        var response = new StringBuilder();
         response.Append(partial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n");
         response.Append("Content-Length: ").Append(contentLength).Append("\r\n");
         response.Append("Content-Type: ").Append(GetContentType(path)).Append("\r\n");
@@ -253,8 +256,8 @@ internal sealed class LocalResourceServer : IDisposable
 
     private string ResolvePath(string requestTarget)
     {
-        int query = requestTarget.IndexOfAny(new[] { '?', '#' });
-        string rawPath = query >= 0 ? requestTarget.Substring(0, query) : requestTarget;
+        int query = requestTarget.IndexOfAny(QuerySeparators);
+        string rawPath = query >= 0 ? requestTarget[..query] : requestTarget;
         string decoded;
         try
         {
@@ -264,19 +267,19 @@ internal sealed class LocalResourceServer : IDisposable
         {
             return null;
         }
-        if (decoded.IndexOf('\0') >= 0)
+        if (decoded.Contains('\0'))
         {
             return null;
         }
 
-        string[] parts = decoded.Replace('\\', '/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        string[] parts = decoded.Replace('\\', '/').Split(PathSeparators, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length < 2 || (parts[0] != "ServerData" && parts[0] != "GameData"))
         {
             return null;
         }
         foreach (string part in parts)
         {
-            if (part == "." || part == ".." || part.IndexOf(':') >= 0)
+            if (part == "." || part == ".." || part.Contains(':'))
             {
                 return null;
             }
@@ -320,7 +323,7 @@ internal sealed class LocalResourceServer : IDisposable
         return false;
     }
 
-    private static string ReadRequestHeader(Stream stream)
+    private static string ReadRequestHeader(NetworkStream stream)
     {
         byte[] bytes = new byte[MaximumRequestHeaderBytes];
         int count = 0;
@@ -343,7 +346,7 @@ internal sealed class LocalResourceServer : IDisposable
 
     private static Dictionary<string, string> ParseHeaders(string[] lines)
     {
-        Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 1; i < lines.Length; i++)
         {
             int separator = lines[i].IndexOf(':');
@@ -351,7 +354,7 @@ internal sealed class LocalResourceServer : IDisposable
             {
                 continue;
             }
-            result[lines[i].Substring(0, separator).Trim()] = lines[i].Substring(separator + 1).Trim();
+            result[lines[i][..separator].Trim()] = lines[i][(separator + 1)..].Trim();
         }
         return result;
     }
@@ -360,11 +363,11 @@ internal sealed class LocalResourceServer : IDisposable
     {
         start = 0;
         end = length - 1;
-        if (length == 0 || !value.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase) || value.IndexOf(',') >= 0)
+        if (length == 0 || !value.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase) || value.Contains(','))
         {
             return false;
         }
-        string[] bounds = value.Substring(6).Split('-');
+        string[] bounds = value[6..].Split('-');
         if (bounds.Length != 2)
         {
             return false;
@@ -393,17 +396,12 @@ internal sealed class LocalResourceServer : IDisposable
 
     private static string GetContentType(string path)
     {
-        switch (Path.GetExtension(path).ToLowerInvariant())
+        return Path.GetExtension(path).ToLowerInvariant() switch
         {
-            case ".json":
-                return "application/json; charset=utf-8";
-            case ".hash":
-            case ".info":
-            case ".version":
-                return "text/plain; charset=utf-8";
-            default:
-                return "application/octet-stream";
-        }
+            ".json" => "application/json; charset=utf-8",
+            ".hash" or ".info" or ".version" => "text/plain; charset=utf-8",
+            _ => "application/octet-stream",
+        };
     }
 
     private static void WriteError(Stream stream, int status, string reason, string additionalHeaders = "")

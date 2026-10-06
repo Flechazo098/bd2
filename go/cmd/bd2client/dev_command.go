@@ -147,16 +147,15 @@ func clientDevelopmentFile(path string) bool {
 }
 
 func clientDevelopmentGameDirectory(args []string) (string, error) {
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
+	for index, arg := range args {
 		if arg == "--game-dir" {
 			if index+1 >= len(args) || strings.TrimSpace(args[index+1]) == "" {
 				return "", errors.New("--game-dir requires a directory")
 			}
 			return filepath.Clean(args[index+1]), nil
 		}
-		if strings.HasPrefix(arg, "--game-dir=") {
-			value := strings.TrimSpace(strings.TrimPrefix(arg, "--game-dir="))
+		if value, ok := strings.CutPrefix(arg, "--game-dir="); ok {
+			value = strings.TrimSpace(value)
 			if value == "" {
 				return "", errors.New("--game-dir requires a directory")
 			}

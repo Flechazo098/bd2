@@ -36,8 +36,7 @@ func initialize(ctx context.Context, db *sql.DB, fresh bool) error {
 	if err != nil {
 		return fmt.Errorf("accountstate: begin schema transaction: %w", err)
 	}
-	defer tx.Rollback()
-
+	defer func() { _ = tx.Rollback() }()
 	if fresh {
 		if err := createV1(ctx, tx); err != nil {
 			return err
@@ -178,10 +177,14 @@ func validateSchemaTables(tx *sql.Tx, version int) error {
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return err
 		}
 		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
 	}
 	if err := rows.Close(); err != nil {
 		return err
@@ -222,10 +225,14 @@ func tableColumns(tx *sql.Tx, table string) ([]schemaColumn, error) {
 		var entry schemaColumn
 		var defaultValue any
 		if err := columns.Scan(&ordinal, &entry.name, &entry.kind, &entry.notNull, &defaultValue, &entry.pk); err != nil {
-			columns.Close()
+			_ = columns.Close()
 			return nil, err
 		}
 		actual = append(actual, entry)
+	}
+	if err := columns.Err(); err != nil {
+		_ = columns.Close()
+		return nil, err
 	}
 	if err := columns.Close(); err != nil {
 		return nil, err

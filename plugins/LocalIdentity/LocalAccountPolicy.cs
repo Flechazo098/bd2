@@ -4,7 +4,6 @@ using static BD2.GameNames.Game;
 using System.Reflection;
 using BepInEx.Logging;
 using HarmonyLib;
-using UnityEngine;
 
 namespace Bd2LocalIdentity;
 
@@ -20,24 +19,16 @@ internal static class LocalAccountPolicy
         // change a later LoginUser parse after its successful local state has
         // been read from disk.
         Type commonPacket = typeof(BDNetwork.CommonPacket);
-        MethodInfo updateAgeGate = commonPacket?.GetGameMethod(
+        MethodInfo updateAgeGate = (commonPacket?.GetGameMethod(
             nameof(BDNetwork.CommonPacket.SendUpdateAgeGateRequest),
             BindingFlags.Static | BindingFlags.Public,
             null,
-            new[] { typeof(bool), typeof(int), typeof(int), typeof(int), typeof(Action) },
-            null);
-        if (updateAgeGate == null)
-        {
-            throw new MissingMethodException("CommonPacket.SendUpdateAgeGateRequest(bool, int, int, int, Action) was not found");
-        }
+            [typeof(bool), typeof(int), typeof(int), typeof(int), typeof(Action)],
+            null)) ?? throw new MissingMethodException("CommonPacket.SendUpdateAgeGateRequest(bool, int, int, int, Action) was not found");
         Type loginUserResponse = typeof(Proto.Net.LoginUserResponse);
-        MethodInfo needsAgeVerificationSetter = loginUserResponse?.GetGameProperty(
+        MethodInfo needsAgeVerificationSetter = (loginUserResponse?.GetGameProperty(
             nameof(Proto.Net.LoginUserResponse.NeedsAgeVerification),
-            BindingFlags.Instance | BindingFlags.Public)?.GetSetMethod();
-        if (needsAgeVerificationSetter == null)
-        {
-            throw new MissingMethodException("LoginUserResponse.NeedsAgeVerification setter was not found");
-        }
+            BindingFlags.Instance | BindingFlags.Public)?.GetSetMethod()) ?? throw new MissingMethodException("LoginUserResponse.NeedsAgeVerification setter was not found");
         harmony.Patch(
             updateAgeGate,
             prefix: new HarmonyMethod(typeof(LocalAccountPolicy), nameof(UpdateAgeGateRequestPrefix)));

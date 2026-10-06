@@ -433,7 +433,7 @@ func parseSessionCookie(cookie string) (string, error) {
 	}
 	var token string
 	seen := false
-	for _, value := range strings.Split(cookie, ";") {
+	for value := range strings.SplitSeq(cookie, ";") {
 		name, candidate, found := strings.Cut(strings.TrimSpace(value), "=")
 		if !found || name != "s" {
 			continue
@@ -451,7 +451,7 @@ func parseSessionCookie(cookie string) (string, error) {
 		return "", errors.New("invalid game session cookie")
 	}
 	for _, char := range token[:48] {
-		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') { //nolint:staticcheck // QF1001
 			return "", errors.New("invalid game session cookie")
 		}
 	}

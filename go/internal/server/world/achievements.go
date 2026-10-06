@@ -207,8 +207,8 @@ func (s *AchievementService) Handle(path string, request []byte) (int, []byte, b
 		}
 		prefix := s.session + "/"
 		for replayKey := range entries {
-			if strings.HasPrefix(replayKey, prefix) {
-				old, err := strconv.ParseUint(strings.TrimPrefix(replayKey, prefix), 10, 64)
+			if suffix, found := strings.CutPrefix(replayKey, prefix); found {
+				old, err := strconv.ParseUint(suffix, 10, 64)
 				if err != nil {
 					return fail(err)
 				}

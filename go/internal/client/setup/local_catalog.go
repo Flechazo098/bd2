@@ -126,7 +126,7 @@ func readCatalog(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open local ServerData catalog: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(file, maximumCatalogBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read local ServerData catalog: %w", err)
@@ -163,8 +163,7 @@ func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 			remoteCount++
 			continue
 		}
-		if strings.HasPrefix(internalID, localCatalogPrefix) {
-			relative := strings.TrimPrefix(internalID, localCatalogPrefix)
+		if relative, ok := strings.CutPrefix(internalID, localCatalogPrefix); ok {
 			relative = filepath.FromSlash(strings.ReplaceAll(relative, "\\", "/"))
 			if info, err := os.Stat(filepath.Join(aa, relative)); err != nil || !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("built-in Addressables catalog references a missing local bundle: %s", relative)
@@ -288,7 +287,7 @@ func replaceCatalog(path string, data []byte) error {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err = temporary.Chmod(0o600); err == nil {
 		_, err = temporary.Write(data)
 	}

@@ -39,12 +39,12 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 		var id uint64
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		interactions, e := packedInts(raw, 9)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if !slices.Contains(interactions, uint64(2)) {
@@ -52,19 +52,19 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 		}
 		mapID, e := optionalScalar(raw, 14)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		recovery, e := optionalScalar(raw, 21)
 		if e != nil || recovery == 0 || mapID == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid motel NPC %d", id)
 		}
 		rules = append(rules, InnRule{NPCID: id, MapID: mapID})
 		recoveryIDs = append(recoveryIDs, recovery)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}

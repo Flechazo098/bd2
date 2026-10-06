@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"sync"
 
@@ -349,12 +350,8 @@ func (s *Wallet) GrantQuestOnce(identity string, rewards []gamedata.Reward) (Cur
 
 func cloneWallet(in walletSnapshot) walletSnapshot {
 	out := walletSnapshot{Version: in.Version, Currency: in.Currency, Granted: make(map[string]bool, len(in.Granted)), Spent: make(map[string]bool, len(in.Spent))}
-	for key, value := range in.Granted {
-		out.Granted[key] = value
-	}
-	for key, value := range in.Spent {
-		out.Spent[key] = value
-	}
+	maps.Copy(out.Granted, in.Granted)
+	maps.Copy(out.Spent, in.Spent)
 	return out
 }
 

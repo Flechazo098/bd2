@@ -14,7 +14,11 @@ func TestOptionalGameplaySnapshotsPreserveAccountInitializationOnRestart(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	domains := []string{"characters", "collection", "deck", "equipment", "items", "mail", "missions", "progress", "wallet"}
 	for _, name := range domains {
 		if err := repo.Save(name, []byte("{}")); err != nil {
@@ -45,7 +49,11 @@ func TestOptionalGameplaySnapshotsPreserveAccountInitializationOnRestart(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if status, err := reopened.InitializationState(domains...); err != nil || status != accountstate.InitializationComplete {
 		t.Fatalf("restart rejected optional gameplay state: %d %v", status, err)
 	}

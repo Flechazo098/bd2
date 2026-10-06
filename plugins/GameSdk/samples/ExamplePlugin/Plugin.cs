@@ -3,36 +3,31 @@ using System.Reflection;
 using BD2.GameNames;
 using BepInEx;
 using HarmonyLib;
+using TMPro;
 
 namespace ExamplePlugin;
 
-[BepInPlugin("example.readable-names", "Readable Names Example", "1.0.0")]
+[BepInPlugin("example.plugin", "example plugin", "1.0.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
-    private Harmony harmony;
+    private const string Greeting = "\nHello! Brown Dust Ⅱ";
+    private static FieldInfo versionTextField;
 
     private void Awake()
     {
-        try
-        {
-            // Fail before installing any game patches when binary/table/plugin versions differ.
-            Game.Validate(typeof(Plugin).Assembly, message => Logger.LogInfo(message));
-            MethodInfo target = Game.Method<IntroUI>(ui => ui.SendMaintenanceInfo(false));
-            harmony = new Harmony("example.readable-names");
-            harmony.Patch(target, prefix: new HarmonyMethod(typeof(Plugin), nameof(BeforeMaintenance)));
-
-            // Private members require the runtime string channel. The prefix expression above
-            // and the Unity callback name below belong to separate channels.
-            var awake = typeof(IntroUI).GetGameMethod("Awake",
-                BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
-            Logger.LogInfo("Resolved IntroUI.Awake: " + (awake != null));
-        }
-        catch (Exception exception)
-        {
-            Logger.LogError("Readable Names Example initialization failed: " + exception);
-        }
+        Game.Validate(typeof(Plugin).Assembly);
+        MethodInfo target = Game.Method<IntroUI>(ui => ui.SetVersionText());
+        versionTextField = typeof(IntroUI).GetGameField("_textVersion", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingFieldException("IntroUI._textVersion");
+        var harmony = new Harmony("example.plugin");
+        harmony.Patch(target, postfix: new HarmonyMethod(typeof(Plugin), nameof(AfterSetVersionText)));
     }
 
-    private static void BeforeMaintenance() { }
-    private void OnDestroy() => harmony?.UnpatchSelf();
+    private static void AfterSetVersionText(IntroUI __instance)
+    {
+        if (versionTextField.GetValue(__instance) is not TMP_Text versionText) return;
+        string current = versionText.text ?? string.Empty;
+        if (current.EndsWith(Greeting, StringComparison.Ordinal)) return;
+        versionText.text = current + Greeting;
+    }
 }

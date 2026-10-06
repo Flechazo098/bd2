@@ -401,7 +401,7 @@ func TestJSONLimitsAndSecurityHeaders(t *testing.T) {
 func TestCreateDeviceLimitsPendingTransactionsPerClient(t *testing.T) {
 	service, store := testService(t)
 	handler := service.Handler()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		response := postJSON(handler, "/auth/device", map[string]string{"provider": "discord"})
 		if response.Code != http.StatusCreated {
 			t.Fatalf("create %d status=%d body=%q", i, response.Code, response.Body.String())
@@ -434,7 +434,7 @@ func TestDecodeProviderJSONRejectsOversizeAndTrailingValues(t *testing.T) {
 func TestRequestLimiterIsBoundedAndExpiresWindows(t *testing.T) {
 	limiter := requestLimiter{windows: make(map[string]limitWindow)}
 	now := time.Unix(testNowUnix, 0)
-	for i := 0; i < 4096; i++ {
+	for i := range 4096 {
 		if !limiter.allow(strconv.Itoa(i), now, time.Minute, 1) {
 			t.Fatalf("rejected window %d before capacity", i)
 		}

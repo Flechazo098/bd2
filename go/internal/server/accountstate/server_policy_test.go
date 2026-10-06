@@ -29,7 +29,11 @@ func TestStartingPackPolicyPersistsAndRejectsChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	op, err = r.BeginOperation()
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +76,11 @@ func TestStartingPackPolicyRollbackAllowsAnotherChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	op, err = r.BeginOperation()
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +102,7 @@ func TestStartingPackPolicyMissingExistingRejectsInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer op.Rollback()
+	defer func() { _ = op.Rollback() }()
 	for _, initialize := range []bool{false, true} {
 		if _, err := r.LockStartingPack(1, initialize); err == nil {
 			t.Fatalf("accepted missing existing policy initialize=%v", initialize)
@@ -113,7 +121,7 @@ func TestStartingPackPolicyRejectsInvalidValues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer op.Rollback()
+			defer func() { _ = op.Rollback() }()
 			if _, err := r.LockStartingPack(1, false); err == nil {
 				t.Fatal("accepted invalid stored value")
 			}
@@ -124,7 +132,7 @@ func TestStartingPackPolicyRejectsInvalidValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer op.Rollback()
+	defer func() { _ = op.Rollback() }()
 	for _, configured := range []int{0, 2, -1} {
 		if _, err := r.LockStartingPack(configured, true); err == nil {
 			t.Fatalf("accepted invalid configured value %d", configured)

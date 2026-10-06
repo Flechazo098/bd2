@@ -14,7 +14,7 @@ internal static class AgeGateState
 {
     private const string FileName = "bd2.localidentity.age-gate.state";
     private const string Content = "format=1\nconfirmed=true\n";
-    private static readonly object Gate = new object();
+    private static readonly object Gate = new();
     private static bool? confirmed;
 
     internal static bool IsConfirmed()
@@ -94,7 +94,7 @@ internal static class AgeGateState
     private static void WriteThrough(string path, string content)
     {
         byte[] bytes = new UTF8Encoding(false).GetBytes(content);
-        using FileStream stream = new FileStream(
+        using var stream = new FileStream(
             path,
             FileMode.CreateNew,
             FileAccess.Write,

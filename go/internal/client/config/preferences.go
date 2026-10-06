@@ -76,7 +76,7 @@ func SavePreferences(gameDirectory string) error {
 		return fmt.Errorf("stage client preferences: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err = temporary.Chmod(0o600); err == nil {
 		_, err = temporary.Write(data)
 	}

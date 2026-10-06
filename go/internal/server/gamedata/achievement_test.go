@@ -13,7 +13,11 @@ func TestAchievementCounterDesignUsesRootGroupsAndBothContents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	if _, err = db.Exec("CREATE TABLE AchievementTable (ProtoBuf BLOB)"); err != nil {
 		t.Fatal(err)
@@ -40,13 +44,21 @@ func TestAchievementRewardDesignIncludesOrdinaryZeroContentsAndTargets(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	db.Exec("CREATE TABLE AchievementTable(ProtoBuf BLOB)")
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if _, err := db.Exec("CREATE TABLE AchievementTable(ProtoBuf BLOB)"); err != nil {
+		t.Fatal(err)
+	}
 	raw := wire.AppendVarint(wire.AppendVarint(nil, 9, 987), 11, 1)
 	raw = wire.AppendVarint(raw, 8, 9)
 	raw = append(raw, 25)
 	raw = binary.LittleEndian.AppendUint64(raw, math.Float64bits(10))
-	db.Exec("INSERT INTO AchievementTable VALUES (?)", raw)
+	if _, err := db.Exec("INSERT INTO AchievementTable VALUES (?)", raw); err != nil {
+		t.Fatal(err)
+	}
 	d := &MissionDesign{Achievements: map[AchievementKey]AchievementDesign{}}
 	if err := loadAchievementRows(db, d); err != nil {
 		t.Fatal(err)

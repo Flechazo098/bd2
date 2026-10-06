@@ -3,6 +3,7 @@ package calendar
 import (
 	"bd2server/internal/server/readonly"
 	"fmt"
+	"maps"
 )
 
 func scalar(n int, v uint64) readonly.Field { return readonly.Field{Number: n, Type: 0, Varint: v} }
@@ -29,9 +30,7 @@ func (s *Set) ApplyReadonly(seed *readonly.Seed) (*readonly.Seed, error) {
 		return nil, fmt.Errorf("calendar: missing calendar/static seed")
 	}
 	result := &readonly.Seed{Version: seed.Version, Responses: make(map[string]readonly.Response, len(seed.Responses))}
-	for path, response := range seed.Responses {
-		result.Responses[path] = response
-	}
+	maps.Copy(result.Responses, seed.Responses)
 	var hunt []readonly.Field
 	if h := s.MonsterHunt; h != nil {
 		for _, v := range h.Seasons {

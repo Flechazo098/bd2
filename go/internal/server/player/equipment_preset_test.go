@@ -96,7 +96,7 @@ func TestEquipmentPresetRejectsForgedEquipment(t *testing.T) {
 	request := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 100), 3, 1)
 	request = wire.AppendString(request, 4, "Forged")
 	request = wire.AppendVarint(request, 5, 1)
-	for slot := 0; slot < equipmentSlotCount; slot++ {
+	for slot := range equipmentSlotCount {
 		entry := wire.AppendVarint(nil, 1, uint64(slot))
 		if slot == 1 {
 			entry = wire.AppendVarint(entry, 2, item.InvenIndex)

@@ -40,7 +40,7 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: query QuestTable%d: %w", packID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type questRow struct {
 		id    int
 		proto []byte
@@ -99,7 +99,7 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 				*dst = int(values[0])
 			}
 		}
-		for slot := 0; slot < len(entry.Rewards); slot++ {
+		for slot := range len(entry.Rewards) {
 			types, err := packedInts(proto, 56+slot)
 			if err != nil {
 				return nil, fmt.Errorf("gamedata: quest %d reward slot %d type: %w", id, slot, err)

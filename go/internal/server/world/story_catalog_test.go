@@ -115,7 +115,7 @@ func TestInitialPackPurchaseUsesDesignAndDurableIdentity(t *testing.T) {
 	}
 	s.storyCatalog = &gamedata.StoryCatalog{Packs: map[int]gamedata.StoryPack{707: {ID: 707, BuyRewards: []gamedata.Reward{{Type: 12, Count: 17}, {Type: 4, Count: 31}, {Type: 19, ID: 88, Count: 1}, {Type: 11, ID: 101, Count: 0}}}}}
 	s.questCostumes = purchaseTestCostumes{101: {ID: 10, HP: 100, CostumeMaxLevel: 5}}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := s.EnsureInitialPackPurchase(); err != nil {
 			t.Fatal(err)
 		}

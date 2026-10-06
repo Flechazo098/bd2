@@ -31,9 +31,9 @@ public sealed class Plugin : BaseUnityPlugin
     private static bool applicationQuitting;
     private static Dictionary<string, CommerceProduct> products;
     private static string catalogOrigin;
-    private static readonly Dictionary<UnityEngine.Object, Action> priceViews = new Dictionary<UnityEngine.Object, Action>();
-    private static readonly HashSet<string> attendanceReceipts = new HashSet<string>(StringComparer.Ordinal);
-    private static readonly HashSet<long> attendanceRefreshPayments = new HashSet<long>();
+    private static readonly Dictionary<UnityEngine.Object, Action> priceViews = [];
+    private static readonly HashSet<string> attendanceReceipts = new(StringComparer.Ordinal);
+    private static readonly HashSet<long> attendanceRefreshPayments = [];
     private sealed class PriceLabelState
     {
         internal string Text;
@@ -44,7 +44,7 @@ public sealed class Plugin : BaseUnityPlugin
         internal bool Layout;
         internal Dictionary<Behaviour, bool> Drivers;
     }
-    private static readonly Dictionary<CurrencyButton, Dictionary<TMP_Text, PriceLabelState>> unavailablePriceLabels = new Dictionary<CurrencyButton, Dictionary<TMP_Text, PriceLabelState>>();
+    private static readonly Dictionary<CurrencyButton, Dictionary<TMP_Text, PriceLabelState>> unavailablePriceLabels = [];
     private static BepInEx.Logging.ManualLogSource Log;
     private const string Unavailable = "当前服务器未开通购买功能";
     private const string Marker = "<link=bd2-commerce:";
@@ -76,9 +76,8 @@ public sealed class Plugin : BaseUnityPlugin
             Patch(typeof(CurrencyButton), "SetCash", nameof(SetCash), false, 1);
             Patch(typeof(CashShopBuyPopupUI), "SetProductInfo", nameof(PopupPrice), true, 8);
             MethodInfo paymentPopup = typeof(UIManager).GetGameMethod("OpenSelectiveMessagePopupUI", All, null,
-                new[] { typeof(Action<MessagePopupUI>), typeof(string), typeof(string), typeof(string),
-                    typeof(Action<bool, MessagePopupUI>), typeof(bool), typeof(bool), typeof(MessagePopupUI.EMessagePopupButtonStyle) }, null);
-            if (paymentPopup == null) throw new MissingMethodException("UIManager payment confirmation overload");
+                [ typeof(Action<MessagePopupUI>), typeof(string), typeof(string), typeof(string),
+                    typeof(Action<bool, MessagePopupUI>), typeof(bool), typeof(bool), typeof(MessagePopupUI.EMessagePopupButtonStyle) ], null) ?? throw new MissingMethodException("UIManager payment confirmation overload");
             harmony.Patch(paymentPopup, prefix: new HarmonyMethod(typeof(Plugin), nameof(SuppressExternalPaymentConfirmation)));
             Patch(typeof(PackagePurchaseButton), "SetPrice", nameof(PackagePrice), true, 0);
             Patch(typeof(PassRootUI), "CheckIsInAppBuyButton", nameof(PassPrice), true, 0);
@@ -90,8 +89,7 @@ public sealed class Plugin : BaseUnityPlugin
             RewardBuffRefresh.Install(harmony);
             PrestigeSkinRewardPresentation.Install(harmony, Log);
             MethodInfo attendance = typeof(EventPacket).GetGameMethod("RecvAttendanceResponse", All, null,
-                new[] { typeof(IMessage), typeof(int), typeof(int) }, null);
-            if (attendance == null) throw new MissingMethodException("EventPacket.RecvAttendanceResponse(IMessage,int,int)");
+                [typeof(IMessage), typeof(int), typeof(int)], null) ?? throw new MissingMethodException("EventPacket.RecvAttendanceResponse(IMessage,int,int)");
             harmony.Patch(attendance, postfix: new HarmonyMethod(typeof(Plugin), nameof(AttendanceRewards)));
             Patch(typeof(IntroUI), "Awake", nameof(IntroAwake), true, 0);
             EnsureCommerceHost();
@@ -104,14 +102,14 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
-    private void Patch(Type type, string name, string callback, bool postfix, int count)
+    private static void Patch(Type type, string name, string callback, bool postfix, int count)
     {
         MethodInfo target = type.GetMethods(All).Single(method => method.IsGameMethod(name) && method.GetParameters().Length == count);
         var patch = new HarmonyMethod(typeof(Plugin), callback);
         harmony.Patch(target, prefix: postfix ? null : patch, postfix: postfix ? patch : null);
     }
 
-    private void PatchGeneratedReceiver(string readableName, string callback)
+    private static void PatchGeneratedReceiver(string readableName, string callback)
     {
         // Compiler-generated declaring types are found by their mapped methods;
         // neither an obfuscated type name nor a generated class number is pinned.
@@ -119,7 +117,7 @@ public sealed class Plugin : BaseUnityPlugin
             .SelectMany(type => type.GetMethods(All | BindingFlags.DeclaredOnly))
             .Single(method => method.IsGameMethod(readableName) && method.ReturnType == typeof(bool) &&
                 method.GetParameters().Select(parameter => parameter.ParameterType)
-                    .SequenceEqual(new[] { typeof(byte[]), typeof(int), typeof(int) }));
+                    .SequenceEqual((Type[])[typeof(byte[]), typeof(int), typeof(int)]));
         harmony.Patch(target, postfix: new HarmonyMethod(typeof(Plugin), callback));
     }
 
@@ -146,7 +144,10 @@ public sealed class Plugin : BaseUnityPlugin
 
     public sealed class CommerceHost : MonoBehaviour
     {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
         private void OnApplicationQuit() { applicationQuitting = true; }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
         private void OnDestroy()
         {
             if (ReferenceEquals(host, this)) host = null;
@@ -164,7 +165,7 @@ public sealed class Plugin : BaseUnityPlugin
             if (origin != catalogOrigin) { products = null; catalogOrigin = origin; nextFetch = 0; RefreshPrices(); }
             if (origin != null && Time.realtimeSinceStartup >= nextFetch)
             {
-                Task<Dictionary<string, CommerceProduct>> request = Task.Run(() => Fetch(origin));
+                var request = Task.Run(() => Fetch(origin));
                 while (!request.IsCompleted)
                 {
                     string current = null;
@@ -194,26 +195,24 @@ public sealed class Plugin : BaseUnityPlugin
         if (new Uri(origin).IsLoopback || string.IsNullOrWhiteSpace(proxy)) request.Proxy = null;
         else
         {
-            if (!Uri.TryCreate(proxy, UriKind.Absolute, out var proxyUri) || proxyUri.Scheme != "http" || proxyUri.UserInfo.Length != 0 || proxyUri.AbsolutePath != "/" || proxyUri.Query.Length != 0 || proxyUri.Fragment.Length != 0)
+            if (!Uri.TryCreate(proxy, UriKind.Absolute, out Uri proxyUri) || proxyUri.Scheme != "http" || proxyUri.UserInfo.Length != 0 || proxyUri.AbsolutePath != "/" || proxyUri.Query.Length != 0 || proxyUri.Fragment.Length != 0)
                 throw new InvalidOperationException("Unsupported client commerce proxy");
             request.Proxy = new WebProxy(proxyUri);
         }
-        using (var response = (HttpWebResponse)request.GetResponse())
-        using (var stream = response.GetResponseStream())
-        using (var reader = new StreamReader(stream))
+        using var response = (HttpWebResponse)request.GetResponse();
+        using Stream stream = response.GetResponseStream();
+        using var reader = new StreamReader(stream);
+        if (response.StatusCode != HttpStatusCode.OK) throw new IOException("Commerce HTTP status " + response.StatusCode);
+        var bodyBuilder = new System.Text.StringBuilder();
+        char[] buffer = new char[8192];
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) != 0)
         {
-            if (response.StatusCode != HttpStatusCode.OK) throw new IOException("Commerce HTTP status " + response.StatusCode);
-            var bodyBuilder = new System.Text.StringBuilder();
-            var buffer = new char[8192];
-            int read;
-            while ((read = reader.Read(buffer, 0, buffer.Length)) != 0)
-            {
-                if (bodyBuilder.Length + read > 4 * 1024 * 1024) throw new IOException("Commerce catalog too large");
-                bodyBuilder.Append(buffer, 0, read);
-            }
-            string body = bodyBuilder.ToString();
-            return JsonConvert.DeserializeObject<CommerceCatalog>(body).Validate(Bd2Build.Versions.Game);
+            if (bodyBuilder.Length + read > 4 * 1024 * 1024) throw new IOException("Commerce catalog too large");
+            bodyBuilder.Append(buffer, 0, read);
         }
+        string body = bodyBuilder.ToString();
+        return JsonConvert.DeserializeObject<CommerceCatalog>(body).Validate(Bd2Build.Versions.Game);
     }
 
     private static CommerceProduct Resolve(string sku)
@@ -222,7 +221,7 @@ public sealed class Plugin : BaseUnityPlugin
         {
             if (products == null || catalogOrigin != Origin() || sku == null) return null;
             CashProductTable table = CashShopInfo.GetCashProductDTO(sku, SG.App.MarketType);
-            if (table == null || !products.TryGetValue(CommerceProduct.MakeKey(table.GroupId, table.Id, table.SaleGroup, sku), out var policy)) return null;
+            if (table == null || !products.TryGetValue(CommerceProduct.MakeKey(table.GroupId, table.Id, table.SaleGroup, sku), out CommerceProduct policy)) return null;
             if (table == null || table.PriceType != 1 || table.GroupId != policy.GroupId || table.Id != policy.ProductId || table.SaleGroup != policy.SaleGroup ||
                 CashShopInfo.GetProductIdByMarket(table, SG.App.MarketType) != sku) return null;
             return policy;
@@ -234,17 +233,17 @@ public sealed class Plugin : BaseUnityPlugin
     {
         try
         {
-            var table = CashShopInfo.GetCashProductDTO(group, id, sale);
+            CashProductTable table = CashShopInfo.GetCashProductDTO(group, id, sale);
             if (table == null || table.PriceType != 1 || products == null || catalogOrigin != Origin()) return null;
             string sku = CashShopInfo.GetProductIdByMarket(table, SG.App.MarketType);
-            return products.TryGetValue(CommerceProduct.MakeKey(group, id, sale, sku), out var policy) ? policy : null;
+            return products.TryGetValue(CommerceProduct.MakeKey(group, id, sale, sku), out CommerceProduct policy) ? policy : null;
         }
         catch { return null; }
     }
 
     private static bool Purchase(string __0, object __1, Action __2)
     {
-        var policy = Resolve(__0);
+        CommerceProduct policy = Resolve(__0);
         if (policy == null || !policy.Enabled)
         {
             __2?.Invoke();
@@ -355,7 +354,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static bool PriceLabel(string __0, ref string __result)
     {
-        var policy = Resolve(__0);
+        CommerceProduct policy = Resolve(__0);
         string text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? "Free" : policy.Amount.ToString(CultureInfo.InvariantCulture);
         __result = Marker + Uri.EscapeDataString(__0 ?? "") + ">" + text + "</link>";
         return false;
@@ -368,7 +367,7 @@ public sealed class Plugin : BaseUnityPlugin
         if (start < 0) return null;
         start += Marker.Length;
         int end = label.IndexOf('>', start);
-        return end < 0 ? null : Resolve(Uri.UnescapeDataString(label.Substring(start, end - start)));
+        return end < 0 ? null : Resolve(Uri.UnescapeDataString(label[start..end]));
     }
 
     private static bool SetCash(CurrencyButton __instance, string __0)
@@ -399,8 +398,8 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void RestorePricePrefixes(CurrencyButton button)
     {
-        if (button == null || !unavailablePriceLabels.TryGetValue(button, out var saved)) return;
-        foreach (var entry in saved)
+        if (button == null || !unavailablePriceLabels.TryGetValue(button, out Dictionary<TMP_Text, PriceLabelState> saved)) return;
+        foreach (KeyValuePair<TMP_Text, PriceLabelState> entry in saved)
             if (entry.Key != null)
             {
                 entry.Key.text = entry.Value.Text;
@@ -413,7 +412,7 @@ public sealed class Plugin : BaseUnityPlugin
                     rect.anchorMin = entry.Value.AnchorMin; rect.anchorMax = entry.Value.AnchorMax;
                     rect.pivot = entry.Value.Pivot; rect.offsetMin = entry.Value.OffsetMin; rect.offsetMax = entry.Value.OffsetMax;
                     if (entry.Value.Drivers != null)
-                        foreach (var driver in entry.Value.Drivers) if (driver.Key != null) driver.Key.enabled = driver.Value;
+                        foreach (KeyValuePair<Behaviour, bool> driver in entry.Value.Drivers) if (driver.Key != null) driver.Key.enabled = driver.Value;
                 }
             }
         unavailablePriceLabels.Remove(button);
@@ -458,19 +457,28 @@ public sealed class Plugin : BaseUnityPlugin
         GameObject buy = Field<GameObject>(popup, "_objBuyButton"), cancel = Field<GameObject>(popup, "_objCancelButton");
         TMP_Text price = button.TextPrice;
         var saved = new Dictionary<TMP_Text, PriceLabelState>();
-        foreach (var label in container.GetComponentsInChildren<TMP_Text>(true))
+        foreach (TMP_Text label in container.GetComponentsInChildren<TMP_Text>(true))
         {
             if (label == price || buy != null && label.transform.IsChildOf(buy.transform) || cancel != null && label.transform.IsChildOf(cancel.transform)) continue;
             if (label.text != "购买费用") continue;
             RectTransform rect = label.rectTransform;
-            saved[label] = new PriceLabelState { Text = label.text, Active = label.gameObject.activeSelf,
-                Layout = true, Alignment = label.alignment, Wrap = label.enableWordWrapping,
-                AnchorMin = rect.anchorMin, AnchorMax = rect.anchorMax, Pivot = rect.pivot,
-                OffsetMin = rect.offsetMin, OffsetMax = rect.offsetMax };
+            saved[label] = new PriceLabelState
+            {
+                Text = label.text,
+                Active = label.gameObject.activeSelf,
+                Layout = true,
+                Alignment = label.alignment,
+                Wrap = label.enableWordWrapping,
+                AnchorMin = rect.anchorMin,
+                AnchorMax = rect.anchorMax,
+                Pivot = rect.pivot,
+                OffsetMin = rect.offsetMin,
+                OffsetMax = rect.offsetMax
+            };
             var drivers = new Dictionary<Behaviour, bool>();
-            foreach (var group in container.GetComponentsInChildren<UnityEngine.UI.LayoutGroup>(true))
+            foreach (UnityEngine.UI.LayoutGroup group in container.GetComponentsInChildren<UnityEngine.UI.LayoutGroup>(true))
             { drivers[group] = group.enabled; group.enabled = false; }
-            foreach (var fitter in container.GetComponentsInChildren<UnityEngine.UI.ContentSizeFitter>(true))
+            foreach (UnityEngine.UI.ContentSizeFitter fitter in container.GetComponentsInChildren<UnityEngine.UI.ContentSizeFitter>(true))
             { drivers[fitter] = fitter.enabled; fitter.enabled = false; }
             saved[label].Drivers = drivers;
             label.text = Unavailable;
@@ -485,14 +493,23 @@ public sealed class Plugin : BaseUnityPlugin
             Log?.LogWarning("Commerce price layout: fee label missing inside CurrencyParent; centering existing price label");
             if (price == null) return;
             RectTransform rect = price.rectTransform;
-            saved[price] = new PriceLabelState { Text = price.text, Active = price.gameObject.activeSelf,
-                Layout = true, Alignment = price.alignment, Wrap = price.enableWordWrapping,
-                AnchorMin = rect.anchorMin, AnchorMax = rect.anchorMax, Pivot = rect.pivot,
-                OffsetMin = rect.offsetMin, OffsetMax = rect.offsetMax };
+            saved[price] = new PriceLabelState
+            {
+                Text = price.text,
+                Active = price.gameObject.activeSelf,
+                Layout = true,
+                Alignment = price.alignment,
+                Wrap = price.enableWordWrapping,
+                AnchorMin = rect.anchorMin,
+                AnchorMax = rect.anchorMax,
+                Pivot = rect.pivot,
+                OffsetMin = rect.offsetMin,
+                OffsetMax = rect.offsetMax
+            };
             var drivers = new Dictionary<Behaviour, bool>();
-            foreach (var group in container.GetComponentsInChildren<UnityEngine.UI.LayoutGroup>(true))
+            foreach (UnityEngine.UI.LayoutGroup group in container.GetComponentsInChildren<UnityEngine.UI.LayoutGroup>(true))
             { drivers[group] = group.enabled; group.enabled = false; }
-            foreach (var fitter in container.GetComponentsInChildren<UnityEngine.UI.ContentSizeFitter>(true))
+            foreach (UnityEngine.UI.ContentSizeFitter fitter in container.GetComponentsInChildren<UnityEngine.UI.ContentSizeFitter>(true))
             { drivers[fitter] = fitter.enabled; fitter.enabled = false; }
             saved[price].Drivers = drivers;
             price.text = Unavailable;
@@ -522,13 +539,14 @@ public sealed class Plugin : BaseUnityPlugin
         throw new MissingFieldException(target.GetType().FullName, name);
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static void PackagePrice(PackagePurchaseButton __instance)
     {
         priceViews.Remove(__instance);
         int group = Field<int>(__instance, "_productGroupId"), id = Field<int>(__instance, "_productId"), sale = Field<int>(__instance, "_productSaleGroupId");
-        var table = CashShopInfo.GetCashProductDTO(group, id, sale);
+        CashProductTable table = CashShopInfo.GetCashProductDTO(group, id, sale);
         if (table == null || table.PriceType != 1) return;
-        var button = Field<CurrencyButton>(__instance, "_btnCurrency");
+        CurrencyButton button = Field<CurrencyButton>(__instance, "_btnCurrency");
         priceViews[__instance] = () => PackagePrice(__instance);
         CommerceProduct policy = Resolve(group, id, sale);
         TMP_Text label = Field<TMP_Text>(__instance, "_textPrice");
@@ -547,23 +565,23 @@ public sealed class Plugin : BaseUnityPlugin
     {
         priceViews.Remove(__instance);
         if (!__result) return;
-        var table = PassInfo.GetPassBuyTable(Field<int>(__instance, "_curPassTableID"), Define_PassBuyType.PbPremium2);
+        PassBuyTable table = PassInfo.GetPassBuyTable(Field<int>(__instance, "_curPassTableID"), Define_PassBuyType.PbPremium2);
         priceViews[__instance] = () => PassPrice(__instance, true);
         Render(Field<UISprite>(__instance, "_imgPremiumBuyPrice"), Field<TMP_Text>(__instance, "_txtPremiumBuyPrice"), Resolve(table.CashProductGroupId, table.CashProductId, table.CashSalesGroup));
     }
 
     private static void PassPopupPrice(BuyConfirmPopupUI __instance, int __0, Define_PassBuyType __1)
     {
-        var price = Field<TMP_Text>(__instance, "_textCurrency");
+        TMP_Text price = Field<TMP_Text>(__instance, "_textCurrency");
         CommercePriceLayout.Reset(price?.transform.parent as RectTransform);
         priceViews.Remove(__instance);
         if (__1 != Define_PassBuyType.PbPremium2) return;
-        var table = PassInfo.GetPassBuyTable(__0, __1);
+        PassBuyTable table = PassInfo.GetPassBuyTable(__0, __1);
         int pass = __0;
         Define_PassBuyType buy = __1;
         priceViews[__instance] = () => PassPopupPrice(__instance, pass, buy);
-        var policy = Resolve(table.CashProductGroupId, table.CashProductId, table.CashSalesGroup);
-        var sprite = Field<UISprite>(__instance, "_uiSpriteCurrency");
+        CommerceProduct policy = Resolve(table.CashProductGroupId, table.CashProductId, table.CashSalesGroup);
+        UISprite sprite = Field<UISprite>(__instance, "_uiSpriteCurrency");
         Render(sprite, price, policy);
         if (policy != null && policy.Enabled && policy.ItemType != 0)
             CommercePriceLayout.Apply(price.transform.parent as RectTransform, sprite, price);
@@ -581,13 +599,13 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void GachaPrice(GachaProductButtonElement __instance, string __4)
     {
-        var buttons = Field<CurrencyButton[]>(__instance, "_currencyGachas");
+        CurrencyButton[] buttons = Field<CurrencyButton[]>(__instance, "_currencyGachas");
         if (buttons == null || buttons.Length == 0) return;
-        foreach (var button in buttons) if (button != null) priceViews.Remove(button);
+        foreach (CurrencyButton button in buttons) if (button != null) priceViews.Remove(button);
         if (__4 == null || !__4.Contains(Marker)) return;
         string sku = ExtractSku(__4);
         priceViews[buttons[0]] = () => Render(buttons[0], Resolve(sku));
-        foreach (var button in buttons) button?.SetActive(false);
+        foreach (CurrencyButton button in buttons) button?.SetActive(false);
         Render(buttons[0], FromLabel(__4));
         Field<TMP_Text>(__instance, "_textDescription").text = "";
     }
@@ -644,18 +662,19 @@ public sealed class Plugin : BaseUnityPlugin
     {
         int start = label.IndexOf(Marker, StringComparison.Ordinal) + Marker.Length;
         int end = label.IndexOf('>', start);
-        return end < 0 ? null : Uri.UnescapeDataString(label.Substring(start, end - start));
+        return end < 0 ? null : Uri.UnescapeDataString(label[start..end]);
     }
 
     private static void RefreshPrices()
     {
-        foreach (var view in priceViews.ToArray())
+        foreach (KeyValuePair<UnityEngine.Object, Action> view in priceViews.ToArray())
         {
             if (view.Key == null) { priceViews.Remove(view.Key); continue; }
             try { view.Value(); } catch (Exception error) { Log?.LogWarning("Commerce UI refresh: " + error.Message); }
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnDestroy()
     {
         // Unity may remove the BepInEx component during startup. Static hooks and

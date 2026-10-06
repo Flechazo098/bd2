@@ -45,7 +45,7 @@ func Run(runOptions Options) error {
 			studio.Shutdown()
 			studio.log().Info("native client window closed")
 		},
-		Bind:                     []interface{}{studio},
+		Bind:                     []any{studio},
 		EnableDefaultContextMenu: false,
 		DragAndDrop: &options.DragAndDrop{
 			DisableWebViewDrop: true,

@@ -68,7 +68,7 @@ func CharacterGrowth(root, version string, charID int, level, exp uint64, materi
 	if err != nil {
 		return 0, 0, nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proto []byte
 		if err := rows.Scan(&proto); err != nil {
@@ -124,7 +124,7 @@ func refundGrowthResources(db *sql.DB, overflow uint64) ([]GrowthMaterial, error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type unit struct{ id, value uint64 }
 	var units []unit
 	for rows.Next() {

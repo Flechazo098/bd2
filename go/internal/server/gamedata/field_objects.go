@@ -49,21 +49,21 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 		var id int
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return design, err
 		}
 		obj := FieldRewardObject{GroupID: id}
 		for _, field := range []int{2, 3} {
 			v, e := packedInts(raw, field)
 			if e != nil || len(v) > 0 {
-				rows.Close()
+				_ = rows.Close()
 				return design, fmt.Errorf("gamedata: field object random buff graph %d requires authored selection rules", id)
 			}
 		}
 		for f, target := range map[int]*int{1: &obj.BuffID, 7: &obj.MonsterID, 8: &obj.QuestID, 9: &obj.ResetType, 12: &obj.Type} {
 			v, e := packedInts(raw, f)
 			if e != nil || len(v) > 1 {
-				rows.Close()
+				_ = rows.Close()
 				return design, fmt.Errorf("gamedata: malformed field object group %d", id)
 			}
 			if len(v) > 0 {
@@ -72,13 +72,13 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 		}
 		group, e := packedInts(raw, 10)
 		if e != nil || len(group) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return design, fmt.Errorf("gamedata: malformed field reward group %d", id)
 		}
 		if len(group) == 1 {
 			var rewardRaw []byte
 			if err = common.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", group[0]).Scan(&rewardRaw); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return design, err
 			}
 			ids, e1 := packedInts(rewardRaw, 5)
@@ -88,7 +88,7 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 			ratios, e5 := packedInts(rewardRaw, 8)
 			dropType, e6 := packedInts(rewardRaw, 2)
 			if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil || e6 != nil {
-				rows.Close()
+				_ = rows.Close()
 				return design, fmt.Errorf("gamedata: malformed field loot %d", group[0])
 			}
 			if len(ids) > 0 && len(ids) == len(types) && len(ids) == len(counts) && len(ratios) == len(ids) && len(drop) <= 1 && len(dropType) <= 1 {
@@ -103,26 +103,26 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 					obj.Rewards = append(obj.Rewards, BattleReward{ID: ids[i], Type: types[i], Count: counts[i]})
 				}
 				if e := design.validateLoot(common, obj.Rewards); e != nil {
-					rows.Close()
+					_ = rows.Close()
 					return design, e
 				}
 			} else {
-				rows.Close()
+				_ = rows.Close()
 				return design, fmt.Errorf("gamedata: malformed field loot entries %d", group[0])
 			}
 		}
 		groups[id] = obj
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return design, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM FieldRewardObjectTable")
 	if err != nil {
 		return design, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int
 		var raw []byte
@@ -147,7 +147,7 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 	if err = rows.Err(); err != nil {
 		return design, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	design.Actions, err = loadFieldActionObjects(db)
 	return design, err
 }

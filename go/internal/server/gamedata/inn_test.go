@@ -11,12 +11,20 @@ func TestInnLoaderJoinsNPCRecoveryMapAndReputation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pack.Close()
+	defer func() {
+		if err := pack.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	shared, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer shared.Close()
+	defer func() {
+		if err := shared.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"FieldNpcTable", "ReputationGroupTable"} {
 		if _, err = pack.Exec("CREATE TABLE " + table + " (id INTEGER, ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)

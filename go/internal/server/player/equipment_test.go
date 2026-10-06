@@ -279,7 +279,7 @@ func smeltingTestDesign(ratios [][]float64) *gamedata.EquipmentSmeltingDesign {
 		Mileage:   gamedata.EquipmentSmeltingMileage{UseType: 8, UseID: 10, UseCount: 1000, RewardType: 68, RewardCount: 1},
 		MaxStreak: 5000,
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		design.Ranks[[2]uint64{904, uint64(i + 1)}] = gamedata.EquipmentSmeltingRank{Values: []uint64{1, 2, 3, 4}, GrowthPoint: []uint64{1, 2, 3, 4}, Ratio: ratios[i]}
 	}
 	return design

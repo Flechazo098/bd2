@@ -52,7 +52,7 @@ func loadPresetDesign(db *sql.DB) (*PresetDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d.Icons = map[uint64]bool{}
 	for rows.Next() {
 		var id uint64

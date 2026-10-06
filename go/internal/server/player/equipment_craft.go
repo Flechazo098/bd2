@@ -108,7 +108,7 @@ func (s *EquipmentInventory) prepareEquipmentMaking(characterIndex, recipeID, co
 	}
 	resultCount := count * recipe.ResultCount
 	generated := make([]Equipment, 0, resultCount)
-	for i := uint64(0); i < resultCount; i++ {
+	for range resultCount {
 		rolled, err := s.craft.Generate(recipeID)
 		if err != nil {
 			return nil, 0, 0, 0, fmt.Errorf("player: roll equipment making result: %w", err)
@@ -383,10 +383,7 @@ func (s *EquipmentInventory) runUpgradeToBreak(indices []uint64, target uint64, 
 		position := s.equipmentPositionLocked(index)
 		entry := s.owned.Equipment[position]
 		maximum := s.upgrade.MaxLevel[entry.ID]
-		goal := target
-		if goal > maximum {
-			goal = maximum
-		}
+		goal := min(target, maximum)
 		for !stopUpgrades && entry.Level < goal {
 			level, _, err := s.upgrade.Level(entry.ID, entry.Level)
 			if err != nil {

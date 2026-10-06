@@ -92,7 +92,7 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(r.Body, 16<<10+1))
 	if err != nil || len(data) > 16<<10 {
 		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
@@ -157,7 +157,7 @@ func (s *Service) createDevice(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create transaction", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := cleanupExpired(tx, now.Unix()); err != nil {
 		http.Error(w, "could not create transaction", http.StatusInternalServerError)
 		return
@@ -396,7 +396,7 @@ func (s *Service) exchangeIdentity(ctx context.Context, provider, code, verifier
 	if err != nil {
 		return providerIdentity{}, networkProviderFailure(ctx, provider, "token_exchange", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return providerIdentity{}, rejectedProviderFailure(provider, "token_exchange", response)
 	}
@@ -422,7 +422,7 @@ func (s *Service) exchangeIdentity(ctx context.Context, provider, code, verifier
 	if err != nil {
 		return providerIdentity{}, networkProviderFailure(ctx, provider, "userinfo", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return providerIdentity{}, rejectedProviderFailure(provider, "userinfo", response)
 	}
@@ -449,7 +449,7 @@ func (s *Service) verifyGoogleIDToken(ctx context.Context, idToken, nonce string
 	if err != nil {
 		return providerIdentity{}, networkProviderFailure(ctx, "google", "id_token_verify", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return providerIdentity{}, rejectedProviderFailure("google", "id_token_verify", response)
 	}
@@ -499,7 +499,7 @@ func (s *Service) completeDevice(deviceID, provider string, identity providerIde
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var accountID, status string
 	subjectHash := s.store.identityDigest(identity.issuer, identity.subject)
 	err = tx.QueryRow(`SELECT i.account_id,a.status FROM identities i JOIN accounts a ON a.id=i.account_id WHERE i.issuer=? AND i.subject_hash=?`, identity.issuer, subjectHash).Scan(&accountID, &status)
@@ -646,7 +646,7 @@ func (s *Service) poll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login result unavailable", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var storedHash, sealed []byte
 	var status, errorCode string
 	var expires int64
@@ -773,7 +773,7 @@ func (s *Service) refresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := cleanupExpired(tx, now.Unix()); err != nil {
 		http.Error(w, "refresh unavailable", http.StatusInternalServerError)
 		return
@@ -914,14 +914,8 @@ func refreshAttemptSealID(familyID string, attemptHash []byte) string {
 }
 
 func (r refreshAttemptResult) deviceResult(now int64) deviceResult {
-	accessTTL := r.AccessExpiresAt - now
-	if accessTTL < 0 {
-		accessTTL = 0
-	}
-	refreshTTL := r.RefreshExpiresAt - now
-	if refreshTTL < 0 {
-		refreshTTL = 0
-	}
+	accessTTL := max(r.AccessExpiresAt-now, 0)
+	refreshTTL := max(r.RefreshExpiresAt-now, 0)
 	return deviceResult{
 		Provider: r.Provider, AccessToken: r.AccessToken, AccessExpiresIn: accessTTL,
 		RefreshToken: r.RefreshToken, RefreshExpiresIn: refreshTTL,
@@ -945,7 +939,7 @@ func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "revocation unavailable", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var familyID, accountStatus string
 	var expires int64
 	var revoked sql.NullInt64

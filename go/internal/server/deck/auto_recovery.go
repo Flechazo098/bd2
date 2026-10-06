@@ -110,7 +110,7 @@ func (s *Store) handleAutoRecovery(req []byte) (int, []byte, bool, error) {
 			}
 			return nil
 		}
-		if n.FieldCharControlDeckType == 0 {
+		if n.FieldCharControlDeckType == 0 { //nolint:staticcheck // QF1003
 			for _, v := range n.Deck {
 				if e = add(v.CharacterInvenIndex); e != nil {
 					return fail(e)

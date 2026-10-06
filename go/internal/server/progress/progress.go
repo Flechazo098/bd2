@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -255,9 +256,7 @@ func (s *Store) UpdateQuest(request []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	quests := make(map[string]QuestProgress, len(s.quests)+1)
-	for key, current := range s.quests {
-		quests[key] = current
-	}
+	maps.Copy(quests, s.quests)
 	selection := s.selections[strconv.Itoa(progress.PackID)]
 	progress.Difficulty = selection.Difficulty
 	if _, acceptedNormal := s.quests[questKey(progress.PackID, progress.QuestID)]; acceptedNormal && selection.QuestID != progress.QuestID {
@@ -454,9 +453,7 @@ func (s *Store) SelectQuest(packID int, selection QuestSelection) error {
 	defer s.mu.Unlock()
 	old := s.selections
 	next := make(map[string]QuestSelection, len(old)+1)
-	for key, value := range old {
-		next[key] = value
-	}
+	maps.Copy(next, old)
 	next[strconv.Itoa(packID)] = selection
 	s.selections = next
 	if err := s.commit(s.position, s.tutorials, s.quests, s.cleared); err != nil {
@@ -490,9 +487,7 @@ func (s *Store) AcceptQuest(questID, packID, difficulty int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	quests := make(map[string]QuestProgress, len(s.quests)+1)
-	for key, value := range s.quests {
-		quests[key] = value
-	}
+	maps.Copy(quests, s.quests)
 	key := questKey(packID, questID, difficulty)
 	if _, exists := quests[key]; !exists {
 		quests[key] = QuestProgress{QuestID: questID, PackID: packID, Difficulty: difficulty}

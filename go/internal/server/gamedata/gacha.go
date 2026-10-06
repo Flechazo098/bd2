@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 
 	_ "modernc.org/sqlite"
@@ -208,9 +210,7 @@ func NewRegularGachaCatalog(gachas map[uint64]RegularGacha, characters map[uint6
 		groups: map[uint64]GachaGroupDesign{}, byGacha: map[uint64]uint64{}, fixed: map[uint64]GachaFixedDesign{}, grades: map[uint64]uint64{},
 		stepUps: map[uint64]GachaStepUpDesign{}, stepByGacha: map[uint64]GachaStepDesign{},
 	}
-	for id, character := range characters {
-		catalog.characters[id] = character
-	}
+	maps.Copy(catalog.characters, characters)
 	for id, gacha := range gachas {
 		if id == 0 || gacha.ID != id || gacha.Count <= 0 || (gacha.PriceType != 2 && gacha.PriceType != 3 && gacha.PriceType != 19) || gacha.Price == 0 {
 			return nil, errors.New("gamedata: invalid regular gacha definition")
@@ -371,21 +371,7 @@ func (c *RegularGachaCatalog) CostumeGrade(costumeID uint64) (uint64, bool) {
 }
 
 func (c *RegularGachaCatalog) recordPoolGrades(gacha RegularGacha) {
-	for id, grade := range gacha.Grades {
-		c.grades[id] = grade
-	}
-}
-
-func recordCostumeGrade(grades map[uint64]uint64, item WeightedCostume, grade uint64) {
-	if item.ID != 0 {
-		if current := grades[item.ID]; current == 0 || grade > current {
-			grades[item.ID] = grade
-		}
-		return
-	}
-	for _, child := range item.Children {
-		recordCostumeGrade(grades, child, grade)
-	}
+	maps.Copy(c.grades, gacha.Grades)
 }
 
 func (c *RegularGachaCatalog) Character(costumeID uint64) (CharacterDesign, bool) {
@@ -447,7 +433,7 @@ func (c *RegularGachaCatalog) FiveStarIDs(gachaID uint64) []uint64 {
 		}
 	}
 	visit(gacha.Pool)
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	slices.Sort(result)
 	return result
 }
 
@@ -807,16 +793,6 @@ func costumeRewardCount(group *CostumeRewardGroup) (uint64, error) {
 	return total, nil
 }
 
-func rollCostumeBranch(pool []WeightedCostume) (int, uint64, error) {
-	return rollCostumeBranchWith(pool, func(limit uint64) (uint64, error) {
-		selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return selected.Uint64(), nil
-	})
-}
-
 func rollCostumeBranchWith(pool []WeightedCostume, draw func(uint64) (uint64, error)) (int, uint64, error) {
 	if len(pool) == 0 || draw == nil {
 		return 0, 0, errors.New("gamedata: empty costume choice")
@@ -843,16 +819,6 @@ func rollCostumeBranchWith(pool []WeightedCostume, draw func(uint64) (uint64, er
 		value -= item.Weight
 	}
 	return 0, 0, errors.New("gamedata: regular gacha branch selection failed")
-}
-
-func rollCostumeChoice(pool []WeightedCostume) (uint64, error) {
-	return rollCostumeChoiceWith(pool, func(limit uint64) (uint64, error) {
-		selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return selected.Uint64(), nil
-	})
 }
 
 func rollCostumeChoiceWith(pool []WeightedCostume, draw func(uint64) (uint64, error)) (uint64, error) {
@@ -927,7 +893,7 @@ func permanentGachaGroupIDs(root, version string) ([]uint64, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: list permanent gacha groups: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []uint64
 	for rows.Next() {
 		var id uint64
@@ -1006,8 +972,8 @@ func ClassifyActiveGachaGroups(root, version string, groupIDs []uint64) (costume
 			return nil, nil, fmt.Errorf("gamedata: active gacha group %d has unsupported type %d", id, types[0])
 		}
 	}
-	sort.Slice(costume, func(i, j int) bool { return costume[i] < costume[j] })
-	sort.Slice(equipment, func(i, j int) bool { return equipment[i] < equipment[j] })
+	slices.Sort(costume)
+	slices.Sort(equipment)
 	return costume, equipment, nil
 }
 
@@ -1073,7 +1039,7 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 	for id := range gachaIDs {
 		orderedIDs = append(orderedIDs, id)
 	}
-	sort.Slice(orderedIDs, func(i, j int) bool { return orderedIDs[i] < orderedIDs[j] })
+	slices.Sort(orderedIDs)
 	for _, id := range orderedIDs {
 		var proto []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM GachaTable WHERE id=?", id).Scan(&proto); err != nil {
@@ -1172,7 +1138,7 @@ func loadGachaStepUp(db *sql.DB, groupID uint64) (GachaStepUpDesign, error) {
 	if err != nil {
 		return GachaStepUpDesign{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := GachaStepUpDesign{ID: groupID}
 	for rows.Next() {
 		var id uint64
@@ -1194,6 +1160,7 @@ func loadGachaStepUp(db *sql.DB, groupID uint64) (GachaStepUpDesign, error) {
 		out.Steps = append(out.Steps, step)
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return GachaStepUpDesign{}, err
 	}
 	if err := rows.Close(); err != nil {
@@ -1351,7 +1318,7 @@ func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var proto []byte
@@ -1385,6 +1352,7 @@ func (c *RegularGachaCatalog) loadGroupsAndFixed(db *sql.DB) error {
 		}
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return err
 	}
 	if err := rows.Close(); err != nil {
@@ -1473,16 +1441,6 @@ func (c *RegularGachaCatalog) loadStepFixed(db *sql.DB) error {
 	return nil
 }
 
-func collectCostumeIDs(pool []WeightedCostume, result *[]uint64) {
-	for _, item := range pool {
-		if item.ID != 0 {
-			*result = append(*result, item.ID)
-		} else {
-			collectCostumeIDs(item.Children, result)
-		}
-	}
-}
-
 func loadGachaCharacterDesign(db *sql.DB, costumeID uint64) (CharacterDesign, error) {
 	characterID, family, err := loadCostumeCharacterFamily(db, costumeID)
 	if err != nil {
@@ -1561,35 +1519,6 @@ func loadCostumeDesign(db *sql.DB, costumeID uint64) (CharacterDesign, error) {
 		CostumeMaxLevel: maxLevels[0], OverflowItemType: mileageTypes[0],
 		OverflowItemID: mileageID, OverflowItemCount: mileageCounts[0],
 	}, nil
-}
-
-func loadCostumeRewardPool(db *sql.DB, groupID uint64) ([]WeightedCostume, error) {
-	var proto []byte
-	if err := db.QueryRow("SELECT ProtoBuf FROM RewardGroupTable WHERE id=?", groupID).Scan(&proto); err != nil {
-		return nil, err
-	}
-	ids, _ := packedInts(proto, 5)
-	types, _ := packedInts(proto, 6)
-	weights, _ := packedInts(proto, 8)
-	if len(ids) == 0 || len(ids) != len(types) || len(ids) != len(weights) {
-		return nil, errors.New("malformed reward group")
-	}
-	var result []WeightedCostume
-	for i, id := range ids {
-		switch types[i] {
-		case 11:
-			result = append(result, WeightedCostume{ID: id, Weight: weights[i]})
-		case 9:
-			children, err := loadCostumeRewardPool(db, id)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, WeightedCostume{Weight: weights[i], Children: children})
-		default:
-			return nil, fmt.Errorf("unsupported costume reward type %d", types[i])
-		}
-	}
-	return result, nil
 }
 
 func validateCostumePool(pool []WeightedCostume, characters map[uint64]CharacterDesign) error {
@@ -1704,19 +1633,23 @@ func LoadInfiniteGachaForSchedules(root, version string, groups []uint64) (*Infi
 	for rows.Next() {
 		var levelProto []byte
 		if err := rows.Scan(&levelProto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		groups, _ := packedInts(levelProto, 5)
 		levels, _ := packedInts(levelProto, 7)
 		health, healthFound, healthErr := fixed64Double(levelProto, 6)
 		if healthErr != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, healthErr
 		}
 		if len(groups) == 1 && len(levels) == 1 && levels[0] == 1 && healthFound && health >= 0 && !math.IsNaN(health) && !math.IsInf(health, 0) {
 			levelOneHealthRatio[groups[0]] = health
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

@@ -49,7 +49,11 @@ func TestCharacterPromotionUsesCharAndGrowthTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, schema := range []string{
 		"CREATE TABLE CharTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB)",
 		"CREATE TABLE CharGrowthTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB)",
@@ -93,7 +97,11 @@ func TestCharacterGrowthPromotionsCrossesTwoStagesWithCumulativeCosts(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, schema := range []string{
 		"CREATE TABLE CharTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB)",
 		"CREATE TABLE CharGrowthTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB)",

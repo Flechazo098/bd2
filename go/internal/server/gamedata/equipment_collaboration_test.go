@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"encoding/binary"
+	"maps"
 	"os"
 	"reflect"
 	"testing"
@@ -18,9 +19,7 @@ func TestIncludeCollaborationURWeaponsInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := map[uint64]EquipmentGacha{}
-	for id, g := range c.Gachas {
-		before[id] = g
-	}
+	maps.Copy(before, c.Gachas)
 	if err := c.IncludeCollaborationURWeapons(root, "20260923193640"); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +83,11 @@ func TestIncludeCollaborationURWeaponsSynthetic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	for _, schema := range []string{"CREATE TABLE LimitedCostumeTable(id INTEGER)", "CREATE TABLE CostumeTable(id INTEGER,useUniqueCharId INTEGER,ProtoBuf BLOB)", "CREATE TABLE CharTable(id INTEGER,uniqueCharId INTEGER,ProtoBuf BLOB)", "CREATE TABLE EquipmentTable(id INTEGER,privateUniqueCharId INTEGER,ProtoBuf BLOB)", "CREATE TABLE EquipmentOptionTable(id INTEGER,GroupId INTEGER,ProtoBuf BLOB)"} {
 		if _, err := db.Exec(schema); err != nil {
@@ -169,7 +172,11 @@ func TestEquipmentFixedUsesChangedIDThresholdsAndResetDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec("CREATE TABLE GachaFixedTable(id INTEGER,ProtoBuf BLOB)"); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +255,11 @@ func TestEquipmentGachaLoaderAcceptsChangedPriceAndPoolLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"GachaTable", "RewardGroupTable"} {
 		if _, err := db.Exec("CREATE TABLE " + table + "(id INTEGER,ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)

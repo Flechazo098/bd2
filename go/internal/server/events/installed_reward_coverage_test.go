@@ -222,7 +222,9 @@ func TestInstalledScheduledTaskAttendanceAndPassRewardCoverage(t *testing.T) {
 		if err = rows.Err(); err != nil {
 			t.Fatal(err)
 		}
-		rows.Close()
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	leaves := map[[2]uint64]gamedata.BattleReward{}
 	var walk func(gamedata.BattleReward, map[uint64]bool)

@@ -43,7 +43,11 @@ func TestFieldMonsterCatalogJoinsRegenerationAndRejectsBrokenReference(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"FieldMonsterTable", "FieldMonsterRegenTable"} {
 		if _, err = db.Exec("CREATE TABLE " + table + " (id INTEGER,ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)

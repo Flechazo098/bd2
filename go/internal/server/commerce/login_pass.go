@@ -6,7 +6,7 @@ import (
 	"bd2server/internal/server/wire"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -92,7 +92,7 @@ func (s *LoginPasses) ClaimAndInfo(identity string) ([]byte, [][]byte, error) {
 	for group := range s.design.Groups {
 		keys = append(keys, group)
 	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	slices.Sort(keys)
 	r, seen := v.Receipts[identity]
 	if !seen {
 		r = loginPassReceipt{Rewarded: map[uint64]bool{}}

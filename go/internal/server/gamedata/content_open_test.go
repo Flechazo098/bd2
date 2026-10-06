@@ -12,7 +12,11 @@ func contentOpeningTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	for _, q := range []string{"CREATE TABLE ContentOpenTable(groupId INTEGER,id INTEGER,ticketId INTEGER,ProtoBuf BLOB)", "CREATE TABLE ContentTicketTable(id INTEGER,ProtoBuf BLOB)"} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)

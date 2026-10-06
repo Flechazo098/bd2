@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 )
 
 // FriendshipKey identifies a costume's level or counseling session.
@@ -27,10 +28,8 @@ func (g FriendshipGiftDesign) Experience(costumeID uint64) uint64 {
 	if g.GiftType == 1 {
 		return g.FavoriteEXP
 	}
-	for _, id := range g.FavoriteCostumeIDs {
-		if id == costumeID {
-			return g.FavoriteEXP
-		}
+	if slices.Contains(g.FavoriteCostumeIDs, costumeID) {
+		return g.FavoriteEXP
 	}
 	return g.EXP
 }
@@ -185,19 +184,19 @@ func loadFriendshipDesign(db *sql.DB) (FriendshipDesign, error) {
 		for rows.Next() {
 			var selection []byte
 			if err := rows.Scan(&selection); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return d, err
 			}
 			choices, err := packedInts(selection, 1)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return d, err
 			}
 			session.ChoiceCount = uint64(len(choices))
 			matches++
 		}
 		err = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return d, err
 		}
@@ -283,7 +282,7 @@ func friendshipRows(db *sql.DB, query string, visit func(uint64, []byte) error) 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var proto []byte
@@ -302,7 +301,7 @@ func friendshipGroupRows(db *sql.DB, query string, visit func(FriendshipKey, []b
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var key FriendshipKey
 		var proto []byte

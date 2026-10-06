@@ -218,7 +218,7 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 		}
 		switch r.Type {
 		case 2, 3, 4, 12, 20:
-			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		case 5, 7, 8, 9, 13, 14, 17, 19, 27, 29:
 			if r.ID == 0 {
 				return nil, fmt.Errorf("world: invalid field item")

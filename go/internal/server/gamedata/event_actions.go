@@ -45,12 +45,12 @@ func LoadEventActionsDesign(root, version string) (*EventActionsDesign, error) {
 		for rows.Next() {
 			var p []byte
 			if e = rows.Scan(&p); e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			r := EventActionRow{Values: map[int]uint64{}, Text: map[int]string{}}
 			if e = wire.Walk(p, func(f wire.Field) error {
-				if f.Type == 0 {
+				if f.Type == 0 { //nolint:staticcheck // QF1003
 					v, _, er := wire.Varint(p, f.Number)
 					if er != nil {
 						return er
@@ -61,7 +61,7 @@ func LoadEventActionsDesign(root, version string) (*EventActionsDesign, error) {
 				}
 				return nil
 			}); e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			var array [3]int
@@ -74,21 +74,21 @@ func LoadEventActionsDesign(root, version string) (*EventActionsDesign, error) {
 			if array[0] > 0 {
 				rs, e := monsterHuntRewardArrays(p, array[0], array[1], array[2])
 				if e != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, e
 				}
 				for _, x := range rs {
-					r.Rewards = append(r.Rewards, Reward{x.Type, x.ID, x.Count})
+					r.Rewards = append(r.Rewards, Reward{x.Type, x.ID, x.Count}) //nolint:staticcheck // S1016
 				}
 			}
 			if table == "FriendshipSpecialEpisodeTable" {
 				rs, e := monsterHuntRewardArrays(p, 4, 3, 2)
 				if e != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, e
 				}
 				for _, x := range rs {
-					r.EventRewards = append(r.EventRewards, Reward{x.Type, x.ID, x.Count})
+					r.EventRewards = append(r.EventRewards, Reward{x.Type, x.ID, x.Count}) //nolint:staticcheck // S1016
 				}
 			}
 			if table == "FireworksTable" {
@@ -100,7 +100,7 @@ func LoadEventActionsDesign(root, version string) (*EventActionsDesign, error) {
 			d.Tables[table] = append(d.Tables[table], r)
 		}
 		e = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if e != nil {
 			return nil, e
 		}

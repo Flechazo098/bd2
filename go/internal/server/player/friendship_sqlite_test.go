@@ -55,7 +55,8 @@ func TestFriendshipSQLiteAtomicFailureRestartAndExactRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			store := &friendshipFailStore{AtomicEntryStore: repo}
-			s, inventory, wallet := sqliteFriendshipService(t, store, template)
+			var wallet *Wallet
+			s, inventory, _ := sqliteFriendshipService(t, store, template)
 			items, err := inventory.GrantOnce("seed", []gamedata.BattleReward{{Type: 8, ID: 7, Count: 3}})
 			if err != nil {
 				t.Fatal(err)
@@ -91,7 +92,11 @@ func TestFriendshipSQLiteAtomicFailureRestartAndExactRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer repo.Close()
+			defer func() {
+				if err := repo.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			s, inventory, wallet = sqliteFriendshipService(t, repo, template)
 			if rollback {
 				if wallet.Snapshot().FreeJewelry != 0 || len(s.collection.FriendshipEntries()) != 0 {

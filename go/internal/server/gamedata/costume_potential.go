@@ -48,21 +48,21 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		var id uint64
 		var raw []byte
 		if err = groups.Scan(&id, &raw); err != nil {
-			groups.Close()
+			_ = groups.Close()
 			return nil, err
 		}
 		active, e := optionalScalar(raw, 3)
 		if e != nil || active > 1 {
-			groups.Close()
+			_ = groups.Close()
 			return nil, fmt.Errorf("gamedata: invalid potential active group")
 		}
 		d.CostumeActive[id] = active == 1
 	}
 	if err = groups.Err(); err != nil {
-		groups.Close()
+		_ = groups.Close()
 		return nil, err
 	}
-	groups.Close()
+	_ = groups.Close()
 	rows, err := db.Query("SELECT groupId,id,ProtoBuf FROM CostumeNodeTable ORDER BY groupId,id")
 	if err != nil {
 		return nil, err
@@ -71,14 +71,14 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		var groupID, id uint64
 		var proto []byte
 		if err := rows.Scan(&groupID, &id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		counts, _ := packedInts(proto, 1)
 		ids, _ := packedInts(proto, 2)
 		types, _ := packedInts(proto, 3)
 		if len(counts) == 0 || len(counts) != len(ids) || len(counts) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid costume potential costs %d/%d", groupID, id)
 		}
 		grade, _ := packedInts(proto, 17)
@@ -88,7 +88,7 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		statTypes, statTypeErr := packedInts(proto, 29)
 		statValue, _, statValueErr := fixed64Double(proto, 30)
 		if nodeTypeErr != nil || statTypeErr != nil || statValueErr != nil || len(nodeTypes) != 1 || len(statTypes) > 1 || math.IsNaN(statValue) || math.IsInf(statValue, 0) || statValue < 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid costume potential stats %d/%d", groupID, id)
 		}
 		node.NodeType = nodeTypes[0]
@@ -97,18 +97,18 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 			node.StatType = statTypes[0]
 		}
 		if (node.NodeType == 1 || node.NodeType == 2) && (node.StatType == 0 || node.StatType > 20) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: unsupported costume potential stat %d/%d option %d", groupID, id, node.StatType)
 		}
 		if len(grade) == 1 {
 			node.ConditionGrade = grade[0]
 		} else if len(grade) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid costume potential grade %d/%d", groupID, id)
 		}
 		for i := range counts {
 			if counts[i] == 0 || types[i] == 0 || (types[i] != 4 && ids[i] == 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid costume potential cost %d/%d", groupID, id)
 			}
 			node.Costs = append(node.Costs, CostumePotentialCost{Type: types[i], ID: ids[i], Count: counts[i]})
@@ -117,6 +117,10 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 			d.Nodes[groupID] = map[uint64]CostumePotentialNode{}
 		}
 		d.Nodes[groupID][id] = node
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -129,13 +133,17 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		unique, _ := packedInts(proto, 27)
 		if len(unique) == 1 {
 			d.CostumeUnique[id] = unique[0]
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -148,13 +156,13 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		grade, _ := packedInts(proto, 10)
 		typeID, e := optionalScalar(proto, 19)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		d.CharacterTypes[id] = typeID
@@ -163,6 +171,10 @@ func loadCostumePotentialDesign(db *sql.DB) (*CostumePotentialDesign, error) {
 			d.CharacterGrade[id] = grade[0]
 			d.CharacterUnique[id] = unique[0]
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

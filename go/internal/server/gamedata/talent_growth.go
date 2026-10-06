@@ -64,27 +64,27 @@ func loadTalentGrowthDesign(db *sql.DB) (*TalentGrowthDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		groups, err := packedInts(raw, 6)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: talent %d growth group: %w", id, err)
 		}
 		maximum, err := packedInts(raw, 11)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: talent %d maximum level: %w", id, err)
 		}
 		if len(groups) != 1 || groups[0] == 0 || len(maximum) != 1 || maximum[0] == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: talent %d has invalid growth metadata", id)
 		}
 		talents[id] = CharacterTalent{TalentID: id, GrowthGroup: groups[0], MaxLevel: maximum[0]}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -103,30 +103,30 @@ func loadTalentGrowthDesign(db *sql.DB) (*TalentGrowthDesign, error) {
 		var characterID uint64
 		var raw []byte
 		if err := rows.Scan(&characterID, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		talentIDs, err := packedInts(raw, 18)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d talent: %w", characterID, err)
 		}
 		if len(talentIDs) == 0 {
 			continue
 		}
 		if len(talentIDs) != 1 || talentIDs[0] == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d has invalid talent reference", characterID)
 		}
 		talent, found := talents[talentIDs[0]]
 		if !found {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d references unknown talent %d", characterID, talentIDs[0])
 		}
 		design.Characters[characterID] = talent
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -141,7 +141,7 @@ func loadTalentGrowthDesign(db *sql.DB) (*TalentGrowthDesign, error) {
 		var group, level uint64
 		var raw []byte
 		if err := rows.Scan(&group, &level, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		counts, countErr := packedInts(raw, 2)
@@ -149,11 +149,11 @@ func loadTalentGrowthDesign(db *sql.DB) (*TalentGrowthDesign, error) {
 		types, typeErr := packedInts(raw, 4)
 		needs, needErr := packedInts(raw, 6)
 		if countErr != nil || idErr != nil || typeErr != nil || needErr != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: talent growth %d/%d has invalid fields", group, level)
 		}
 		if group == 0 || level == 0 || len(counts) != len(ids) || len(ids) != len(types) || len(needs) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: talent growth %d/%d has mismatched fields", group, level)
 		}
 		entry := TalentGrowthLevel{Level: level}
@@ -162,20 +162,20 @@ func loadTalentGrowthDesign(db *sql.DB) (*TalentGrowthDesign, error) {
 		}
 		for i := range counts {
 			if types[i] == 0 || counts[i] == 0 || (types[i] == 4 && ids[i] != 0) || (types[i] != 4 && ids[i] == 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: talent growth %d/%d has invalid cost", group, level)
 			}
 			entry.Costs = append(entry.Costs, PromotionCost{Type: types[i], ID: ids[i], Count: counts[i]})
 		}
 		key := [2]uint64{group, level}
 		if _, exists := design.Levels[key]; exists {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: duplicate talent growth %d/%d", group, level)
 		}
 		design.Levels[key] = entry
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

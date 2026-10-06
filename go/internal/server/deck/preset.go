@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -471,7 +473,7 @@ func (s *Store) handlePresetInfo(request []byte) (int, []byte, bool, error) {
 			slots = append(slots, slot)
 		}
 	}
-	sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+	slices.Sort(slots)
 	var response []byte
 	for _, slot := range slots {
 		response = wire.AppendBytes(response, 1, presetWire(s.presets[slot]))
@@ -706,9 +708,7 @@ func (s *Store) handlePresetUse(request []byte) (int, []byte, bool, error) {
 	}
 	next := clone(s.state)
 	next.Deck = append([]DeckEntry(nil), deckEntries...)
-	for character, costume := range assignments {
-		next.Costumes[character] = costume
-	}
+	maps.Copy(next.Costumes, assignments)
 	if err := s.commit(next); err != nil {
 		return 0, nil, true, fmt.Errorf("deck: persist applied preset: %w", err)
 	}
@@ -732,7 +732,7 @@ func (s *Store) handlePresetUse(request []byte) (int, []byte, bool, error) {
 	for index := range characterSet {
 		indices = append(indices, index)
 	}
-	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+	slices.Sort(indices)
 	for _, index := range indices {
 		if character, found := s.characters.Find(index); found {
 			response = wire.AppendBytes(response, 2, player.CharacterWire(character))
@@ -841,7 +841,7 @@ func (s *Store) handleCostumeSettingInfo(request []byte) (int, []byte, bool, err
 	for index := range s.costumeSettings {
 		indices = append(indices, index)
 	}
-	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+	slices.Sort(indices)
 	var response []byte
 	for _, index := range indices {
 		response = wire.AppendBytes(response, 1, costumeSettingWire(s.costumeSettings[index]))

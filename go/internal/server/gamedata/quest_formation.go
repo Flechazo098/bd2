@@ -62,8 +62,7 @@ func loadQuestFormationsDB(db *sql.DB, packID int) (map[int]QuestFormation, erro
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: query QuestTable%d formations: %w", packID, err)
 	}
-	defer rows.Close()
-
+	defer func() { _ = rows.Close() }()
 	formations := make(map[int]QuestFormation)
 	charGroups := make(map[uint64][]QuestCharacterDesign)
 	storyGroups := make(map[uint64][]QuestCostumeDesign)
@@ -140,7 +139,7 @@ func loadCharacterGroup(db *sql.DB, groupID uint64) ([]QuestCharacterDesign, err
 	if err != nil {
 		return nil, fmt.Errorf("query character group %d: %w", groupID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []QuestCharacterDesign
 	for rows.Next() {
 		var rowID int
@@ -180,7 +179,7 @@ func loadStoryCostumeGroup(db *sql.DB, groupID uint64) ([]QuestCostumeDesign, er
 	if err != nil {
 		return nil, fmt.Errorf("query story costume group %d: %w", groupID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []QuestCostumeDesign
 	type storyRow struct {
 		id    int

@@ -10,7 +10,7 @@ func loadInfiniteGachaIdentity(db *sql.DB, selectedGroups []uint64) (groupID, ga
 	if err != nil {
 		return 0, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var raw []byte
@@ -57,7 +57,7 @@ func loadInfiniteCashIdentity(db *sql.DB, rewardID uint64) (groupID, productID, 
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var products [][]byte
 	for rows.Next() {
 		var raw []byte

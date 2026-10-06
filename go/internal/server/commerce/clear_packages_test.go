@@ -84,10 +84,10 @@ func TestClearPackageRejectsConflictingMalformedAndSpoofedRows(t *testing.T) {
 	row = wire.AppendVarint(row, 2, 12)
 	row = wire.AppendVarint(row, 3, 2)
 	prefix := wire.AppendVarint(nil, 1, 1)
-	row = row[:len(row):len(row)]
-	prefix = prefix[:len(prefix):len(prefix)]
+	row = row[:len(row):len(row)]             //nolint:modernize // slicesclip
+	prefix = prefix[:len(prefix):len(prefix)] //nolint:modernize // slicesclip
 	active := wire.AppendBytes(append([]byte(nil), prefix...), 3, row)
-	active = active[:len(active):len(active)]
+	active = active[:len(active):len(active)] //nolint:modernize // slicesclip
 	requests := map[string][]byte{
 		"missing row":           prefix,
 		"empty active":          wire.AppendBytes(prefix, 3, nil),
@@ -269,7 +269,7 @@ func TestClearPackageMailSQLiteAtomicRetryAndReconnect(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, s, mailbox, _, _ = open(false)
+	_, s, mailbox, _, _ = open(false)
 	// A replay must restore the exact response without requiring progress again
 	// or issuing a second mail, including after sequence/session changes.
 	s.AttachProgress(nil, nil)

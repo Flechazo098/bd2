@@ -15,7 +15,11 @@ func createV1Database(t *testing.T, path string, domain, payload string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -52,12 +56,16 @@ func TestMigrationV1ToV2IsRepeatSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for range 2 {
 		if err := migrateV1ToV2(context.Background(), tx); err != nil {
 			t.Fatal(err)
@@ -75,12 +83,16 @@ func TestMigrationV2ToV3IsRepeatSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := migrateV1ToV2(context.Background(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +114,11 @@ func TestOpenMigratesV1ToCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	version, err := r.SchemaVersion()
 	if err != nil || version != schemaVersion {
 		t.Fatalf("schema version %d, error %v", version, err)
@@ -116,7 +132,11 @@ func TestMigrationsRejectMissingAndNonAdjacentSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, test := range []struct {
 		name  string
 		steps []migration
@@ -130,7 +150,7 @@ func TestMigrationsRejectMissingAndNonAdjacentSteps(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer tx.Rollback()
+			defer func() { _ = tx.Rollback() }()
 			err = runMigrations(context.Background(), tx, 1, 3, test.steps)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error %v, want %q", err, test.want)
@@ -143,14 +163,20 @@ func TestValidationFailureRollsBackMigrationAndVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	createV1Database(t, path, "progress", `{"quests":{"0:1":{"QuestID":1,"PackID":0}},"cleared_quests":{}}`)
 	if r, err := Open(path); err == nil {
-		r.Close()
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal("opened state rejected by final validation")
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var version string
 	if err := db.QueryRow(`SELECT value FROM metadata WHERE key = 'schema_version'`).Scan(&version); err != nil || version != "1" {
 		t.Fatalf("schema version %q after rollback: %v", version, err)
@@ -168,7 +194,11 @@ func TestMigrationFailureRollsBackEarlierStepWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)

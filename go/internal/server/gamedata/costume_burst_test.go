@@ -12,7 +12,11 @@ func TestCostumeBurstDesignAndUpgradeRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec(`CREATE TABLE CostumeBurstTable (groupId INTEGER,id INTEGER,ProtoBuf BLOB,PRIMARY KEY(groupId,id))`); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +59,11 @@ func TestCostumeBurstRejectsInvalidIdentityCostAndGap(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			if _, err := db.Exec(`CREATE TABLE CostumeBurstTable (groupId INTEGER,id INTEGER,ProtoBuf BLOB,PRIMARY KEY(groupId,id))`); err != nil {
 				t.Fatal(err)
 			}

@@ -48,34 +48,34 @@ func LoadHuntingPack(root, version string, pack int) (*HuntingPack, error) {
 	for rows.Next() {
 		var raw []byte
 		if err := rows.Scan(&raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g := HuntingGround{}
 		for field, target := range map[int]*uint64{1: &g.BossID, 2: &g.Difficulty, 3: &g.ID, 4: &g.MapID} {
 			v, e := optionalScalar(raw, field)
 			if e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			*target = v
 		}
 		g.Monsters, err = packedInts(raw, 5)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if g.ID == 0 || g.MapID == 0 || g.BossID == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid hunting ground")
 		}
 		d.Grounds = append(d.Grounds, g)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	for _, g := range d.Grounds {
 		ids := append(append([]uint64(nil), g.Monsters...), g.BossID)
 		for _, id := range ids {
@@ -112,7 +112,7 @@ func LoadHuntingPack(root, version string, pack int) (*HuntingPack, error) {
 					return nil, fmt.Errorf("gamedata: hunting reward arrays mismatch")
 				}
 				for _, reward := range r {
-					m.Rewards[deck] = append(m.Rewards[deck], BattleReward{reward.Type, reward.ID, reward.Count})
+					m.Rewards[deck] = append(m.Rewards[deck], BattleReward{reward.Type, reward.ID, reward.Count}) //nolint:staticcheck // S1016
 				}
 			}
 			d.Monsters[id] = m

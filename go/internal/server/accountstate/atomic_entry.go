@@ -27,7 +27,7 @@ func (r *Repository) SaveWithEntries(domain string, core []byte, changes []state
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := saveWithEntries(tx, domain, core, changes); err != nil {
 		return err
 	}

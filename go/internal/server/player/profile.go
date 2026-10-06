@@ -48,7 +48,7 @@ func validMasterTitleName(name string, fromRequest bool) bool {
 		}
 		if fromRequest {
 			lower := unicode.ToLower(r)
-			if !((lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'z') || (r >= 0xAC00 && r <= 0xD7A3) || (r >= 0x4E00 && r <= 0x9FD5) || (r >= 0x3041 && r <= 0x30FE) || (r >= 0x0180 && r <= 0x024F)) {
+			if !((lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'z') || (r >= 0xAC00 && r <= 0xD7A3) || (r >= 0x4E00 && r <= 0x9FD5) || (r >= 0x3041 && r <= 0x30FE) || (r >= 0x0180 && r <= 0x024F)) { //nolint:staticcheck // QF1001
 				return false
 			}
 		}

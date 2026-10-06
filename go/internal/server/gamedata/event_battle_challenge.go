@@ -22,7 +22,7 @@ func LoadEventBattleChallenges(root, version string) (EventBattleChallenges, err
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := EventBattleChallenges{}
 	for rows.Next() {
 		var id uint64
@@ -69,7 +69,7 @@ func VerifySubmittedChallenges(req []byte, definitions []EventBattleChallenge) (
 		}
 		var v []uint64
 		var e error
-		if f.Type == 0 {
+		if f.Type == 0 { //nolint:staticcheck // QF1003
 			n, k := binary.Uvarint(f.Value)
 			if k <= 0 {
 				return wire.ErrMalformed

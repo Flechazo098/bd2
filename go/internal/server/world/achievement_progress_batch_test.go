@@ -124,7 +124,11 @@ func BenchmarkAchievementProgressBoundary(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				defer repo.Close()
+				defer func() {
+					if err := repo.Close(); err != nil {
+						b.Error(err)
+					}
+				}()
 				store := &achievementQueryStore{Repository: repo}
 				design := &gamedata.AchievementCounterDesign{Groups: map[int][]int{}, Conditions: map[int]gamedata.AchievementCondition{}}
 				for id := 1; id <= 500; id++ {
@@ -150,12 +154,12 @@ func BenchmarkAchievementProgressBoundary(b *testing.B) {
 				store.lists, store.loads, store.saves = 0, 0, 0
 				b.ReportAllocs()
 				b.ResetTimer()
-				for iteration := 0; iteration < b.N; iteration++ {
+				for iteration := range b.N {
 					op, err := repo.BeginOperation()
 					if err != nil {
 						b.Fatal(err)
 					}
-					for request := 0; request < 57; request++ {
+					for request := range 57 {
 						if bulk {
 							_, _, err = s.ApplyGameplayProgress(conditions, nil)
 						} else {
@@ -170,7 +174,7 @@ func BenchmarkAchievementProgressBoundary(b *testing.B) {
 							b.Fatal(err)
 						}
 						var events []GameplayAchievementRecordedEvent
-						for id := 0; id < eventCount; id++ {
+						for id := range eventCount {
 							events = append(events, GameplayAchievementRecordedEvent{Identity: fmt.Sprintf("%d/%d/%d", iteration, request, id), Type: 14, SubType: uint64(id + 1), Count: 1})
 						}
 						if bulk {

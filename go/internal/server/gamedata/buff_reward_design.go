@@ -17,7 +17,7 @@ func LoadBuffRewardDesign(root, version string) (map[uint64]PictorialBuffStat, e
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[uint64]PictorialBuffStat{}
 	for rows.Next() {
 		var raw []byte

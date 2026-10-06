@@ -273,7 +273,7 @@ func loadProtoRows(db *sql.DB, table string, consume func([]byte) error) error {
 	if err != nil {
 		return fmt.Errorf("gamedata: query %s: %w", table, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var proto []byte
 		if err := rows.Scan(&proto); err != nil {

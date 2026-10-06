@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -225,7 +225,7 @@ func (s *CostumePotentialService) Handle(path string, request []byte) (int, []by
 		return 0, nil, true, errors.New("player: insufficient gold for costume potential")
 	}
 	sortedNodes := append([]uint64(nil), nodes...)
-	sort.Slice(sortedNodes, func(i, j int) bool { return sortedNodes[i] < sortedNodes[j] })
+	slices.Sort(sortedNodes)
 	parts := make([]string, len(sortedNodes))
 	for i, id := range sortedNodes {
 		parts[i] = strconv.FormatUint(id, 10)

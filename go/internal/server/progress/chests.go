@@ -63,8 +63,8 @@ func (s *Store) OpenedFieldRewards(pack int) ([]int, error) {
 		if len(raw) == 0 {
 			return nil, fmt.Errorf("progress: invalid field reward entry")
 		}
-		if strings.HasPrefix(key, prefix) {
-			id, e := strconv.Atoi(strings.TrimPrefix(key, prefix))
+		if suffix, found := strings.CutPrefix(key, prefix); found {
+			id, e := strconv.Atoi(suffix)
 			if e != nil || id <= 0 {
 				return nil, fmt.Errorf("progress: invalid field reward key")
 			}

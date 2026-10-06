@@ -56,8 +56,10 @@ func (s *CostumePotentialService) connect(request []byte) (int, []byte, bool, er
 			return fail(e)
 		}
 	}
+	seqFields := 0
 	if err = wire.Walk(request, func(f wire.Field) error {
 		if f.Number == 1 {
+			seqFields++
 			if f.Type != 0 {
 				return fmt.Errorf("player: invalid potential sequence wire")
 			}
@@ -66,13 +68,6 @@ func (s *CostumePotentialService) connect(request []byte) (int, []byte, bool, er
 	}); err != nil {
 		return fail(err)
 	}
-	seqFields := 0
-	wire.Walk(request, func(f wire.Field) error {
-		if f.Number == 1 {
-			seqFields++
-		}
-		return nil
-	})
 	if seqFields != 1 {
 		return fail(fmt.Errorf("player: duplicate potential sequence"))
 	}
@@ -167,10 +162,7 @@ func (s *CostumePotentialService) connect(request []byte) (int, []byte, bool, er
 		if e != nil {
 			return fail(e)
 		}
-		hp := oldHP[c.InvenIndex]
-		if hp > maximum {
-			hp = maximum
-		}
+		hp := min(oldHP[c.InvenIndex], maximum)
 		if e = s.characters.SetCurrentHealth(c.InvenIndex, hp); e != nil {
 			return fail(e)
 		}

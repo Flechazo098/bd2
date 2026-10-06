@@ -312,7 +312,11 @@ func TestTalentSkillUpgradeLedgerSurvivesSQLiteCloseAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inventory, err = OpenInventory(repository, &Starter{Version: "2.35.10"})
 	if err != nil {
 		t.Fatal(err)

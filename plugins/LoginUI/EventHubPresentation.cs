@@ -4,7 +4,6 @@ using BD2.GameNames;
 using Google.Protobuf;
 using HarmonyLib;
 using Proto.Net;
-using UnityEngine;
 using gamfs;
 using static Bd2LoginUI.LoginRuntime;
 using static Bd2LoginUI.SessionRecovery;
@@ -19,17 +18,18 @@ internal static class EventHubPresentation
     {
         MethodInfo receive = typeof(MiniEventHubPacket).GetGameMethod(
             "RecvMiniEventHubInfoResponse", BindingFlags.Static | BindingFlags.NonPublic,
-            null, new[] { typeof(IMessage), typeof(int), typeof(int), typeof(Action) }, null);
+            null, [typeof(IMessage), typeof(int), typeof(int), typeof(Action)], null);
         if (receive == null || receive.ReturnType != typeof(bool))
             throw new MissingMethodException("MiniEventHubPacket.RecvMiniEventHubInfoResponse(IMessage) was not found");
         harmony.Patch(receive, postfix: new HarmonyMethod(typeof(EventHubPresentation), nameof(ReceivePostfix)));
         Log?.LogInfo("Authoritative empty mini-event hub presentation reset installed");
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static void ReceivePostfix(IMessage __0, int __2, bool __result)
     {
         if (ServerRoot == null || !EstablishedGameSession || !__result || __2 > 0 ||
-            !(__0 is MiniEventHubInfoResponse response) || response.MiniEventHubInfo.Count != 0) return;
+            __0 is not MiniEventHubInfoResponse response || response.MiniEventHubInfo.Count != 0) return;
         try
         {
             // Detach the old manager subscriber before Reset removes its UID.

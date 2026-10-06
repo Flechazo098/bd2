@@ -3,7 +3,7 @@ package player
 import (
 	"path/filepath"
 	"reflect"
-	"sort"
+	"slices"
 	"testing"
 
 	"bd2server/internal/server/wire"
@@ -247,7 +247,7 @@ func responseCharacterIndices(t *testing.T, response []byte) []uint64 {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	slices.Sort(result)
 	return result
 }
 

@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-func nums(b []byte, n int) ([]uint64, error) { return list(b, n) }
-
 type econ struct{ cost, granted uint64 }
 
 func (e *econ) Apply(_ string, c, r []gamedata.Reward) ([]byte, error) {
@@ -188,7 +186,9 @@ func TestEventBattleChallengeUnknownAndDuplicateRejectedBeforeCost(t *testing.T)
 	s.design.Tables["PackEventBattleTable"] = [][]byte{row}
 	s.AttachBattleChallenges(gamedata.EventBattleChallenges{88: {{Type: 8, Reward: gamedata.BattleReward{Type: 3, Count: 25}}}})
 	start := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 5, 17), 8, 1), 9, 1), 4, 88)
-	s.EnterBattle(start, "sid:x")
+	if _, err := s.EnterBattle(start, "sid:x"); err != nil {
+		t.Fatal(err)
+	}
 	bad := wire.AppendVarint(wire.AppendVarint(nil, 2, 1), 5, 1)
 	if _, err := s.CompleteBattle(bad, "sid:x"); err == nil {
 		t.Fatal("unknownchallenge")

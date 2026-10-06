@@ -52,11 +52,11 @@ func loadCostumeBurstDesign(db *sql.DB) (*CostumeBurstDesign, error) {
 		var groupID, level uint64
 		var raw []byte
 		if err := rows.Scan(&groupID, &level, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if groupID == 0 || level == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid costume burst identity %d/%d", groupID, level)
 		}
 		groups, groupErr := packedInts(raw, 8)
@@ -65,28 +65,28 @@ func loadCostumeBurstDesign(db *sql.DB) (*CostumeBurstDesign, error) {
 		itemIDs, itemIDErr := packedInts(raw, 11)
 		types, typeErr := packedInts(raw, 12)
 		if groupErr != nil || idErr != nil || countErr != nil || itemIDErr != nil || typeErr != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: costume burst %d/%d has invalid fields", groupID, level)
 		}
 		if len(groups) != 1 || groups[0] != groupID || len(ids) != 1 || ids[0] != level {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: costume burst %d/%d has mismatched proto identity", groupID, level)
 		}
 		if len(counts) == 0 || len(counts) != len(itemIDs) || len(itemIDs) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: costume burst %d/%d has mismatched costs", groupID, level)
 		}
 		entry := CostumeBurstLevel{CostumeID: groupID, Level: level}
 		for i := range counts {
 			if counts[i] == 0 || (types[i] == 4 && itemIDs[i] != 0) ||
 				(types[i] == 8 && itemIDs[i] == 0) || (types[i] != 4 && types[i] != 8) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: costume burst %d/%d has invalid cost", groupID, level)
 			}
 			entry.Costs = append(entry.Costs, PromotionCost{Type: types[i], ID: itemIDs[i], Count: counts[i]})
 		}
 		if _, exists := design.Levels[groupID][level]; exists {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: duplicate costume burst %d/%d", groupID, level)
 		}
 		if design.Levels[groupID] == nil {
@@ -95,7 +95,7 @@ func loadCostumeBurstDesign(db *sql.DB) (*CostumeBurstDesign, error) {
 		design.Levels[groupID][level] = entry
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

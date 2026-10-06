@@ -41,7 +41,6 @@ func (s *Service) rankWire(u user) []byte {
 func (s *Service) rankRewards(d *gamedata.MonsterHunt, group uint64) []gamedata.BattleReward {
 	var selected *gamedata.MonsterHuntRankReward
 	for _, r := range d.Ranks[group] {
-		r := r
 		threshold := float64(1)
 		if r.Type == 1 {
 			threshold = 100
@@ -59,7 +58,7 @@ func (s *Service) grant(identity string, rewards []gamedata.BattleReward) ([]byt
 	if s.rewardGrant != nil {
 		rs := make([]gamedata.Reward, len(rewards))
 		for i, r := range rewards {
-			rs[i] = gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}
+			rs[i] = gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count} //nolint:staticcheck // S1016
 		}
 		return s.rewardGrant(identity, rs)
 	}
@@ -68,7 +67,7 @@ func (s *Service) grant(identity string, rewards []gamedata.BattleReward) ([]byt
 	for _, r := range rewards {
 		switch r.Type {
 		case 2, 3, 4, 12, 20:
-			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		default:
 			stack = append(stack, r)
 		}

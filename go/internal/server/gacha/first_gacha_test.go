@@ -14,7 +14,7 @@ func TestFirstGachaPreviewConfirmAndReplay(t *testing.T) {
 	characters := make(map[uint64]gamedata.CharacterDesign)
 	equipmentDesign := make(map[uint64]gamedata.EquipmentDesign)
 	program := &gamedata.FirstGachaRewardGroup{ID: 20, DropCount: 1, DropType: 1}
-	for i := uint64(0); i < 5; i++ {
+	for i := range uint64(5) {
 		costumeID := 61001 + i
 		equipmentID := 71001 + i
 		characters[costumeID] = fixtureCharacter(6100+i, 100+i)

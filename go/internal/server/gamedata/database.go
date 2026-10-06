@@ -44,7 +44,7 @@ func readEntry(root, version, name, label string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: open database archive: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	for _, entry := range reader.File {
 		if !strings.EqualFold(entry.Name, name) {
 			continue

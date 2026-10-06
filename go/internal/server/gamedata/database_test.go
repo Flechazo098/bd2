@@ -76,16 +76,24 @@ func writeDatabaseTestArchive(t *testing.T, path, member string, content []byte)
 	archive := zip.NewWriter(file)
 	entry, err := archive.Create(member)
 	if err != nil {
-		file.Close()
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
 	if _, err := entry.Write(content); err != nil {
-		archive.Close()
-		file.Close()
+		if err := archive.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
 	if err := archive.Close(); err != nil {
-		file.Close()
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {

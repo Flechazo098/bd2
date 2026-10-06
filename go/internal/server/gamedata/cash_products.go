@@ -48,18 +48,18 @@ func loadCashCatalog(db *sql.DB) (*CashCatalog, error) {
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		p, e := decodeCashProduct(raw)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		c.Products = append(c.Products, p)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func readCashMetadata(db *sql.DB, table string, visit func([]byte) error) error 
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {

@@ -3,7 +3,7 @@ package player
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 
 	"bd2server/internal/server/gamedata"
@@ -60,7 +60,7 @@ func (s *CharAwakeService) info(request []byte) (int, []byte, bool, error) {
 	for id := range states {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var response []byte
 	for _, id := range ids {
 		progress := states[id]
@@ -167,7 +167,7 @@ func (s *CharAwakeService) imprintLevelUp(request []byte) (int, []byte, bool, er
 	}
 	identity := "char-imprint:" + strconv.FormatUint(uniqueID, 10)
 	for _, level := range levels {
-		identity += ":" + strconv.FormatUint(level, 10)
+		identity += ":" + strconv.FormatUint(level, 10) //nolint:modernize // stringsbuilder
 	}
 	if gold != 0 {
 		if _, err := s.wallet.SpendGoldOnce(identity, gold); err != nil {

@@ -3,6 +3,7 @@ package deck
 import (
 	"bd2server/internal/server/wire"
 	"fmt"
+	"maps"
 	"math"
 )
 
@@ -59,8 +60,6 @@ func (s *Store) handleCostumeUse(req []byte) (int, []byte, bool, error) {
 		}
 	}
 	n := clone(s.state)
-	for char, cost := range assignments {
-		n.Costumes[char] = cost
-	}
+	maps.Copy(n.Costumes, assignments)
 	return 41, nil, true, s.commit(n)
 }

@@ -14,9 +14,15 @@ func recoveryFixture(t *testing.T) *presetFixture {
 	if e := f.deck.AttachFieldSettings(&gamedata.FieldSettingsDesign{TalentSlots: 1, CharacterTalentClass: map[uint64]uint64{350: 10, 360: 14}}); e != nil {
 		t.Fatal(e)
 	}
-	f.characters.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil })
-	f.characters.SetCurrentHealth(100, 100)
-	f.characters.SetCurrentHealth(200, 0)
+	if err := f.characters.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.characters.SetCurrentHealth(100, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.characters.SetCurrentHealth(200, 0); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, e := f.deck.Handle("/DeckSave", req(1, triple(200, 1, 1))); e != nil {
 		t.Fatal(e)
 	}
@@ -34,7 +40,9 @@ func TestAutoRecoveryPersistsResponseAndDisabledSettingNeverExecutes(t *testing.
 		if caster != 100 || len(targets) != 1 || targets[0] != 200 {
 			t.Fatal("wrong actual fatigue targets")
 		}
-		f.characters.SetCurrentHealth(200, 25)
+		if err := f.characters.SetCurrentHealth(200, 25); err != nil {
+			return player.AutoRecoveryResult{}, err
+		}
 		c, _ := f.characters.Find(200)
 		c.HP = 25
 		return player.AutoRecoveryResult{Caster: 100, Characters: []player.Character{c}, Experience: 2, Catalyst: 10}, nil
@@ -61,8 +69,10 @@ func TestAutoRecoveryPersistsResponseAndDisabledSettingNeverExecutes(t *testing.
 	if _, _, _, e = f.deck.Handle("/CharAutoReviveSet", req(4, wire.AppendVarint(nil, 3, 100))); e != nil {
 		t.Fatal(e)
 	}
-	f.characters.SetCurrentHealth(200, 0)
-	_, out, _, e = f.deck.Handle("/DeckCharAutoRevive", req(5, wire.AppendVarint(nil, 2, 100)))
+	if err := f.characters.SetCurrentHealth(200, 0); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, e = f.deck.Handle("/DeckCharAutoRevive", req(5, wire.AppendVarint(nil, 2, 100)))
 	if e != nil || calls != 1 {
 		t.Fatal("disabled automatic recovery executed", e)
 	}
@@ -88,7 +98,9 @@ func TestAutoRecoveryFailureReportsExhaustionAndStoryCannotRecover(t *testing.T)
 	if e != nil || mode != 3 || disabled != 2 {
 		t.Fatalf("failure mode%d disabled%d %v", mode, disabled, e)
 	}
-	f.characters.SetCurrentHealth(100, 0)
+	if err := f.characters.SetCurrentHealth(100, 0); err != nil {
+		t.Fatal(err)
+	}
 	f.deck.state.FieldCharControlDeckType = 2
 	f.deck.AttachAutoRecovery(func(uint64, uint64, []uint64) (player.AutoRecoveryResult, error) {
 		t.Fatal("story mode must not recover temporary party")

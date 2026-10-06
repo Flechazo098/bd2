@@ -182,10 +182,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if available > math.MaxUint64/divisor {
 				return fail(errors.New("npcinn: recovery amount overflow"))
 			}
-			heal := available * divisor / rate
-			if heal > missing {
-				heal = missing
-			}
+			heal := min(available*divisor/rate, missing)
 			cost = heal * rate / divisor
 			c.HP = current + heal
 		}

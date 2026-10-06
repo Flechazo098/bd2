@@ -26,7 +26,9 @@ func TestEquipmentReconnectRestoresEveryCharacterAndClearedReplacement(t *testin
 		if e != nil {
 			t.Fatal(e)
 		}
-		chars.AttachMaxHealth(func(Character) (uint64, error) { return 100, nil })
+		if err := chars.AttachMaxHealth(func(Character) (uint64, error) { return 100, nil }); err != nil {
+			t.Fatal(err)
+		}
 		if e = chars.EnsurePersisted(); e != nil {
 			t.Fatal(e)
 		}
@@ -78,7 +80,11 @@ func TestEquipmentReconnectRestoresEveryCharacterAndClearedReplacement(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eq = open(repo)
 	eq.BeginSession("after-restart")
 	code, response, handled, err := eq.Handle("/EquipInfo", wire.AppendVarint(nil, 1, 1))

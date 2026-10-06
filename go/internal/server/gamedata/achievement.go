@@ -29,7 +29,7 @@ func loadAchievementCounterDesign(db *sql.DB) (*AchievementCounterDesign, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	sets := map[int]map[int]bool{}
 	conditions := map[int]AchievementCondition{}
 	for rows.Next() {

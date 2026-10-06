@@ -245,15 +245,12 @@ func inventorySlotPrice(rule gamedata.InventorySlotRule, current, count uint64) 
 	}
 	var total uint64
 	step := rule.BasePrice / 3
-	for i := uint64(0); i < count; i++ {
+	for i := range count {
 		offset := current + i + 1 - rule.Default
 		if step != 0 && offset > (math.MaxUint64-rule.BasePrice)/step {
 			return 0, errors.New("player: inventory slot price overflow")
 		}
-		price := rule.BasePrice + step*offset
-		if price > rule.MaxPrice {
-			price = rule.MaxPrice
-		}
+		price := min(rule.BasePrice+step*offset, rule.MaxPrice)
 		if math.MaxUint64-total < price {
 			return 0, errors.New("player: inventory slot total price overflow")
 		}

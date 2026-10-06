@@ -32,9 +32,17 @@ internal static partial class PlatformControlHttp
         string path = uri.AbsolutePath;
         switch (path)
         {
-            case "/auth/config": case "/auth/device": case "/auth/session/refresh": case "/auth/session/revoke":
-            case "/client/runtime": case "/client/resources": case "/readyz": case "/livez": case "/healthz":
-            case "/StateCheckInfoJson": case "/logs": return path;
+            case "/auth/config":
+            case "/auth/device":
+            case "/auth/session/refresh":
+            case "/auth/session/revoke":
+            case "/client/runtime":
+            case "/client/resources":
+            case "/readyz":
+            case "/livez":
+            case "/healthz":
+            case "/StateCheckInfoJson":
+            case "/logs": return path;
         }
         string[] segments = path.Split('/');
         if (segments.Length == 5 && segments[1] == "auth" && segments[2] == "device" && segments[4] == "poll")

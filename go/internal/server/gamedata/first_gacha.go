@@ -309,8 +309,7 @@ func (d *FirstGachaDesign) roll(draw func(uint64) (uint64, error)) ([]FirstGacha
 	}
 	var out []FirstGachaReward
 	var run func(*FirstGachaRewardGroup) error
-	var emit func(FirstGachaRewardEntry) error
-	emit = func(e FirstGachaRewardEntry) error {
+	emit := func(e FirstGachaRewardEntry) error {
 		for n := uint64(0); n < e.Count; n++ {
 			if e.ItemType == 9 {
 				if err := run(e.Group); err != nil {

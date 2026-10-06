@@ -77,7 +77,11 @@ func TestFirstGachaLoaderRejectsNonStarterOrPricedMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			db.SetMaxOpenConns(1)
 			for _, table := range []string{"GameDefaultTable", "GachaGroupTable", "GachaTable"} {
 				if _, err := db.Exec("CREATE TABLE " + table + " (id INTEGER PRIMARY KEY,ProtoBuf BLOB)"); err != nil {
@@ -144,7 +148,7 @@ func TestFirstGachaAgainstInstalledVersion23510(t *testing.T) {
 	}
 	// Current GameData gives one five-star, one four-star, three three-star
 	// costumes and five exclusive-equipment instances in every reroll.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		roll, err := design.Roll()
 		if err != nil {
 			t.Fatal(err)

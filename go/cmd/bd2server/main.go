@@ -289,14 +289,14 @@ func serve(args []string) (serveErr error) {
 	if err != nil {
 		return fmt.Errorf("open account state database: %w", err)
 	}
-	defer stateRepository.Close()
+	defer func() { _ = stateRepository.Close() }()
 	var authService *auth.Service
 	if authentication.Mode == "oauth" {
 		authStore, err := auth.Open(filepath.Join(filepath.Dir(filepath.Clean(*stateFile)), "auth.db"), authRuntime.MasterKey)
 		if err != nil {
 			return fmt.Errorf("open authentication database: %w", err)
 		}
-		defer authStore.Close()
+		defer func() { _ = authStore.Close() }()
 		authService, err = auth.New(authRuntime, authStore)
 		if err != nil {
 			return err
@@ -1041,7 +1041,9 @@ func serve(args []string) (serveErr error) {
 	}
 	loginPasses.SetClock(time.Now, eventAPReset.ResetSeconds-9*3600)
 	eventTasksService.AttachUnlockResolver(missionUnlocked)
-	missionService.AttachEventHandler(eventTasksService)
+	if err = missionService.AttachEventHandler(eventTasksService); err != nil {
+		return fmt.Errorf("attach mission event handler: %w", err)
+	}
 	if err = missionService.RecordLogin(missionUnlocked); err != nil {
 		return err
 	}

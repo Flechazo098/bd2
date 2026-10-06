@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -179,7 +179,7 @@ func (s *TalentDispatchService) Handle(path string, req []byte) (int, []byte, bo
 				ids = append(ids, id)
 			}
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		slices.Sort(ids)
 		for _, id := range ids {
 			b = wire.AppendBytes(b, 1, s.rowWire(st.Rows[id]))
 		}

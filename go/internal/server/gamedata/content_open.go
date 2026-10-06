@@ -54,7 +54,7 @@ func loadContentOpeningDesign(db *sql.DB) (*ContentOpeningDesign, error) {
 	if err == nil {
 		err = rows.Err()
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func loadContentOpeningDesign(db *sql.DB) (*ContentOpeningDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d := &ContentOpeningDesign{}
 	seen := map[[2]uint64]bool{}
 	for rows.Next() {

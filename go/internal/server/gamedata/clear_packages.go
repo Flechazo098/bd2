@@ -22,12 +22,12 @@ func LoadClearPackageCatalog(root, version string) (*ClearPackageCatalog, error)
 		for rows.Next() {
 			var raw []byte
 			if err = rows.Scan(&raw); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			v, err := cashScalars(raw, 1, 2, 3, 4, 5, 6)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			r := ClearPackageRewardDesign{Kind: uint64(kind), TicketID: v[0], GroupID: v[1], Type: v[5]}
@@ -41,13 +41,13 @@ func LoadClearPackageCatalog(root, version string) (*ClearPackageCatalog, error)
 				r.TargetID = v[4]
 			}
 			if r.GroupID == 0 || r.TicketID == 0 || r.TargetID == 0 || r.RandomBoxID == 0 || r.Type > 1 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid clear-package reward")
 			}
 			c.Rewards = append(c.Rewards, r)
 		}
 		err = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return nil, err
 		}

@@ -12,7 +12,11 @@ func TestBattleDeckPhasesDesignRows(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	for _, q := range []string{"CREATE TABLE FieldMonsterTable(id INTEGER PRIMARY KEY, ProtoBuf BLOB)", "CREATE TABLE PhaseBattleTable(groupId INTEGER,id INTEGER,ProtoBuf BLOB)"} {
 		if _, e := db.Exec(q); e != nil {
@@ -64,13 +68,19 @@ func TestBattleDeckPhasesRetainSelectedDifficulty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, q := range []string{"CREATE TABLE FieldMonsterTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)", "CREATE TABLE PhaseBattleTable(groupId INTEGER,id INTEGER,ProtoBuf BLOB)", "CREATE TABLE BattleDeckTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)"} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	db.Exec("INSERT INTO FieldMonsterTable VALUES(8,?)", wire.AppendVarint(nil, 21, 1))
+	if _, err := db.Exec("INSERT INTO FieldMonsterTable VALUES(8,?)", wire.AppendVarint(nil, 21, 1)); err != nil {
+		t.Fatal(err)
+	}
 	for _, v := range []struct{ id, deck uint64 }{{1, 8}, {2, 9}} {
 		data := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 2, v.deck), 3, 1), 4, v.id)
 		if _, err := db.Exec("INSERT INTO PhaseBattleTable VALUES(1,?,?)", v.id, data); err != nil {

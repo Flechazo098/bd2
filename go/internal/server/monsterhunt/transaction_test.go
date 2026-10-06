@@ -16,7 +16,11 @@ func TestPresetPurchaseRollsBackCurrencyAndSlotTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	wallet, err := player.OpenWallet(repo, player.Currency{Gold: 100000})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +48,11 @@ func TestPresetPurchaseRollsBackCurrencyAndSlotTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if raw, err := reopened.Load("monsterhunt"); err != nil || raw != nil {
 		t.Fatalf("slot survived rollback: %s %v", raw, err)
 	}

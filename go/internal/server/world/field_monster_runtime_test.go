@@ -12,7 +12,9 @@ import (
 func TestPackDetailTracksKillRetryRespawnAndResearchAcrossRestart(t *testing.T) {
 	s := testService()
 	store := stateio.NewMemory()
-	s.AttachFieldMonsterState(store)
+	if err := s.AttachFieldMonsterState(store); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.monsterNow = func() time.Time { return now }
 	s.packSummaryTargets = map[int]bool{21: true}

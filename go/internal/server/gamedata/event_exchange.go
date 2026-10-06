@@ -29,39 +29,39 @@ func LoadEventExchangeCatalog(root, version string) (*EventExchangeCatalog, erro
 		var id uint64
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g := EventExchangeGroup{ID: id}
 		for n, p := range map[int]*uint64{22: &g.StartPage, 4: &g.EndPage, 7: &g.FreeCount, 8: &g.FreeType, 25: &g.UnlockRatio, 14: &g.Cost.Count, 15: &g.Cost.ID, 16: &g.Cost.Type} {
 			*p, err = optionalScalar(raw, n)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 		}
 		repeat, e := optionalScalar(raw, 12)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		g.Repeat = repeat != 0
 		if g.StartPage == 0 || g.EndPage < g.StartPage || g.Cost.Count == 0 || g.Cost.Type == 0 || g.FreeType > 2 || g.ID > 2147483647 || g.EndPage > 2147483647 || g.Cost.Count > 2147483647 || g.FreeCount > 2147483647 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid exchange group %d", id)
 		}
 		d.Groups[id] = g
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT groupId,id,pageId,ProtoBuf FROM EventCoinExchangeTable ORDER BY groupId,id")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var group, id, page uint64
 		var raw []byte

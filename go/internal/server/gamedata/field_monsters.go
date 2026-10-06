@@ -36,20 +36,20 @@ func loadFieldMonsters(db *sql.DB) ([]FieldMonsterDesign, error) {
 		var id int
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		q, e1 := packedInts(raw, 6)
 		life, e2 := packedInts(raw, 3)
 		if e1 != nil || e2 != nil || len(q) > 1 || len(life) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: malformed monster regeneration %d", id)
 		}
 		g := FieldMonsterDesign{GroupID: id}
 		for f, dst := range map[int]*uint64{7: &g.RegenSeconds, 9: &g.ResetType} {
 			v, e := optionalScalar(raw, f)
 			if e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			*dst = v
@@ -62,7 +62,7 @@ func loadFieldMonsters(db *sql.DB) ([]FieldMonsterDesign, error) {
 		}
 		if len(life) > 0 {
 			if life[0] > math.MaxInt32 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid monster lifetime %d", id)
 			}
 			g.LifeSeconds = life[0]
@@ -70,15 +70,15 @@ func loadFieldMonsters(db *sql.DB) ([]FieldMonsterDesign, error) {
 		groups[id] = g
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id, ProtoBuf FROM FieldMonsterTable ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []FieldMonsterDesign
 	for rows.Next() {
 		var id int

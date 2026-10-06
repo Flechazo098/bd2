@@ -106,13 +106,19 @@ func TestEatFoodAutoSharesStacksValidatesWholeRequestAndReplaysSQLite(t *testing
 	}); err != nil || len(resultIndices) != 2 || resultIndices[0] != 77 || resultIndices[1] != 78 {
 		t.Fatalf("auto response=%v err=%v", resultIndices, err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
-	s, inventory, characters = foodTestService(t, repo)
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	s, inventory, _ = foodTestService(t, repo)
 	code, replay, _, err := s.Handle("/EatFoodAuto", request)
 	if err != nil || code != 27 || !bytes.Equal(replay, body) || inventory.All()[0].Count != 1 {
 		t.Fatalf("auto replay code=%d err=%v", code, err)
@@ -198,7 +204,11 @@ func TestEatFoodSQLitePersistsRecoveryAndSequenceReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s, inventory, characters = foodTestService(t, repo)
 	code, replayed, _, err := s.Handle("/EatFood", request)
 	if err != nil || code != 22 || !bytes.Equal(body, replayed) {
@@ -239,7 +249,9 @@ func TestEatFoodRejectsInvalidStacksAndContextWithoutMutation(t *testing.T) {
 			t.Fatalf("invalid request %d accepted", i)
 		}
 	}
-	s.AttachContext(func() (int, error) { return 21, nil }, func() bool { return true })
+	if err := s.AttachContext(func() (int, error) { return 21, nil }, func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err = s.Handle("/EatFood", foodRequest(12, 77, 0, stacks[0])); err == nil {
 		t.Fatal("accepted food during battle")
 	}
@@ -309,7 +321,9 @@ func TestCurrentHealthGrowthAndImmortalClearPersistedInjury(t *testing.T) {
 	request = wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 77)
 	target, _, _ := wire.Varint(request, 2)
 	candidate, _ := characters.Find(target)
-	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}})
+	if err := characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err = characters.Handle("/CharImmortal", request); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +389,11 @@ func TestCurrentHealthRetainsSavedCharacterHPWithoutSeparateEntryAcrossReopen(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	characters = open(repo)
 	check(characters)
 	if err = characters.SetCurrentHealth(77, 300); err != nil {
@@ -392,7 +410,9 @@ func TestCurrentHealthRetainsSavedCharacterHPWithoutSeparateEntryAcrossReopen(t 
 	request := wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 78)
 	target, _, _ := wire.Varint(request, 2)
 	candidate, _ := characters.Find(target)
-	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}})
+	if err := characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{candidate.ID: 42}, FullRestore: map[[2]uint64]bool{{42, candidate.TalentLevel}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err = characters.Handle("/CharImmortal", request); err != nil {
 		t.Fatal(err)
 	}
@@ -458,12 +478,18 @@ func TestEatFoodSQLiteRollbackRestoresInventoryHealthAndReplayLedger(t *testing.
 	if err = op.Rollback(); !errors.Is(err, stateio.ErrStateRecoveryRequired) {
 		t.Fatalf("expected recovery fencing, got %v", err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s, inventory, characters = foodTestService(t, repo)
 	if inventory.All()[0].Count != 1 {
 		t.Fatal("rollback lost inventory")

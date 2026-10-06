@@ -199,10 +199,7 @@ func urlInDB(p []byte) (string, error) {
 			break
 		}
 		i += start + len(marker)
-		limit := i + 128
-		if limit > len(p) {
-			limit = len(p)
-		}
+		limit := min(i+128, len(p))
 		if j := bytes.Index(p[i:limit], []byte("http")); j >= 0 {
 			at := i + j
 			if at+len(oldURL) <= len(p) {
@@ -229,7 +226,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -433,7 +430,7 @@ func findIntro(file []byte) (textAsset, []byte, error) {
 		return textAsset{}, nil, fmt.Errorf("introdb: invalid object count %d", count)
 	}
 	var candidates []textAsset
-	for i := int32(0); i < count; i++ {
+	for i := range count {
 		// Since serialized version 14, Unity aligns object records to four bytes
 		// before their 64-bit path ID (not to an eight-byte boundary).
 		r.off = (r.off + 48 + 3) &^ 3

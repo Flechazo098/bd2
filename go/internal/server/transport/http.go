@@ -182,7 +182,7 @@ func (h HTTP) clientResources(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "PUT required", http.StatusMethodNotAllowed)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 16<<10+1))
 	if err != nil || len(body) > 16<<10 {
 		http.Error(w, "resource selection too large", http.StatusRequestEntityTooLarge)
@@ -267,7 +267,7 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no dispatcher", http.StatusServiceUnavailable)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20+1))
 	if err != nil || len(body) > 8<<20 {
 		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)

@@ -21,7 +21,11 @@ func TestLevelRewardBatchRollsBackWalletInventoryAndClaimTogether(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inv, err := player.OpenInventory(repo, &player.Starter{Version: "2.35.10"})
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +77,11 @@ func TestLevelRewardBatchRollsBackWalletInventoryAndClaimTogether(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inv, err = player.OpenInventory(reopened, &player.Starter{Version: "2.35.10"})
 	if err != nil {
 		t.Fatal(err)

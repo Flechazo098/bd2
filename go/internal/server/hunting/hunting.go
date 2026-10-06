@@ -10,7 +10,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -267,9 +269,6 @@ func monsterWire(m gamedata.HuntingMonster, active bool) []byte {
 	}
 	return b
 }
-func monsters(d *gamedata.HuntingPack, g gamedata.HuntingGround) [][]byte {
-	return monstersWithState(d, g, nil)
-}
 func monstersWithState(d *gamedata.HuntingPack, g gamedata.HuntingGround, defeated []uint64) [][]byte {
 	dead := map[uint64]bool{}
 	for _, id := range defeated {
@@ -328,10 +327,8 @@ func (s *Service) validate(pack int, monster, deck uint64) (*gamedata.HuntingPac
 			}
 		}
 	}
-	for _, dead := range st.Defeated {
-		if dead == monster {
-			return nil, g, m, fmt.Errorf("hunting: defeated monster requires reentry")
-		}
+	if slices.Contains(st.Defeated, monster) {
+		return nil, g, m, fmt.Errorf("hunting: defeated monster requires reentry")
 	}
 	known := false
 	for _, id := range m.Decks {
@@ -379,7 +376,7 @@ func (s *Service) CompleteBattle(pack int, mode, monster, deck uint64, receipt s
 	stack := make([]gamedata.BattleReward, 0)
 	for _, r := range rewards {
 		if r.Type == 2 || r.Type == 3 || r.Type == 4 || r.Type == 12 || r.Type == 20 {
-			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		} else {
 			stack = append(stack, r)
 		}
@@ -389,7 +386,7 @@ func (s *Service) CompleteBattle(pack int, mode, monster, deck uint64, receipt s
 	if s.grant != nil {
 		rs := make([]gamedata.Reward, len(rewards))
 		for i, r := range rewards {
-			rs[i] = gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}
+			rs[i] = gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count} //nolint:staticcheck // S1016
 		}
 		s.mu.Unlock()
 		grantedBundle, err = s.grant(identity, rs)
@@ -465,9 +462,7 @@ func (s *Service) CompleteBattle(pack int, mode, monster, deck uint64, receipt s
 	if err != nil {
 		return nil, nil, err
 	}
-	for key, value := range latest {
-		ledger[key] = value
-	}
+	maps.Copy(ledger, latest)
 	ledger[receipt] = battleReceipt{Fingerprint: fingerprint, Bundle: bundle, Monsters: updates}
 	if err := s.saveBattleReceipts(ledger); err != nil {
 		return nil, nil, err
@@ -477,13 +472,9 @@ func (s *Service) CompleteBattle(pack int, mode, monster, deck uint64, receipt s
 func (s *Service) clone() snapshot {
 	next := s.state
 	next.Packs = map[string]packState{}
-	for k, v := range s.state.Packs {
-		next.Packs[k] = v
-	}
+	maps.Copy(next.Packs, s.state.Packs)
 	next.Receipts = map[string]bool{}
-	for k, v := range s.state.Receipts {
-		next.Receipts[k] = v
-	}
+	maps.Copy(next.Receipts, s.state.Receipts)
 	return next
 }
 func (s *Service) persist(next snapshot) error {

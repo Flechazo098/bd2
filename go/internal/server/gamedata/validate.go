@@ -89,13 +89,13 @@ func Ensure(ctx context.Context, client *http.Client, root, version, origin stri
 		return Result{}, false, fmt.Errorf("gamedata: create info staging file: %w", err)
 	}
 	infoStagePath := infoStage.Name()
-	defer os.Remove(infoStagePath)
+	defer func() { _ = os.Remove(infoStagePath) }()
 	if _, err := infoStage.Write(infoBytes); err != nil {
-		infoStage.Close()
+		_ = infoStage.Close()
 		return Result{}, false, fmt.Errorf("gamedata: write staged info: %w", err)
 	}
 	if err := infoStage.Sync(); err != nil {
-		infoStage.Close()
+		_ = infoStage.Close()
 		return Result{}, false, fmt.Errorf("gamedata: sync staged info: %w", err)
 	}
 	if err := infoStage.Close(); err != nil {
@@ -179,7 +179,7 @@ func validateArchive(archivePath string, expected int64) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("gamedata: open archive: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	if len(reader.File) == 0 {
 		return Result{}, fmt.Errorf("gamedata: archive is empty")
 	}
@@ -230,7 +230,7 @@ func downloadSmall(ctx context.Context, client *http.Client, url string, limit i
 	if err != nil {
 		return nil, fmt.Errorf("gamedata: download %s: %w", InfoName, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("gamedata: download %s: HTTP %s", InfoName, response.Status)
 	}
@@ -253,7 +253,7 @@ func downloadExact(ctx context.Context, client *http.Client, url string, target 
 	if err != nil {
 		return fmt.Errorf("gamedata: download %s: %w", ArchiveName, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("gamedata: download %s: HTTP %s", ArchiveName, response.Status)
 	}

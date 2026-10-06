@@ -1,3 +1,4 @@
+using System.Globalization;
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -13,9 +14,9 @@ internal static class CaptureWriter
     private const int MaxBodyBytes = 16 * 1024 * 1024;
     private const int MaxQueuedRecords = 256;
     private const int WriterShutdownSeconds = 30;
-    private static readonly object FailureFileLock = new object();
+    private static readonly object FailureFileLock = new();
     private static readonly BlockingCollection<CaptureRecord> WriteQueue =
-        new BlockingCollection<CaptureRecord>(new ConcurrentQueue<CaptureRecord>(), MaxQueuedRecords);
+        new(new ConcurrentQueue<CaptureRecord>(), MaxQueuedRecords);
     private static ManualLogSource Log;
     internal static string DirectoryPath { get; private set; }
     private static string JsonlPath;
@@ -27,7 +28,7 @@ internal static class CaptureWriter
     internal static void Initialize(string root, ManualLogSource log)
     {
         Log = log;
-        DirectoryPath = Path.GetFullPath(Path.Combine(root, "Capture", DateTime.Now.ToString("yyyyMMdd-HHmmss")));
+        DirectoryPath = Path.GetFullPath(Path.Combine(root, "Capture", DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)));
         JsonlPath = Path.Combine(DirectoryPath, "capture.jsonl");
         ReadableLogPath = Path.Combine(DirectoryPath, "capture.log");
         Directory.CreateDirectory(Path.Combine(DirectoryPath, "bodies"));
@@ -210,11 +211,11 @@ internal static class CaptureWriter
         if (record.Body == null || record.Body.Length == 0) return null;
         string type = record.Type ?? record.Path ?? "protobuf";
         int dot = type.LastIndexOf('.');
-        if (dot >= 0) type = type.Substring(dot + 1);
+        if (dot >= 0) type = type[(dot + 1)..];
         string safe = new string(type.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_')
             .ToArray()).Trim('_');
         if (safe.Length == 0) safe = "protobuf";
-        string name = record.Id.ToString("D6") + "_" + record.Direction +
+        string name = record.Id.ToString("D6", CultureInfo.InvariantCulture) + "_" + record.Direction +
             "_" + safe + ".pb";
         File.WriteAllBytes(Path.Combine(DirectoryPath, "bodies", name), record.Body);
         return "bodies/" + name;
@@ -236,7 +237,7 @@ internal static class CaptureWriter
     private static string ReadableLine(CaptureRecord record, string bodyFile)
     {
         string direction = record.Direction == "request" ? "REQ" : "RESP";
-        return string.Format("{0,-33} {1,6:D6}  {2,-4}  {3,-40} {4,-50} {5,8}  {6}",
+        return string.Format(CultureInfo.InvariantCulture, "{0,-33} {1,6:D6}  {2,-4}  {3,-40} {4,-50} {5,8}  {6}",
             record.Timestamp.ToString("O"), record.Id, direction,
             Truncate(record.Path, 40), Truncate(record.Type, 50), record.Length,
             bodyFile ?? record.Note ?? "-");
@@ -245,7 +246,7 @@ internal static class CaptureWriter
     private static string Truncate(string value, int width)
     {
         value ??= "";
-        return value.Length <= width ? value : value.Substring(0, width - 1) + "…";
+        return value.Length <= width ? value : value[..(width - 1)] + "…";
     }
 
     private static string JsonString(string value)
@@ -270,7 +271,7 @@ internal static class CaptureWriter
                 case '\t': escaped.Append("\\t"); break;
                 default:
                     if (character <= '\u001f')
-                        escaped.Append("\\u").Append(((int)character).ToString("x4"));
+                        escaped.Append("\\u").Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
                     else
                         escaped.Append(character);
                     break;

@@ -22,6 +22,7 @@ internal static class LoginPanel
 
     private static Sprite DiscordSymbol;
     private static Sprite DiscordWordmark;
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0270", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     internal static void ConfigureLoginPanel(object introUI)
     {
         if (Authentication == null || Authentication.mode != "oauth")
@@ -30,7 +31,7 @@ internal static class LoginPanel
         }
         try
         {
-            Component component = introUI as Component;
+            var component = introUI as Component;
             Transform panel = component == null ? null : FindDescendant(component.transform, "SignInWithAccount");
             if (panel == null)
             {
@@ -86,6 +87,7 @@ internal static class LoginPanel
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0270", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static void ConfigureProviderGrid(Transform panel, int providerCount)
     {
         GridLayoutGroup grid = panel.GetComponentInChildren<GridLayoutGroup>(true);
@@ -117,8 +119,7 @@ internal static class LoginPanel
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         UpdateBetterGridSettings(type.GetGameField("settingsFallback", flags)?.GetValue(grid), columns);
         object collection = type.GetGameField("customSettings", flags)?.GetValue(grid);
-        IEnumerable items = collection?.GetType().GetGameProperty("Items", flags)?.GetValue(collection, null) as IEnumerable;
-        if (items == null)
+        if (collection?.GetType().GetGameProperty("Items", flags)?.GetValue(collection, null) is not IEnumerable items)
         {
             return;
         }
@@ -137,10 +138,7 @@ internal static class LoginPanel
         Type type = settings.GetType();
         FieldInfo constraint = type.GetGameField("Constraint", BindingFlags.Instance | BindingFlags.Public);
         FieldInfo count = type.GetGameField("ConstraintCount", BindingFlags.Instance | BindingFlags.Public);
-        if (constraint != null)
-        {
-            constraint.SetValue(settings, Enum.ToObject(constraint.FieldType, (int)GridLayoutGroup.Constraint.FixedColumnCount));
-        }
+        constraint?.SetValue(settings, Enum.ToObject(constraint.FieldType, (int)GridLayoutGroup.Constraint.FixedColumnCount));
         count?.SetValue(settings, columns);
     }
 
@@ -156,8 +154,7 @@ internal static class LoginPanel
             }
             UpdateBetterRectTransformData(type.GetGameField("transformFallback", flags)?.GetValue(component), width);
             object collection = type.GetGameField("transformConfigs", flags)?.GetValue(component);
-            IEnumerable items = collection?.GetType().GetGameProperty("Items", flags)?.GetValue(collection, null) as IEnumerable;
-            if (items == null)
+            if (collection?.GetType().GetGameProperty("Items", flags)?.GetValue(collection, null) is not IEnumerable items)
             {
                 continue;
             }
@@ -175,7 +172,7 @@ internal static class LoginPanel
         {
             return;
         }
-        Vector2 size = (Vector2)sizeField.GetValue(data);
+        var size = (Vector2)sizeField.GetValue(data);
         size.x = width;
         sizeField.SetValue(data, size);
     }
@@ -215,11 +212,7 @@ internal static class LoginPanel
 
     private static Sprite LoadSprite(string resourceName, string name)
     {
-        using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
-        if (stream == null)
-        {
-            throw new FileNotFoundException("Embedded login asset is missing", resourceName);
-        }
+        using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName) ?? throw new FileNotFoundException("Embedded login asset is missing", resourceName);
         byte[] bytes = new byte[stream.Length];
         int offset = 0;
         while (offset < bytes.Length)
@@ -231,7 +224,7 @@ internal static class LoginPanel
             }
             offset += read;
         }
-        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false, false)
+        var texture = new Texture2D(2, 2, TextureFormat.RGBA32, false, false)
         {
             name = name,
             filterMode = FilterMode.Bilinear,
@@ -242,7 +235,7 @@ internal static class LoginPanel
             UnityEngine.Object.Destroy(texture);
             throw new InvalidDataException("Could not decode embedded login asset " + resourceName);
         }
-        Sprite sprite = Sprite.Create(
+        var sprite = Sprite.Create(
             texture,
             new Rect(0f, 0f, texture.width, texture.height),
             new Vector2(0.5f, 0.5f),
@@ -251,18 +244,21 @@ internal static class LoginPanel
         return sprite;
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static Button FindButton(Transform root, string name)
     {
         Transform match = FindDescendant(root, name);
         return match == null ? null : match.GetComponent<Button>();
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static Image FindImage(Transform root, string name)
     {
         Transform match = FindDescendant(root, name);
         return match == null ? null : match.GetComponent<Image>();
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     internal static void SetActive(Transform root, string name, bool active)
     {
         Transform match = FindDescendant(root, name);

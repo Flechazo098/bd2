@@ -126,7 +126,7 @@ func TestPresetSlotCurrencyAndIdempotency(t *testing.T) {
 	req := wire.AppendVarint(nil, 1, 41)
 	req = wire.AppendVarint(req, 2, 1)
 	before := s.state.Slots
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, _, _, e := s.HandleSession("/MonsterHuntPresetSlotAdd", req, "session"); e != nil {
 			t.Fatal(e)
 		}

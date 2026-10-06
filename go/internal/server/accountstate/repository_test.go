@@ -94,7 +94,11 @@ func TestRollbackAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	requireState(t, reopened, "wallet", []byte("committed"), 2)
 	var mode string
 	if err := reopened.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
@@ -241,7 +245,11 @@ func TestSecondRepositoryIsRejectedUntilWriterCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open after writer Close: %v", err)
 	}
-	defer second.Close()
+	defer func() {
+		if err := second.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 }
 
 func TestWriterEpochStillFencesStaleRepositoryBeforeMutation(t *testing.T) {
@@ -333,7 +341,11 @@ func BenchmarkRequestTransaction(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
 	ctx := context.Background()
 	payload := bytes.Repeat([]byte("x"), 4096)
 	b.ResetTimer()

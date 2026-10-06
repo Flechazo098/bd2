@@ -91,22 +91,22 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		var id uint64
 		var b []byte
 		if err = rows.Scan(&id, &b); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		g, e := optionalScalar(b, 18)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		max, e := optionalScalar(b, 11)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		bans, e := packedInts(b, 1)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		v := TalentUseCharacter{Group: g, MaxLevel: max, BannedPacks: map[int]bool{}}
@@ -116,10 +116,10 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		talents[id] = v
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM CharTable")
 	if err != nil {
 		return nil, err
@@ -128,28 +128,28 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		var id uint64
 		var b []byte
 		if err = rows.Scan(&id, &b); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		t, e := optionalScalar(b, 18)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if t > 0 {
 			v, ok := talents[t]
 			if !ok {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: unknown character talent %d", t)
 			}
 			d.Characters[id] = v
 		}
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT groupId,id,ProtoBuf FROM TalentSkillTable")
 	if err != nil {
 		return nil, err
@@ -158,13 +158,13 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		var r TalentUseRule
 		var b []byte
 		if err = rows.Scan(&r.Group, &r.Level, &b); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		for f, p := range map[int]*uint64{1: &r.Catalyst, 2: &r.Class, 5: &r.Experience, 8: &r.Reset, 12: &r.Reputation, 13: &r.Target} {
 			*p, err = optionalScalar(b, f)
 			if err != nil || *p > math.MaxInt32 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid talent skill scalar")
 			}
 		}
@@ -185,31 +185,31 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 			return nil
 		})
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		for _, v := range r.Values {
 			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > math.MaxInt32 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid talent value")
 			}
 		}
 		if r.Group == 0 || r.Level == 0 || r.Class == 0 || r.Class > 20 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid talent identity")
 		}
 		d.Rules[[2]uint64{r.Group, r.Level}] = r
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM TalentRewardTable")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var b []byte
@@ -221,13 +221,13 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 			return nil, e
 		}
 		for _, r := range rewards {
-			d.Rewards[id] = append(d.Rewards[id], Reward{r.Type, r.ID, r.Count})
+			d.Rewards[id] = append(d.Rewards[id], Reward{r.Type, r.ID, r.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	buffs := map[uint64]uint64{}
 	rows, err = db.Query("SELECT id,ProtoBuf FROM FoodBuffTable")
 	if err != nil {
@@ -237,17 +237,17 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		var id uint64
 		var b []byte
 		if err = rows.Scan(&id, &b); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		t, e := optionalScalar(b, 2)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		g, e := optionalScalar(b, 3)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if t == 1 {
@@ -255,15 +255,15 @@ func loadTalentUseDesign(db *sql.DB) (*TalentUseDesign, error) {
 		}
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM FoodTable")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var b []byte
@@ -286,7 +286,7 @@ func loadTalentNPCs(db *sql.DB) (map[uint64]TalentNPC, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var v TalentNPC
 		var b []byte

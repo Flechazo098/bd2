@@ -48,7 +48,7 @@ func (s *Service) play(path string, req []byte, g *GameState, d *gamedata.EventG
 			return fail(fmt.Errorf("eventgames: invalid bingo play count"))
 		}
 		cost = plays
-		for i := uint64(0); i < plays; i++ {
+		for range plays {
 			var available []uint64
 			for pos := range g.Board {
 				if !contains(g.Opened, uint64(pos)) {
@@ -192,7 +192,7 @@ func (s *Service) play(path string, req []byte, g *GameState, d *gamedata.EventG
 				return fail(fmt.Errorf("eventgames: roulette draw exceeds limit"))
 			}
 		}
-		for i := uint64(0); i < n; i++ {
+		for range n {
 			force := d.Pity > 0 && g.SinceSpecial+1 >= d.Pity
 			var candidates []gamedata.EventGameReward
 			total := uint64(0)
@@ -270,7 +270,7 @@ func completeLine(g *GameState, n, typ, index uint64) bool {
 	if n == 0 {
 		return false
 	}
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		var pos uint64
 		switch typ {
 		case 1:

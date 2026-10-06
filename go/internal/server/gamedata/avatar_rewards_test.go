@@ -12,7 +12,11 @@ func TestAvatarRewardsLoadAndValidateTypedMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"AvatarItemTable", "AvatarMotionTable", "AvatarCharTable", "AvatarSetTable"} {
 		if _, err = db.Exec("CREATE TABLE " + table + "(ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)

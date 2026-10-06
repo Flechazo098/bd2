@@ -59,7 +59,7 @@ internal static class SessionDiagnostics
     {
         try
         {
-            string recent = LastFailure == null ? "none" : LastFailure;
+            string recent = LastFailure ?? "none";
             string age = LastFailure == null ? "none" : Math.Max(0, Time.realtimeSinceStartup - LastFailureTime).ToString("F1", CultureInfo.InvariantCulture);
             return " origin=" + (ServerRoot?.GetLeftPart(UriPartial.Authority) ?? "unset") +
                 " established=" + EstablishedGameSession + " recovering=" + (SessionRecoveryInProgress != 0) +
@@ -82,7 +82,7 @@ internal static class SessionDiagnostics
         try
         {
             object code = Value(__2, "errorType");
-            if (code == null || Convert.ToInt32(code) == 0) return;
+            if (code == null || Convert.ToInt32(code, CultureInfo.InvariantCulture) == 0) return;
             LastResponseError = "path=" + Path(__0) + " sequence=" + Value(__1, "Sequence") +
                 " packet_code=" + Value(__2, "packetCode") + " error_code=" + code + " reason=" + ErrorReason(code);
             LastResponseErrorTime = Time.realtimeSinceStartup;
@@ -93,7 +93,7 @@ internal static class SessionDiagnostics
 
     internal static string Code(object value)
     {
-        try { return Convert.ToInt32(value).ToString(CultureInfo.InvariantCulture); }
+        try { return Convert.ToInt32(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture); }
         catch { return "unknown"; }
     }
 
@@ -109,16 +109,16 @@ internal static class SessionDiagnostics
     {
         try
         {
-        if (error == null) return "unknown";
-        int code = Convert.ToInt32(error);
-        // Resolve enum labels through the shared name table, including renamed fields.
-        foreach (FieldInfo field in typeof(EErrorType).GetFields(BindingFlags.Public | BindingFlags.Static))
-            if (Convert.ToInt32(field.GetRawConstantValue()) == code)
-            {
-                foreach (string name in new[] { "SESSION_DST", "DB_CLOSE", "QUERY_ERROR", "WAIT_TIMEOUT", "REQUEST_FAILED", "NOT_PINGCHECK_SESSION_DST", "WAIT_PROCESS_REDIRECT", "RPE_NEON_API_ACCESS_TOKEN_EXPIRE", "PRE_NETWORK_ERROR_NEON_API", "CLINET_NET_TIMEOUT", "CLIENT_LOGIC_ERROR", "RPE_UPDATE_MAJOR_CLIENT_DOWN", "RPE_CDN_ASSET_BUNDLE_UPDATE", "RPE_PURCHASED_DISABLED", "RPE_BLOCK_IP", "PRE_BLOCK_NETWORK_TYPE", "RPE_REQUEST_MISSING_PARAM", "RPE_XML_DATA_NOT_FOUND", "RPE_PROTOBUF_ENCODING_ERROR" })
-                    if (field.Name == Game.MemberName(typeof(EErrorType), name, GameMemberKind.Field)) return name;
-            }
-        return "unclassified";
+            if (error == null) return "unknown";
+            int code = Convert.ToInt32(error, CultureInfo.InvariantCulture);
+            // Resolve enum labels through the shared name table, including renamed fields.
+            foreach (FieldInfo field in typeof(EErrorType).GetFields(BindingFlags.Public | BindingFlags.Static))
+                if (Convert.ToInt32(field.GetRawConstantValue(), CultureInfo.InvariantCulture) == code)
+                {
+                    foreach (string name in new[] { "SESSION_DST", "DB_CLOSE", "QUERY_ERROR", "WAIT_TIMEOUT", "REQUEST_FAILED", "NOT_PINGCHECK_SESSION_DST", "WAIT_PROCESS_REDIRECT", "RPE_NEON_API_ACCESS_TOKEN_EXPIRE", "PRE_NETWORK_ERROR_NEON_API", "CLINET_NET_TIMEOUT", "CLIENT_LOGIC_ERROR", "RPE_UPDATE_MAJOR_CLIENT_DOWN", "RPE_CDN_ASSET_BUNDLE_UPDATE", "RPE_PURCHASED_DISABLED", "RPE_BLOCK_IP", "PRE_BLOCK_NETWORK_TYPE", "RPE_REQUEST_MISSING_PARAM", "RPE_XML_DATA_NOT_FOUND", "RPE_PROTOBUF_ENCODING_ERROR" })
+                        if (field.Name == Game.MemberName(typeof(EErrorType), name, GameMemberKind.Field)) return name;
+                }
+            return "unclassified";
         }
         catch { return "unclassified"; }
     }
@@ -127,17 +127,17 @@ internal static class SessionDiagnostics
     {
         try
         {
-        // Method identities only; stack arguments and exception text may contain credentials.
-        var callers = new System.Text.StringBuilder();
-        foreach (StackFrame frame in new StackTrace(false).GetFrames() ?? Array.Empty<StackFrame>())
-        {
-            MethodBase method = frame.GetMethod();
-            if (method?.DeclaringType == null || method.DeclaringType == typeof(SessionDiagnostics)) continue;
-            if (callers.Length > 0) callers.Append(" <- ");
-            callers.Append(method.DeclaringType.FullName).Append('.').Append(method.Name);
-            if (callers.Length > 1200) break;
-        }
-        Log?.LogWarning("Client restart requested:" + Context() + " callers=" + callers);
+            // Method identities only; stack arguments and exception text may contain credentials.
+            var callers = new System.Text.StringBuilder();
+            foreach (StackFrame frame in new StackTrace(false).GetFrames() ?? [])
+            {
+                MethodBase method = frame.GetMethod();
+                if (method?.DeclaringType == null || method.DeclaringType == typeof(SessionDiagnostics)) continue;
+                if (callers.Length > 0) callers.Append(" <- ");
+                callers.Append(method.DeclaringType.FullName).Append('.').Append(method.Name);
+                if (callers.Length > 1200) break;
+            }
+            Log?.LogWarning("Client restart requested:" + Context() + " callers=" + callers);
         }
         catch { /* Preserve the original restart even if stack inspection fails. */ }
     }

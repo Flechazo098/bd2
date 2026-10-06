@@ -66,7 +66,9 @@ func TestInstalledCashProductRewardCoverage23510(t *testing.T) {
 	if err := rowsDB.Err(); err != nil {
 		t.Fatal(err)
 	}
-	rowsDB.Close()
+	if err := rowsDB.Close(); err != nil {
+		t.Fatal(err)
+	}
 	release()
 	policy, err := NewCatalog("2.35.10", catalog, gameconfig.Default().Purchases)
 	if err != nil {

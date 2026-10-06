@@ -3,6 +3,7 @@ package mail
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"sort"
@@ -25,9 +26,7 @@ func (s *Service) AttachCashRewards(e CashRewardEconomy, templates map[uint64]bo
 	}
 	s.cashEconomy = e
 	s.cashTemplates = make(map[uint64]bool, len(templates))
-	for id, ok := range templates {
-		s.cashTemplates[id] = ok
-	}
+	maps.Copy(s.cashTemplates, templates)
 	return nil
 }
 func (s *Service) IssueCashOnce(identity string, template uint64, rewards []gamedata.Reward, sentAt time.Time) error {

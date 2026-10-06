@@ -8,6 +8,7 @@ package feature
 import (
 	"errors"
 	"fmt"
+	"maps"
 
 	"bd2server/internal/server/wire"
 )
@@ -84,8 +85,6 @@ func (Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 // EmptyPacketCodes returns a detached copy for diagnostics and protocol tests.
 func EmptyPacketCodes() map[string]int {
 	result := make(map[string]int, len(emptyResponses))
-	for path, code := range emptyResponses {
-		result[path] = code
-	}
+	maps.Copy(result, emptyResponses)
 	return result
 }

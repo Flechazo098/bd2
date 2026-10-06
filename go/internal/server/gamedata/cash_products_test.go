@@ -11,7 +11,11 @@ func TestCashCatalogPreservesKeysAliasesAndLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	db.SetMaxOpenConns(1)
 	for _, q := range []string{"CREATE TABLE CashProductTable(groupId INTEGER,id INTEGER,saleGroup INTEGER,ProtoBuf BLOB)", "CREATE TABLE RandomBoxTable(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE RewardGroupTable(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE CashShopTable(ProtoBuf BLOB)", "CREATE TABLE CashPackageTable(ProtoBuf BLOB)", "CREATE TABLE EventShopTable(ProtoBuf BLOB)"} {
 		if _, err = db.Exec(q); err != nil {

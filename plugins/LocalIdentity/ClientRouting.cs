@@ -1,7 +1,6 @@
 using System;
 using System.Reflection;
 using BD2.GameNames;
-using static BD2.GameNames.Game;
 using HarmonyLib;
 using System.IO;
 using System.Net;
@@ -15,6 +14,7 @@ namespace Bd2LocalIdentity;
 
 internal sealed class ClientRouting : IDisposable
 {
+    private static readonly char[] InvalidOriginCharacters = ['?', '#', '@', '%'];
     private static ClientRouting installedRouting;
     private static ManualLogSource routingLog;
 
@@ -147,7 +147,7 @@ internal sealed class ClientRouting : IDisposable
 
     internal void ApplyServerOrigin()
     {
-        Uri gameEndpoint = new Uri(new Uri(config.server_origin + "/"), "game/");
+        var gameEndpoint = new Uri(new Uri(config.server_origin + "/"), "game/");
         BDNetwork.ServerURLInfo.SetUriDirectly(gameEndpoint);
         log.LogInfo("Client server origin applied: " + config.server_origin);
     }
@@ -168,9 +168,9 @@ internal sealed class ClientRouting : IDisposable
 
     private static ResourcePolicy RequestResourcePolicy(ManualLogSource log, ClientConfig config)
     {
-        Uri endpoint = new Uri(new Uri(config.server_origin + "/"), "client/resources");
+        var endpoint = new Uri(new Uri(config.server_origin + "/"), "client/resources");
         byte[] body = Encoding.UTF8.GetBytes("{\"cdn_mode\":\"" + config.cdn_mode + "\"}");
-        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(endpoint);
+        var request = (HttpWebRequest)WebRequest.Create(endpoint);
         request.Method = "PUT";
         request.ContentType = "application/json";
         request.Accept = "application/json";
@@ -189,7 +189,7 @@ internal sealed class ClientRouting : IDisposable
             {
                 stream.Write(body, 0, body.Length);
             }
-            using HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+            using var response = (HttpWebResponse)request.GetResponse();
             log.LogInfo("Client resource policy response: origin=" + config.server_origin +
                 " status=" + (int)response.StatusCode);
             if (response.StatusCode != HttpStatusCode.OK)
@@ -215,7 +215,7 @@ internal sealed class ClientRouting : IDisposable
     {
         JObject value = ParseObject(json, "client configuration");
         RequireOnly(value, "schema_version", "server_origin", "cdn_mode", "local_resource_directory", "proxy_url");
-        ClientConfig config = new ClientConfig
+        var config = new ClientConfig
         {
             schema_version = RequiredInteger(value, "schema_version"),
             server_origin = RequiredString(value, "server_origin"),
@@ -247,17 +247,17 @@ internal sealed class ClientRouting : IDisposable
         raw = raw.Trim();
         if (raw.Length == 0) return string.Empty;
         const string error = "proxy_url must be an HTTP proxy address with an explicit port and no credentials or path";
-        if (raw.IndexOfAny(new[] { '?', '#', '@', '%' }) >= 0) throw new InvalidDataException(error);
+        if (raw.IndexOfAny(InvalidOriginCharacters) >= 0) throw new InvalidDataException(error);
         foreach (char character in raw)
             if (char.IsWhiteSpace(character) || char.IsControl(character)) throw new InvalidDataException(error);
         if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri proxy) || proxy.Scheme != "http" ||
             string.IsNullOrEmpty(proxy.Host) || !string.IsNullOrEmpty(proxy.UserInfo) ||
             !string.IsNullOrEmpty(proxy.Query) || !string.IsNullOrEmpty(proxy.Fragment) || proxy.AbsolutePath != "/")
             throw new InvalidDataException(error);
-        string authority = raw.Substring(raw.IndexOf("://", StringComparison.Ordinal) + 3).TrimEnd('/');
+        string authority = raw[(raw.IndexOf("://", StringComparison.Ordinal) + 3)..].TrimEnd('/');
         int separator = authority.LastIndexOf(':');
         if (separator <= 0) throw new InvalidDataException(error);
-        string portText = authority.Substring(separator + 1);
+        string portText = authority[(separator + 1)..];
         foreach (char character in portText) if (character < '0' || character > '9') throw new InvalidDataException(error);
         if (!int.TryParse(portText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
             out int port) || port < 1 || port > 65535) throw new InvalidDataException(error);
@@ -282,8 +282,8 @@ internal sealed class ClientRouting : IDisposable
 
     private static JObject ParseObject(string json, string description)
     {
-        using StringReader input = new StringReader(json);
-        using JsonTextReader reader = new JsonTextReader(input)
+        using var input = new StringReader(json);
+        using var reader = new JsonTextReader(input)
         {
             DateParseHandling = DateParseHandling.None
         };
@@ -353,13 +353,13 @@ internal sealed class ClientRouting : IDisposable
         {
             throw new FileNotFoundException("Client routing configuration is missing", path);
         }
-        using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         return ReadBoundedStream(stream, maximumBytes);
     }
 
     private static string ReadBoundedStream(Stream stream, int maximumBytes)
     {
-        using MemoryStream output = new MemoryStream();
+        using var output = new MemoryStream();
         byte[] buffer = new byte[4096];
         while (true)
         {

@@ -25,7 +25,7 @@ func loadPackJamDesign(db *sql.DB) (*PackJamDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var design *PackJamDesign
 	for rows.Next() {
 		var id int

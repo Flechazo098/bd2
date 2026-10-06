@@ -26,7 +26,7 @@ func loadPackDetailDesign(db *sql.DB) (PackDetailDesign, error) {
 	if err != nil {
 		return PackDetailDesign{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var design PackDetailDesign
 	for rows.Next() {
 		var id int

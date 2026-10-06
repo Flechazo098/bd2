@@ -25,7 +25,7 @@ func LoadLimitedCostumes(root, version string) (*LimitedCostumeCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	catalog := &LimitedCostumeCatalog{characters: map[uint64]CharacterDesign{}}
 	for rows.Next() {
 		var costumeID uint64

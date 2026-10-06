@@ -24,8 +24,8 @@ func (s *Store) ResearchObjects(pack int) ([]int, error) {
 		if string(raw) != "once" {
 			return nil, fmt.Errorf("progress: invalid research entry")
 		}
-		if strings.HasPrefix(key, prefix) {
-			id, e := strconv.Atoi(strings.TrimPrefix(key, prefix))
+		if suffix, found := strings.CutPrefix(key, prefix); found {
+			id, e := strconv.Atoi(suffix)
 			if e != nil || id <= 0 {
 				return nil, fmt.Errorf("progress: invalid research identity")
 			}

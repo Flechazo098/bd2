@@ -22,17 +22,27 @@ func TestMonsterFieldDamagePartyFractionAndRequestReplay(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	chars.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil })
-	chars.EnsurePersisted()
-	chars.SetCurrentHealth(77, 70)
-	chars.SetCurrentHealth(88, 0)
+	if err := chars.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := chars.EnsurePersisted(); err != nil {
+		t.Fatal(err)
+	}
+	if err := chars.SetCurrentHealth(77, 70); err != nil {
+		t.Fatal(err)
+	}
+	if err := chars.SetCurrentHealth(88, 0); err != nil {
+		t.Fatal(err)
+	}
 	s.characters = chars
 	s.decks, e = deck.NewStore(deck.Seed{Version: versionconfig.State(), FieldCharControlDeckType: 1, FieldDeck: []deck.FieldEntry{{Slot: 1, CharacterInvenIndex: 77}, {Slot: 2, CharacterInvenIndex: 88}}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	s.fieldBuffs = map[uint64]gamedata.FieldBuffDesign{4: {ID: 4, Type: 5, TargetType: 1, Value: .25}, 5: {ID: 5, Type: 4, TargetType: 0, Value: 10}}
-	s.AttachFieldMonsterState(store)
+	if err := s.AttachFieldMonsterState(store); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("login")
 	s.AttachFieldMonsterDamage(s.applyMonsterFieldDamage)
 	s.monsterLoader = func(int) ([]gamedata.FieldMonsterDesign, error) {
@@ -56,7 +66,9 @@ func TestMonsterFieldDamagePartyFractionAndRequestReplay(t *testing.T) {
 	if hp != 45 {
 		t.Fatal("retry damaged again", hp)
 	}
-	chars.SetCurrentHealth(77, 0)
+	if err := chars.SetCurrentHealth(77, 0); err != nil {
+		t.Fatal(err)
+	}
 	rows, e := s.applyMonsterFieldDamage(21, 5, "test")
 	if e != nil || len(rows) != 1 {
 		t.Fatal("dead leader should remain the controlled leader", e)

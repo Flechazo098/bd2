@@ -30,26 +30,26 @@ func loadFieldActionObjects(db *sql.DB) (map[int]FieldActionObject, error) {
 		var id int
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		group := FieldActionObject{GroupID: id}
 		for field, dst := range map[int]*int{3: &group.RegenSeconds, 4: &group.Type} {
 			v, e := optionalScalar(raw, field)
 			if e != nil || v > 0x7fffffff {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid action group %d", id)
 			}
 			*dst = int(v)
 		}
 		if id <= 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid action group identity")
 		}
 		groups[id] = group
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func loadFieldActionObjects(db *sql.DB) (map[int]FieldActionObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int
 		var raw []byte

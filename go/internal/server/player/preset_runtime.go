@@ -3,6 +3,7 @@ package player
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"bd2server/internal/server/wire"
@@ -229,7 +230,7 @@ func (s *CharacterStore) ApplyPresetCostumes(assignments map[uint64]uint64) ([]C
 	for index := range assignments {
 		indices = append(indices, index)
 	}
-	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+	slices.Sort(indices)
 	result := make([]Character, 0, len(indices))
 	for _, index := range indices {
 		character, found := s.Find(index)

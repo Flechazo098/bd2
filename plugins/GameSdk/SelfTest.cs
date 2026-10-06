@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Diagnostics;
 using System.Runtime.Loader;
 using Mono.Cecil;
@@ -8,6 +9,7 @@ namespace BD2.GameSdk;
 /// <summary>End-to-end tests with synthetic binaries. Never execute the production game or readable shell.</summary>
 internal static class SelfTest
 {
+    private static readonly string[] PublicRuntimeTypes = ["BD2.GameNames.Game", "BD2.GameNames.GameMemberKind"];
     private static void Assert(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException("Self-test: " + message);
@@ -17,7 +19,7 @@ internal static class SelfTest
         var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (string arg in new[] { "build", project, "--nologo", "-c", "Release" }.Concat(properties)) start.ArgumentList.Add(arg);
         using var process = Process.Start(start);
-        var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync(); Task<string> stderr = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
         string output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
         if (process.ExitCode != 0) throw new InvalidOperationException(output);
@@ -72,22 +74,22 @@ internal static class SelfTest
         string mappingPath = Path.Combine(root, "ObfuscationTranslation_9.8.7.obfuscate"), versionPath = Path.Combine(root, "versions.json");
         File.WriteAllText(versionPath, "{\"game_version\":\"9.8.7\"}");
         var rows = new List<string> { "#ReverseOrder", "#Classes", "#Methods", "#Fields", "#Properties", "#Events", "#Parameters" };
-        using (var game = Program.ReadModule(gamePath))
+        using (ModuleDefinition game = Program.ReadModule(gamePath))
         {
             var table = new BD2.GameNames.Internal.NameTable { assembly_name = "Assembly-CSharp" };
-            var defs = game.GetTypes().ToArray(); int counter = 0;
-            string Obfuscated() => "ὠ" + string.Concat((counter++).ToString().Select(c => (char)('ὠ' + c - '0')));
+            TypeDefinition[] defs = game.GetTypes().ToArray(); int counter = 0;
+            string Obfuscated() => "ὠ" + string.Concat((counter++).ToString(CultureInfo.InvariantCulture).Select(c => (char)('ὠ' + c - '0')));
             var newNames = new Dictionary<TypeDefinition, string>();
-            string Full(TypeDefinition t) => t.DeclaringType != null ? Full(t.DeclaringType) + "+" + newNames[t] : newNames.TryGetValue(t, out var n) ? n : Program.TypeKey(t);
-            foreach (var t in defs)
+            string Full(TypeDefinition t) => t.DeclaringType != null ? Full(t.DeclaringType) + "+" + newNames[t] : newNames.TryGetValue(t, out string n) ? n : Program.TypeKey(t);
+            foreach (TypeDefinition t in defs)
                 if (t.Namespace == "Readable" || t.DeclaringType?.Namespace == "Readable")
                 {
                     newNames[t] = Obfuscated();
                     string meaning = t.DeclaringType == null ? Program.TypeKey(t) : newNames[t.DeclaringType] + "/" + (t.Name == "State" ? "<Run>d__0" : t.Name);
                     rows.Add(newNames[t] + "⇨" + meaning);
                 }
-            foreach (var t in defs) table.types.Add(new BD2.GameNames.Internal.TypeName { token = t.MetadataToken.ToInt32(), original = Program.TypeKey(t), readable = Full(t) });
-            foreach (var t in defs)
+            foreach (TypeDefinition t in defs) table.types.Add(new BD2.GameNames.Internal.TypeName { token = t.MetadataToken.ToInt32(), original = Program.TypeKey(t), readable = Full(t) });
+            foreach (TypeDefinition t in defs)
             {
                 void Rename(IMemberDefinition member, string kind, string signature = null, MethodDefinition method = null)
                 {
@@ -95,31 +97,31 @@ internal static class SelfTest
                     string original = member.Name, target = renamed ? Obfuscated() : original;
                     if (renamed) rows.Add(target + "⇨" + original);
                     var entry = new BD2.GameNames.Internal.MemberName { token = member.MetadataToken.ToInt32(), declaring_type = Program.TypeKey(t), original = original, readable = target, kind = kind, signature = signature };
-                    if (method != null) foreach (var p in method.Parameters)
-                    {
-                        if (string.IsNullOrEmpty(p.Name)) continue;
-                        string name = Obfuscated(); rows.Add(name + "⇨" + p.Name);
-                        entry.parameters.Add(new BD2.GameNames.Internal.ParameterName { position = p.Index, original = p.Name, readable = name });
-                    }
+                    if (method != null) foreach (ParameterDefinition p in method.Parameters)
+                        {
+                            if (string.IsNullOrEmpty(p.Name)) continue;
+                            string name = Obfuscated(); rows.Add(name + "⇨" + p.Name);
+                            entry.parameters.Add(new BD2.GameNames.Internal.ParameterName { position = p.Index, original = p.Name, readable = name });
+                        }
                     table.members.Add(entry);
                 }
-                foreach (var m in t.Methods) Rename(m, "method", Program.Signature(m), m);
-                foreach (var f in t.Fields) Rename(f, "field", Program.Signature(f));
-                foreach (var p in t.Properties) Rename(p, "property");
-                foreach (var e in t.Events) Rename(e, "event", Program.TypeKey(e.EventType));
+                foreach (MethodDefinition m in t.Methods) Rename(m, "method", Program.Signature(m), m);
+                foreach (FieldDefinition f in t.Fields) Rename(f, "field", Program.Signature(f));
+                foreach (PropertyDefinition p in t.Properties) Rename(p, "property");
+                foreach (EventDefinition e in t.Events) Rename(e, "event", Program.TypeKey(e.EventType));
             }
             Program.Rewrite(game, table, true);
             var entries = table.members.ToDictionary(m => m.token);
-            foreach (var t in defs)
+            foreach (TypeDefinition t in defs)
             {
-                foreach (var m in t.Methods)
+                foreach (MethodDefinition m in t.Methods)
                 {
-                    var entry = entries[m.MetadataToken.ToInt32()]; m.Name = entry.readable;
-                    foreach (var p in entry.parameters) m.Parameters[p.position].Name = p.readable;
+                    GameNames.Internal.MemberName entry = entries[m.MetadataToken.ToInt32()]; m.Name = entry.readable;
+                    foreach (GameNames.Internal.ParameterName p in entry.parameters) m.Parameters[p.position].Name = p.readable;
                 }
-                foreach (var f in t.Fields) f.Name = entries[f.MetadataToken.ToInt32()].readable;
-                foreach (var p in t.Properties) p.Name = entries[p.MetadataToken.ToInt32()].readable;
-                foreach (var e in t.Events) e.Name = entries[e.MetadataToken.ToInt32()].readable;
+                foreach (FieldDefinition f in t.Fields) f.Name = entries[f.MetadataToken.ToInt32()].readable;
+                foreach (PropertyDefinition p in t.Properties) p.Name = entries[p.MetadataToken.ToInt32()].readable;
+                foreach (EventDefinition e in t.Events) e.Name = entries[e.MetadataToken.ToInt32()].readable;
                 Program.SetTypeName(t, table.types.Single(e => e.token == t.MetadataToken.ToInt32()).readable);
             }
             game.Write(gamePath);
@@ -132,9 +134,9 @@ internal static class SelfTest
         Program.Prepare(gamePath, mappingPath, versionPath, sdkDir);
         SourceNavigation.Verify(sdkDir);
         string tablePath = Path.Combine(sdkDir, "names.json");
-        var generated = Program.ReadTable(tablePath);
+        GameNames.Internal.NameTable generated = Program.ReadTable(tablePath);
         Assert(generated.types.Any(t => t.readable == "Readable.Agent+<Run>d__0"), "compiler-generated scoped type");
-        using (var shell = Program.ReadModule(Path.Combine(sdkDir, Program.ShellName + ".dll")))
+        using (ModuleDefinition shell = Program.ReadModule(Path.Combine(sdkDir, Program.ShellName + ".dll")))
         {
             Assert(shell.Assembly.CustomAttributes.Any(a => a.AttributeType.Name == "ReferenceAssemblyAttribute"), "reference assembly marker");
             Assert(shell.GetType("Readable.Agent").Methods.First(m => m.Name == "Ping").Body.Instructions.Any(i => i.OpCode == OpCodes.Ret), "readable IL retained for offline decompiler fallback");
@@ -206,7 +208,7 @@ internal static class SelfTest
             """);
         Build(probeProject);
         string readablePlugin = Path.Combine(probeDir, "bin/Release/netstandard2.1/Probe.dll"), pluginPath = Path.Combine(root, "Probe.dll");
-        using (var plugin = Program.ReadModule(readablePlugin))
+        using (ModuleDefinition plugin = Program.ReadModule(readablePlugin))
         {
             var foreign = new TypeReference("Readable", "Agent", plugin, new AssemblyNameReference("Foreign", new Version(1, 0)));
             var holder = new TypeDefinition("", "ExternalHolder", TypeAttributes.Public, plugin.TypeSystem.Object);
@@ -214,7 +216,7 @@ internal static class SelfTest
             plugin.Write(readablePlugin);
         }
         Program.Reobfuscate(tablePath, readablePlugin, pluginPath, gamePath);
-        using (var rewritten = Program.ReadModule(pluginPath))
+        using (ModuleDefinition rewritten = Program.ReadModule(pluginPath))
         {
             Assert(rewritten.GetType("ExternalHolder").Fields[0].FieldType.FullName == "Readable.Agent", "external assembly scope isolation");
             Assert(!rewritten.AssemblyReferences.Any(a => a.Name == "System.Private.CoreLib"), "target framework preserved");
@@ -245,13 +247,13 @@ internal static class SelfTest
     }
     private static string[] Strings(string path)
     {
-        using var module = Program.ReadModule(path);
+        using ModuleDefinition module = Program.ReadModule(path);
         return module.GetTypes().SelectMany(t => t.Methods).Where(m => m.HasBody).SelectMany(m => m.Body.Instructions).Where(i => i.OpCode == OpCodes.Ldstr).Select(i => (string)i.Operand).ToArray();
     }
     internal static void VerifyRuntime(string tablePath, string runtimePath)
     {
-        var table = Program.ReadTable(tablePath);
-        using (var runtime = Program.ReadModule(runtimePath))
+        GameNames.Internal.NameTable table = Program.ReadTable(tablePath);
+        using (ModuleDefinition runtime = Program.ReadModule(runtimePath))
         {
             var resource = (EmbeddedResource)runtime.Resources.Single(r => r.Name == "BD2.GameNames.names.json.gz");
             Assert(resource.GetResourceData().SequenceEqual(File.ReadAllBytes(tablePath + ".gz")), "embedded runtime table equals the shared table");
@@ -259,12 +261,12 @@ internal static class SelfTest
         var context = new AssemblyLoadContext("BD2 full runtime-table check", isCollectible: true);
         try
         {
-            var runtime = context.LoadFromAssemblyPath(Path.GetFullPath(runtimePath));
-            Assert(runtime.GetExportedTypes().Select(t => t.FullName).OrderBy(n => n).SequenceEqual(new[] { "BD2.GameNames.Game", "BD2.GameNames.GameMemberKind" }), "serialization models are not public API");
-            var game = runtime.GetType("BD2.GameNames.Game");
+            System.Reflection.Assembly runtime = context.LoadFromAssemblyPath(Path.GetFullPath(runtimePath));
+            Assert(runtime.GetExportedTypes().Select(t => t.FullName).OrderBy(n => n).SequenceEqual(PublicRuntimeTypes), "serialization models are not public API");
+            Type game = runtime.GetType("BD2.GameNames.Game");
             Assert((string)game.GetProperty("GameVersion").GetValue(null) == table.game_version, "runtime deserializes the full table");
-            var translate = game.GetMethod("TypeName").CreateDelegate<Func<string, string>>();
-            foreach (var type in table.types) Assert(translate(type.readable) == type.original, "runtime type translation: " + type.readable);
+            Func<string, string> translate = game.GetMethod("TypeName").CreateDelegate<Func<string, string>>();
+            foreach (GameNames.Internal.TypeName type in table.types) Assert(translate(type.readable) == type.original, "runtime type translation: " + type.readable);
             Assert(translate("Unknown.Type") == "Unknown.Type", "runtime literal fallback");
             Console.WriteLine($"Verified embedded runtime table: game={table.game_version}, {table.types.Count} type lookups; {runtimePath}");
         }

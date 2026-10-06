@@ -52,7 +52,7 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		groups, _ := packedInts(proto, 4)
@@ -60,17 +60,21 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		notTrash, _ := packedInts(proto, 14)
 		rankGroup, _ := packedInts(proto, 19)
 		if len(groups) != 1 || len(maximum) != 1 || len(rankGroup) != 1 || maximum[0] == 0 || rankGroup[0] == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment %d invalid upgrade design", id)
 		}
 		d.Group[id], d.MaxLevel[id], d.RankGroup[id] = groups[0], maximum[0], rankGroup[0]
 		d.NotTrash[id] = len(notTrash) == 1 && notTrash[0] != 0
 		rankGroups[rankGroup[0]] = true
 		if prior, found := groupMaximum[groups[0]]; found && prior != maximum[0] {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment growth group %d has inconsistent maxima", groups[0])
 		}
 		groupMaximum[groups[0]] = maximum[0]
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -83,7 +87,7 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		var group, level uint64
 		var proto []byte
 		if err := rows.Scan(&group, &level, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		maximum, referenced := groupMaximum[group]
@@ -94,13 +98,13 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		breakIDs, _ := packedInts(proto, 2)
 		breakTypes, _ := packedInts(proto, 3)
 		if len(breakCounts) == 0 || len(breakCounts) != len(breakIDs) || len(breakCounts) != len(breakTypes) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment break result %d/%d malformed", group, level)
 		}
 		breakRewards := make([]BattleReward, 0, len(breakCounts))
 		for i := range breakCounts {
 			if breakCounts[i] == 0 || breakIDs[i] == 0 || breakTypes[i] == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment break result %d/%d invalid", group, level)
 			}
 			breakRewards = append(breakRewards, BattleReward{Type: breakTypes[i], ID: breakIDs[i], Count: breakCounts[i]})
@@ -117,18 +121,22 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		point, _ := packedInts(proto, 5)
 		ratio, present, err := fixed64Double(proto, 10)
 		if err != nil || !present || ratio < 0 || ratio > 1 || len(point) != 1 || len(counts) == 0 || len(counts) != len(ids) || len(counts) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment growth %d/%d malformed", group, level)
 		}
 		entry := EquipmentUpgradeLevel{Level: level, GrowthPoint: point[0], SuccessRatio: ratio}
 		for i := range counts {
 			if counts[i] == 0 || (types[i] != 4 && types[i] != 8) || (types[i] == 4 && ids[i] != 0) || (types[i] == 8 && ids[i] == 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment growth %d/%d invalid cost", group, level)
 			}
 			entry.Costs = append(entry.Costs, PromotionCost{Type: types[i], ID: ids[i], Count: counts[i]})
 		}
 		d.Levels[[2]uint64{group, level}] = entry
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -141,7 +149,7 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		var group, slot uint64
 		var proto []byte
 		if err := rows.Scan(&group, &slot, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if !rankGroups[group] {
@@ -149,22 +157,26 @@ func loadEquipmentUpgradeDesign(db *sql.DB) (*EquipmentUpgradeDesign, error) {
 		}
 		ratios, err := fixed32Floats(proto, 4)
 		if err != nil || slot < 1 || slot > 3 || len(ratios) != 4 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment rank %d/%d malformed", group, slot)
 		}
 		var total float64
 		for _, ratio := range ratios {
 			if ratio < 0 || ratio > 1 || math.IsNaN(ratio) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment rank %d/%d invalid ratio", group, slot)
 			}
 			total += ratio
 		}
 		if math.Abs(total-1) > 1e-5 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment rank %d/%d ratio total %.8f", group, slot, total)
 		}
 		d.RankRatio[[2]uint64{group, slot}] = append([]float64(nil), ratios...)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

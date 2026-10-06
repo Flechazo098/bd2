@@ -6,7 +6,7 @@ import (
 	"bd2server/internal/server/wire"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -64,10 +64,7 @@ func (s *Service) reputationState(pack int, rule gamedata.NPCReputationRule) (ui
 	if !ok {
 		return 1, 0, nil
 	}
-	elapsed := s.npcReputation.now().Unix() - start
-	if elapsed < 0 {
-		elapsed = 0
-	}
+	elapsed := max(s.npcReputation.now().Unix()-start, 0)
 	if uint64(elapsed) >= rule.DownHours*3600 {
 		return 1, 0, nil
 	}
@@ -128,7 +125,7 @@ func (s *Service) npcReputationRows(pack int) ([][]byte, error) {
 	for id := range d.Groups {
 		groups = append(groups, id)
 	}
-	sort.Slice(groups, func(i, j int) bool { return groups[i] < groups[j] })
+	slices.Sort(groups)
 	var rows [][]byte
 	for _, id := range groups {
 		state, elapsed, e := s.reputationState(pack, d.Groups[id])

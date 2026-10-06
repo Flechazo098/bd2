@@ -13,7 +13,11 @@ func TestTalentGrowthDesignJoinsCharacterAndUsesCumulativeExperience(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec("CREATE TABLE TalentTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB); CREATE TABLE CharTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB); CREATE TABLE TalentGrowthTable (groupId INTEGER,id INTEGER,ProtoBuf BLOB,PRIMARY KEY(groupId,id))"); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +68,11 @@ func TestTalentGrowthDesignRejectsMismatchedCostArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec("CREATE TABLE TalentTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB); CREATE TABLE CharTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB); CREATE TABLE TalentGrowthTable (groupId INTEGER,id INTEGER,ProtoBuf BLOB,PRIMARY KEY(groupId,id))"); err != nil {
 		t.Fatal(err)
 	}

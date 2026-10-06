@@ -27,7 +27,11 @@ func TestDispatchReceiptFailureRollsBackAPAndRewards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inv, err := player.OpenInventory(repo, &player.Starter{Version: "2.35.10"})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +71,11 @@ func TestDispatchReceiptFailureRollsBackAPAndRewards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, name := range []string{"hunting", "huntdispatch"} {
 		raw, err := reopened.Load(name)
 		if err != nil || raw != nil {

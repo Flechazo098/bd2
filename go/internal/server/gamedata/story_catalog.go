@@ -52,7 +52,7 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		var id int
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		read := func(field int) (int, error) {
@@ -67,7 +67,7 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		}
 		kind, err := read(55)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if kind != 0 && kind != 1000 {
@@ -75,39 +75,39 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		}
 		protoID, err := read(25)
 		if err != nil || protoID != id || id <= 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid story pack%d identity", id)
 		}
 		pack := StoryPack{ID: id, Type: kind}
 		buyType, err := read(11)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		pack.BuyType = uint64(buyType)
 		buyPrice, err := read(7)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		pack.BuyPrice = uint64(buyPrice)
 		counts, err := packedInts(raw, 8)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids, err := packedInts(raw, 9)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		types, err := packedInts(raw, 10)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if len(counts) != len(ids) || len(ids) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid story pack%d buy rewards", id)
 		}
 		for i, count := range counts {
@@ -117,27 +117,27 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 				continue
 			}
 			if types[i] == 0 || count > math.MaxInt32 || types[i] > math.MaxInt32 || ids[i] > math.MaxInt32 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid story pack%d buy reward", id)
 			}
 			pack.BuyRewards = append(pack.BuyRewards, Reward{Type: types[i], ID: ids[i], Count: count})
 		}
 		if pack.PriorPackID, err = read(57); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if pack.NextPackID, err = read(45); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		maps, err := packedInts(raw, 21)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		for _, mapID := range maps {
 			if mapID == 0 || mapID > math.MaxInt32 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid story pack%d map", id)
 			}
 			pack.MapIDs = append(pack.MapIDs, int(mapID))
@@ -145,10 +145,10 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		d.Packs[id] = pack
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM ContentOpenTable WHERE groupId=1 ORDER BY id")
 	if err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		var id int
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		pack, found := d.Packs[id]
@@ -169,7 +169,7 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 		for field, dst := range map[int]*uint64{1: &group, 2: &protoID, 4: &open.TutorialID, 5: &open.SquadLevel, 6: &open.TicketID} {
 			values, err := packedInts(raw, field)
 			if err != nil || len(values) > 1 || (len(values) == 1 && values[0] > math.MaxInt32) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid story contentopen%d", id)
 			}
 			if len(values) == 1 {
@@ -177,17 +177,17 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 			}
 		}
 		if group != 1 || protoID != uint64(id) || open.TicketID == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid story contentopen%d key/ticket", id)
 		}
 		pack.Open = open
 		d.Packs[id] = pack
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	for id, pack := range d.Packs {
 		pack.Quests, err = loadQuestDesignDB(db, id)
 		if err != nil {

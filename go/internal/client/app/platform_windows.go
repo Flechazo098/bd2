@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +43,9 @@ func ShowFatalError(err error) {
 	if conversionErr != nil {
 		return
 	}
-	messageBoxW.Call(0, uintptr(unsafe.Pointer(message)), uintptr(unsafe.Pointer(title)), 0x10)
+	if result, _, callErr := messageBoxW.Call(0, uintptr(unsafe.Pointer(message)), uintptr(unsafe.Pointer(title)), 0x10); result == 0 {
+		log.Printf("Fatal error dialog could not be displayed: %v", callErr)
+	}
 }
 
 // CREATE_NO_WINDOW prevents console-subsystem helpers such as powershell.exe
@@ -74,7 +77,7 @@ func launchGame(target, proxyURL string) error {
 		return err
 	} else if running {
 		if !activateProcessWindow(processID, 5*time.Second) {
-			return fmt.Errorf("Brown Dust II is running, but its window could not be restored")
+			return fmt.Errorf("Brown Dust II is running, but its window could not be restored") //nolint:staticcheck // ST1005
 		}
 		return errGameAlreadyRunning
 	}
@@ -95,7 +98,11 @@ func windowsExecutableProcessID(name string) (uint32, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() {
+		if err := windows.CloseHandle(snapshot); err != nil {
+			log.Printf("Process snapshot cleanup failed: %v", err)
+		}
+	}()
 	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
 	if err := windows.Process32First(snapshot, &entry); err != nil {
 		return 0, false, err
@@ -120,9 +127,14 @@ func activateProcessWindow(processID uint32, timeout time.Duration) bool {
 			iconic, _, _ := isIconicProc.Call(window)
 			if iconic != 0 {
 				const swRestore = 9
-				showWindowAsyncProc.Call(window, swRestore)
+				if result, _, callErr := showWindowAsyncProc.Call(window, swRestore); result == 0 {
+					log.Printf("Game window restore request failed: %v", callErr)
+				}
 			}
-			setForegroundWindowProc.Call(window)
+			if result, _, _ := setForegroundWindowProc.Call(window); result == 0 {
+				// Windows may deny foreground activation even for a valid game window.
+				log.Print("Windows declined foreground activation of the game window")
+			}
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -136,7 +148,9 @@ func topLevelWindowForProcess(processID uint32) uintptr {
 	var found uintptr
 	callback := syscall.NewCallback(func(window uintptr, _ uintptr) uintptr {
 		var owner uint32
-		getWindowThreadProcessIDProc.Call(window, uintptr(unsafe.Pointer(&owner)))
+		if thread, _, _ := getWindowThreadProcessIDProc.Call(window, uintptr(unsafe.Pointer(&owner))); thread == 0 {
+			return 1 // The window disappeared during enumeration.
+		}
 		visible, _, _ := isWindowVisibleProc.Call(window)
 		if owner == processID && visible != 0 {
 			found = window
@@ -144,6 +158,11 @@ func topLevelWindowForProcess(processID uint32) uintptr {
 		}
 		return 1
 	})
-	enumWindowsProc.Call(callback, 0)
+	if result, _, callErr := enumWindowsProc.Call(callback, 0); result == 0 && found == 0 {
+		// A successful match deliberately stops enumeration and also returns zero.
+		if callErr != syscall.Errno(0) {
+			log.Printf("Game window enumeration failed: %v", callErr)
+		}
+	}
 	return found
 }

@@ -41,12 +41,18 @@ func TestTrackerRewardAndProgressFailureRollbackTogether(t *testing.T) {
 	if err = op.Rollback(); err != nil && !errors.Is(err, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	b, err := repo.Load("tracker-reward")
 	if err != nil || b != nil {
 		t.Fatal("reward survived transaction rollback")
@@ -134,12 +140,14 @@ func TestTrackerPrepareCatchResumeAndCrossSequenceRetry(t *testing.T) {
 		t.Fatal("reconnect lost durable catch progress")
 	}
 	caught := 0
-	wire.Walk(p, func(f wire.Field) error {
+	if err := wire.Walk(p, func(f wire.Field) error {
 		if f.Number == 5 {
 			caught++
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if caught != 1 {
 		t.Fatal("resume lost caught monster")
 	}
@@ -155,7 +163,9 @@ func TestTrackerSlotsExpiryAndDailyReset(t *testing.T) {
 	s.now = func() time.Time { return now }
 	s.design.Tables["FieldSpawnEventTable"] = append(s.design.Tables["FieldSpawnEventTable"], gamedata.EventActionRow{Values: map[int]uint64{4: 1, 5: 2, 2: 1}, Text: map[int]string{7: "13:00:00", 1: "13:10:00"}})
 	r := events.NewRegistry()
-	r.Replace([]events.Schedule{{UID: 3, Type: 21, ID: 1, Start: base.Add(-time.Hour).UnixMilli(), End: base.Add(48 * time.Hour).UnixMilli()}})
+	if err := r.Replace([]events.Schedule{{UID: 3, Type: 21, ID: 1, Start: base.Add(-time.Hour).UnixMilli(), End: base.Add(48 * time.Hour).UnixMilli()}}); err != nil {
+		t.Fatal(err)
+	}
 	s.registry = r
 	if _, _, _, err := s.Handle("/FieldEventSpawnStart", spawnStart(1, 1)); err != nil {
 		t.Fatal(err)

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,12 +130,7 @@ func nums(b []byte, n int) ([]uint64, error) {
 }
 func scalar(b []byte, n int) uint64 { v, _, _ := wire.Varint(b, n); return v }
 func contains(a []uint64, v uint64) bool {
-	for _, x := range a {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a, v)
 }
 func (s *Service) Handle(path string, req []byte) (int, []byte, bool, error) {
 	return s.HandleSession(path, req, "local")

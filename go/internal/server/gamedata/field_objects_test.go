@@ -12,12 +12,20 @@ func TestFieldObjectLoadIndependentEquipmentAndRandomBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pack.Close()
+	defer func() {
+		if err := pack.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	common, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer common.Close()
+	defer func() {
+		if err := common.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"FieldRewardObjectGroupTable", "FieldRewardObjectTable"} {
 		if _, err := pack.Exec("CREATE TABLE " + table + "(id INTEGER, ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)
@@ -140,7 +148,7 @@ func TestFieldResetUsesConfiguredBoundary(t *testing.T) {
 }
 func TestFieldWeightedDrawCountAndZeroWeight(t *testing.T) {
 	o := FieldRewardObject{DropCount: 2, Rewards: []BattleReward{{Type: 5, ID: 1, Count: 142}, {Type: 5, ID: 2, Count: 71}}, Ratios: []uint64{0, 100}}
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		got, err := o.Draw()
 		if err != nil || len(got) != 2 || got[0].ID != 2 || got[1].ID != 2 {
 			t.Fatalf("draw=%+v err=%v", got, err)

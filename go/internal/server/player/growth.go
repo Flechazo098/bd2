@@ -401,7 +401,7 @@ func (s *CharacterStore) promoteCharacter(current Character, position int, fromC
 	requested := make(map[[2]uint64]uint64)
 	var gold uint64
 	for _, material := range materials {
-		if material.Type == 4 {
+		if material.Type == 4 { //nolint:staticcheck // QF1003
 			if material.InvenIndex != 0 || material.ID != 0 || gold != 0 {
 				return 0, nil, true, errors.New("player: invalid promotion currency")
 			}

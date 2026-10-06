@@ -23,7 +23,9 @@ func TestAchievementClearRequiresProgressBeforeAnyBatchReward(t *testing.T) {
 		t.Fatal(err)
 	}
 	progress := testAchievementProgress(5)
-	s.AttachAchievementProgress(&progress)
+	if err := s.AttachAchievementProgress(&progress); err != nil {
+		t.Fatal(err)
+	}
 	info := wire.AppendVarint(nil, 1, 987)
 	info = wire.AppendVarint(info, 2, 1)
 	info = wire.AppendVarint(info, 2, 2)
@@ -61,11 +63,15 @@ func TestAchievementCurrencyRewardsCreditWalletAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.AttachWallet(wallet)
+	if err := s.AttachWallet(wallet); err != nil {
+		t.Fatal(err)
+	}
 	p := testAchievementProgress(1)
-	s.AttachAchievementProgress(&p)
+	if err := s.AttachAchievementProgress(&p); err != nil {
+		t.Fatal(err)
+	}
 	req := wire.AppendBytes(wire.AppendVarint(nil, 1, 1), 3, wire.AppendVarint(wire.AppendVarint(nil, 1, 987), 2, 1))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, _, _, err := s.Handle("/AchievementClear", req); err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +98,9 @@ func TestAchievementTierOrderUsesActualIDsAndAllowsUnorderedBatch(t *testing.T) 
 			t.Fatal(err)
 		}
 		p := testAchievementProgress(2)
-		s.AttachAchievementProgress(&p)
+		if err := s.AttachAchievementProgress(&p); err != nil {
+			t.Fatal(err)
+		}
 		request := func(ids ...uint64) []byte {
 			info := wire.AppendVarint(nil, 1, 987)
 			for _, id := range ids {

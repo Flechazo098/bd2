@@ -1,3 +1,4 @@
+using System.Globalization;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -23,7 +24,7 @@ internal static class SessionRecovery
     internal static bool ApplicationQuitting;
     private static RecoveryHost Owner;
     private static SecureGameRelay GameRelay;
-    private static readonly List<WeakReference<UnityWebRequest>> GameRequests = new List<WeakReference<UnityWebRequest>>();
+    private static readonly List<WeakReference<UnityWebRequest>> GameRequests = [];
     internal static bool EstablishedGameSession;
     private static GameObject RecoveryOverlay;
     private static Text RecoveryText;
@@ -36,7 +37,7 @@ internal static class SessionRecovery
     private static float LastGameTransportFailure;
     private static float RuntimeProbeFailureSince;
     private static bool RuntimeProbeDegraded;
-    internal static CancellationTokenSource ControlProbeCancellation = new CancellationTokenSource();
+    internal static CancellationTokenSource ControlProbeCancellation = new();
 
     internal static void DisposeGameRelay()
     {
@@ -96,7 +97,7 @@ internal static class SessionRecovery
         {
             UnityEngine.Object.Destroy(Owner.gameObject);
         }
-        GameObject host = new GameObject("BD2 Login Recovery Host");
+        var host = new GameObject("BD2 Login Recovery Host");
         UnityEngine.Object.DontDestroyOnLoad(host);
         Owner = host.AddComponent<RecoveryHost>();
         Log?.LogInfo("Created persistent login recovery coroutine host");
@@ -107,9 +108,11 @@ internal static class SessionRecovery
         Owner.StartCoroutine(RuntimeMonitor());
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "Unity OnDestroy cancels and disposes Lifetime.")]
     public sealed class RecoveryHost : MonoBehaviour
     {
-        internal readonly CancellationTokenSource Lifetime = new CancellationTokenSource();
+        internal readonly CancellationTokenSource Lifetime = new();
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
         private void OnDestroy()
         {
             Lifetime.Cancel();
@@ -163,13 +166,13 @@ internal static class SessionRecovery
             }
             try
             {
-              if (request.result != UnityWebRequest.Result.Success || request.responseCode >= 400)
-                SessionDiagnostics.Record("event=game-http-failure path=" + requestUri.AbsolutePath +
-                    " http_status=" + request.responseCode + " result=" + request.result +
-                    " access_expired=" + (request.GetResponseHeader("X-BD2-Access-Expired") == "1") +
-                    " session_expired=" + (request.GetResponseHeader("X-BD2-Session-Expired") == "1") +
-                    " reconnect=" + (request.GetResponseHeader("X-BD2-Reconnect") == "1") +
-                    " transport_failure=" + (request.GetResponseHeader("X-BD2-Transport-Failure") == "1"));
+                if (request.result != UnityWebRequest.Result.Success || request.responseCode >= 400)
+                    SessionDiagnostics.Record("event=game-http-failure path=" + requestUri.AbsolutePath +
+                        " http_status=" + request.responseCode + " result=" + request.result +
+                        " access_expired=" + (request.GetResponseHeader("X-BD2-Access-Expired") == "1") +
+                        " session_expired=" + (request.GetResponseHeader("X-BD2-Session-Expired") == "1") +
+                        " reconnect=" + (request.GetResponseHeader("X-BD2-Reconnect") == "1") +
+                        " transport_failure=" + (request.GetResponseHeader("X-BD2-Transport-Failure") == "1"));
             }
             catch { /* Keep actual HTTP recovery independent of diagnostics. */ }
             if (request.result == UnityWebRequest.Result.Success && request.responseCode >= 200 && request.responseCode < 300)
@@ -253,15 +256,15 @@ internal static class SessionRecovery
         {
             try
             {
-              if (__0 != null && IsConfiguredServerFailure(__0))
-              {
-                const BindingFlags requestFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                object failed = __0.GetType().GetGameProperty("PacketData", requestFlags)?.GetValue(__0, null);
-                string path = failed?.GetType().GetGameProperty("SendPath", requestFlags)?.GetValue(failed, null) as string;
-                object observedRetries = failed?.GetType().GetGameProperty("RetryCount", requestFlags)?.GetValue(failed, null);
-                SessionDiagnostics.Record("event=game-request-backoff path=" + SessionDiagnostics.Path(path) + " retry_count=" + observedRetries +
-                    " error_code=" + SessionDiagnostics.Code(__1) + " reason=" + SessionDiagnostics.ErrorReason(__1));
-              }
+                if (__0 != null && IsConfiguredServerFailure(__0))
+                {
+                    const BindingFlags requestFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                    object failed = __0.GetType().GetGameProperty("PacketData", requestFlags)?.GetValue(__0, null);
+                    string path = failed?.GetType().GetGameProperty("SendPath", requestFlags)?.GetValue(failed, null) as string;
+                    object observedRetries = failed?.GetType().GetGameProperty("RetryCount", requestFlags)?.GetValue(failed, null);
+                    SessionDiagnostics.Record("event=game-request-backoff path=" + SessionDiagnostics.Path(path) + " retry_count=" + observedRetries +
+                        " error_code=" + SessionDiagnostics.Code(__1) + " reason=" + SessionDiagnostics.ErrorReason(__1));
+                }
             }
             catch { /* Diagnostics must not change backoff or recovery decisions. */ }
             try
@@ -274,19 +277,19 @@ internal static class SessionRecovery
                     string server = packet?.GetType().GetGameField("RequestServerURL", diagnosticFlags)?.GetValue(packet) as string;
                     string endpoint = Uri.TryCreate(server, UriKind.Absolute, out Uri parsed) ? parsed.GetLeftPart(UriPartial.Authority) + parsed.AbsolutePath : "invalid";
                     string message = __0?.GetType().GetGameProperty("Message", diagnosticFlags)?.GetValue(__0, null) as string ?? string.Empty;
-                    string category = message.IndexOf("tim", StringComparison.OrdinalIgnoreCase) >= 0 ? "Timeout" :
-                        message.IndexOf("cert", StringComparison.OrdinalIgnoreCase) >= 0 || message.IndexOf("TLS", StringComparison.OrdinalIgnoreCase) >= 0 || message.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0 ? "TLS" : "Other";
+                    string category = message.Contains("tim", StringComparison.OrdinalIgnoreCase) ? "Timeout" :
+                        message.Contains("cert", StringComparison.OrdinalIgnoreCase) || message.Contains("TLS", StringComparison.OrdinalIgnoreCase) || message.Contains("SSL", StringComparison.OrdinalIgnoreCase) ? "TLS" : "Other";
                     Log?.LogDebug("Maintenance backoff: endpoint=" + endpoint + ", category=" + category + ", observedRequests=" + GameRequests.Count);
                     foreach (WeakReference<UnityWebRequest> reference in GameRequests)
                     {
                         if (!reference.TryGetTarget(out UnityWebRequest request) || !request.isDone) continue;
                         if (!TryGetOwnedRequestUri(request.url, out Uri original) || original.AbsolutePath != "/game/MaintenanceInfo") continue;
                         string error = request.error ?? string.Empty;
-                        string safeError = error.IndexOf("Insecure", StringComparison.OrdinalIgnoreCase) >= 0 ? "InsecureConnectionBlocked" :
-                            error.IndexOf("connect", StringComparison.OrdinalIgnoreCase) >= 0 ? "ConnectionFailure" :
-                            error.IndexOf("tim", StringComparison.OrdinalIgnoreCase) >= 0 ? "Timeout" :
-                            error.IndexOf("HTTP", StringComparison.OrdinalIgnoreCase) >= 0 ? "HttpFailure" :
-                            error.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0 || error.IndexOf("cert", StringComparison.OrdinalIgnoreCase) >= 0 ? "TlsFailure" : "Unclassified";
+                        string safeError = error.Contains("Insecure", StringComparison.OrdinalIgnoreCase) ? "InsecureConnectionBlocked" :
+                            error.Contains("connect", StringComparison.OrdinalIgnoreCase) ? "ConnectionFailure" :
+                            error.Contains("tim", StringComparison.OrdinalIgnoreCase) ? "Timeout" :
+                            error.Contains("HTTP", StringComparison.OrdinalIgnoreCase) ? "HttpFailure" :
+                            error.Contains("SSL", StringComparison.OrdinalIgnoreCase) || error.Contains("cert", StringComparison.OrdinalIgnoreCase) ? "TlsFailure" : "Unclassified";
                         Log?.LogWarning("Maintenance completed transport: result=" + request.result + ", status=" + request.responseCode +
                             ", error=" + safeError + ", errorLength=" + error.Length);
                     }
@@ -427,7 +430,7 @@ internal static class SessionRecovery
             SetRecoveryMessage("等待服务器启动……\nWaiting for server…");
             ControlProbeResult result = null;
             yield return RequestControlEndpoint(new Uri(ServerRoot, "readyz"), UnityWebRequest.kHttpVerbGET, null, null, 6,
-                lifetime, ControlProbeCancellation.Token, response => result = response);
+                response => result = response, lifetime, ControlProbeCancellation.Token);
             if (result == null || generation != Volatile.Read(ref RecoveryGeneration) || lifetime.IsCancellationRequested) yield break;
             if (result.Success && result.StatusCode == 200) break;
             if (result.Error != lastError)
@@ -472,7 +475,7 @@ internal static class SessionRecovery
 
     private static IEnumerator RuntimeMonitor()
     {
-        WaitForSecondsRealtime interval = new WaitForSecondsRealtime(5f);
+        var interval = new WaitForSecondsRealtime(5f);
         while (true)
         {
             if (ServerRoot == null || !EstablishedGameSession || Volatile.Read(ref SessionRecoveryInProgress) != 0)
@@ -485,7 +488,7 @@ internal static class SessionRecovery
             {
                 ControlProbeResult result = null;
                 yield return RequestControlEndpoint(new Uri(ServerRoot, "client/runtime"), UnityWebRequest.kHttpVerbGET, null, null, 6,
-                    lifetime, ControlProbeCancellation.Token, response => result = response);
+                    response => result = response, lifetime, ControlProbeCancellation.Token);
                 if (lifetime.IsCancellationRequested) yield break;
                 if (result == null || generation != Volatile.Read(ref RecoveryGeneration) || Volatile.Read(ref SessionRecoveryInProgress) != 0) continue;
                 RuntimeStatus status = null;
@@ -527,7 +530,7 @@ internal static class SessionRecovery
                         {
                             ControlProbeResult readiness = null;
                             yield return RequestControlEndpoint(new Uri(ServerRoot, "readyz"), UnityWebRequest.kHttpVerbGET,
-                                null, null, 6, lifetime, ControlProbeCancellation.Token, response => readiness = response);
+                                null, null, 6, response => readiness = response, lifetime, ControlProbeCancellation.Token);
                             if (lifetime.IsCancellationRequested) yield break;
                             if (generation != Volatile.Read(ref RecoveryGeneration)) continue;
                             if (readiness != null && IsUnavailableProbe(readiness) && Time.realtimeSinceStartup - LastGameSuccess >= 90f)
@@ -563,7 +566,7 @@ internal static class SessionRecovery
 
     internal static void SetIntroStatePostfix(object __instance, object __0)
     {
-        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || __0 == null || Convert.ToInt32(__0) != 9 || Owner == null)
+        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || __0 == null || Convert.ToInt32(__0, CultureInfo.InvariantCulture) != 9 || Owner == null)
         {
             return;
         }
@@ -634,10 +637,10 @@ internal static class SessionRecovery
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
         PackManager pack = FindUnitySingleton<PackManager>();
         PropertyInfo packLoading = pack?.GetType().GetGameProperty(nameof(PackManager.IsPackLoading), flags);
-        if (!(packLoading?.GetValue(pack) is bool loading) || loading) return false;
+        if (packLoading?.GetValue(pack) is not bool loading || loading) return false;
         GameFieldManager field = FindUnitySingleton<GameFieldManager>();
         PropertyInfo battle = field?.GetType().GetGameProperty(nameof(GameFieldManager.IsBattlePlay), flags);
-        if (!(battle?.GetValue(field) is bool inBattle) || inBattle) return false;
+        if (battle?.GetValue(field) is not bool inBattle || inBattle) return false;
 
         // OpenMenuUICoroutine deliberately clears IsLoadedField and loads an
         // empty scene. EntryFlow plus the completed, active MenuUI is its ready
@@ -670,9 +673,9 @@ internal static class SessionRecovery
             "GetUI",
             BindingFlags.Static | BindingFlags.Public,
             null,
-            new[] { typeof(string) },
+            [typeof(string)],
             null);
-        return getUI?.Invoke(null, new object[] { name }) as Component;
+        return getUI?.Invoke(null, [name]) as Component;
     }
 
     private static bool IsRecoveryUIActive(string name)
@@ -706,7 +709,7 @@ internal static class SessionRecovery
             root.anchorMin = Vector2.zero;
             root.anchorMax = Vector2.one;
             root.offsetMin = root.offsetMax = Vector2.zero;
-            GameObject label = new GameObject("Status", typeof(RectTransform), typeof(Text));
+            var label = new GameObject("Status", typeof(RectTransform), typeof(Text));
             label.transform.SetParent(RecoveryOverlay.transform, false);
             RecoveryText = label.GetComponent<Text>();
             RecoveryText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
@@ -755,6 +758,7 @@ internal static class SessionRecovery
     }
 
     [Serializable]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1805", Justification = "JsonUtility populates these fields by reflection; explicit defaults avoid CS0649.")]
     private sealed class RuntimeStatus
     {
         public string status = null;

@@ -26,7 +26,7 @@ func stateCheckCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	version, err := repository.SchemaVersion()
 	if err != nil {
 		return err

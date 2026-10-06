@@ -61,7 +61,7 @@ func TestGachaPointExchangeGrantsUpgradesOverflowsAndRetries(t *testing.T) {
 	service.BeginSession("point-costume-login")
 
 	var lastRequest, lastResponse []byte
-	for exchange := uint64(0); exchange < 7; exchange++ {
+	for exchange := range uint64(7) {
 		request := wire.AppendVarint(nil, 1, 100+exchange)
 		request = wire.AppendVarint(request, 2, groupID)
 		code, response, handled, err := service.Handle("/GachaPointExchange", request)

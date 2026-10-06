@@ -157,7 +157,11 @@ func TestPackInfoResetsExpiredSQLiteCommissionAtWeeklyBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s.store = stateio.EntrySnapshotStore{Entries: reopened, Domain: "missions", Bucket: "gameplay"}
 	now = now.Add(time.Second)
 	// PackInGameInfo calls Info without an intervening TodayQuestInfo request.

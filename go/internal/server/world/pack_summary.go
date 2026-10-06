@@ -26,7 +26,7 @@ func (s *Service) handlePackSummary(request []byte) (int, []byte, bool, error) {
 		var once, regen uint64
 		for _, objectID := range ids {
 			object := s.fieldObjects[int(id)].Objects[objectID]
-			if object.Type == 2 {
+			if object.Type == 2 { //nolint:staticcheck // QF1003
 				once++
 			} else if object.Type == 1 || object.Type == 3 {
 				regen++

@@ -13,13 +13,14 @@
     <ProjectReference Include="../../GameNames/GameNames.csproj" Condition="'$(BD2Packaging)' != 'true'" />
     <PackageReference Include="BD2.GameNames" Version="[$(Version)]" Condition="'$(BD2Packaging)' == 'true'" />
     <None Include="../README.md" Pack="true" PackagePath="README.md" />
+    <None Include="../LICENSE" Pack="true" PackagePath="" />
     <None Include="../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
     <None Include="build/*" Pack="true" PackagePath="build/" />
     <None Include="_._" Pack="true" PackagePath="lib/netstandard2.0/" />
     <None Include="$(BD2ToolPublishDir)/**/*" Exclude="$(BD2ToolPublishDir)/**/*.exe;$(BD2ToolPublishDir)/**/*.pdb" Condition="'$(BD2ToolPublishDir)' != ''" Pack="true" PackagePath="tools/net8.0/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <Target Name="RequirePackageInputs" BeforeTargets="GenerateNuspec">
-    <Error Condition="'$(BD2Packaging)' != 'true'" Text="Pack with ../Pack.ps1; BD2Packaging=true is required for the version-locked runtime dependency." />
-    <Error Condition="!Exists('$(BD2ToolPublishDir)/GameSdk.dll')" Text="Pack with ../Pack.ps1: published tool missing." />
+    <Error Condition="'$(BD2Packaging)' != 'true'" Text="Pack with bd2w sdk pack; BD2Packaging=true is required for the version-locked runtime dependency." />
+    <Error Condition="!Exists('$(BD2ToolPublishDir)/GameSdk.dll')" Text="Pack with bd2w sdk pack: published tool missing." />
   </Target>
 </Project>

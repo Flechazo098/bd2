@@ -147,7 +147,11 @@ func TestOldSchemaIsRejectedWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var version string
 	if err := db.QueryRow(`SELECT value FROM metadata WHERE key = 'schema_version'`).Scan(&version); err != nil || version != "0" {
 		t.Fatalf("changed unsupported version %q: %v", version, err)

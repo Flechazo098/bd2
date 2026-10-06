@@ -16,10 +16,9 @@ internal static class PrestigeSkinRewardPresentation
     internal static void Install(Harmony harmony, ManualLogSource logger)
     {
         log = logger;
-        var target = typeof(PrestigeSkinGetUI).GetGameMethod("RecursiveShowPrestigeSkin",
+        MethodInfo target = typeof(PrestigeSkinGetUI).GetGameMethod("RecursiveShowPrestigeSkin",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null,
-            new[] { typeof(Queue<ItemBaseInfo>), typeof(Action) }, null);
-        if (target == null) throw new MissingMethodException("PrestigeSkinGetUI.RecursiveShowPrestigeSkin");
+            [typeof(Queue<ItemBaseInfo>), typeof(Action)], null) ?? throw new MissingMethodException("PrestigeSkinGetUI.RecursiveShowPrestigeSkin");
         harmony.Patch(target, prefix: new HarmonyMethod(typeof(PrestigeSkinRewardPresentation), nameof(ClosePreviousWindows)));
     }
 
@@ -27,7 +26,7 @@ internal static class PrestigeSkinRewardPresentation
     {
         // Snapshot both aliases before removing either window. CloseProcess
         // releases assets and clears the end-step callback; it does not invoke it.
-        var prestige = UIManager.GetUI<PrestigeSkinGetUI>();
+        PrestigeSkinGetUI prestige = UIManager.GetUI<PrestigeSkinGetUI>();
         var special = UIManager.GetUI("SpecialSkinGetUI") as PrestigeSkinGetUI;
         int closed = 0;
         if (prestige != null)

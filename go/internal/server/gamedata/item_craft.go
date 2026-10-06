@@ -28,12 +28,12 @@ func loadItemCraftDesign(db *sql.DB) (*ItemCraftDesign, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var id uint64
 			var raw []byte
 			if err = rows.Scan(&id, &raw); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			r := ItemCraftRecipe{ID: id, Class: 8}
@@ -52,14 +52,14 @@ func loadItemCraftDesign(db *sql.DB) (*ItemCraftDesign, error) {
 			for f, p := range map[int]*uint64{countField: &r.Result.Count, idField: &r.Result.ID, levelField: &r.TalentLevel} {
 				*p, err = optionalScalar(raw, f)
 				if err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, err
 				}
 			}
 			if typeField != 0 {
 				r.Result.Type, err = optionalScalar(raw, typeField)
 				if err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, err
 				}
 			}
@@ -90,7 +90,7 @@ func loadItemCraftDesign(db *sql.DB) (*ItemCraftDesign, error) {
 			}
 		}
 		err = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return nil, err
 		}

@@ -68,12 +68,18 @@ func TestPermanentBuffAndCurrencyAccountRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = op.Rollback()
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eco, _, wallet := economyFixture(t, repo, &economyGraph{})
 	buffs, err = OpenBuffRewards(repo, design)
 	if err != nil {

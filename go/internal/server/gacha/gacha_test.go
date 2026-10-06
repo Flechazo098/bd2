@@ -783,7 +783,11 @@ func TestGachaMultiBuyFailureRollsBackWholeSQLiteOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	service := newMultiBuyTestService(t, repo)
 	if err := service.collection.EnsurePersisted(); err != nil {
 		t.Fatal(err)
@@ -808,7 +812,11 @@ func TestGachaMultiBuyFailureRollsBackWholeSQLiteOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	reopened := newMultiBuyTestService(t, repo)
 	if len(reopened.collection.Costumes()) != 0 || reopened.collection.GachaDailyCount("2026-09-30", 1, 0) != 0 || reopened.collection.GachaUser(1).Point != 0 {
 		t.Fatal("failed request persisted a partial batch")
@@ -1250,7 +1258,7 @@ func TestGachaPointManualExchangePersistsAndRetriesWithoutDoubleGrant(t *testing
 	exchange := wire.AppendVarint(nil, 1, 42)
 	exchange = wire.AppendVarint(exchange, 2, 205)
 	exchange = wire.AppendVarint(exchange, 3, 5)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		code, response, ok, err := service.Handle("/GachaPointManualExchange", exchange)
 		if err != nil || !ok || code != 188 {
 			t.Fatalf("exchange %d code=%d ok=%v err=%v", i, code, ok, err)
@@ -1927,7 +1935,7 @@ func TestInstalledNewbieSelectionGuaranteeStopsAfterThirtyWithoutPoints(t *testi
 	if _, _, _, err := service.Handle("/GachaSelectionSave", selection); err != nil {
 		t.Fatal(err)
 	}
-	for draw := uint64(0); draw < 3; draw++ {
+	for draw := range uint64(3) {
 		request := wire.AppendVarint(nil, 1, draw+2)
 		request = wire.AppendVarint(request, 2, 31)
 		request = wire.AppendVarint(request, 3, 1)

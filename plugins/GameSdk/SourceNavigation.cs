@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -42,10 +43,10 @@ internal static class SourceNavigation
         string directory = Path.GetDirectoryName(Path.GetFullPath(shellPath));
         string sourceRoot = Path.Combine(directory, "sources");
         Directory.CreateDirectory(sourceRoot);
-        using var module = Program.ReadModule(shellPath, dependencyDirectory);
+        using ModuleDefinition module = Program.ReadModule(shellPath, dependencyDirectory);
         using var pe = new PEFile(shellPath, new MemoryStream(File.ReadAllBytes(shellPath)), PEStreamOptions.PrefetchEntireImage);
-        var reader = pe.Metadata;
-        var types = reader.TypeDefinitions.Where(h => reader.GetTypeDefinition(h).GetDeclaringType().IsNil && reader.GetString(reader.GetTypeDefinition(h).Name) != "<Module>").ToArray();
+        MetadataReader reader = pe.Metadata;
+        TypeDefinitionHandle[] types = reader.TypeDefinitions.Where(h => reader.GetTypeDefinition(h).GetDeclaringType().IsNil && reader.GetString(reader.GetTypeDefinition(h).Name) != "<Module>").ToArray();
         var sources = new ConcurrentBag<Source>();
         var timer = Stopwatch.StartNew();
         int completed = 0;
@@ -60,10 +61,10 @@ internal static class SourceNavigation
             {
                 int token = MetadataTokens.GetToken(handle);
                 string relative = PathFor(reader, handle);
-                var primary = worker.Decompile(handle, Path.Combine(sourceRoot, relative), raw: false);
+                Source primary = worker.Decompile(handle, Path.Combine(sourceRoot, relative), raw: false);
                 ApplyImplicitDeclarations(primary.Declarations, definitionsByToken[MetadataTokens.GetToken(handle)]);
                 sources.Add(primary);
-                var typeTokens = Descendants(reader, handle).Select(h => MetadataTokens.GetToken(h)).ToArray();
+                int[] typeTokens = Descendants(reader, handle).Select(h => MetadataTokens.GetToken(h)).ToArray();
                 var wanted = typeTokens.SelectMany(t => expected[t]).ToHashSet();
                 var covered = primary.Declarations.Keys.ToHashSet();
                 if (wanted.Except(covered).Any())
@@ -73,7 +74,7 @@ internal static class SourceNavigation
                     // Roslyn materializes embedded documents by basename, so primary
                     // and generated views must have distinct filenames as well as paths.
                     string generatedPath = Path.Combine(Path.GetDirectoryName(relative), Path.GetFileNameWithoutExtension(relative) + ".generated.cs");
-                    var raw = worker.Decompile(handle, Path.Combine(sourceRoot, "generated", generatedPath), raw: true);
+                    Source raw = worker.Decompile(handle, Path.Combine(sourceRoot, "generated", generatedPath), raw: true);
                     ApplyImplicitDeclarations(raw.Declarations, definitionsByToken[MetadataTokens.GetToken(handle)]);
                     sources.Add(raw);
                     covered.UnionWith(raw.Declarations.Keys);
@@ -82,8 +83,8 @@ internal static class SourceNavigation
                 {
                     // ILSpy hides some runtime-only definitions even with transformations
                     // disabled. Decompile them explicitly, retaining exact token identity.
-                    var supplemental = worker.DecompileMember(MetadataTokens.EntityHandle(missing),
-                        Path.Combine(sourceRoot, "metadata", missing.ToString("X8") + ".cs"));
+                    Source supplemental = worker.DecompileMember(MetadataTokens.EntityHandle(missing),
+                        Path.Combine(sourceRoot, "metadata", missing.ToString("X8", CultureInfo.InvariantCulture) + ".cs"));
                     sources.Add(supplemental);
                     if (!supplemental.Declarations.ContainsKey(missing))
                         throw new InvalidDataException($"Decompiler omitted declaration 0x{missing:X8}; complete navigation cannot be published");
@@ -94,50 +95,50 @@ internal static class SourceNavigation
                 return worker;
             }, worker => worker.Dispose());
 
-        var ordered = sources.OrderBy(s => s.Path, StringComparer.Ordinal).ToArray();
+        Source[] ordered = [.. sources.OrderBy(s => s.Path, StringComparer.Ordinal)];
         var sourceByPath = ordered.ToDictionary(s => s.Path, StringComparer.Ordinal);
         var declarations = new Dictionary<int, Declaration>();
         var methodPoints = new Dictionary<int, (Source Source, List<Point> Points)>();
-        foreach (var source in ordered.OrderBy(s => s.Declarations.Values.FirstOrDefault()?.GeneratedView == true))
+        foreach (Source source in ordered.OrderBy(s => s.Declarations.Values.FirstOrDefault()?.GeneratedView == true))
         {
-            foreach (var declaration in source.Declarations) declarations.TryAdd(declaration.Key, declaration.Value);
-            foreach (var method in source.Methods) methodPoints.TryAdd(method.Key, (source, method.Value));
+            foreach (KeyValuePair<int, Declaration> declaration in source.Declarations) declarations.TryAdd(declaration.Key, declaration.Value);
+            foreach (KeyValuePair<int, List<Point>> method in source.Methods) methodPoints.TryAdd(method.Key, (source, method.Value));
         }
         // Accessors may be folded into properties/events. Their declaration navigation
         // maps to the exact accessor when present, otherwise its owning declaration.
-        foreach (var type in module.GetTypes())
+        foreach (Mono.Cecil.TypeDefinition type in module.GetTypes())
         {
-            foreach (var property in type.Properties)
+            foreach (Mono.Cecil.PropertyDefinition property in type.Properties)
                 Alias(property, property.GetMethod, property.SetMethod);
-            foreach (var @event in type.Events)
+            foreach (Mono.Cecil.EventDefinition @event in type.Events)
                 Alias(@event, @event.AddMethod, @event.RemoveMethod, @event.InvokeMethod);
         }
         void Alias(IMemberDefinition owner, params MethodDefinition[] accessors)
         {
-            if (!declarations.TryGetValue(owner.MetadataToken.ToInt32(), out var location)) return;
-            foreach (var method in accessors.Where(m => m != null))
+            if (!declarations.TryGetValue(owner.MetadataToken.ToInt32(), out Declaration location)) return;
+            foreach (MethodDefinition method in accessors.Where(m => m != null))
                 declarations.TryAdd(method.MetadataToken.ToInt32(), location with { Token = method.MetadataToken.ToInt32(), Name = method.FullName, Kind = "Method" });
         }
-        foreach (var method in module.GetTypes().SelectMany(t => t.Methods).Where(m => m.HasBody))
+        foreach (MethodDefinition method in module.GetTypes().SelectMany(t => t.Methods).Where(m => m.HasBody))
         {
             int token = method.MetadataToken.ToInt32();
-            if (!methodPoints.ContainsKey(token) && declarations.TryGetValue(token, out var declaration))
+            if (!methodPoints.ContainsKey(token) && declarations.TryGetValue(token, out Declaration declaration))
             {
-                var source = sourceByPath[declaration.File];
+                Source source = sourceByPath[declaration.File];
                 methodPoints[token] = (source, new List<Point> { new(0, declaration.Line, declaration.Column, declaration.EndLine, declaration.EndColumn) });
             }
         }
         int bodies = module.GetTypes().Sum(t => t.Methods.Count(m => m.HasBody));
         if (methodPoints.Count < bodies) throw new InvalidDataException($"Navigation coverage incomplete: {methodPoints.Count} symbols for {bodies} method bodies");
         string pdbPath = Path.ChangeExtension(shellPath, ".pdb");
-        var pdb = BuildPdb(pe, module, ordered, declarations, methodPoints, dependencyDirectory);
-        File.WriteAllBytes(pdbPath, pdb.Bytes);
+        (byte[] Bytes, BlobContentId Id) = BuildPdb(pe, module, ordered, declarations, methodPoints, dependencyDirectory);
+        File.WriteAllBytes(pdbPath, Bytes);
         // Attach exactly the PDB we generated to this PE. No implementation is executed.
-        module.Write(shellPath, new WriterParameters { WriteSymbols = true, SymbolWriterProvider = new NavigationSymbolWriterProvider(pdb.Id, pdbPath, pdb.Bytes) });
+        module.Write(shellPath, new WriterParameters { WriteSymbols = true, SymbolWriterProvider = new NavigationSymbolWriterProvider(Id, pdbPath, Bytes) });
         // Store the source root once instead of repeating a long machine-specific
         // cache path for hundreds of thousands of declarations.
         var manifest = new Manifest(2, Program.Hash(shellPath), Program.Hash(pdbPath), typeof(CSharpDecompiler).Assembly.GetName().Version.ToString(), sourceRoot,
-            ordered.Length, declarations.Count, bodies, methodPoints.Count, new List<string>(),
+            ordered.Length, declarations.Count, bodies, methodPoints.Count, [],
             declarations.Values.OrderBy(d => d.Token).Select(d => d with { File = Path.GetRelativePath(sourceRoot, d.File) }).ToList());
         File.WriteAllText(Path.Combine(directory, "navigation.json"), JsonSerializer.Serialize(manifest));
         WriteXmlDocumentation(shellPath, pe, declarations);
@@ -148,48 +149,48 @@ internal static class SourceNavigation
     {
         sdkDirectory = Program.ResolveSdkDirectory(sdkDirectory);
         string library = Path.Combine(sdkDirectory, "lib", Program.ShellName + ".dll"), pdbPath = Path.ChangeExtension(library, ".pdb");
-        var manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(Path.Combine(sdkDirectory, "navigation.json")));
+        Manifest manifest = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(Path.Combine(sdkDirectory, "navigation.json")));
         if (Program.Hash(library) != manifest.AssemblySha256 || Program.Hash(pdbPath) != manifest.PdbSha256)
             throw new InvalidDataException("Source navigation manifest, DLL and PDB do not match");
-        using var peStream = File.OpenRead(library); using var pe = new PEReader(peStream);
-        using var pdbStream = File.OpenRead(pdbPath); using var provider = MetadataReaderProvider.FromPortablePdbStream(pdbStream);
-        var pdb = provider.GetMetadataReader(); var dll = pe.GetMetadataReader();
+        using FileStream peStream = File.OpenRead(library); using var pe = new PEReader(peStream);
+        using FileStream pdbStream = File.OpenRead(pdbPath); using var provider = MetadataReaderProvider.FromPortablePdbStream(pdbStream);
+        MetadataReader pdb = provider.GetMetadataReader(); MetadataReader dll = pe.GetMetadataReader();
         var id = new BlobContentId(pdb.DebugMetadataHeader.Id);
-        var entry = pe.ReadDebugDirectory().Single(d => d.Type == DebugDirectoryEntryType.CodeView);
-        var codeview = pe.ReadCodeViewDebugDirectoryData(entry);
+        DebugDirectoryEntry entry = pe.ReadDebugDirectory().Single(d => d.Type == DebugDirectoryEntryType.CodeView);
+        CodeViewDebugDirectoryData codeview = pe.ReadCodeViewDebugDirectoryData(entry);
         if (codeview.Guid != id.Guid || entry.Stamp != id.Stamp || codeview.Age != 1) throw new InvalidDataException("PDB identity does not match navigation assembly");
-        var checksum = pe.ReadDebugDirectory().Single(d => d.Type == DebugDirectoryEntryType.PdbChecksum);
+        DebugDirectoryEntry checksum = pe.ReadDebugDirectory().Single(d => d.Type == DebugDirectoryEntryType.PdbChecksum);
         if (!pe.ReadPdbChecksumDebugDirectoryData(checksum).Checksum.SequenceEqual(SHA256.HashData(File.ReadAllBytes(pdbPath))))
             throw new InvalidDataException("PE/PDB checksum mismatch");
         int documents = 0, methods = 0;
-        foreach (var documentHandle in pdb.Documents)
+        foreach (DocumentHandle documentHandle in pdb.Documents)
         {
-            var document = pdb.GetDocument(documentHandle);
+            System.Reflection.Metadata.Document document = pdb.GetDocument(documentHandle);
             if (pdb.GetGuid(document.Language) != CSharpLanguage) throw new InvalidDataException("Navigation document language is not C#");
-            var embedded = pdb.GetCustomDebugInformation(documentHandle).Select(h => pdb.GetCustomDebugInformation(h)).Single(c => pdb.GetGuid(c.Kind) == EmbeddedSource);
+            System.Reflection.Metadata.CustomDebugInformation embedded = pdb.GetCustomDebugInformation(documentHandle).Select(h => pdb.GetCustomDebugInformation(h)).Single(c => pdb.GetGuid(c.Kind) == EmbeddedSource);
             byte[] content = DecodeEmbedded(pdb.GetBlobBytes(embedded.Value));
             if (!SHA256.HashData(content).SequenceEqual(pdb.GetBlobBytes(document.Hash))) throw new InvalidDataException("Embedded-source checksum mismatch");
             string path = pdb.GetString(document.Name);
             if (!File.Exists(path) || !File.ReadAllBytes(path).SequenceEqual(content)) throw new InvalidDataException("Local source does not match embedded source: " + path);
             documents++;
         }
-        foreach (var method in dll.MethodDefinitions)
+        foreach (MethodDefinitionHandle method in dll.MethodDefinitions)
         {
-            var definition = dll.GetMethodDefinition(method);
+            System.Reflection.Metadata.MethodDefinition definition = dll.GetMethodDefinition(method);
             if (definition.RelativeVirtualAddress == 0) continue;
-            var debug = pdb.GetMethodDebugInformation(method);
-            var points = debug.GetSequencePoints().ToArray();
-            if (debug.Document.IsNil || points.Length == 0) throw new InvalidDataException("Method lacks navigation symbols: 0x" + MetadataTokens.GetToken(method).ToString("X8"));
+            System.Reflection.Metadata.MethodDebugInformation debug = pdb.GetMethodDebugInformation(method);
+            System.Reflection.Metadata.SequencePoint[] points = [.. debug.GetSequencePoints()];
+            if (debug.Document.IsNil || points.Length == 0) throw new InvalidDataException("Method lacks navigation symbols: 0x" + MetadataTokens.GetToken(method).ToString("X8", CultureInfo.InvariantCulture));
             int size = pe.GetMethodBody(definition.RelativeVirtualAddress).GetILContent().Length;
             if (points.Any(p => !p.IsHidden && (p.Offset >= size || p.StartLine <= 0 || p.EndLine < p.StartLine))) throw new InvalidDataException("Invalid navigation sequence point");
             methods++;
         }
-        foreach (var type in dll.TypeDefinitions)
+        foreach (TypeDefinitionHandle type in dll.TypeDefinitions)
         {
             if (dll.GetString(dll.GetTypeDefinition(type).Name) == "<Module>") continue;
-            var custom = pdb.GetCustomDebugInformation(type).Select(h => pdb.GetCustomDebugInformation(h)).SingleOrDefault(c => pdb.GetGuid(c.Kind) == TypeDocuments);
-            if (custom.Value.IsNil) throw new InvalidDataException("Type lacks source documents: 0x" + MetadataTokens.GetToken(type).ToString("X8"));
-            var blob = pdb.GetBlobReader(custom.Value);
+            System.Reflection.Metadata.CustomDebugInformation custom = pdb.GetCustomDebugInformation(type).Select(h => pdb.GetCustomDebugInformation(h)).SingleOrDefault(c => pdb.GetGuid(c.Kind) == TypeDocuments);
+            if (custom.Value.IsNil) throw new InvalidDataException("Type lacks source documents: 0x" + MetadataTokens.GetToken(type).ToString("X8", CultureInfo.InvariantCulture));
+            BlobReader blob = pdb.GetBlobReader(custom.Value);
             while (blob.RemainingBytes > 0) _ = pdb.GetDocument(MetadataTokens.DocumentHandle(blob.ReadCompressedInteger()));
         }
         if (documents != manifest.Documents || methods != manifest.MethodsWithBodies || manifest.Symbols.Select(s => s.Token).Distinct().Count() != manifest.Declarations)
@@ -199,14 +200,14 @@ internal static class SourceNavigation
 
     internal static void RestoreSources(string sdkDirectory)
     {
-        using var stream = File.OpenRead(Path.Combine(sdkDirectory, "lib", Program.ShellName + ".pdb"));
+        using FileStream stream = File.OpenRead(Path.Combine(sdkDirectory, "lib", Program.ShellName + ".pdb"));
         using var provider = MetadataReaderProvider.FromPortablePdbStream(stream);
-        var reader = provider.GetMetadataReader();
-        foreach (var handle in reader.Documents)
+        MetadataReader reader = provider.GetMetadataReader();
+        foreach (DocumentHandle handle in reader.Documents)
         {
             string path = reader.GetString(reader.GetDocument(handle).Name);
             if (File.Exists(path)) continue;
-            var info = reader.GetCustomDebugInformation(handle).Select(h => reader.GetCustomDebugInformation(h)).Single(c => reader.GetGuid(c.Kind) == EmbeddedSource);
+            System.Reflection.Metadata.CustomDebugInformation info = reader.GetCustomDebugInformation(handle).Select(h => reader.GetCustomDebugInformation(h)).Single(c => reader.GetGuid(c.Kind) == EmbeddedSource);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             File.WriteAllBytes(path, DecodeEmbedded(reader.GetBlobBytes(info.Value)));
         }
@@ -225,38 +226,38 @@ internal static class SourceNavigation
 
     private static void ApplyImplicitDeclarations(Dictionary<int, Declaration> declarations, Mono.Cecil.TypeDefinition type)
     {
-        foreach (var property in type.Properties)
-            if (declarations.TryGetValue(property.MetadataToken.ToInt32(), out var location))
-                foreach (var accessor in new[] { property.GetMethod, property.SetMethod }.Where(m => m != null))
+        foreach (Mono.Cecil.PropertyDefinition property in type.Properties)
+            if (declarations.TryGetValue(property.MetadataToken.ToInt32(), out Declaration location))
+                foreach (MethodDefinition accessor in new[] { property.GetMethod, property.SetMethod }.Where(m => m != null))
                     declarations.TryAdd(accessor.MetadataToken.ToInt32(), location with { Token = accessor.MetadataToken.ToInt32(), Name = accessor.FullName, Kind = "Method" });
-        foreach (var @event in type.Events)
-            if (declarations.TryGetValue(@event.MetadataToken.ToInt32(), out var location))
-                foreach (var accessor in new[] { @event.AddMethod, @event.RemoveMethod, @event.InvokeMethod }.Where(m => m != null))
+        foreach (Mono.Cecil.EventDefinition @event in type.Events)
+            if (declarations.TryGetValue(@event.MetadataToken.ToInt32(), out Declaration location))
+                foreach (MethodDefinition accessor in new[] { @event.AddMethod, @event.RemoveMethod, @event.InvokeMethod }.Where(m => m != null))
                     declarations.TryAdd(accessor.MetadataToken.ToInt32(), location with { Token = accessor.MetadataToken.ToInt32(), Name = accessor.FullName, Kind = "Method" });
-        if (declarations.TryGetValue(type.MetadataToken.ToInt32(), out var declaration))
+        if (declarations.TryGetValue(type.MetadataToken.ToInt32(), out Declaration declaration))
         {
-            foreach (var constructor in type.Methods.Where(m => m.IsConstructor && !declarations.ContainsKey(m.MetadataToken.ToInt32())))
+            foreach (MethodDefinition constructor in type.Methods.Where(m => m.IsConstructor && !declarations.ContainsKey(m.MetadataToken.ToInt32())))
                 declarations.TryAdd(constructor.MetadataToken.ToInt32(), declaration with { Token = constructor.MetadataToken.ToInt32(), Name = constructor.FullName, Kind = "Method" });
-            foreach (var field in type.Fields.Where(f => f.IsRuntimeSpecialName))
+            foreach (Mono.Cecil.FieldDefinition field in type.Fields.Where(f => f.IsRuntimeSpecialName))
                 declarations.TryAdd(field.MetadataToken.ToInt32(), declaration with { Token = field.MetadataToken.ToInt32(), Name = field.FullName, Kind = "Field" });
         }
-        foreach (var nested in type.NestedTypes) ApplyImplicitDeclarations(declarations, nested);
+        foreach (Mono.Cecil.TypeDefinition nested in type.NestedTypes) ApplyImplicitDeclarations(declarations, nested);
     }
 
     private static IEnumerable<TypeDefinitionHandle> Descendants(MetadataReader reader, TypeDefinitionHandle handle)
     {
         yield return handle;
-        foreach (var child in reader.GetTypeDefinition(handle).GetNestedTypes())
-            foreach (var nested in Descendants(reader, child)) yield return nested;
+        foreach (TypeDefinitionHandle child in reader.GetTypeDefinition(handle).GetNestedTypes())
+            foreach (TypeDefinitionHandle nested in Descendants(reader, child)) yield return nested;
     }
     private static string PathFor(MetadataReader reader, TypeDefinitionHandle handle)
     {
-        var type = reader.GetTypeDefinition(handle);
+        System.Reflection.Metadata.TypeDefinition type = reader.GetTypeDefinition(handle);
         static string Safe(string name) => string.Concat(name.Select(c => char.IsLetterOrDigit(c) || c is '_' or '-' or '.' ? c : '_'));
         string ns = reader.GetString(type.Namespace), name = reader.GetString(type.Name);
         // Token suffix prevents collisions from generic arity, case-insensitive filesystems,
         // and names whose invalid filename characters normalize to the same spelling.
-        return Path.Combine(Safe(ns), Safe(name) + "." + MetadataTokens.GetToken(handle).ToString("X8") + ".cs");
+        return Path.Combine(Safe(ns), Safe(name) + "." + MetadataTokens.GetToken(handle).ToString("X8", CultureInfo.InvariantCulture) + ".cs");
     }
 
     private sealed class Worker : IDisposable
@@ -278,24 +279,32 @@ internal static class SourceNavigation
         }
         private static DecompilerSettings Settings(bool raw) => new()
         {
-            ThrowOnAssemblyResolveErrors = true, UseDebugSymbols = false, ShowXmlDocumentation = false,
-            UseNestedDirectoriesForNamespaces = true, AnonymousMethods = !raw, AnonymousTypes = !raw,
-            AsyncAwait = !raw, YieldReturn = !raw, AutomaticProperties = !raw, AutomaticEvents = !raw,
-            GetterOnlyAutomaticProperties = !raw, UseExpressionBodyForCalculatedGetterOnlyProperties = !raw
+            ThrowOnAssemblyResolveErrors = true,
+            UseDebugSymbols = false,
+            ShowXmlDocumentation = false,
+            UseNestedDirectoriesForNamespaces = true,
+            AnonymousMethods = !raw,
+            AnonymousTypes = !raw,
+            AsyncAwait = !raw,
+            YieldReturn = !raw,
+            AutomaticProperties = !raw,
+            AutomaticEvents = !raw,
+            GetterOnlyAutomaticProperties = !raw,
+            UseExpressionBodyForCalculatedGetterOnlyProperties = !raw
         };
         internal Source Decompile(TypeDefinitionHandle type, string path, bool raw)
         {
-            var decompiler = raw ? this.raw : primary;
-            return Render(decompiler, decompiler.DecompileTypes(new[] { type }), path, raw);
+            CSharpDecompiler decompiler = raw ? this.raw : primary;
+            return Render(decompiler, decompiler.DecompileTypes((TypeDefinitionHandle[])[type]), path, raw);
         }
         internal Source DecompileMember(EntityHandle member, string path)
         {
-            var source = Render(raw, raw.Decompile(member), path, true);
+            Source source = Render(raw, raw.Decompile(member), path, true);
             int token = MetadataTokens.GetToken(member);
             if (!source.Declarations.ContainsKey(token))
             {
-                var text = Encoding.UTF8.GetString(source.Content);
-                source.Declarations[token] = new Declaration(token, "Metadata declaration 0x" + token.ToString("X8"), member.Kind.ToString(), path, 2, 1, text.Count(c => c == '\n') + 1, 1, true);
+                string text = Encoding.UTF8.GetString(source.Content);
+                source.Declarations[token] = new Declaration(token, "Metadata declaration 0x" + token.ToString("X8", CultureInfo.InvariantCulture), member.Kind.ToString(), path, 2, 1, text.Count(c => c == '\n') + 1, 1, true);
             }
             return source;
         }
@@ -305,11 +314,11 @@ internal static class SourceNavigation
             // Keep token identity in the index/PDB while spelling those identifiers
             // legally in the generated view, so one state machine cannot break the
             // semantic parser and navigation for all ordinary members in its file.
-            foreach (var identifier in tree.DescendantsAndSelf.OfType<Identifier>())
+            foreach (Identifier identifier in tree.DescendantsAndSelf.OfType<Identifier>())
             {
                 string name = identifier.Name;
                 if (name.Any(c => !(char.IsLetterOrDigit(c) || c == '_')))
-                    identifier.Name = "__generated_" + string.Concat(name.Select(c => char.IsLetterOrDigit(c) || c == '_' ? c.ToString() : "u" + ((int)c).ToString("X4")));
+                    identifier.Name = "__generated_" + string.Concat(name.Select(c => char.IsLetterOrDigit(c) || c == '_' ? c.ToString() : "u" + ((int)c).ToString("X4", CultureInfo.InvariantCulture)));
             }
             tree.InsertChildAfter(null, new Comment(" Decompiled from the matching game DLL using the shared BD2 names table. For navigation; not compiled or executed."), Roles.Comment);
             using var text = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
@@ -319,20 +328,20 @@ internal static class SourceNavigation
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             File.WriteAllBytes(path, content);
             var declarations = new Dictionary<int, Declaration>();
-            foreach (var node in tree.DescendantsAndSelf)
+            foreach (AstNode node in tree.DescendantsAndSelf)
             {
                 if (node is not EntityDeclaration && node is not VariableInitializer && node is not Accessor) continue;
                 if (node.GetSymbol() is not IEntity entity || entity.MetadataToken.IsNil) continue;
                 int token = MetadataTokens.GetToken(entity.MetadataToken);
-                var start = node is EntityDeclaration declaration && !declaration.NameToken.IsNull ? declaration.NameToken.StartLocation : node.StartLocation;
-                var end = node.EndLocation;
+                TextLocation start = node is EntityDeclaration declaration && !declaration.NameToken.IsNull ? declaration.NameToken.StartLocation : node.StartLocation;
+                TextLocation end = node.EndLocation;
                 if (start.Line <= 0 || end.Line < start.Line) continue;
                 declarations.TryAdd(token, new Declaration(token, entity.ReflectionName, entity.SymbolKind.ToString(), path, start.Line, start.Column, end.Line, end.Column, generated));
             }
             var points = new Dictionary<int, List<Point>>();
-            foreach (var function in decompiler.CreateSequencePoints(tree))
+            foreach (KeyValuePair<ICSharpCode.Decompiler.IL.ILFunction, List<ICSharpCode.Decompiler.DebugInfo.SequencePoint>> function in decompiler.CreateSequencePoints(tree))
             {
-                var method = function.Key.MoveNextMethod ?? function.Key.Method;
+                IMethod method = function.Key.MoveNextMethod ?? function.Key.Method;
                 if (method == null || method.MetadataToken.IsNil) continue;
                 int token = MetadataTokens.GetToken(method.MetadataToken);
                 var sequence = function.Value.Where(p => !p.IsHidden).Select(p => new Point(p.Offset, p.StartLine, p.StartColumn, p.EndLine, p.EndColumn)).ToList();
@@ -349,11 +358,11 @@ internal static class SourceNavigation
         var metadata = new MetadataBuilder();
         var documents = new Dictionary<string, DocumentHandle>(StringComparer.Ordinal);
         var custom = new List<(EntityHandle Parent, Guid Kind, byte[] Bytes)>();
-        var csharp = metadata.GetOrAddGuid(CSharpLanguage);
-        var sha256 = metadata.GetOrAddGuid(new Guid("8829D00F-11B8-4213-878B-770E8597AC16"));
-        foreach (var source in sources)
+        GuidHandle csharp = metadata.GetOrAddGuid(CSharpLanguage);
+        GuidHandle sha256 = metadata.GetOrAddGuid(new Guid("8829D00F-11B8-4213-878B-770E8597AC16"));
+        foreach (Source source in sources)
         {
-            var document = metadata.AddDocument(metadata.GetOrAddDocumentName(source.Path), sha256, metadata.GetOrAddBlob(SHA256.HashData(source.Content)), csharp);
+            DocumentHandle document = metadata.AddDocument(metadata.GetOrAddDocumentName(source.Path), sha256, metadata.GetOrAddBlob(SHA256.HashData(source.Content)), csharp);
             documents.Add(source.Path, document);
             using var stream = new MemoryStream();
             using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true)) writer.Write(source.Content.Length);
@@ -361,17 +370,17 @@ internal static class SourceNavigation
             custom.Add((document, EmbeddedSource, stream.ToArray()));
         }
         var methodDefs = module.GetTypes().SelectMany(t => t.Methods).ToDictionary(m => m.MetadataToken.ToInt32());
-        foreach (var handle in pe.Metadata.MethodDefinitions)
+        foreach (MethodDefinitionHandle handle in pe.Metadata.MethodDefinitions)
         {
             int token = MetadataTokens.GetToken(handle);
-            if (!methods.TryGetValue(token, out var mapped)) { metadata.AddMethodDebugInformation(default, default); continue; }
-            var points = mapped.Points.Where(p => p.Offset >= 0 && p.Offset < methodDefs[token].Body.CodeSize && p.Line > 0 && p.EndLine >= p.Line)
-                .GroupBy(p => p.Offset).Select(g => g.First()).OrderBy(p => p.Offset).ToArray();
+            if (!methods.TryGetValue(token, out (Source Source, List<Point> Points) mapped)) { metadata.AddMethodDebugInformation(default, default); continue; }
+            Point[] points = [.. mapped.Points.Where(p => p.Offset >= 0 && p.Offset < methodDefs[token].Body.CodeSize && p.Line > 0 && p.EndLine >= p.Line)
+                .GroupBy(p => p.Offset).Select(g => g.First()).OrderBy(p => p.Offset)];
             var blob = new BlobBuilder(); blob.WriteCompressedInteger(0); // no local signature is needed for navigation
             int previousOffset = 0, previousLine = 0, previousColumn = 0;
             for (int i = 0; i < points.Length; i++)
             {
-                var p = points[i]; blob.WriteCompressedInteger(i == 0 ? p.Offset : p.Offset - previousOffset);
+                Point p = points[i]; blob.WriteCompressedInteger(i == 0 ? p.Offset : p.Offset - previousOffset);
                 int lines = p.EndLine - p.Line; blob.WriteCompressedInteger(lines);
                 int columns = p.EndColumn - p.Column;
                 if (lines == 0) blob.WriteCompressedInteger(Math.Max(1, columns)); else blob.WriteCompressedSignedInteger(columns);
@@ -381,21 +390,21 @@ internal static class SourceNavigation
             }
             metadata.AddMethodDebugInformation(documents[mapped.Source.Path], metadata.GetOrAddBlob(blob));
         }
-        foreach (var type in module.GetTypes())
+        foreach (Mono.Cecil.TypeDefinition type in module.GetTypes())
         {
-            if (!declarations.TryGetValue(type.MetadataToken.ToInt32(), out var d)) continue;
+            if (!declarations.TryGetValue(type.MetadataToken.ToInt32(), out Declaration d)) continue;
             var docs = new BlobBuilder(); docs.WriteCompressedInteger(MetadataTokens.GetRowNumber(documents[d.File]));
             custom.Add((MetadataTokens.EntityHandle(type.MetadataToken.ToInt32()), TypeDocuments, docs.ToArray()));
         }
-        var options = Encoding.UTF8.GetBytes("language\0C#\0language-version\0" + "12.0\0compiler-version\0BD2.GameSdk\0output-kind\0DynamicallyLinkedLibrary\0optimization\0debug\0");
+        byte[] options = Encoding.UTF8.GetBytes("language\0C#\0language-version\0" + "12.0\0compiler-version\0BD2.GameSdk\0output-kind\0DynamicallyLinkedLibrary\0optimization\0debug\0");
         custom.Add((MetadataTokens.EntityHandle(1), CompilationOptions, options));
         var references = new BlobBuilder();
-        foreach (var reference in module.AssemblyReferences)
+        foreach (Mono.Cecil.AssemblyNameReference reference in module.AssemblyReferences)
         {
             string path = Path.Combine(dependencies, reference.Name + ".dll");
             if (!File.Exists(path)) continue;
-            using var stream = File.OpenRead(path); using var dependency = new PEReader(stream);
-            var reader = dependency.GetMetadataReader();
+            using FileStream stream = File.OpenRead(path); using var dependency = new PEReader(stream);
+            MetadataReader reader = dependency.GetMetadataReader();
             references.WriteBytes(Encoding.UTF8.GetBytes(Path.GetFileName(path))); references.WriteByte(0);
             references.WriteByte(0); // global alias
             references.WriteByte(1); // combined embedInteropTypes=false, image kind=assembly
@@ -404,16 +413,16 @@ internal static class SourceNavigation
             references.WriteBytes(reader.GetGuid(reader.GetModuleDefinition().Mvid).ToByteArray());
         }
         custom.Add((MetadataTokens.EntityHandle(1), CompilationReferences, references.ToArray()));
-        foreach (var info in custom.OrderBy(c => CodedIndex.HasCustomDebugInformation(c.Parent)))
-            metadata.AddCustomDebugInformation(info.Parent, metadata.GetOrAddGuid(info.Kind), metadata.GetOrAddBlob(info.Bytes));
+        foreach ((EntityHandle Parent, Guid Kind, byte[] Bytes) in custom.OrderBy(c => CodedIndex.HasCustomDebugInformation(c.Parent)))
+            metadata.AddCustomDebugInformation(Parent, metadata.GetOrAddGuid(Kind), metadata.GetOrAddBlob(Bytes));
         var counts = Enumerable.Range(0, 64).Select(i => pe.Metadata.GetTableRowCount((TableIndex)i)).ToImmutableArray();
         var builder = new PortablePdbBuilder(metadata, counts, default, blobs =>
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            foreach (var blob in blobs) hash.AppendData(blob.GetBytes());
+            foreach (Blob blob in blobs) hash.AppendData(blob.GetBytes());
             return BlobContentId.FromHash(hash.GetHashAndReset());
         });
-        var output = new BlobBuilder(); var id = builder.Serialize(output);
+        var output = new BlobBuilder(); BlobContentId id = builder.Serialize(output);
         return (output.ToArray(), id);
     }
 
@@ -428,14 +437,14 @@ internal static class SourceNavigation
         // navigation. Repeating the same boilerplate for every member inflated
         // each XML file to hundreds of MB without adding API documentation.
         foreach (IEntity entity in decompiler.TypeSystem.MainModule.TypeDefinitions)
-            {
-                if (entity.MetadataToken.IsNil || !declarations.TryGetValue(MetadataTokens.GetToken(entity.MetadataToken), out var location)) continue;
-                string id = ICSharpCode.Decompiler.Documentation.IdStringProvider.GetIdString(entity);
-                writer.WriteStartElement("member"); writer.WriteAttributeString("name", id);
-                writer.WriteElementString("summary", "Readable game type. Decompiled source: " + Path.GetRelativePath(Path.Combine(Path.GetDirectoryName(assembly), "sources"), location.File) + ":" + location.Line);
-                writer.WriteElementString("remarks", "Navigation-only reference; the runtime implementation is in the matching Assembly-CSharp.");
-                writer.WriteEndElement();
-            }
+        {
+            if (entity.MetadataToken.IsNil || !declarations.TryGetValue(MetadataTokens.GetToken(entity.MetadataToken), out Declaration location)) continue;
+            string id = ICSharpCode.Decompiler.Documentation.IdStringProvider.GetIdString(entity);
+            writer.WriteStartElement("member"); writer.WriteAttributeString("name", id);
+            writer.WriteElementString("summary", "Readable game type. Decompiled source: " + Path.GetRelativePath(Path.Combine(Path.GetDirectoryName(assembly), "sources"), location.File) + ":" + location.Line);
+            writer.WriteElementString("remarks", "Navigation-only reference; the runtime implementation is in the matching Assembly-CSharp.");
+            writer.WriteEndElement();
+        }
         writer.WriteEndElement(); writer.WriteEndElement();
     }
 
@@ -455,10 +464,10 @@ internal static class SourceNavigation
                 using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
                 writer.Write(0x53445352); writer.Write(id.Guid.ToByteArray()); writer.Write(1); writer.Write(Encoding.UTF8.GetBytes(path)); writer.Write((byte)0);
                 byte[] codeview = stream.ToArray();
-                return new ImageDebugHeader(new[] {
+                return new ImageDebugHeader([
                     new ImageDebugHeaderEntry(new ImageDebugDirectory { Type = ImageDebugType.CodeView, MajorVersion = 0x100, MinorVersion = 0x504d, TimeDateStamp = (int)id.Stamp, SizeOfData = codeview.Length }, codeview),
-                    new ImageDebugHeaderEntry(new ImageDebugDirectory { Type = ImageDebugType.PdbChecksum, SizeOfData = 39 }, Encoding.UTF8.GetBytes("SHA256\0").Concat(SHA256.HashData(pdb)).ToArray())
-                });
+                    new ImageDebugHeaderEntry(new ImageDebugDirectory { Type = ImageDebugType.PdbChecksum, SizeOfData = 39 }, [.. Encoding.UTF8.GetBytes("SHA256\0"), .. SHA256.HashData(pdb)])
+                ]);
             }
         }
     }

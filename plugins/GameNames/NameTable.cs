@@ -1,10 +1,14 @@
+#pragma warning disable IDE0005
 using System.Collections.Generic;
+#pragma warning restore IDE0005
 using System.Runtime.Serialization;
 
 // DataContractJsonSerializer populates these internal fields from the embedded table.
 #pragma warning disable CS0649
 
+#pragma warning disable IDE0130
 namespace BD2.GameNames.Internal;
+#pragma warning restore IDE0130
 
 [DataContract]
 internal sealed class NameTable
@@ -16,8 +20,8 @@ internal sealed class NameTable
     [DataMember] public string assembly_sha256;
     [DataMember] public string mapping_sha256;
     [DataMember] public string generator_sha256;
-    [DataMember] public List<TypeName> types = new List<TypeName>();
-    [DataMember] public List<MemberName> members = new List<MemberName>();
+    [DataMember] public List<TypeName> types = [];
+    [DataMember] public List<MemberName> members = [];
 }
 
 [DataContract]
@@ -37,7 +41,7 @@ internal sealed class MemberName
     [DataMember] public string readable;
     [DataMember] public string original;
     [DataMember] public string signature;
-    [DataMember] public List<ParameterName> parameters = new List<ParameterName>();
+    [DataMember] public List<ParameterName> parameters = [];
 }
 
 [DataContract]

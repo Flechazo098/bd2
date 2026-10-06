@@ -37,7 +37,7 @@ func TestAchievementUpdatePersistsAndRetries(t *testing.T) {
 	store := stateio.NewMemory()
 	s := achievementTestService(t, store)
 	req := achievementRequest(10, 7, 1)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		code, body, ok, err := s.Handle("/AchievementUpdate", req)
 		if err != nil || code != 167 || !ok || len(body) != 0 {
 			t.Fatalf("update: %d %x %v %v", code, body, ok, err)
@@ -91,7 +91,7 @@ func TestAchievementInvalidRequestsDoNotMutate(t *testing.T) {
 func TestAchievementBatchRetryKeepsEarlierReceipt(t *testing.T) {
 	s := achievementTestService(t, stateio.NewMemory())
 	requests := [][]byte{achievementRequest(10, 7, 1), achievementRequest(11, 7, 2)}
-	for retry := 0; retry < 2; retry++ {
+	for range 2 {
 		for _, request := range requests {
 			if _, _, _, err := s.Handle("/AchievementUpdate", request); err != nil {
 				t.Fatal(err)
@@ -165,7 +165,11 @@ func TestAchievementTransactionRollbackAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s = achievementTestService(t, repo)
 	if achievementValue(t, s) != 1 {
 		t.Fatal("SQLite reopen lost count")
@@ -185,7 +189,11 @@ func TestAchievementTransactionRollbackAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer recovered.Close()
+	defer func() {
+		if err := recovered.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s = achievementTestService(t, recovered)
 	if achievementValue(t, s) != 1 {
 		t.Fatal("rolled-back increment survived")

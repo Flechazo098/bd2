@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -192,7 +192,7 @@ func (s *FriendshipService) info(entries map[string]FriendshipEntry) []byte {
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var body []byte
 	for _, id := range ids {
 		state := FriendshipState{CostumeID: id, Level: 1}
@@ -303,13 +303,7 @@ func (s *FriendshipService) counsel(request []byte, state FriendshipState, max u
 	if err != nil {
 		return nil, err
 	}
-	completed := false
-	for _, id := range state.Sessions {
-		if id == session {
-			completed = true
-			break
-		}
-	}
+	completed := slices.Contains(state.Sessions, session)
 	if !free {
 		rewards = append(rewards, s.design.Default.CounselingRewards...)
 		daily.Used++
@@ -331,7 +325,7 @@ func (s *FriendshipService) counsel(request []byte, state FriendshipState, max u
 	if quick == 0 {
 		if !completed {
 			next.Sessions = append(next.Sessions, session)
-			sort.Slice(next.Sessions, func(i, j int) bool { return next.Sessions[i] < next.Sessions[j] })
+			slices.Sort(next.Sessions)
 		}
 	}
 	bundle, err := s.grant(key, rewards)
@@ -395,7 +389,7 @@ func (s *FriendshipService) grant(identity string, rewards []gamedata.Reward) ([
 			if reward.ID == 0 || reward.ID > math.MaxInt32 {
 				return nil, errors.New("player: invalid friendship item reward")
 			}
-			items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+			items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	if _, err := s.wallet.GrantQuestOnce(identity+":currency", rewards); err != nil {

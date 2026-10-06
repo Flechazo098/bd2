@@ -17,17 +17,17 @@ func LoadRewardCostumeCatalog(root, version string) (*RegularGachaCatalog, error
 		var unique uint64
 		var raw []byte
 		if e = chars.Scan(&unique, &raw); e != nil {
-			chars.Close()
+			_ = chars.Close()
 			return nil, e
 		}
 		growth, e := optionalScalar(raw, 10)
 		if e != nil {
-			chars.Close()
+			_ = chars.Close()
 			return nil, e
 		}
 		temporary, e := optionalScalar(raw, 21)
 		if e != nil {
-			chars.Close()
+			_ = chars.Close()
 			return nil, e
 		}
 		if growth == 1 && temporary == 0 {
@@ -35,10 +35,10 @@ func LoadRewardCostumeCatalog(root, version string) (*RegularGachaCatalog, error
 		}
 	}
 	if e = chars.Err(); e != nil {
-		chars.Close()
+		_ = chars.Close()
 		return nil, e
 	}
-	chars.Close()
+	_ = chars.Close()
 	rows, err := db.Query("SELECT id,useUniqueCharId FROM CostumeTable ORDER BY id")
 	if err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func LoadRewardCostumeCatalog(root, version string) (*RegularGachaCatalog, error
 	for rows.Next() {
 		var id, unique uint64
 		if err = rows.Scan(&id, &unique); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if eligible[unique] == 1 {
@@ -55,10 +55,10 @@ func LoadRewardCostumeCatalog(root, version string) (*RegularGachaCatalog, error
 		}
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	out := &RegularGachaCatalog{characters: map[uint64]CharacterDesign{}}
 	for _, id := range ids {
 		design, e := loadGachaCharacterDesign(db, id)

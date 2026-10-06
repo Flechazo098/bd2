@@ -405,7 +405,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 			if field.Type != 2 {
 				return nil
 			}
-			if field.Number == 4 {
+			if field.Number == 4 { //nolint:staticcheck // QF1003
 				response = wire.AppendBytes(response, 1, field.Value)
 			} else if field.Number == 5 {
 				response = wire.AppendBytes(response, 2, field.Value)

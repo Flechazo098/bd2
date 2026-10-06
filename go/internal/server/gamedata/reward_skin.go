@@ -2,6 +2,7 @@ package gamedata
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 )
 
@@ -27,7 +28,7 @@ func LoadPrestigeSkinCatalog(root, version string) (*PrestigeSkinCatalog, error)
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	catalog := &PrestigeSkinCatalog{Skins: map[uint64]uint64{}}
 	for rows.Next() {
 		var id uint64
@@ -47,7 +48,7 @@ func LoadPrestigeSkinCatalog(root, version string) (*PrestigeSkinCatalog, error)
 	if e := rows.Err(); e != nil {
 		return nil, e
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, e = db.Query("SELECT ProtoBuf FROM SkinSellingTable ORDER BY groupId,id")
 	if e != nil {
 		return nil, e
@@ -95,7 +96,7 @@ func (c *PrestigeSkinCatalog) Giftable(cashAvailable func(CashProductKey) bool) 
 			result = append(result, design)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	slices.Sort(result)
 	return result
 }
 

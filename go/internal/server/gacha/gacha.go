@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -487,13 +488,7 @@ func (s *Service) buyWithIdentity(request []byte, seq uint64, identity string) (
 		return 146, nil, true, errors.New("gacha: discounted or content-ticket draw cannot use ordinary gacha tickets")
 	}
 	for _, ticket := range tickets {
-		allowed := false
-		for _, ticketID := range design.TicketIDs {
-			if ticket.ID == ticketID {
-				allowed = true
-				break
-			}
-		}
+		allowed := slices.Contains(design.TicketIDs, ticket.ID)
 		if !allowed {
 			return 146, nil, true, fmt.Errorf("gacha: ticket %d is not valid for gacha %d", ticket.ID, id)
 		}
@@ -706,10 +701,6 @@ func (s *Service) stepForGacha(gachaID uint64) (uint64, gamedata.GachaStepDesign
 // Scheduled equipment draws update GachaUser/GachaFixed accounting. Standalone
 // ticket-only draws have no schedule group and persist only their idempotency
 // marker plus the generated equipment instances.
-func (s *Service) buyEquipment(seq, buyType uint64, tickets []player.Item, design gamedata.EquipmentGacha) (int, []byte, bool, error) {
-	return s.buyEquipmentWithIdentity(seq, buyType, tickets, design, "")
-}
-
 func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player.Item, design gamedata.EquipmentGacha, identity string) (int, []byte, bool, error) {
 	if s.equipmentInventory == nil {
 		return 146, nil, true, errors.New("gacha: equipment inventory not attached")
@@ -722,13 +713,7 @@ func (s *Service) buyEquipmentWithIdentity(seq, buyType uint64, tickets []player
 		return 146, nil, true, errors.New("gacha: ticket-only equipment draw requires a ticket")
 	}
 	for _, ticket := range tickets {
-		allowed := false
-		for _, ticketID := range design.TicketIDs {
-			if ticket.ID == ticketID {
-				allowed = true
-				break
-			}
-		}
+		allowed := slices.Contains(design.TicketIDs, ticket.ID)
 		if !allowed {
 			return 146, nil, true, fmt.Errorf("gacha: ticket %d is not valid for equipment gacha %d", ticket.ID, design.ID)
 		}

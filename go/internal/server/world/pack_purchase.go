@@ -64,7 +64,7 @@ func (s *Service) grantPurchaseRewards(identity string, rewards []gamedata.Rewar
 			if reward.ID == 0 {
 				return nil, fmt.Errorf("world: invalid pack ticket")
 			}
-			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	var costumeIDs []uint64

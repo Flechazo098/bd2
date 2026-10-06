@@ -16,13 +16,13 @@ func LoadRewardEquipmentCatalog(root, version string) (*EquipmentGachaCatalog, e
 	for rows.Next() {
 		var id uint64
 		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	if err = rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err = rows.Close(); err != nil {

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 )
 
@@ -70,7 +70,7 @@ func TestItemCraftAgainstInstalledGameData(t *testing.T) {
 					producers = append(producers, id)
 				}
 			}
-			sort.Slice(producers, func(i, j int) bool { return producers[i] < producers[j] })
+			slices.Sort(producers)
 			if len(producers) == 0 {
 				t.Fatal("missing actual producers")
 			}
@@ -100,14 +100,14 @@ func TestItemCraftAgainstInstalledGameData(t *testing.T) {
 						ids = append(ids, rid)
 					}
 				}
-				sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+				slices.Sort(ids)
 				if len(ids) == 0 {
 					t.Fatal("missing level1 recipe")
 				}
 				r := recipes[ids[0]]
 				var materials []gamedata.BattleReward
 				for _, c := range r.Costs {
-					materials = append(materials, gamedata.BattleReward{Type: c.Type, ID: c.ID, Count: c.Count})
+					materials = append(materials, gamedata.BattleReward{Type: c.Type, ID: c.ID, Count: c.Count}) //nolint:staticcheck // S1016
 				}
 				if _, e = items.GrantOnce("materials", materials); e != nil {
 					t.Fatal(e)
@@ -229,7 +229,11 @@ func TestAlchemyBatchSQLiteCanExceedOrdinaryCraftLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	s, items, chars, wallet := craftFixture(t, repo, 8)
 	rule := s.talents.Rules[[2]uint64{42, 2}]
 	rule.Values[0] = 1
@@ -292,12 +296,18 @@ func TestItemCraftFinalReceiptFailureRollsBackEveryDomain(t *testing.T) {
 	if e = op.Rollback(); e != nil && !errors.Is(e, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(e)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, e = accountstate.Open(path)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	next, items, chars, wallet := craftFixture(t, repo, 8)
 	c, _ := chars.Find(77)
 	if c.TalentExp != 0 || wallet.Snapshot().Catalyst != 100 || craftCount(items, 8, 1) != 200 || craftCount(items, 8, 2) != 2 {

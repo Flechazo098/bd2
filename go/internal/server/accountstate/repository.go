@@ -107,7 +107,7 @@ func claimWriterEpoch(ctx context.Context, db *sql.DB) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("accountstate: begin writer claim: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var raw string
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM metadata WHERE key='writer_epoch'`).Scan(&raw); err != nil {
 		return 0, fmt.Errorf("accountstate: read writer epoch: %w", err)
@@ -148,7 +148,7 @@ func (r *Repository) RequireDomains(required ...string) error {
 	if err != nil {
 		return fmt.Errorf("accountstate: list domains: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var found []string
 	for rows.Next() {
 		var name string
@@ -225,7 +225,7 @@ func (r *Repository) LoadContext(ctx context.Context, name string) ([]byte, int6
 	if err != nil {
 		return nil, 0, false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	return tx.Load(name)
 }
 
@@ -236,7 +236,7 @@ func (r *Repository) SaveContext(ctx context.Context, name string, payload []byt
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	generation, err := tx.Save(name, payload)
 	if err != nil {
 		return 0, err

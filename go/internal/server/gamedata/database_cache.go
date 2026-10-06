@@ -93,7 +93,7 @@ func memoryDatabase(plain []byte) (*sql.DB, error) {
 	db.SetMaxIdleConns(1)
 	conn, err := db.Conn(context.Background())
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	err = conn.Raw(func(driver any) error {
@@ -118,7 +118,7 @@ func memoryDatabase(plain []byte) (*sql.DB, error) {
 		err = closeErr
 	}
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return db, nil
@@ -170,7 +170,6 @@ func (c *DatabaseCache) Open(root, version, logical string) (*sql.DB, func(), er
 				db, loadErr = memoryDatabase(plain)
 			}
 		}
-		plain = nil
 		c.loadMu.Unlock()
 		if loadErr == nil {
 			slog.Debug("GameData database cached", "logical", logical, "version", version, "image_bytes", size, "load_ms", float64(time.Since(loadStarted).Microseconds())/1000)

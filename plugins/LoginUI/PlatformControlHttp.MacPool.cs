@@ -6,10 +6,10 @@ namespace Bd2LoginUI;
 
 internal static partial class PlatformControlHttp
 {
-    private static readonly Dictionary<string, CurlPool> CurlPools = new Dictionary<string, CurlPool>();
+    private static readonly Dictionary<string, CurlPool> CurlPools = [];
     private sealed class CurlPool
     {
-        internal readonly Stack<IntPtr> Idle = new Stack<IntPtr>();
+        internal readonly Stack<IntPtr> Idle = new();
         internal int Users;
         internal DateTime LastUsed;
         internal bool Retired;
@@ -22,7 +22,7 @@ internal static partial class PlatformControlHttp
         lock (PoolLock)
         {
             if (shuttingDown) throw new OperationCanceledException();
-            List<string> stale = new List<string>();
+            var stale = new List<string>();
             foreach (KeyValuePair<string, CurlPool> entry in CurlPools)
                 if (entry.Value.Users == 0 && (DateTime.UtcNow - entry.Value.LastUsed > TimeSpan.FromMinutes(2) || CurlPools.Count >= 16)) stale.Add(entry.Key);
             foreach (string old in stale)
