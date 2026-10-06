@@ -37,7 +37,7 @@ func LoadEventActionsDesign(root, version string) (*EventActionsDesign, error) {
 	}
 	defer done()
 	d := &EventActionsDesign{Tables: map[string][]EventActionRow{}, SpawnRewards: map[[2]uint64]Reward{}}
-	for _, table := range []string{"FieldEventDefaultTable", "FieldSpawnEventTable", "FieldEventMonsterTable", "FireworksTable", "VotingEventTable", "VotingCandidateTable", "VotingRoundTable", "VotingCountRewardTable", "VotingSeasonTable", "FriendshipSpecialEpisodeTable", "NpcQuizTable", "TacticsBingoGroupTable", "TacticsBingoTable", "CafeteriaDefaultTable", "CafeteriaEventTable"} {
+	for _, table := range []string{"FieldEventDefaultTable", "FieldSpawnEventTable", "FieldEventMonsterTable", "FireworksTable", "VotingEventTable", "VotingCandidateTable", "VotingRoundTable", "VotingCountRewardTable", "VotingSeasonTable", "FriendshipSpecialEpisodeTable", "NpcQuizTable", "TacticsBingoGroupTable", "TacticsBingoTable", "CharGroupTable", "CharTable", "CafeteriaDefaultTable", "CafeteriaEventTable"} {
 		rows, e := db.Query("SELECT ProtoBuf FROM " + table)
 		if e != nil {
 			return nil, e

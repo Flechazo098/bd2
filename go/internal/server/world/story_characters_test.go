@@ -14,10 +14,11 @@ import (
 	"testing"
 )
 
-// CharTable10140 is the temporary blacksmith joining pack1 quest11.
+// Source: GameData 20260923193640 CharTable10140 is the temporary blacksmith
+// joining pack1 quest11, and Proto/Net/CharDBInfo supplies talent_level field8.
 // Its TalentSkillTable group901 has row1 only; omitted field8 defaults to zero
 // in the client and causes a lookup of the nonexistent group901/row0.
-func TestInstalledStoryPartyInitialTalentPersistsAndEncodes(t *testing.T) {
+func TestInstalledStoryCharactersInitialTalentPersistsAndEncodes(t *testing.T) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
@@ -50,7 +51,7 @@ func TestInstalledStoryPartyInitialTalentPersistsAndEncodes(t *testing.T) {
 		return storage, s
 	}
 	storage, s := open()
-	party, err := s.ResolveStoryParty(1, 11)
+	party, err := s.resolveStoryCharacters(1, 11)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,6 +64,11 @@ func TestInstalledStoryPartyInitialTalentPersistsAndEncodes(t *testing.T) {
 	if joined.InvenIndex == 0 || joined.TalentLevel != 1 {
 		t.Fatalf("temporary blacksmith has invalid initial talent: %+v", joined)
 	}
+	before := s.characters.RawAll()
+	repeated, err := s.resolveStoryCharacters(1, 11)
+	if err != nil || !reflect.DeepEqual(repeated, party) || !reflect.DeepEqual(s.characters.RawAll(), before) {
+		t.Fatalf("repeated temporary resolution changed identity or character state: err=%v", err)
+	}
 	if err = s.characters.SetCurrentHealth(joined.InvenIndex, 7); err != nil {
 		t.Fatal(err)
 	}
@@ -70,9 +76,12 @@ func TestInstalledStoryPartyInitialTalentPersistsAndEncodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, s = open()
-	characters, _, err := s.resolveActivePartyWires(1, 11)
+	characters, decks, err := s.resolveActivePartyWires(1, 11)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(decks) != 0 {
+		t.Fatal("temporary talent character fabricated an unsaved battle deck")
 	}
 	for _, data := range characters {
 		id, _, err := wire.Varint(data, 2)
@@ -95,9 +104,9 @@ func TestInstalledStoryPartyInitialTalentPersistsAndEncodes(t *testing.T) {
 	t.Fatal("temporary blacksmith omitted from party CharDBInfo")
 }
 
-// Quest13 and quest14 share CharGroup102, but their field StoryCharGroup grows
-// from three to four costume designs. Owning the whole field cast used to add
-// a sixth battle member and roll back this otherwise completed quest clear.
+// Source: GameData 20260923193640 QuestTable1 quests 13..16 use CharGroup102
+// while their cosmetic StoryCharGroup changes. The saved five-player party
+// and positions below implement the user's policy for ordinary story battles.
 func TestInstalledQuest13ClearKeepsSavedBattlePartyAcrossReopen(t *testing.T) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
@@ -116,10 +125,20 @@ func TestInstalledQuest13ClearKeepsSavedBattlePartyAcrossReopen(t *testing.T) {
 		{InvenIndex: 102, ID: 20, HP: 72, Level: 30, CostumeID: 202, UseCostume: 1002, TalentLevel: 1, TalentExp: 14, Exp: 124},
 		{InvenIndex: 103, ID: 130, HP: 73, Level: 30, CostumeID: 1301, UseCostume: 1003, TalentLevel: 1, TalentExp: 15, Exp: 125},
 		{InvenIndex: 104, ID: 140, HP: 74, Level: 30, CostumeID: 1401, UseCostume: 1004, TalentLevel: 1},
+		{InvenIndex: 105, ID: 350, HP: 75, Level: 30, CostumeID: 3501, UseCostume: 1005, TalentLevel: 1},
 	}, Costumes: []player.Costume{
 		{InvenIndex: 1001, ID: 101, UseChar: 101}, {InvenIndex: 1002, ID: 202, UseChar: 102},
 		{InvenIndex: 1003, ID: 1301, UseChar: 103}, {InvenIndex: 1004, ID: 1401, UseChar: 104},
+		{InvenIndex: 1005, ID: 3501, UseChar: 105},
 	}}
+	// Inventory order, wire order, slot sequence, and grid position are distinct.
+	saved := []deck.DeckEntry{
+		{CharacterInvenIndex: 105, CostumeInvenIndex: 0, Slot: 3},
+		{CharacterInvenIndex: 103, CostumeInvenIndex: 11, Slot: 1},
+		{CharacterInvenIndex: 101, CostumeInvenIndex: 3, Slot: 5},
+		{CharacterInvenIndex: 104, CostumeInvenIndex: ^uint64(0), Slot: 2},
+		{CharacterInvenIndex: 102, CostumeInvenIndex: 8, Slot: 4},
+	}
 	path := filepath.Join(t.TempDir(), "state.db")
 	open := func() (*accountstate.Repository, *Service) {
 		t.Helper()
@@ -154,81 +173,76 @@ func TestInstalledQuest13ClearKeepsSavedBattlePartyAcrossReopen(t *testing.T) {
 		return repo, s
 	}
 	repo, s := open()
+	saveStoryTestDeck(t, s.decks, saved)
 	for id := 1; id < 13; id++ {
 		if err := s.state.ClearQuest(id, 1); err != nil {
 			t.Fatal(err)
 		}
 	}
-	update := wire.AppendVarint(selectionRequest(13, 1, 0), 4, 1)
-	if _, err := s.state.UpdateQuest(update); err != nil {
+	if _, err := s.state.UpdateQuest(wire.AppendVarint(selectionRequest(13, 1, 0), 4, 1)); err != nil {
 		t.Fatal(err)
 	}
-	party, err := s.ResolveStoryParty(1, 13)
-	if err != nil || len(party) != 3 { // Two temporaries and the only initial field choice.
-		t.Fatalf("initial story party=%+v err=%v", party, err)
+	beforeResolve := s.characters.RawAll()
+	assertStoryTestBattleParty(t, s, saved)
+	if !reflect.DeepEqual(s.characters.RawAll(), beforeResolve) {
+		t.Fatal("battle party resolution materialized temporary characters")
 	}
-	var saved []deck.DeckEntry
-	for _, c := range party {
-		if !player.IsStoryCharacter(c) {
-			continue
-		}
-		if err := s.characters.SetCurrentHealth(c.InvenIndex, 7+uint64(len(saved))); err != nil {
+	temporary, err := s.resolveStoryCharacters(1, 13)
+	if err != nil || len(temporary) == 0 {
+		t.Fatalf("quest13 temporary talent characters=%+v err=%v", temporary, err)
+	}
+	for i, c := range temporary {
+		if err := s.characters.SetCurrentHealth(c.InvenIndex, uint64(7+i)); err != nil {
 			t.Fatal(err)
 		}
-		saved = append(saved, deck.DeckEntry{CharacterInvenIndex: c.InvenIndex, CostumeInvenIndex: uint64(len(saved) * 2), Slot: uint64(len(saved) + 1)})
-	}
-	for _, c := range seed.Characters[:3] {
-		saved = append(saved, deck.DeckEntry{CharacterInvenIndex: c.InvenIndex, CostumeInvenIndex: uint64(len(saved) * 2), Slot: uint64(len(saved) + 1)})
-	}
-	if err := s.decks.SetStoryParty(saved); err != nil {
-		t.Fatal(err)
 	}
 	before := s.characters.RawAll()
-	op, err := repo.BeginOperation()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, response, handled, err := s.Handle("/QuestClear", selectionRequest(13, 1, 0))
-	if err != nil || !handled {
-		_ = op.Rollback()
-		t.Fatalf("quest13 clear handled=%v err=%v", handled, err)
-	}
-	if err := op.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	var echoed []deck.DeckEntry
-	var joins int
-	if err := wire.Walk(response, func(f wire.Field) error {
-		if f.Number == 5 {
-			joins++
+	for id := 13; id <= 15; id++ {
+		chars, decks, err := s.resolveActivePartyWires(1, id)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if f.Number == 4 {
-			index, _, _ := wire.Varint(f.Value, 1)
-			position, _, _ := wire.Varint(f.Value, 2)
-			slot, _, _ := wire.Varint(f.Value, 3)
-			echoed = append(echoed, deck.DeckEntry{CharacterInvenIndex: index, CostumeInvenIndex: position, Slot: slot})
+		if len(chars) != len(temporary) || !reflect.DeepEqual(decodeStoryTestDeck(t, decks), saved) {
+			t.Fatalf("quest%d displaced a player or moved positions", id)
 		}
-		return nil
-	}); err != nil || !reflect.DeepEqual(echoed, saved) || joins != 0 {
-		t.Fatalf("clear changed saved battle choices/positions or repeated join UI: deck=%+v want=%+v joins=%d err=%v", echoed, saved, joins, err)
-	}
-	if err := repo.Close(); err != nil {
-		t.Fatal(err)
-	}
-	_, s = open()
-	if !s.state.QuestCleared(13, 1) || s.firstUnclearedQuestFor(1) != 14 {
-		t.Fatal("quest13 clear did not survive SQLite reopen")
-	}
-	if !reflect.DeepEqual(s.decks.CurrentDeck(), saved) || !reflect.DeepEqual(s.characters.RawAll(), before) {
-		t.Fatal("quest transition or reopen changed party, positions, character stats, talents, or health")
-	}
-	party, err = s.ResolveStoryParty(1, 14)
-	if err != nil || len(party) != 5 {
-		t.Fatalf("reopened quest14 battle party=%+v err=%v", party, err)
+		assertStoryTestBattleParty(t, s, saved)
+		op, err := repo.BeginOperation()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, response, handled, err := s.Handle("/QuestClear", selectionRequest(uint64(id), 1, 0))
+		if err != nil || !handled {
+			_ = op.Rollback()
+			t.Fatalf("quest%d clear handled=%v err=%v", id, handled, err)
+		}
+		if err := op.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		echoed, joins := storyTestClearParty(t, response)
+		if !reflect.DeepEqual(echoed, saved) || len(joins) != 0 {
+			t.Fatalf("quest%d changed choices/positions or fabricated join UI: deck=%+v want=%+v joins=%v", id, echoed, saved, joins)
+		}
+		assertStoryTestBattleParty(t, s, saved)
+		if !reflect.DeepEqual(s.characters.RawAll(), before) {
+			t.Fatalf("quest%d transition changed character stats, talents, health, or identities", id)
+		}
+		if err := repo.Close(); err != nil {
+			t.Fatal(err)
+		}
+		repo, s = open()
+		if !s.state.QuestCleared(id, 1) || s.firstUnclearedQuestFor(1) != id+1 {
+			t.Fatalf("quest%d clear did not survive SQLite reopen", id)
+		}
+		assertStoryTestBattleParty(t, s, saved)
+		if !reflect.DeepEqual(s.characters.RawAll(), before) {
+			t.Fatalf("quest%d reopen changed character state", id)
+		}
 	}
 }
 
-func TestInstalledAdjacentStoryPartyRetainsHealth(t *testing.T) {
+// Source: installed GameData CharGroup rows choose an adjacent unchanged
+// temporary cast; the server's instance policy preserves its identity and HP.
+func TestInstalledAdjacentStoryCharactersRetainHealth(t *testing.T) {
 	root := os.Getenv("BD2_REAL_GAMEDATA")
 	if root == "" {
 		t.Skip("BD2_REAL_GAMEDATA not configured")
@@ -275,7 +289,7 @@ func TestInstalledAdjacentStoryPartyRetainsHealth(t *testing.T) {
 	s := testService()
 	s.characters = characters
 	s.storyRoster = catalog
-	party, err := s.ResolveStoryParty(21, first)
+	party, err := s.resolveStoryCharacters(21, first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +299,7 @@ func TestInstalledAdjacentStoryPartyRetainsHealth(t *testing.T) {
 	if err := characters.SetCurrentHealth(party[0].InvenIndex, 7); err != nil {
 		t.Fatal(err)
 	}
-	next, err := s.ResolveStoryParty(21, second)
+	next, err := s.resolveStoryCharacters(21, second)
 	if err != nil {
 		t.Fatal(err)
 	}

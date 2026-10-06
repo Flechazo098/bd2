@@ -460,7 +460,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		wasCleared := s.state.QuestCleared(quest, pack, s.questDifficultyFor(pack, quest))
 		var previousParty []player.Character
 		if design.Type == 0 && s.storyRoster != nil {
-			previousParty, err = s.ResolveStoryParty(pack, quest)
+			previousParty, err = s.resolveStoryCharacters(pack, quest)
 			if err != nil {
 				return 0, nil, true, err
 			}
@@ -502,7 +502,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				}
 			}
 		}
-		slog.Info("team trace: quest cleared", "pack", pack, "quest", quest, "changesBattleDeck", pack == s.seed.PackID && quest == s.seed.BattleUnlockQuestID)
+		slog.Info("team trace: quest cleared", "pack", pack, "quest", quest, "changesBattleDeck", false)
 		return 18, s.clearResponse(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment, nextItems, nextChars), true, nil
 	default:
 		return 0, nil, false, nil
@@ -922,32 +922,13 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 			out = wire.AppendBytes(out, 11, info)
 		}
 	}
-	if packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 {
-		deckIDs := []uint64{s.seed.RewardCharacter.InvenIndex}
-		for _, character := range s.seed.StoryCharacters {
-			deckIDs = append(deckIDs, character.InvenIndex)
-		}
-		for _, character := range s.starter.Characters {
-			deckIDs = append(deckIDs, character.InvenIndex)
-		}
-		for index, characterID := range deckIDs {
-			deck := wire.AppendVarint(nil, 1, characterID)
-			deck = wire.AppendVarint(deck, 2, ^uint64(0))
-			deck = wire.AppendVarint(deck, 3, uint64(index+1))
-			out = wire.AppendBytes(out, 4, deck)
-		}
-		for _, character := range s.seed.StoryCharacters {
-			out = wire.AppendBytes(out, 5, encodeCharacter(character))
-		}
-	} else if s.decks != nil {
-		// QuestClear echoes the authoritative current
-		// DeckInfo. Omitting it after quest 29 makes the client rebuild a party
-		// from ordinary owned characters and overwrite the story formation.
+	if s.decks != nil {
+		// Echo the player's saved formation, including quests that unlock a
+		// character. Receiving a character is not a request to change the deck.
 		for _, current := range s.decks.CurrentDeck() {
 			entry := wire.AppendVarint(nil, 1, current.CharacterInvenIndex)
-			if current.CostumeInvenIndex != 0 {
-				entry = wire.AppendVarint(entry, 2, current.CostumeInvenIndex)
-			}
+			// Preserve the saved battle-grid position, including cell zero.
+			entry = wire.AppendVarint(entry, 2, current.CostumeInvenIndex)
 			entry = wire.AppendVarint(entry, 3, current.Slot)
 			out = wire.AppendBytes(out, 4, entry)
 		}

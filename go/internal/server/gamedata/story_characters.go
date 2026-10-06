@@ -8,7 +8,8 @@ type StoryCharacterDesign struct {
 	InitialTalentLevel                                          uint64
 }
 
-// StoryCharacterCatalog contains only authored temporary character rows.
+// StoryCharacterCatalog contains available temporary pack characters, not a
+// mandatory battle formation for ordinary story or master-story quests.
 type StoryCharacterCatalog struct {
 	formations map[int]map[int]QuestFormation
 	characters map[[2]int][]StoryCharacterDesign
@@ -81,8 +82,8 @@ func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCos
 				if err != nil {
 					return nil, err
 				}
-				// CharGroup supplies battle instances. StoryCharGroup supplies
-				// cosmetic field actors and cannot override a battle costume.
+				// CharGroup supplies available temporary instances. StoryCharGroup
+				// supplies cosmetic field actors and cannot override their costume.
 				base, err := stats.BaseStats(row.CharacterID, row.Level)
 				if err != nil {
 					return nil, err
