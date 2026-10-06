@@ -24,6 +24,17 @@ func TestCostumeCharacterRelationshipDoesNotUseNumericPrefix(t *testing.T) {
 	if err != nil || got != 999 {
 		t.Fatalf("character=%d err=%v", got, err)
 	}
+	base, family, err := loadCostumeCharacterFamily(db, 76543)
+	if err != nil || base != 999 || len(family) != 2 {
+		t.Fatalf("base=%d family=%v err=%v", base, family, err)
+	}
+	seen := map[uint64]bool{}
+	for _, id := range family {
+		seen[id] = true
+	}
+	if !seen[999] || !seen[1000] || seen[222] {
+		t.Fatalf("promotion family=%v", family)
+	}
 	db.Exec("INSERT INTO CharTable VALUES (?,?,?)", 777, 88, wire.AppendVarint(nil, 10, 1))
 	if _, err := loadCostumeBaseCharacterID(db, 76543); err == nil {
 		t.Fatal("ambiguous base guessed")

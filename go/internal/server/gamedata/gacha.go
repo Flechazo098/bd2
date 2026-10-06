@@ -37,12 +37,13 @@ type InfiniteGachaDesign struct {
 }
 
 type CharacterDesign struct {
-	ID                uint64
-	HP                uint64
-	CostumeMaxLevel   uint64
-	OverflowItemType  uint64
-	OverflowItemID    uint64
-	OverflowItemCount uint64
+	ID                 uint64
+	GrowthCharacterIDs []uint64 // Permanent CharTable IDs sharing this costume's UniqueCharId.
+	HP                 uint64
+	CostumeMaxLevel    uint64
+	OverflowItemType   uint64
+	OverflowItemID     uint64
+	OverflowItemCount  uint64
 }
 
 type WeightedCostume struct {
@@ -1483,7 +1484,7 @@ func collectCostumeIDs(pool []WeightedCostume, result *[]uint64) {
 }
 
 func loadGachaCharacterDesign(db *sql.DB, costumeID uint64) (CharacterDesign, error) {
-	characterID, err := loadCostumeBaseCharacterID(db, costumeID)
+	characterID, family, err := loadCostumeCharacterFamily(db, costumeID)
 	if err != nil {
 		return CharacterDesign{}, err
 	}
@@ -1521,6 +1522,7 @@ func loadGachaCharacterDesign(db *sql.DB, costumeID uint64) (CharacterDesign, er
 		return CharacterDesign{}, err
 	}
 	costume.ID = characterID
+	costume.GrowthCharacterIDs = family
 	costume.HP = uint64(hp)
 	return costume, nil
 }
