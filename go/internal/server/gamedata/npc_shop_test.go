@@ -41,3 +41,37 @@ func TestNPCShopCatalogKeepsCompositeProductKeysAndRejectsOrphans(t *testing.T) 
 		t.Fatal("accepted product whose shop is missing")
 	}
 }
+
+func TestSellCatalogUsesTypesAndRejectsAmbiguousDefinitions(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, q := range []string{"CREATE TABLE ShopTable(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE ProductTable(id INTEGER,groupId INTEGER,ProtoBuf BLOB)", "CREATE TABLE SellItemTable(id INTEGER,ProtoBuf BLOB)"} {
+		if _, err = db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert := func(id, typ, item uint64) {
+		t.Helper()
+		var p []byte
+		for _, f := range [][2]uint64{{8, id}, {4, typ}, {3, item}, {2, 1}, {13, 4}, {11, 7}} {
+			p = wire.AppendVarint(p, int(f[0]), f[1])
+		}
+		if _, err = db.Exec("INSERT INTO SellItemTable VALUES(?,?)", id, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, typ := range []uint64{5, 8, 10} {
+		insert(uint64(i+1), typ, 400)
+	}
+	d, err := loadNPCShopDesign(db)
+	if err != nil || len(d.Sell) != 3 || !d.Sell[1].InventorySellable() || !d.Sell[2].InventorySellable() || d.Sell[3].InventorySellable() {
+		t.Fatal("sell definition type boundaries", d, err)
+	}
+	insert(4, 8, 400)
+	if _, err = loadNPCShopDesign(db); err == nil {
+		t.Fatal("accepted ambiguous type/item price definition")
+	}
+}
