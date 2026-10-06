@@ -130,7 +130,7 @@ func (s *Service) handleQuestSelection(path string, request []byte) (int, []byte
 			if err := s.state.RemoveQuest(quest, pack, 0); err != nil {
 				return 0, nil, true, err
 			}
-			return 20, wire.AppendVarint(nil, 1, uint64(quest)), true, nil
+			return 20, s.appendCurrentBattleDeck(wire.AppendVarint(nil, 1, uint64(quest)), 2), true, nil
 		}
 		selection, ok := s.state.Selection(pack)
 		if !ok || selection.QuestID != quest || selection.Difficulty == 0 {
@@ -140,7 +140,7 @@ func (s *Service) handleQuestSelection(path string, request []byte) (int, []byte
 		if err := s.state.SelectQuest(pack, progress.QuestSelection{}); err != nil {
 			return 0, nil, true, err
 		}
-		return 20, wire.AppendVarint(nil, 1, uint64(quest)), true, nil
+		return 20, s.appendCurrentBattleDeck(wire.AppendVarint(nil, 1, uint64(quest)), 2), true, nil
 	}
 	level, _, err := wire.Varint(request, 4)
 	if err != nil || level > 4 {
@@ -164,6 +164,7 @@ func (s *Service) handleQuestSelection(path string, request []byte) (int, []byte
 			return 0, nil, true, err
 		}
 		out := wire.AppendBytes(nil, 1, s.questInfoWire(pack, quest))
+		out = s.appendCurrentBattleDeck(out, 3)
 		items, err := s.ensureQuestItems(pack, quest)
 		if err != nil {
 			return 0, nil, true, err

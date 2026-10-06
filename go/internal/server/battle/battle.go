@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"sync"
 
@@ -223,7 +222,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		state.phase++
 		state.index, state.deck, state.phaseStarted = next.DeckID, next.DeckID, false
 		state.phaseSeq, state.phaseReply = seq, append([]byte(nil), response...)
-		slog.Info("team trace: battle phase changed", "pack", state.pack, "monster", state.monster, "group", next.GroupID, "phase", next.ID, "enemyDeck", next.DeckID)
 		return 632, response, true, nil
 	case "/BattleVerifyState":
 		if !state.entered {
@@ -355,7 +353,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		state.enterReceipt = identity
 		state.fieldInstance = fieldInstance
 		state.phases, state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = phases, 0, false, 0, nil
-		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)
 		return 52, response, true, nil
 	case "/BattleRetry":
 		if !state.entered {
@@ -424,19 +421,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		state.index, state.round, state.phaseStarted = index, nextRound, true
 		if nextRound == 1 {
 			state.initialBlue = initialBlue
-			// Log the actual submitted team after pre-battle DeckSave, rather
-			// than inferring it from the deck that existed at BattleEnter.
-			// BattleCharDBInfo fields 2/3/7/9 are inventory/character/costume/grid.
-			blueTeam := make([]string, 0, len(initialBlue))
-			for _, character := range initialBlue {
-				inventory, _, _ := wire.Varint(character, 2)
-				id, _, _ := wire.Varint(character, 3)
-				costume, _, _ := wire.Varint(character, 7)
-				grid, _, _ := wire.Varint(character, 9)
-				blueTeam = append(blueTeam, fmt.Sprintf("inven=%d char=%d costume=%d grid=%d", inventory, id, costume, int32(grid)))
-			}
-			seq, _, _ := wire.Varint(request, 1)
-			slog.Info("team trace: battle started", "seq", seq, "pack", state.pack, "monster", state.monster, "enemyDeck", state.deck, "mode", state.mode, "blueTeam", blueTeam)
 		}
 		// Stable per-battle/round seed; reproducible across retries.
 		seed := index*7919 + state.round*104729

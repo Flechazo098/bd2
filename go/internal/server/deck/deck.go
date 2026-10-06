@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"sync"
 
@@ -401,7 +400,6 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		}
 		s.mu.RLock()
 		defer s.mu.RUnlock()
-		slog.Info("team trace: deliver saved battle deck", "deck", s.state.Deck)
 		out := encodeDeck(s.state.Deck)
 		if s.fieldSettingsDesign != nil {
 			v, e := s.loadFieldSettings()
@@ -437,14 +435,9 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 		if e = s.validateOwnedDeckLocked(x); e != nil {
 			return 0, nil, true, e
 		}
-		seq, _, _ := wire.Varint(req, 1)
-		slog.Info("team trace: client requested battle deck replacement", "seq", seq, "before", s.state.Deck, "after", x)
 		n := clone(s.state)
 		n.Deck = x
 		e = s.commit(n)
-		if e != nil {
-			slog.Error("team trace: deck replacement failed", "seq", seq, "error", e)
-		}
 		return 10, nil, true, e
 	case "/FieldDeckSave":
 		if e := checkSeq(req); e != nil {
