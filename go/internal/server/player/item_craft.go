@@ -132,7 +132,10 @@ func (s *ItemCraftService) Handle(path string, request []byte) (int, []byte, boo
 	if recipe.Class == 7 {
 		limitIndex = 1
 	}
-	if len(current.Values) <= limitIndex || count > uint64(current.Values[limitIndex]) {
+	// Batch count is the missing intermediate quantity requested by equipment
+	// making (EquipmentMakingUI.OnClickUI), not the AlchemyUI craft slider.
+	// Its full material graph and int32 quantities are validated below.
+	if path != "/AlchemyBatch" && (len(current.Values) <= limitIndex || current.Values[limitIndex] < 1 || math.IsNaN(current.Values[limitIndex]) || math.IsInf(current.Values[limitIndex], 0) || count > uint64(current.Values[limitIndex])) {
 		return fail(fmt.Errorf("craft: count exceeds talent limit"))
 	}
 	gain, catalyst, maximum, err := s.talents.CraftTalent(character.ID, character.TalentLevel, recipe.Class, recipe.TalentLevel, count, character.TalentExp)

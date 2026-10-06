@@ -161,7 +161,7 @@ func (s *Service) Snapshot() ([]Entry, []gamedata.PictorialBuffStat, error) {
 		}
 	}
 	for _, row := range d.Cooking {
-		if items[[2]uint64{14, row.RecipeID}] || books[Entry{GroupID: gamedata.PictorialCooking, ID: row.ID}] {
+		if items[[2]uint64{7, row.RecipeID}] || books[Entry{GroupID: gamedata.PictorialCooking, ID: row.ID}] {
 			entries = append(entries, Entry{gamedata.PictorialCooking, row.ID, row.BuffID})
 		}
 	}
