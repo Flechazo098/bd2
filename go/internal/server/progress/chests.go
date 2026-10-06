@@ -74,3 +74,33 @@ func (s *Store) OpenedFieldRewards(pack int) ([]int, error) {
 	sort.Ints(ids)
 	return ids, nil
 }
+
+// OpenedFieldRewardPeriods reads the complete opened-object snapshot once from
+// the current request transaction. The returned maps are owned by the caller;
+// nothing is cached across requests or transaction rollback.
+func (s *Store) OpenedFieldRewardPeriods() (map[int]map[int]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	store, err := s.fieldRewardEntries()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := store.ListEntries("progress", "field_rewards")
+	if err != nil {
+		return nil, err
+	}
+	periods := map[int]map[int]string{}
+	for key, raw := range entries {
+		packKey, objectKey, found := strings.Cut(key, ":")
+		pack, packErr := strconv.Atoi(packKey)
+		id, idErr := strconv.Atoi(objectKey)
+		if !found || packErr != nil || idErr != nil || pack <= 0 || id <= 0 || key != fieldRewardKey(pack, id) || len(raw) == 0 {
+			return nil, fmt.Errorf("progress: invalid field reward entry %q", key)
+		}
+		if periods[pack] == nil {
+			periods[pack] = map[int]string{}
+		}
+		periods[pack][id] = string(raw)
+	}
+	return periods, nil
+}

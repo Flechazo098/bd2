@@ -885,8 +885,19 @@ func (s *Service) handle(path string, b []byte, identity string) ([]byte, error)
 func (s *Service) RecordEvent(condition, sub, count uint64, unlocked func(uint64, uint64) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if count == 0 {
+	if !s.recordEventLocked(condition, sub, count, unlocked) {
 		return nil
+	}
+	return s.save()
+}
+
+// recordEventLocked reports every persistent mutation, including initializing
+// a matching task or rolling its period. Irrelevant and already capped events
+// leave the account snapshot untouched.
+func (s *Service) recordEventLocked(condition, sub, count uint64, unlocked func(uint64, uint64) bool) bool {
+	changed := false
+	if count == 0 {
+		return false
 	}
 	for _, v := range s.taskSchedules() {
 		if v.Type != 4 || !s.active(v) {
@@ -908,7 +919,15 @@ func (s *Service) RecordEvent(condition, sub, count uint64, unlocked func(uint64
 			if !match {
 				continue
 			}
+			previous := s.state.Missions[scheduleKey(v)+"/"+key(t.ID)]
+			var prior mission
+			if previous != nil {
+				prior = *previous
+			}
 			m := s.mission(v, t.ID)
+			if previous == nil || prior != *m {
+				changed = true
+			}
 			if m.Claimed {
 				continue
 			}
@@ -920,9 +939,10 @@ func (s *Service) RecordEvent(condition, sub, count uint64, unlocked func(uint64
 			} else {
 				m.Value += count
 			}
+			changed = true
 		}
 	}
-	return s.save()
+	return changed
 }
 func (s *Service) Notify() ([]byte, error) {
 	s.mu.Lock()

@@ -51,7 +51,7 @@ func (m *attendanceMailStub) IssueAttachmentsOnce(identity, title, body string, 
 	m.identity, m.title, m.body, m.sentAt = identity, title, body, sentAt
 	return nil
 }
-func setup(t *testing.T) (*Service, *economyStub, stateio.Store) {
+func setup(t testing.TB) (*Service, *economyStub, stateio.Store) {
 	t.Helper()
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	registry := events.NewRegistry()

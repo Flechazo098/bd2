@@ -343,12 +343,8 @@ func (s *Server) handleBatch(body, key []byte) (transport.RawReply, error) {
 		} else if itemElapsed >= 100*time.Millisecond {
 			slog.Warn("slow batch item", "index", i, "path", request.Path, "duration_ms", float64(itemElapsed.Microseconds())/1000)
 		}
-		raw, err := protocol.EncodeWithNotify(code, response, key, time.Now().UnixMilli(), notify)
+		envelope, err := protocol.EnvelopeWithNotify(code, response, key, time.Now().UnixMilli(), notify)
 		if err != nil {
-			return transport.RawReply{}, err
-		}
-		var envelope protocol.Envelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return transport.RawReply{}, err
 		}
 		items = append(items, protocol.BatchResponse{Path: request.Path, ResponseData: envelope})

@@ -1,12 +1,120 @@
 package world
 
 import (
+	"bd2server/internal/server/accountstate"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
+	"bd2server/internal/server/progress"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
+	"errors"
+	"path/filepath"
+	"reflect"
 	"testing"
+	"time"
 )
+
+type fieldSnapshotCountStore struct {
+	*accountstate.Repository
+	lists, loads int
+}
+
+func (s *fieldSnapshotCountStore) ListEntries(domain, bucket string) (map[string][]byte, error) {
+	if domain == "progress" && bucket == "field_rewards" {
+		s.lists++
+	}
+	return s.Repository.ListEntries(domain, bucket)
+}
+func (s *fieldSnapshotCountStore) LoadEntry(domain, bucket, key string) ([]byte, bool, error) {
+	if domain == "progress" && bucket == "field_rewards" {
+		s.loads++
+	}
+	return s.Repository.LoadEntry(domain, bucket, key)
+}
+
+func TestGameplayFieldSnapshotReadsOneBucketAndRestoresAfterRollback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	storage := &fieldSnapshotCountStore{Repository: repo}
+	s := testService()
+	s.state, err = progress.OpenStore(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.packs = map[int]map[int]gamedata.QuestDesign{}
+	for pack := 1; pack <= 40; pack++ {
+		s.packs[pack] = nil
+	}
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	s.monsterNow = func() time.Time { return now }
+	s.fieldReset = gamedata.FieldResetSchedule{DailyReset: 9 * time.Hour, WeeklyDay: time.Monday}
+	s.WithFieldObjects(map[int]gamedata.FieldObjectDesign{
+		21: {Objects: map[int]gamedata.FieldRewardObject{71: {ID: 71, Type: 2, ResetType: 1}, 72: {ID: 72, Type: 2, ResetType: 0}, 73: {ID: 73, Type: 2, ResetType: 3}}},
+		22: {Objects: map[int]gamedata.FieldRewardObject{71: {ID: 71, Type: 2, ResetType: 0}}},
+	})
+	for _, row := range []struct {
+		pack, id int
+		period   string
+	}{{21, 71, "once"}, {21, 72, "2026-10-05"}, {21, 73, "2026-10-05"}, {22, 71, "2026-10-06"}} {
+		if err := s.state.MarkFieldRewardOpened(row.pack, row.id, row.period); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := s.GameplayAchievementProvider(&gamedata.AchievementCounterDesign{}, gamedata.GameplayAchievementGrades{})
+	assert := func(want map[string]gamedata.FieldRewardObject) {
+		t.Helper()
+		storage.lists, storage.loads = 0, 0
+		got, err := p.Snapshot()
+		if err != nil || !reflect.DeepEqual(got.FieldObjects, want) {
+			t.Fatalf("field snapshot=%v err=%v want=%v", got.FieldObjects, err, want)
+		}
+		if storage.lists != 1 || storage.loads != 0 {
+			t.Fatalf("snapshot queried bucket %d times and objects %d times", storage.lists, storage.loads)
+		}
+	}
+	want := map[string]gamedata.FieldRewardObject{"field:21:71:once": s.fieldObjects[21].Objects[71], "field:21:73:2026-10-05": s.fieldObjects[21].Objects[73], "field:22:71:2026-10-06": s.fieldObjects[22].Objects[71]}
+	assert(want)
+	op, err := repo.BeginOperation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.state.MarkFieldRewardOpened(21, 72, "2026-10-06"); err != nil {
+		t.Fatal(err)
+	}
+	want["field:21:72:2026-10-06"] = s.fieldObjects[21].Objects[72]
+	assert(want)
+	if err := op.Rollback(); !errors.Is(err, stateio.ErrStateRecoveryRequired) {
+		t.Fatalf("dirty rollback=%v", err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage.Repository = repo
+	s.state, err = progress.OpenStore(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(want, "field:21:72:2026-10-06")
+	assert(want)
+	now = now.AddDate(0, 0, 7)
+	delete(want, "field:21:73:2026-10-05")
+	delete(want, "field:22:71:2026-10-06")
+	assert(want)
+	if err := s.state.MarkFieldRewardOpened(21, 999, "once"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Snapshot(); err == nil {
+		t.Fatal("unknown opened object skipped validation")
+	}
+}
 
 type gameplayTestSource struct {
 	characters []player.Character
@@ -28,6 +136,31 @@ func (s gameplayEquipment) All() []player.Equipment { return s.s.equipment }
 type gameplayItems struct{ s *gameplayTestSource }
 
 func (s gameplayItems) All() []player.Item { return s.s.items }
+
+func TestInventorySnapshotProjectsMissionInputsWithoutUnrelatedReads(t *testing.T) {
+	source := &gameplayTestSource{costumes: []player.Costume{{ID: 1, InvenIndex: 101, Level: 2}}, equipment: []player.Equipment{{ID: 2, InvenIndex: 201, Level: 3}}, items: []player.Item{{Type: 5, ID: 4, Count: 7}, {Type: 5, ID: 4, Count: 2}}}
+	p := &OwnedGameplayAchievementProvider{Costumes: gameplayCostumes{source}, Equipment: gameplayEquipment{source}, Items: gameplayItems{source}, Conditions: func() ([]GameplayAchievementCondition, error) {
+		t.Fatal("inventory projection read quest conditions")
+		return nil, nil
+	}, FieldObjects: func() (map[string]gamedata.FieldRewardObject, error) {
+		t.Fatal("inventory projection queried field objects")
+		return nil, nil
+	}}
+	before, err := p.InventorySnapshot()
+	if err != nil || before.Items[[2]uint64{5, 4}] != 9 || before.Costumes[101].Level != 2 || before.Equipment[201].Level != 3 {
+		t.Fatalf("inventory projection=%+v err=%v", before, err)
+	}
+	source.costumes[0].Level = 4
+	source.equipment[0].Level = 5
+	source.items[0].Count = 1
+	after, err := p.InventorySnapshot()
+	if err != nil || after.Items[[2]uint64{5, 4}] != 3 || after.Costumes[101].Level != 4 || after.Equipment[201].Level != 5 {
+		t.Fatalf("changed inventory projection=%+v err=%v", after, err)
+	}
+	if before.Items[[2]uint64{5, 4}] != 9 || before.Costumes[101].Level != 2 || before.Equipment[201].Level != 3 {
+		t.Fatal("new snapshot modified event baseline")
+	}
+}
 func TestTemporaryPartyMembersCannotGrantPermanentAcquisitionAchievements(t *testing.T) {
 	source := &gameplayTestSource{}
 	p := &OwnedGameplayAchievementProvider{Characters: source}
