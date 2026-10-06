@@ -261,6 +261,9 @@ func (s *Service) AttachDecks(decks *deck.Store) error {
 func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error) {
 	if s.todayQuests != nil {
 		if code, body, handled, err := s.todayQuests.Handle(path, request); handled {
+			if err == nil {
+				body = s.commissionResponseDeck(code, body)
+			}
 			return code, body, handled, err
 		}
 	}
@@ -356,7 +359,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				}
 			}
 		}
-		slog.Info("team trace: deliver owned characters", "characters", characters)
 		for _, character := range characters {
 			response = wire.AppendBytes(response, 1, encodeCharacter(character))
 		}
@@ -375,7 +377,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if s.collection != nil {
 			costumes = s.collection.Costumes()
 		}
-		slog.Info("team trace: deliver owned costumes", "costumes", costumes, "quest26", s.seed.RewardCostume)
 		var selections map[uint64]uint64
 		if s.prestigeSelections != nil {
 			var err error
@@ -422,7 +423,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if !s.packUnlocked(pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
 		}
-		slog.Info("team trace: deliver pack progress", "pack", pack, "clearedQuests", s.state.ClearedQuests(pack), "storyCharacters", s.storyCharacters(pack))
 		if active := s.firstUnclearedQuestFor(pack); active != 0 {
 			if _, err := s.ensureQuestItems(pack, active); err != nil {
 				return 0, nil, true, err
@@ -502,7 +502,6 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 				}
 			}
 		}
-		slog.Info("team trace: quest cleared", "pack", pack, "quest", quest, "changesBattleDeck", false)
 		return 18, s.clearResponse(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment, nextItems, nextChars), true, nil
 	default:
 		return 0, nil, false, nil
@@ -740,19 +739,10 @@ func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 		out = wire.AppendBytes(out, 2, quest)
 	}
 	cleared := s.state.ClearedQuests(packID, s.questDifficulty(packID))
-	// Entering a pack replaces the client's entire task and completion lists.
-	// Include commissions here as well as in QuestInfo so cross-pack travel and
-	// login restore the same active chain and already completed nodes.
-	if s.todayQuests != nil {
-		quests, ids, err := s.todayQuests.Info(packID)
-		if err != nil {
-			return nil, err
-		}
-		for _, quest := range quests {
-			out = wire.AppendBytes(out, 2, quest)
-		}
-		cleared = append(cleared, ids...)
-	}
+	// CommonPacket requests TodayQuestInfo after parsing this response, before
+	// the waypoint callback calls PackManager.Enter. That separate response owns
+	// commission restoration; including commissions here lets Enter append them
+	// a second time when TodayQuestInfo arrives first, crashing the quest HUD.
 	if len(cleared) != 0 {
 		var packed []byte
 		for _, id := range cleared {
@@ -922,17 +912,8 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 			out = wire.AppendBytes(out, 11, info)
 		}
 	}
-	if s.decks != nil {
-		// Echo the player's saved formation, including quests that unlock a
-		// character. Receiving a character is not a request to change the deck.
-		for _, current := range s.decks.CurrentDeck() {
-			entry := wire.AppendVarint(nil, 1, current.CharacterInvenIndex)
-			// Preserve the saved battle-grid position, including cell zero.
-			entry = wire.AppendVarint(entry, 2, current.CostumeInvenIndex)
-			entry = wire.AppendVarint(entry, 3, current.Slot)
-			out = wire.AppendBytes(out, 4, entry)
-		}
-	}
+	// Receiving a character is not a request to change the saved formation.
+	out = s.appendCurrentBattleDeck(out, 4)
 	for _, char := range nextChars {
 		out = wire.AppendBytes(out, 5, char)
 	}

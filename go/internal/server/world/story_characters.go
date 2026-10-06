@@ -2,7 +2,6 @@ package world
 
 import (
 	"bd2server/internal/server/player"
-	"bd2server/internal/server/wire"
 	"fmt"
 )
 
@@ -102,12 +101,5 @@ func (s *Service) resolveActivePartyWires(packID, questID int) ([][]byte, [][]by
 	for _, c := range party {
 		characters = append(characters, encodeCharacter(c))
 	}
-	var wires [][]byte
-	if s.decks != nil {
-		for _, entry := range s.decks.CurrentDeck() {
-			data := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, entry.CharacterInvenIndex), 2, entry.CostumeInvenIndex), 3, entry.Slot)
-			wires = append(wires, data)
-		}
-	}
-	return characters, wires, nil
+	return characters, s.currentBattleDeckWires(), nil
 }

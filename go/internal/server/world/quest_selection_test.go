@@ -1,11 +1,13 @@
 package world
 
 import (
+	"bd2server/internal/server/deck"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/progress"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
+	"reflect"
 	"testing"
 )
 
@@ -92,18 +94,48 @@ func TestDifficultySelectionPersistsAndRewardsRemainIndependent(t *testing.T) {
 }
 func TestSideQuestRemainsIndependentFromMainDifficulty(t *testing.T) {
 	s := testService()
+	var err error
+	s.decks, err = deck.NewStore(deck.Seed{Version: "2.35.10", FieldDeck: []deck.FieldEntry{{Slot: 1, CharacterInvenIndex: 905}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := []deck.DeckEntry{
+		{CharacterInvenIndex: 905, CostumeInvenIndex: 0, Slot: 1},
+		{CharacterInvenIndex: 904, CostumeInvenIndex: 8, Slot: 2},
+		{CharacterInvenIndex: 903, CostumeInvenIndex: 11, Slot: 3},
+		{CharacterInvenIndex: 902, CostumeInvenIndex: 3, Slot: 4},
+		{CharacterInvenIndex: 901, CostumeInvenIndex: ^uint64(0), Slot: 5},
+	}
+	saveStoryTestDeck(t, s.decks, saved)
+	call := func(path string, deckField int) {
+		t.Helper()
+		_, response, handled, err := s.Handle(path, selectionRequest(50, 21, 0))
+		if err != nil || !handled {
+			t.Fatalf("%s handled=%v err=%v", path, handled, err)
+		}
+		var entries [][]byte
+		if err := wire.Walk(response, func(f wire.Field) error {
+			if f.Number == deckField {
+				entries = append(entries, f.Value)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := decodeStoryTestDeck(t, entries); !reflect.DeepEqual(got, saved) || !reflect.DeepEqual(s.decks.CurrentDeck(), saved) {
+			t.Fatalf("%s changed saved battle deck: response=%+v saved=%+v", path, got, s.decks.CurrentDeck())
+		}
+	}
 	pack := s.storyCatalog.Packs[21]
 	pack.Quests[50] = gamedata.QuestDesign{ID: 50, Type: 1}
 	s.storyCatalog.Packs[21] = pack
-	if _, _, _, err := s.Handle("/QuestAccept", selectionRequest(50, 21, 0)); err != nil {
-		t.Fatal(err)
-	}
+	call("/QuestAccept", 3)
+	call("/QuestGiveUp", 2)
+	call("/QuestAccept", 3)
 	if first := s.firstUnclearedQuestFor(21); first != 1 {
 		t.Fatalf("side replaced main%d", first)
 	}
-	if _, _, _, err := s.Handle("/QuestClear", selectionRequest(50, 21, 0)); err != nil {
-		t.Fatal(err)
-	}
+	call("/QuestClear", 4)
 	if !s.state.QuestCleared(50, 21) || s.state.QuestCleared(1, 21) {
 		t.Fatal("side clear affected main")
 	}
