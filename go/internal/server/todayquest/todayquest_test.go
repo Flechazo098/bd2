@@ -1,12 +1,15 @@
 package todayquest
 
 import (
+	"bd2server/internal/server/accountstate"
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
 	"bd2server/internal/server/stateio"
 	"bd2server/internal/server/wire"
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -124,5 +127,110 @@ func TestGiveUpRestoresQuotaAndClearsPriorChain(t *testing.T) {
 	st, err := s.load()
 	if err != nil || st.Cleared[101] {
 		t.Fatalf("prior clear retained: %v", err)
+	}
+}
+
+func TestPackInfoResetsExpiredSQLiteCommissionAtWeeklyBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	s, economy, _ := fixture(t)
+	s.store = stateio.EntrySnapshotStore{Entries: repo, Domain: "missions", Bucket: "gameplay"}
+	now := time.Date(2026, 10, 11, 23, 59, 59, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	call(t, s, "/QuestAccept", 101)
+	call(t, s, "/QuestUpdate", 101, 1)
+	call(t, s, "/QuestClear", 101)
+	call(t, s, "/QuestUpdate", 102, 71, 72)
+	call(t, s, "/QuestClear", 102)
+	st, err := s.load()
+	if err != nil || s.secondsLeft(st) != 1 {
+		t.Fatalf("weekly countdown: %d %v", s.secondsLeft(st), err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := accountstate.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	s.store = stateio.EntrySnapshotStore{Entries: reopened, Domain: "missions", Bucket: "gameplay"}
+	now = now.Add(time.Second)
+	// PackInGameInfo calls Info without an intervening TodayQuestInfo request.
+	rows, cleared, err := s.Info(7)
+	if err != nil || len(rows) != 0 || len(cleared) != 0 {
+		t.Fatalf("expired pack tasks: %v %v %v", rows, cleared, err)
+	}
+	st, err = s.load()
+	if err != nil || s.secondsLeft(st) != 7*24*60*60 {
+		t.Fatalf("new weekly countdown: %d %v", s.secondsLeft(st), err)
+	}
+	if score, err := s.Score(); err != nil || score != 7 {
+		t.Fatalf("prior score: %d %v", score, err)
+	}
+	call(t, s, "/QuestAccept", 101)
+	call(t, s, "/QuestUpdate", 101, 1)
+	call(t, s, "/QuestClear", 101)
+	call(t, s, "/QuestUpdate", 102, 71, 72)
+	call(t, s, "/QuestClear", 102)
+	if score, err := s.Score(); err != nil || score != 14 || economy.grants != 2 {
+		t.Fatalf("new week score/reward: %d %d %v", score, economy.grants, err)
+	}
+}
+
+func TestCurrentCommissionConditionsRestoreProgressAndRejectForeignObjects(t *testing.T) {
+	// Proto.Net.Define_QuestConditionType and PackManager.RefreshQuestCondition:
+	// Hunt/ TalkManual use Value; Collection/ObjectMove/FieldResearchObject use ObjectId.
+	for _, condition := range []int{1, 2, 9, 18, 19} {
+		t.Run(fmt.Sprint(condition), func(t *testing.T) {
+			s, _, _ := fixture(t)
+			q := s.design.Quests[101]
+			q.ConditionType, q.ConditionCount = condition, 2
+			q.MagicValues = []uint64{71, 72}
+			s.design.Quests[101] = q
+			call(t, s, "/QuestAccept", 101)
+			objectCondition := condition == 2 || condition == 9 || condition == 18
+			if objectCondition {
+				call(t, s, "/QuestUpdate", 101, 71)
+				call(t, s, "/QuestUpdate", 101, 71)
+				if _, _, _, err := s.Handle("/QuestUpdate", packet(101, 999)); err == nil {
+					t.Fatal("foreign object accepted")
+				}
+			} else {
+				call(t, s, "/QuestUpdate", 101, 1)
+				call(t, s, "/QuestUpdate", 101, 0)
+				if _, _, _, err := s.Handle("/QuestUpdate", packet(101, 3)); err == nil {
+					t.Fatal("progress exceeded condition count")
+				}
+			}
+			rows, _, err := s.Info(7)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("restored rows: %v %v", rows, err)
+			}
+			if objectCondition {
+				object, _, _ := wire.Varint(rows[0], 3)
+				if object != 71 {
+					t.Fatalf("object progress %d", object)
+				}
+			} else {
+				value, _, _ := wire.Varint(rows[0], 2)
+				if value != 1 {
+					t.Fatalf("scalar progress %d", value)
+				}
+			}
+			if _, _, _, err := s.Handle("/QuestClear", packet(101)); err == nil {
+				t.Fatal("partial progress cleared")
+			}
+			if objectCondition {
+				call(t, s, "/QuestUpdate", 101, 72)
+			} else {
+				call(t, s, "/QuestUpdate", 101, 2)
+			}
+			call(t, s, "/QuestClear", 101)
+		})
 	}
 }

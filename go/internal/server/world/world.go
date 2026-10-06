@@ -713,6 +713,19 @@ func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 		out = wire.AppendBytes(out, 2, quest)
 	}
 	cleared := s.state.ClearedQuests(packID, s.questDifficulty(packID))
+	// Entering a pack replaces the client's entire task and completion lists.
+	// Include commissions here as well as in QuestInfo so cross-pack travel and
+	// login restore the same active chain and already completed nodes.
+	if s.todayQuests != nil {
+		quests, ids, err := s.todayQuests.Info(packID)
+		if err != nil {
+			return nil, err
+		}
+		for _, quest := range quests {
+			out = wire.AppendBytes(out, 2, quest)
+		}
+		cleared = append(cleared, ids...)
+	}
 	if len(cleared) != 0 {
 		var packed []byte
 		for _, id := range cleared {
