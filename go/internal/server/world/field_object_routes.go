@@ -165,7 +165,7 @@ func (s *Service) handleFieldObjectRespawn(request []byte) (int, []byte, bool, e
 			response = wire.AppendBytes(response, 1, wire.AppendVarint(nil, 1, uint64(id)))
 		}
 	}
-	if reset == 0 || reset == 3 {
+	if reset == 0 || reset == 3 { //nolint:staticcheck // QF1003
 		next, e := s.fieldReset.Next(reset, s.monsterTime())
 		if e != nil {
 			return 30, nil, true, e

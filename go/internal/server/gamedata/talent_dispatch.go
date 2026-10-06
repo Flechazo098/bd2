@@ -47,16 +47,16 @@ func LoadTalentDispatchDesign(root, version string) (map[uint64]TalentDispatchDe
 	for rows.Next() {
 		var r row
 		if e = rows.Scan(&r.id, &r.raw); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		rs = append(rs, r)
 	}
 	if e = rows.Err(); e != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, e
 	}
-	rows.Close()
+	_ = rows.Close()
 	out := map[uint64]TalentDispatchDesign{}
 	for _, r := range rs {
 		d := TalentDispatchDesign{ID: r.id, Reset: reset}

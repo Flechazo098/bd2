@@ -31,7 +31,7 @@ func TestFieldBuffConsumptionAfterValidationAndBeforeBattleActivation(t *testing
 		t.Fatal("persistence failure activated battle")
 	}
 	fail = false
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if _, _, _, err := s.Handle("/BattleEnter", enter); err != nil {
 			t.Fatal(err)
 		}

@@ -234,7 +234,8 @@ func TestCommissionPackEntryRestoresSQLiteChainAndRollback(t *testing.T) {
 			}
 		}
 	}
-	repo, s, wallet, inv := open()
+	var wallet *player.Wallet
+	repo, s, _, inv := open()
 	savedDeck := []deck.DeckEntry{
 		{CharacterInvenIndex: 901, CostumeInvenIndex: 0, Slot: 1},
 		{CharacterInvenIndex: 905, CostumeInvenIndex: 8, Slot: 2},
@@ -260,7 +261,7 @@ func TestCommissionPackEntryRestoresSQLiteChainAndRollback(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, s, wallet, inv = open()
+	repo, s, _, _ = open()
 	if !reflect.DeepEqual(s.decks.CurrentDeck(), savedDeck) {
 		t.Fatal("SQLite reopen lost selected formation")
 	}
@@ -296,7 +297,7 @@ func TestCommissionPackEntryRestoresSQLiteChainAndRollback(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, s, wallet, inv = open()
+	_, s, wallet, _ = open()
 	call(s, "/QuestClear", 102, 21)
 	assertEntry(s, 21, map[int][]uint64{}, []int{101, 102})
 	if wallet.Snapshot().Gold != 10 {

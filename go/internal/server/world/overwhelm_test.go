@@ -37,7 +37,9 @@ func TestOverwhelmRewardAndReceiptRollbackTogether(t *testing.T) {
 		t.Fatal(e)
 	}
 	s := testService()
-	s.AttachFieldMonsterState(overwhelmFailedState{repo})
+	if err := s.AttachFieldMonsterState(overwhelmFailedState{repo}); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("login")
 	s.monsterLoader = func(int) ([]gamedata.FieldMonsterDesign, error) {
 		return []gamedata.FieldMonsterDesign{{ID: 9, GroupID: 7, BattleDeck: 33, UseBattleSkip: 1, RegenSeconds: 10, Reward: gamedata.Reward{Type: 5, ID: 400, Count: 2}}}, nil
@@ -54,12 +56,18 @@ func TestOverwhelmRewardAndReceiptRollbackTogether(t *testing.T) {
 	if e = op.Rollback(); e != nil && !errors.Is(e, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(e)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, e = accountstate.Open(path)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, name := range []string{"overwhelm_test_authorization", "overwhelm_test_reward", "field_monster_runtime"} {
 		b, e := repo.Load(name)
 		if e != nil || b != nil {
@@ -82,7 +90,9 @@ func overwhelmRequest(seq uint64, ids ...uint64) []byte {
 func TestOverwhelmBatchPrevalidationAuthorizationAndGenerationReplay(t *testing.T) {
 	s := testService()
 	store := stateio.NewMemory()
-	s.AttachFieldMonsterState(store)
+	if err := s.AttachFieldMonsterState(store); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("login")
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.monsterNow = func() time.Time { return now }

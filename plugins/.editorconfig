@@ -30,3 +30,6 @@ generated_code = true
 
 [*.generated.cs]
 generated_code = true
+
+[GameSdk/samples/**/*.cs]
+dotnet_analyzer_diagnostic.severity = none

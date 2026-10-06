@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
@@ -17,13 +16,13 @@ internal sealed class CommercePriceLayout : MonoBehaviour
     private float fontSize;
     private bool autoSize, wrap;
     private TextAlignmentOptions alignment;
-    private readonly List<KeyValuePair<Behaviour, bool>> drivers = new List<KeyValuePair<Behaviour, bool>>();
+    private readonly List<KeyValuePair<Behaviour, bool>> drivers = [];
     private readonly Vector3[] corners = new Vector3[4];
 
     internal static void Apply(RectTransform region, UISprite sprite, TMP_Text text)
     {
         if (region == null || sprite == null || text == null) return;
-        var layout = region.GetComponent<CommercePriceLayout>() ?? region.gameObject.AddComponent<CommercePriceLayout>();
+        CommercePriceLayout layout = region.GetComponent<CommercePriceLayout>() ?? region.gameObject.AddComponent<CommercePriceLayout>();
         layout.Restore();
         layout.region = region;
         layout.icon = (RectTransform)sprite.transform;
@@ -45,6 +44,7 @@ internal sealed class CommercePriceLayout : MonoBehaviour
         layout.Arrange();
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     internal static void Reset(RectTransform region)
     {
         if (region != null) region.GetComponent<CommercePriceLayout>()?.Restore();
@@ -52,7 +52,7 @@ internal sealed class CommercePriceLayout : MonoBehaviour
 
     private void CaptureDrivers(RectTransform target)
     {
-        foreach (var driver in target.GetComponents<Behaviour>())
+        foreach (Behaviour driver in target.GetComponents<Behaviour>())
             if (driver is ContentSizeFitter || driver is AspectRatioFitter)
             {
                 drivers.Add(new KeyValuePair<Behaviour, bool>(driver, driver.enabled));
@@ -60,7 +60,9 @@ internal sealed class CommercePriceLayout : MonoBehaviour
             }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
     private void LateUpdate() => Arrange();
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnDisable() => Restore();
 
     private void Arrange()
@@ -72,7 +74,7 @@ internal sealed class CommercePriceLayout : MonoBehaviour
         float middle = region.rect.center.y;
         // Reserve the actual caption width in this price strip, even after a
         // language, screen size or font change. Decorative labels are ignored.
-        foreach (var label in region.GetComponentsInChildren<TMP_Text>())
+        foreach (TMP_Text label in region.GetComponentsInChildren<TMP_Text>())
         {
             if (label == price || !label.gameObject.activeInHierarchy || string.IsNullOrWhiteSpace(label.text)) continue;
             label.rectTransform.GetWorldCorners(corners);
@@ -125,11 +127,11 @@ internal sealed class CommercePriceLayout : MonoBehaviour
             price.enableWordWrapping = wrap;
             price.alignment = alignment;
         }
-        foreach (var driver in drivers) if (driver.Key != null) driver.Key.enabled = driver.Value;
+        foreach (KeyValuePair<Behaviour, bool> driver in drivers) if (driver.Key != null) driver.Key.enabled = driver.Value;
         drivers.Clear();
     }
 
-    private struct RectState
+    private readonly struct RectState
     {
         private readonly Vector2 min, max, pivot, position, size;
         private readonly Vector3 scale;
@@ -138,7 +140,7 @@ internal sealed class CommercePriceLayout : MonoBehaviour
             min = rect.anchorMin; max = rect.anchorMax; pivot = rect.pivot;
             position = rect.anchoredPosition; size = rect.sizeDelta; scale = rect.localScale;
         }
-        internal void Restore(RectTransform rect)
+        internal readonly void Restore(RectTransform rect)
         {
             rect.anchorMin = min; rect.anchorMax = max; rect.pivot = pivot;
             rect.anchoredPosition = position; rect.sizeDelta = size; rect.localScale = scale;

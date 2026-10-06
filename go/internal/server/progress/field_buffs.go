@@ -3,7 +3,7 @@ package progress
 import (
 	"bd2server/internal/server/wire"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -41,7 +41,7 @@ func (s *Store) FieldBuffs() ([][]byte, error) {
 		}
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var out [][]byte
 	for _, id := range ids {
 		out = append(out, entries[strconv.FormatUint(id, 10)])

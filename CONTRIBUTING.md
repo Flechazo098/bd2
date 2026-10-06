@@ -13,3 +13,5 @@ Commit messages must follow this format:
 - `<description>` must be **concise but complete**, clearly covering **all changes made in the commit**. Do not omit important changes for the sake of brevity.
 
 Before pushing, run the code checks for each language you modified.
+
+Not every lint suggestion needs to be applied. Evaluate each finding, and suppress its warning locally if the code is intentionally left unchanged after review.

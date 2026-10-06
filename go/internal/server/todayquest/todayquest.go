@@ -142,10 +142,7 @@ func (s *Service) load() (snapshot, error) {
 			b := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", p, ids[j])))
 			return string(a[:]) < string(b[:])
 		})
-		n := s.design.PostCount
-		if n > len(ids) {
-			n = len(ids)
-		}
+		n := min(s.design.PostCount, len(ids))
 		st.Offered = append(st.Offered, ids[:n]...)
 	}
 	sort.Ints(st.Offered)
@@ -375,7 +372,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		if b, ok := st.Responses[q.ID]; ok && st.Cleared[q.ID] {
 			return 18, b, true, nil
 		}
-		if !active || (q.ConditionType == 2 || q.ConditionType == 9 || q.ConditionType == 18) && len(a.Objects) < q.ConditionCount || !(q.ConditionType == 2 || q.ConditionType == 9 || q.ConditionType == 18) && a.Value < q.ConditionCount {
+		if !active || (q.ConditionType == 2 || q.ConditionType == 9 || q.ConditionType == 18) && len(a.Objects) < q.ConditionCount || !(q.ConditionType == 2 || q.ConditionType == 9 || q.ConditionType == 18) && a.Value < q.ConditionCount { //nolint:staticcheck // QF1001
 			return 0, nil, true, fmt.Errorf("todayquest: incomplete quest")
 		}
 		if q.ReputationCompleteID != 0 && s.CompleteReputation == nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -117,7 +118,7 @@ func loadIndexedEntries[T any](store stateio.EntryStore, bucket string, index fu
 		}
 		indices = append(indices, parsed)
 	}
-	sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
+	slices.Sort(indices)
 	result := make([]T, 0, len(indices))
 	for _, id := range indices {
 		result = append(result, values[strconv.FormatUint(id, 10)])

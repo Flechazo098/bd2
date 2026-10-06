@@ -21,7 +21,7 @@ func loadEquipmentSlots(db *sql.DB) (map[uint64]uint64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	slots := make(map[uint64]uint64)
 	for rows.Next() {
 		var id uint64

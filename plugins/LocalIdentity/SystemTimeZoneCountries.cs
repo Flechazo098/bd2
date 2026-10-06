@@ -12,7 +12,7 @@ namespace Bd2LocalIdentity;
 // UTC, offset-only zones and unknown identifiers intentionally have no territory.
 internal static class SystemTimeZoneCountries
 {
-    private static readonly Dictionary<string, string> Countries = new Dictionary<string, string>(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string> Countries = new(StringComparer.Ordinal)
     {
         { "AUS Central Standard Time", "AU" },
         { "AUS Eastern Standard Time", "AU" },

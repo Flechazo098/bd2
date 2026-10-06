@@ -223,7 +223,11 @@ func TestContentOpenSQLiteReceiptRestartAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer repo.Close()
+			defer func() {
+				if err := repo.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			service, inventory := contentOpenHarness(t, repo, true, 3)
 			if fail {
 				if contentOpenTicketCount(inventory, 42) != 0 {

@@ -118,12 +118,18 @@ func TestEconomySQLiteAtomicRollbackAndRetry(t *testing.T) {
 		t.Fatal("operation not applied")
 	}
 	_ = op.Rollback()
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, e = accountstate.Open(path)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eco, items, wallet := economyFixture(t, repo, &economyGraph{})
 	if wallet.Snapshot().Gold != 5 || len(items.All()) != 0 {
 		t.Fatal("rollback kept rewards/cost")

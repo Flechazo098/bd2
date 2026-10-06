@@ -6,14 +6,13 @@ using System.Threading;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using UnityEngine;
 
 namespace Bd2LocalIdentity;
 
-[BepInPlugin(Guid, Name, Version)]
+[BepInPlugin(PluginId, Name, Version)]
 public sealed class Plugin : BaseUnityPlugin
 {
-    public const string Guid = "bd2.localidentity";
+    public const string PluginId = "bd2.localidentity";
     public const string Name = "BD2 Local Identity";
     public const string Version = Bd2Build.Versions.Plugin;
     private static ManualLogSource Log;
@@ -47,7 +46,10 @@ public sealed class Plugin : BaseUnityPlugin
             MethodInfo prefix = typeof(Plugin).GetGameMethod(
                 nameof(UseSdkPrefix),
                 BindingFlags.Static | BindingFlags.NonPublic);
-            Harmony harmony = new Harmony(Guid);
+            // Harmony.Dispose calls UnpatchSelf; these hooks live until process exit.
+#pragma warning disable CA2000
+            var harmony = new Harmony(PluginId);
+#pragma warning restore CA2000
             LocalLoginState.Install(harmony, Routing.ServerOrigin, Logger);
             harmony.Patch(getter, prefix: new HarmonyMethod(prefix));
             TryInstall("OS time zone device country", () => SystemTimeZoneRegion.Install(harmony, Logger));
@@ -70,6 +72,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnApplicationQuit()
     {
         DisposeRouting();

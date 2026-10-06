@@ -32,7 +32,7 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		var o FieldResearchObject
@@ -40,39 +40,39 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 		for i, f := range []int{1, 3, 5, 17, 18} {
 			v, e := optionalScalar(raw, f)
 			if e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return d, e
 			}
 			*values[i] = int(v)
 		}
 		o.QuestRange, err = packedInts(raw, 10)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		o.Reward.Type, err = optionalScalar(raw, 16)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		o.Reward.ID, err = optionalScalar(raw, 15)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		o.Reward.Count, err = optionalScalar(raw, 14)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		if o.ID <= 0 {
-			rows.Close()
+			_ = rows.Close()
 			return d, fmt.Errorf("gamedata: invalid research id")
 		}
 		d.Objects[o.ID] = o
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return d, err
 	}
@@ -90,13 +90,13 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 		var id int
 		var scene string
 		if err = rows.Scan(&id, &scene); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		maps[scene] = id
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return d, err
 	}
@@ -109,7 +109,7 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 	if err != nil {
 		return d, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
@@ -142,12 +142,12 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 	if err = rows.Err(); err != nil {
 		return d, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = common.Query(fmt.Sprintf("SELECT id,ProtoBuf FROM QuestTable%d", pack))
 	if err != nil {
 		return d, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int
 		var raw []byte
@@ -191,13 +191,13 @@ func LoadResearchCharacters(root, version string) (map[uint64]bool, error) {
 	for rows.Next() {
 		var id uint64
 		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		talents[id] = true
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func LoadResearchCharacters(root, version string) (map[uint64]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var raw []byte

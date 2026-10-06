@@ -31,7 +31,7 @@ func (c *EventPlayCatalog) Field(game uint64) (*EventField, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		if e = rows.Scan(&raw); e != nil {
 			return nil, e

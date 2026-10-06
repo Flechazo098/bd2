@@ -37,7 +37,7 @@ func LoadFieldBuffDesign(root, version string) (map[uint64]FieldBuffDesign, erro
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[uint64]FieldBuffDesign{}
 	for rows.Next() {
 		var id uint64

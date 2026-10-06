@@ -190,7 +190,7 @@ func TestSQLiteMixedSaleWalletInventoryReceiptRollbackAndRestartRetry(t *testing
 	req := saleRequest(1, saleLine(granted[0].InvenIndex, 19, 3, 100), saleLine(granted[1].InvenIndex, 23, 4, 100))
 	var wallet *player.Wallet
 	var response []byte
-	for phase := 0; phase < 3; phase++ {
+	for phase := range 3 {
 		items, err = player.OpenInventory(repo, starter)
 		if err != nil {
 			t.Fatal(err)

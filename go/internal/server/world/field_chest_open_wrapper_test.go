@@ -47,7 +47,11 @@ func TestInstalledFieldChestOpenWrapperProtocolAndSQLiteRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	service := func() *Service {
 		s := sqliteFieldService(t, store).WithFieldObjects(map[int]gamedata.FieldObjectDesign{1: design})

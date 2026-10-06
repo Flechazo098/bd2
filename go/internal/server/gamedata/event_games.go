@@ -54,7 +54,7 @@ func LoadEventGame(root, version string, kind, id uint64) (*EventGame, error) {
 		if e != nil {
 			return nil, e
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		var out []EventGameReward
 		for rows.Next() {
 			var b []byte
@@ -139,20 +139,25 @@ func LoadEventGame(root, version string, kind, id uint64) (*EventGame, error) {
 		for rows.Next() {
 			var b []byte
 			if e = rows.Scan(&b); e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			i, e := optionalScalar(b, 3)
 			if e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			min, _ := optionalScalar(b, 5)
 			max, _ := optionalScalar(b, 4)
 			d.Moves = append(d.Moves, struct{ ID, Min, Max uint64 }{i, min, max})
 		}
-		e = rows.Err()
-		rows.Close()
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 	case 13:
 		d.Cells, e = load("BingoRewardGroupTable", cellGroup, "default")
 		if e == nil {

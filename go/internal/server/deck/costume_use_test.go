@@ -64,7 +64,11 @@ func TestBatchCostumeUseRestoresCharacterSelectionsFromSQLite(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer r.Close()
+	defer func() {
+		if err := r.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inv, e = player.OpenInventory(r, &player.Starter{Version: "2.35.10"})
 	if e != nil {
 		t.Fatal(e)

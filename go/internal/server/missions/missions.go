@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,10 +210,7 @@ func (s *Service) applyCompletionDependencies(next *snapshot, completed gamedata
 			if before >= target {
 				continue
 			}
-			next.Progress[name] = before + 1
-			if next.Progress[name] > target {
-				next.Progress[name] = target
-			}
+			next.Progress[name] = min(before+1, target)
 			if before < target && next.Progress[name] >= target {
 				queue = append(queue, key)
 			}
@@ -1004,7 +1003,7 @@ func (s *Service) grantRewards(identity string, rewards []gamedata.Reward) ([]pl
 			// server-dynamic. It is intentionally not fabricated as ItemDBInfo.
 			continue
 		}
-		stack = append(stack, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+		stack = append(stack, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 	}
 	if len(stack) == 0 {
 		return nil, nil
@@ -1029,14 +1028,6 @@ func rewardBundle(items []player.Item) []byte {
 		bundle = wire.AppendBytes(bundle, 6, view)
 	}
 	return bundle
-}
-
-func battleRewards(rewards []gamedata.Reward) []gamedata.BattleReward {
-	result := make([]gamedata.BattleReward, len(rewards))
-	for i, reward := range rewards {
-		result[i] = gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}
-	}
-	return result
 }
 
 func (s *Service) commit(next snapshot) error {
@@ -1073,18 +1064,11 @@ func equalProgress(a, b map[string]uint64) bool {
 
 func cloneSnapshot(in snapshot) snapshot {
 	progress := make(map[string]uint64, len(in.Progress))
-	for key, value := range in.Progress {
-		progress[key] = value
-	}
+	maps.Copy(progress, in.Progress)
 	return snapshot{Version: in.Version, DailyPeriod: in.DailyPeriod, WeeklyPeriod: in.WeeklyPeriod, Completed: append([]string(nil), in.Completed...), Claimed: append([]string(nil), in.Claimed...), Progress: progress}
 }
 func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

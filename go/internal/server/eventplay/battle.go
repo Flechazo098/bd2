@@ -113,7 +113,7 @@ func (s *Service) CompleteBattle(req []byte, receipt string) ([]byte, error) {
 		}
 		rewards := []gamedata.Reward{}
 		for _, r := range rs {
-			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		}
 		cost := num(row, 3)
 		var costs []gamedata.Reward

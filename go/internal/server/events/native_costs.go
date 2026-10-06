@@ -20,10 +20,7 @@ func (e *Economy) NativePurchaseCosts(cost gamedata.Reward) ([]gamedata.Reward, 
 		return nil, fmt.Errorf("events: diamond cost has an item ID")
 	}
 	balance := e.wallet.Snapshot()
-	free := cost.Count
-	if free > balance.FreeJewelry {
-		free = balance.FreeJewelry
-	}
+	free := min(cost.Count, balance.FreeJewelry)
 	paid := cost.Count - free
 	if paid > balance.Jewelry {
 		return nil, fmt.Errorf("events: insufficient total diamonds")

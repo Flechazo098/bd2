@@ -11,7 +11,11 @@ func TestCashRewardsUseItemCountAndRejectRandomIndependentRolls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec("CREATE TABLE RewardGroupTable(id INTEGER,ProtoBuf BLOB)"); err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // NPCShopDesign is the ordinary in-game shop, distinct from CashShopTable.
@@ -46,7 +46,7 @@ func LoadNPCShopDesign(root, version string) (NPCShopDesign, error) {
 	for pack := range packs {
 		ids = append(ids, pack)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, pack := range ids {
 		bindings, e := LoadNPCShopActors(root, version, int(pack))
 		if e != nil {
@@ -74,7 +74,7 @@ func LoadNPCShopActors(root, version string, pack int) (map[uint64][]uint64, err
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[uint64][]uint64{}
 	for rows.Next() {
 		var id uint64

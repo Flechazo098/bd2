@@ -155,12 +155,18 @@ func TestNativeTotalDiamondPurchaseSQLiteRollbackAndRestartReplay(t *testing.T) 
 	if err = op.Rollback(); err != nil && !errors.Is(err, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	wallet, err = player.OpenWallet(repo, player.Currency{})
 	if err != nil {
 		t.Fatal(err)

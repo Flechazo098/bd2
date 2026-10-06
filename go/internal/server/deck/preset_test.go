@@ -117,7 +117,7 @@ func presetRequest(slot, character, costume, equipment uint64, name string) []by
 	base = wire.AppendVarint(base, 3, 1)
 	deck := wire.AppendBytes(nil, 1, base)
 	deck = wire.AppendVarint(deck, 2, costume)
-	for equipmentType := uint64(0); equipmentType < 5; equipmentType++ {
+	for equipmentType := range uint64(5) {
 		entry := wire.AppendVarint(nil, 1, equipmentType)
 		if equipmentType == 0 {
 			entry = wire.AppendVarint(entry, 2, equipment)
@@ -202,7 +202,7 @@ func TestPresetMetadataCanCreateEmptySlot(t *testing.T) {
 func TestPresetAddSlotChargesOncePersistsAndCaps(t *testing.T) {
 	f := newPresetFixture(t)
 	add := req(20, wire.AppendVarint(nil, 2, 1))
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		if code, _, _, err := f.deck.Handle("/PresetAddSlot", add); err != nil || code != 180 {
 			t.Fatalf("add attempt %d code=%d err=%v", attempt, code, err)
 		}

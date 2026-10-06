@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -282,7 +282,7 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 func (s *Service) grant(identity string, rewards []gamedata.BattleReward) ([]byte, error) {
 	rs := make([]gamedata.Reward, 0, len(rewards))
 	for _, r := range rewards {
-		rs = append(rs, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+		rs = append(rs, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 	}
 	return s.economy.Apply(identity, nil, rs)
 }
@@ -440,7 +440,7 @@ func (s *Service) game(path string, req []byte, session string, next *snapshot, 
 			for id := range d.Objects {
 				ids = append(ids, id)
 			}
-			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			slices.Sort(ids)
 			for _, id := range ids {
 				startReply = wire.AppendVarint(startReply, 1, id)
 			}
@@ -630,7 +630,7 @@ func (s *Service) game(path string, req []byte, session string, next *snapshot, 
 				return nil, e
 			}
 			field := 1
-			if f == "Run" {
+			if f == "Run" { //nolint:staticcheck // QF1003
 				field = 3
 			} else if f == "Field" {
 				field = 5

@@ -19,33 +19,30 @@ internal static class PassRewardPresentation
     private sealed class Capture
     {
         internal Capture Previous;
-        internal readonly List<ItemBaseInfo> Rewards = new List<ItemBaseInfo>();
+        internal readonly List<ItemBaseInfo> Rewards = [];
     }
     private sealed class Batch
     {
-        internal readonly List<ItemBaseInfo> Rewards = new List<ItemBaseInfo>();
+        internal readonly List<ItemBaseInfo> Rewards = [];
     }
 
     internal static void Install(Harmony harmony)
     {
-        var receiver = typeof(MissionPassPacket).GetNestedTypes(All)
+        MethodInfo receiver = typeof(MissionPassPacket).GetNestedTypes(All)
             .SelectMany(type => type.GetMethods(All | BindingFlags.DeclaredOnly))
             .Single(method => method.IsGameMethod("<SendPassRewardRequest>b__1") && method.ReturnType == typeof(bool) &&
                 method.GetParameters().Select(parameter => parameter.ParameterType)
-                    .SequenceEqual(new[] { typeof(byte[]), typeof(int), typeof(int) }));
+                    .SequenceEqual((Type[])[typeof(byte[]), typeof(int), typeof(int)]));
         harmony.Patch(receiver,
             prefix: new HarmonyMethod(typeof(PassRewardPresentation), nameof(BeginReceive)),
             postfix: new HarmonyMethod(typeof(PassRewardPresentation), nameof(EndReceive)),
             finalizer: new HarmonyMethod(typeof(PassRewardPresentation), nameof(FinishReceive)));
-        var addRewards = typeof(DataManager).GetGameMethod("AddRewardInfoBundle", All, null,
-            new[] { typeof(Proto.Net.RewardDBInfoBundle), typeof(List<ItemBaseInfo>).MakeByRefType(), typeof(bool) }, null);
-        if (addRewards == null) throw new MissingMethodException("DataManager.AddRewardInfoBundle");
+        MethodInfo addRewards = typeof(DataManager).GetGameMethod("AddRewardInfoBundle", All, null,
+            [typeof(Proto.Net.RewardDBInfoBundle), typeof(List<ItemBaseInfo>).MakeByRefType(), typeof(bool)], null) ?? throw new MissingMethodException("DataManager.AddRewardInfoBundle");
         harmony.Patch(addRewards, postfix: new HarmonyMethod(typeof(PassRewardPresentation), nameof(CaptureRewards)));
-        var receiveAll = typeof(PassRootUI).GetGameMethod("ReceiveAllReward", All);
-        if (receiveAll == null) throw new MissingMethodException("PassRootUI.ReceiveAllReward");
+        MethodInfo receiveAll = typeof(PassRootUI).GetGameMethod("ReceiveAllReward", All) ?? throw new MissingMethodException("PassRootUI.ReceiveAllReward");
         harmony.Patch(receiveAll, postfix: new HarmonyMethod(typeof(PassRewardPresentation), nameof(WrapReceiveAll)));
-        var popup = typeof(MissionPassPacket).GetGameMethod("ShowRewardPopup", All);
-        if (popup == null) throw new MissingMethodException("MissionPassPacket.ShowRewardPopup");
+        MethodInfo popup = typeof(MissionPassPacket).GetGameMethod("ShowRewardPopup", All) ?? throw new MissingMethodException("MissionPassPacket.ShowRewardPopup");
         harmony.Patch(popup, prefix: new HarmonyMethod(typeof(PassRewardPresentation), nameof(MergeBatch)));
     }
 
@@ -74,7 +71,7 @@ internal static class PassRewardPresentation
     private static IEnumerator ReceiveAll(IEnumerator original)
     {
         var owner = new Batch();
-        var previous = batch;
+        Batch previous = batch;
         batch = owner;
         try
         {
@@ -89,7 +86,7 @@ internal static class PassRewardPresentation
     private static void MergeBatch(ref List<ItemBaseInfo> __0)
     {
         if (batch == null || batch.Rewards.Count == 0) return;
-        var combined = __0 == null ? new List<ItemBaseInfo>() : new List<ItemBaseInfo>(__0);
+        List<ItemBaseInfo> combined = __0 == null ? [] : new List<ItemBaseInfo>(__0);
         combined.AddRange(batch.Rewards);
         batch.Rewards.Clear();
         __0 = combined;

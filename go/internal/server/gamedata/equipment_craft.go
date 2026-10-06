@@ -69,13 +69,13 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 	for rows.Next() {
 		var row makingRow
 		if err := rows.Scan(&row.id, &row.raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		makingRows = append(makingRows, row)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -131,7 +131,7 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		classes, _ := packedInts(raw, 4)
@@ -140,6 +140,10 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		if len(classes) == 1 && classes[0] == equipmentMakingTalentClass && len(growthGroups) == 1 && len(skillGroups) == 1 {
 			talents[id] = equipmentMakingTalent{SkillGroup: skillGroups[0], GrowthGroup: growthGroups[0]}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -152,7 +156,7 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		talentIDs, _ := packedInts(raw, 18)
@@ -161,6 +165,10 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 				design.CharTalent[id] = talent
 			}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -173,13 +181,13 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		var group, level uint64
 		var raw []byte
 		if err := rows.Scan(&group, &level, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		catalysts, _ := packedInts(raw, 1)
 		experience, _ := packedInts(raw, 5)
 		if len(catalysts) > 1 || len(experience) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment making talent skill %d/%d malformed", group, level)
 		}
 		var skill equipmentMakingTalentSkill
@@ -190,6 +198,10 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 			skill.Catalyst = catalysts[0]
 		}
 		design.Skills[[2]uint64{group, level}] = skill
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -202,18 +214,22 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 		var group, level uint64
 		var raw []byte
 		if err := rows.Scan(&group, &level, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		need, err := packedInts(raw, 6)
 		if err != nil || len(need) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: malformed equipment talent growth %d/%d", group, level)
 		}
 		design.TalentNeed[[2]uint64{group, level}] = 0
 		if len(need) == 1 {
 			design.TalentNeed[[2]uint64{group, level}] = need[0]
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

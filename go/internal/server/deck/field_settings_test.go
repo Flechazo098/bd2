@@ -55,12 +55,14 @@ func TestTalentSlotsRestoreOwnershipAndClearSlots(t *testing.T) {
 		t.Fatal(e)
 	}
 	n := 0
-	wire.Walk(b, func(f wire.Field) error {
+	if err := wire.Walk(b, func(f wire.Field) error {
 		if f.Number == 2 {
 			n++
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if n != 3 {
 		t.Fatal("DeckInfo missing empty quick slot", n)
 	}
@@ -85,7 +87,9 @@ func TestCharmFieldAndTalentSlotsExpireWithoutPermanentOwnership(t *testing.T) {
 	}
 	install(uint64(time.Now().Add(time.Hour).UnixMilli()))
 	d := &gamedata.FieldSettingsDesign{TalentSlots: 1, CharacterTalentClass: map[uint64]uint64{9010: 10}, CharacterTemporaryPack: map[uint64]int{9010: 99}}
-	f.deck.AttachFieldSettingsPack(func() (int, error) { return 4, nil })
+	if err := f.deck.AttachFieldSettingsPack(func() (int, error) { return 4, nil }); err != nil {
+		t.Fatal(err)
+	}
 	if e := f.deck.AttachFieldSettings(d); e != nil {
 		t.Fatal(e)
 	}
@@ -116,7 +120,9 @@ func TestTemporaryFieldAndTalentSlotsFollowPack(t *testing.T) {
 	}
 	pack := 4
 	d := &gamedata.FieldSettingsDesign{TalentSlots: 1, CharacterTalentClass: map[uint64]uint64{9001: 9}, CharacterTemporaryPack: map[uint64]int{9001: 4}}
-	f.deck.AttachFieldSettingsPack(func() (int, error) { return pack, nil })
+	if err := f.deck.AttachFieldSettingsPack(func() (int, error) { return pack, nil }); err != nil {
+		t.Fatal(err)
+	}
 	if e := f.deck.AttachFieldSettings(d); e != nil {
 		t.Fatal(e)
 	}

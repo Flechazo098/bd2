@@ -2,11 +2,24 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
+    <!-- Adjust these settings as needed. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <AssemblyName>ExamplePlugin</AssemblyName>
     <BD2GameVersion>2.35.10</BD2GameVersion>
+    <BD2ManagedDir Condition="'$(BD2ManagedDir)' == ''">$(GameDir)/BrownDust II_Data/Managed</BD2ManagedDir>
     <!-- GameDir belongs in local Directory.Build.props or on the command line. -->
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="BD2.GameSdk" Version="0.2.1-game.2.35.10" PrivateAssets="all" />
+    <PackageReference Include="BD2.GameSdk" Version="0.2.2-game.2.35.10" PrivateAssets="all" />
+    <!-- Adjust these references as needed. -->
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(BD2ManagedDir)/Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(BD2ManagedDir)/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

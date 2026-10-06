@@ -245,7 +245,7 @@ func TestBattleStateIsIsolatedPerGameSession(t *testing.T) {
 
 func TestRepeatedCurrentSessionSelectionDoesNotEvictOtherBattles(t *testing.T) {
 	service := NewService("", "", nil, nil)
-	for index := 0; index < 1024; index++ {
+	for index := range 1024 {
 		service.BeginSession(fmt.Sprintf("session-%d", index))
 	}
 	service.BeginSession("session-1023")

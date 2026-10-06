@@ -14,7 +14,7 @@ func LoadPackRecoveryPolicy(root, version string) (*PackRecoveryPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	p := &PackRecoveryPolicy{Types: map[int]uint64{}}
 	for rows.Next() {
 		var id int

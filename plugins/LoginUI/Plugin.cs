@@ -13,14 +13,15 @@ using static Bd2LoginUI.LoginController;
 
 namespace Bd2LoginUI;
 
-[BepInPlugin(Guid, Name, Version)]
+[BepInPlugin(PluginId, Name, Version)]
 [BepInDependency("bd2.localidentity", BepInDependency.DependencyFlags.HardDependency)]
 public sealed class Plugin : BaseUnityPlugin
 {
-    public const string Guid = "bd2.login.ui";
+    public const string PluginId = "bd2.login.ui";
     public const string Name = "BD2 Login UI";
     public const string Version = Bd2Build.Versions.Plugin;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnApplicationQuit()
     {
         ApplicationQuitting = true;
@@ -91,13 +92,18 @@ public sealed class Plugin : BaseUnityPlugin
                 throw new MissingMethodException("IntroUI authentication transition methods were not found (client version mismatch)");
             }
 
-            Harmony harmony = new Harmony(Guid);
+            // Harmony.Dispose calls UnpatchSelf; these hooks live until process exit.
+#pragma warning disable CA2000
+            var harmony = new Harmony(PluginId);
+#pragma warning restore CA2000
             SessionDiagnostics.Install(harmony);
             EventRequestDiagnostics.Install(harmony);
             EventHubPresentation.Install(harmony);
             harmony.Patch(awake, postfix: new HarmonyMethod(typeof(SessionRecovery), nameof(IntroAwakePostfix)));
-            HarmonyMethod maintenancePrefix = new HarmonyMethod(typeof(LoginController), nameof(SendMaintenancePrefix));
-            maintenancePrefix.after = new[] { "bd2.localidentity" };
+            var maintenancePrefix = new HarmonyMethod(typeof(LoginController), nameof(SendMaintenancePrefix))
+            {
+                after = ["bd2.localidentity"]
+            };
             harmony.Patch(SendMaintenance, prefix: maintenancePrefix);
             harmony.Patch(
                 accessTokenGetter,

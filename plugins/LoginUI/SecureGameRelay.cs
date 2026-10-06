@@ -16,12 +16,14 @@ namespace Bd2LoginUI;
 // This listener binds loopback only and can forward game paths to one fixed origin.
 internal sealed class SecureGameRelay : IDisposable
 {
+    private static readonly char[] HeaderNewlines = ['\r', '\n'];
+    private static readonly string[] HeaderSeparators = ["\r\n"];
     private readonly Uri server;
     private readonly Uri local;
     private readonly string prefix;
     private readonly TcpListener listener;
-    private readonly CancellationTokenSource lifetime = new CancellationTokenSource();
-    private readonly SemaphoreSlim slots = new SemaphoreSlim(16, 16);
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly SemaphoreSlim slots = new(16, 16);
     private readonly ManualLogSource log;
     private int disposed;
 
@@ -33,7 +35,7 @@ internal sealed class SecureGameRelay : IDisposable
         this.server = server;
         this.log = log;
         byte[] nonce = new byte[32];
-        using (RandomNumberGenerator random = RandomNumberGenerator.Create()) random.GetBytes(nonce);
+        using (var random = RandomNumberGenerator.Create()) random.GetBytes(nonce);
         prefix = "/" + BitConverter.ToString(nonce).Replace("-", "").ToLowerInvariant() + "/";
         Array.Clear(nonce, 0, nonce.Length);
         listener = new TcpListener(IPAddress.Loopback, 0);
@@ -43,7 +45,7 @@ internal sealed class SecureGameRelay : IDisposable
         log?.LogInfo("Game HTTPS transport uses native OS networking through a private loopback relay");
     }
 
-    internal static SecureGameRelay Start(Uri server, ManualLogSource log) => new SecureGameRelay(server, log);
+    internal static SecureGameRelay Start(Uri server, ManualLogSource log) => new(server, log);
 
     internal Uri Rewrite(Uri uri)
     {
@@ -55,7 +57,7 @@ internal sealed class SecureGameRelay : IDisposable
         original = null;
         if (uri == null || uri.Scheme != local.Scheme || uri.Host != local.Host || uri.Port != local.Port ||
             !uri.AbsolutePath.StartsWith(prefix, StringComparison.Ordinal)) return false;
-        Uri resolved = new Uri(server, "/" + uri.PathAndQuery.Substring(prefix.Length));
+        var resolved = new Uri(server, "/" + uri.PathAndQuery[prefix.Length..]);
         if (!IsRelayedUri(resolved)) return false;
         original = resolved;
         return true;
@@ -100,7 +102,7 @@ internal sealed class SecureGameRelay : IDisposable
             if (used >= 4 && header[used - 4] == 13 && header[used - 3] == 10 && header[used - 2] == 13 && header[used - 1] == 10) break;
         }
         if (used == header.Length) throw new InvalidDataException("Relay header limit");
-        string[] lines = Encoding.ASCII.GetString(header, 0, used).Split(new[] { "\r\n" }, StringSplitOptions.None);
+        string[] lines = Encoding.ASCII.GetString(header, 0, used).Split(HeaderSeparators, StringSplitOptions.None);
         Array.Clear(header, 0, header.Length);
         string[] start = lines[0].Split(' ');
         if (start.Length != 3 || (start[0] != "PUT" && start[0] != "POST" && start[0] != "GET") ||
@@ -110,14 +112,14 @@ internal sealed class SecureGameRelay : IDisposable
             throw new InvalidDataException("Invalid relay target");
         bool maintenance = remote.AbsolutePath.Equals("/game/MaintenanceInfo", StringComparison.Ordinal);
         if (maintenance) log?.LogInfo("Game relay received MaintenanceInfo request");
-        Dictionary<string, string> headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int length = 0;
         bool lengthSeen = false;
         foreach (string line in lines)
         {
             int separator = line.IndexOf(':');
             if (separator <= 0) continue;
-            string name = line.Substring(0, separator).Trim(), value = line.Substring(separator + 1).Trim();
+            string name = line[..separator].Trim(), value = line[(separator + 1)..].Trim();
             if (name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Chunked relay requests are not supported");
             if (name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
             {
@@ -162,7 +164,7 @@ internal sealed class SecureGameRelay : IDisposable
             {
                 if ((item.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || item.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) ||
                     (item.Key.StartsWith("X-BD2-", StringComparison.OrdinalIgnoreCase) &&
-                        !item.Key.Equals("X-BD2-Transport-Failure", StringComparison.OrdinalIgnoreCase))) && item.Value.IndexOfAny(new[] { '\r', '\n' }) < 0)
+                        !item.Key.Equals("X-BD2-Transport-Failure", StringComparison.OrdinalIgnoreCase))) && item.Value.IndexOfAny(HeaderNewlines) < 0)
                     output.Append(item.Key).Append(": ").Append(item.Value).Append("\r\n");
             }
             output.Append("Content-Length: ").Append(response.Data.Length.ToString(CultureInfo.InvariantCulture)).Append("\r\n\r\n");

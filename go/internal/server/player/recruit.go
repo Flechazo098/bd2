@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -269,7 +269,7 @@ func (s *RecruitService) rollSpecial(count uint64) (specialRecruitState, error) 
 			}
 		}
 	}
-	sort.Slice(pool, func(i, j int) bool { return pool[i] < pool[j] })
+	slices.Sort(pool)
 	for len(state.IDs) < int(s.design.AppearCount) && len(pool) > 0 {
 		var total uint64
 		for _, id := range pool {
@@ -321,7 +321,7 @@ func (s *RecruitService) scoutInfo(state specialRecruitState) []byte {
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, id := range ids {
 		b = wire.AppendVarint(b, 4, id)
 	}

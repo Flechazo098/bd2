@@ -11,7 +11,11 @@ import (
 
 func TestEquipmentOptionRerollDesignReadsCostsAndRollsUnlockedSlots(t *testing.T) {
 	db := optionRerollTestDatabase(t)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	insertOptionRerollEquipment(t, db, 77, 9, []uint64{100}, []uint64{200, 200}, []uint64{300})
 	insertOptionRerollCost(t, db, 9, []uint64{0, 5}, []uint64{1000, 5}, []uint64{0, 17}, []uint64{4, 8})
@@ -60,7 +64,11 @@ func TestEquipmentOptionRerollDesignReadsCostsAndRollsUnlockedSlots(t *testing.T
 
 func TestEquipmentOptionRerollDesignRejectsMismatchedCostArrays(t *testing.T) {
 	db := optionRerollTestDatabase(t)
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	insertOptionRerollEquipment(t, db, 77, 9, []uint64{100}, []uint64{200}, nil)
 	// LockItemCount has one entry but the other parallel arrays have two.
 	insertOptionRerollCost(t, db, 9, []uint64{0}, []uint64{1000, 5}, []uint64{0, 17}, []uint64{4, 8})
@@ -139,7 +147,9 @@ func optionRerollTestDatabase(t *testing.T) *sql.DB {
 		CREATE TABLE EquipmentRerollDefaultTable (id INTEGER PRIMARY KEY, ProtoBuf BLOB);
 		CREATE TABLE EquipmentOptionTable (groupId INTEGER,id INTEGER,ProtoBuf BLOB,PRIMARY KEY(groupId,id));
 	`); err != nil {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
 	return db

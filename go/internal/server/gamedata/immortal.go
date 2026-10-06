@@ -26,21 +26,21 @@ func LoadImmortalDesign(root, version string) (*ImmortalDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		group, err := optionalScalar(raw, 18)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		talents[id] = group
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT id,ProtoBuf FROM CharTable")
 	if err != nil {
 		return nil, err
@@ -49,12 +49,12 @@ func LoadImmortalDesign(root, version string) (*ImmortalDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		talent, err := optionalScalar(raw, 18)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if group := talents[talent]; group != 0 {
@@ -62,15 +62,15 @@ func LoadImmortalDesign(root, version string) (*ImmortalDesign, error) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, err = db.Query("SELECT groupId,id,ProtoBuf FROM TalentSkillTable")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var group, level uint64
 		var raw []byte

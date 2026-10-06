@@ -1,22 +1,62 @@
 #!/bin/sh
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) suffix=.exe ;; *) suffix= ;; esac
-tool_dir="$root/.build/tools"
-tool="$tool_dir/bd2w$suffix"
 
-# Bootstrap only when the cached executable is absent. Build/run live in Go.
-if [ ! -f "$tool" ]; then
+if [ "${1-}" = check-csharp ]; then
+    shift
+    (
+        cd "$root"
+        if [ "$#" -eq 0 ]; then
+            set -- GameSdk GameNames LocalIdentity LoginUI CashShop CaptureEnvironment
+        fi
+        for project do
+            case "$project" in
+                GameSdk|GameNames|LocalIdentity|LoginUI|CashShop|CaptureEnvironment) ;;
+                *) printf 'bd2w: unknown C# project: %s\n' "$project" >&2; exit 1 ;;
+            esac
+        done
+        Configuration=Release
+        export Configuration
+        failed=0
+        for project do
+            printf 'Checking %s\n' "$project"
+            project_file="$root/plugins/$project/$project.csproj"
+            if ! dotnet build "$project_file" -c Release -t:Rebuild --nologo -warnaserror; then
+                failed=1
+                continue
+            fi
+            if ! dotnet format style "$project_file" --verify-no-changes --severity info --no-restore; then
+                failed=1
+            fi
+        done
+        exit "$failed"
+    )
+    exit $?
+fi
+
+tool_dir="$root/.build/tools"
+tool="$tool_dir/bd2w"
+
+tool_is_current() {
+    [ -f "$tool" ] || return 1
+    newer_sources=$(find "$root/go/build" "$root/go/go.mod" "$root/go/go.sum" -type f -newer "$tool" -print) || {
+        printf 'bd2w: cannot check build tool source timestamps.\n' >&2
+        exit 1
+    }
+    [ -z "$newer_sources" ]
+}
+
+if ! tool_is_current; then
     mkdir -p "$tool_dir"
     lock="$tool_dir/.bootstrap.lock"
     attempts=0
-    while [ ! -f "$tool" ]; do
+    while ! tool_is_current; do
         if mkdir "$lock" 2>/dev/null; then
-            temporary="$tool_dir/.bd2w-$$$suffix"
+            temporary="$tool_dir/.bd2w-$$"
             trap 'rm -f "$temporary"; rmdir "$lock" 2>/dev/null || true' 0
             trap 'exit 130' INT TERM
-            if [ ! -f "$tool" ]; then
-                printf 'bd2w: compiling the build tool for first use...\n'
+            if ! tool_is_current; then
+                printf 'bd2w: compiling the build tool...\n'
                 (
                     cd "$root/go"
                     GOCACHE="$root/go/.cache/go-build"

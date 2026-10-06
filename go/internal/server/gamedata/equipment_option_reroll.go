@@ -79,7 +79,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		protoID, idErr := packedInts(proto, 6)
@@ -90,7 +90,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		privateUniqueCharID, uniqueErr := packedInts(proto, 16)
 		if idErr != nil || rerollErr != nil || mainErr != nil || subErr != nil || privateErr != nil || uniqueErr != nil ||
 			len(protoID) != 1 || protoID[0] != id || len(rerollID) != 1 || rerollID[0] == 0 || len(main) == 0 || len(sub) == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment %d has invalid option-reroll design", id)
 		}
 		item := EquipmentOptionRerollItem{
@@ -101,7 +101,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 			PrivateGroups:  append([]uint64(nil), private...),
 		}
 		if len(privateUniqueCharID) > 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment %d has invalid private unique character", id)
 		}
 		if len(privateUniqueCharID) == 1 {
@@ -109,7 +109,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		}
 		for _, group := range append(append(append([]uint64(nil), main...), sub...), private...) {
 			if group == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment %d references option group zero", id)
 			}
 			referencedGroups[group] = true
@@ -117,7 +117,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		d.Equipment[id] = item
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -132,7 +132,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		protoID, idErr := packedInts(proto, 1)
@@ -142,13 +142,13 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		types, typeErr := packedInts(proto, 5)
 		if idErr != nil || lockErr != nil || countErr != nil || itemErr != nil || typeErr != nil ||
 			len(protoID) != 1 || protoID[0] != id || len(counts) == 0 || len(locks) != len(counts) || len(ids) != len(counts) || len(types) != len(counts) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: option-reroll cost %d has mismatched resource arrays", id)
 		}
 		cost := EquipmentOptionRerollCost{Resources: make([]EquipmentOptionRerollResource, len(counts))}
 		for i := range counts {
 			if types[i] == 0 || counts[i] == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: option-reroll cost %d has invalid resource %d", id, i)
 			}
 			cost.Resources[i] = EquipmentOptionRerollResource{Type: types[i], ID: ids[i], BaseCount: counts[i], LockCount: locks[i]}
@@ -156,7 +156,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		d.Costs[id] = cost
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -171,7 +171,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ratio, ratioErr := packedInts(proto, 1)
@@ -183,7 +183,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 			len(ratio) != 1 || ratio[0] == 0 || len(sourceID) != 1 || sourceID[0] == 0 || len(sourceType) != 1 || sourceType[0] == 0 ||
 			len(targetID) != 1 || targetID[0] == 0 || len(targetType) != 1 || targetType[0] == 0 ||
 			(sourceID[0] == targetID[0] && sourceType[0] == targetType[0]) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment reroll default %d is invalid", id)
 		}
 		d.Conversion = &EquipmentOptionRerollConversion{
@@ -191,7 +191,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -206,7 +206,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		var groupID, id uint64
 		var proto []byte
 		if err := rows.Scan(&groupID, &id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if !referencedGroups[groupID] {
@@ -218,7 +218,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		value, present, valueErr := fixed64Double(proto, 1)
 		if groupErr != nil || idErr != nil || weightErr != nil || valueErr != nil || !present ||
 			len(protoGroup) != 1 || protoGroup[0] != groupID || len(protoID) != 1 || protoID[0] != id || len(weights) != 1 || weights[0] == 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: option group %d choice %d is invalid", groupID, id)
 		}
 		group := d.Groups[groupID]
@@ -227,7 +227,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		d.Groups[groupID] = group
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

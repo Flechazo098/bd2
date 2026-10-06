@@ -80,7 +80,7 @@ func TestBinaryRejectsCorruptionLimitsAndTrailing(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	for n := 0; n < len(raw); n++ {
+	for n := range len(raw) {
 		if _, e = UnmarshalBinary(raw[:n]); e == nil {
 			t.Fatalf("accepted truncation %d", n)
 		}

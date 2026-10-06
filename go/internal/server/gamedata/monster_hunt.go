@@ -72,12 +72,12 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 	for rows.Next() {
 		var part []byte
 		if err = rows.Scan(&part); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		v, e := optionalScalar(part, 7)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if body == 0 && v > 0 {
@@ -85,7 +85,7 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -135,17 +135,17 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		var lv uint64
 		var r []byte
 		if err = rows.Scan(&lv, &r); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		clear, e := monsterHuntRewardArrays(r, 8, 7, 6)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		daily, e := monsterHuntRewardArrays(r, 3, 2, 1)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		d.Rewards[lv] = MonsterHuntRewards{clear, daily}
@@ -154,7 +154,7 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -167,28 +167,28 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		var r MonsterHuntRankReward
 		var p []byte
 		if err = rows.Scan(&g, &r.ID, &p); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		r.Type, err = optionalScalar(p, 6)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		r.Ranking, _, err = fixed64Double(p, 5)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		r.Rewards, err = monsterHuntRewardArrays(p, 9, 8, 7)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		d.Ranks[g] = append(d.Ranks[g], r)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}

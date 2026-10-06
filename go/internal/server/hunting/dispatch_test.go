@@ -99,9 +99,9 @@ func TestDispatchPreviewHasAPItemInfo(t *testing.T) {
 		t.Fatal(e)
 	}
 	totals := map[uint64]uint64{}
-	wire.Walk(out, func(f wire.Field) error {
+	if err := wire.Walk(out, func(f wire.Field) error {
 		if f.Number == 2 {
-			wire.Walk(f.Value, func(item wire.Field) error {
+			return wire.Walk(f.Value, func(item wire.Field) error {
 				if item.Number == 1 {
 					typ, _, _ := wire.Varint(item.Value, 3)
 					n, _, _ := wire.Varint(item.Value, 4)
@@ -111,7 +111,9 @@ func TestDispatchPreviewHasAPItemInfo(t *testing.T) {
 			})
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if totals[21] != 10 || totals[23] != 2 || totals[4] != 0 {
 		t.Fatalf("preview refund ItemInfo %+v", totals)
 	}

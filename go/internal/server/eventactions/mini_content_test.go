@@ -65,7 +65,9 @@ func TestMiniContentStoryAndQuizCompleteReplayAndWindows(t *testing.T) {
 	}
 	reopened.now = s.now
 	reopened.BeginSession("test")
-	reopened.AttachMiniContent(routes, d)
+	if err := reopened.AttachMiniContent(routes, d); err != nil {
+		t.Fatal(err)
+	}
 	_, replay, _, err := reopened.Handle("/NpcQuizClear", quiz)
 	if err != nil || !bytes.Equal(replay, quizReply) || e.calls != 2 {
 		t.Fatal("quiz restart replay", err)

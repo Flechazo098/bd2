@@ -57,20 +57,20 @@ func loadEquipmentSmeltingDesign(db *sql.DB) (*EquipmentSmeltingDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		grade, _ := packedInts(proto, 3)
 		maximum, _ := packedInts(proto, 13)
 		rankGroup, _ := packedInts(proto, 19)
 		if len(grade) != 1 || len(maximum) != 1 || len(rankGroup) != 1 || grade[0] == 0 || maximum[0] == 0 || rankGroup[0] == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment %d has invalid smelting design", id)
 		}
 		d.Equipment[id] = EquipmentSmeltingItem{Grade: grade[0], RankGroup: rankGroup[0], MaxLevel: maximum[0]}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -84,26 +84,26 @@ func loadEquipmentSmeltingDesign(db *sql.DB) (*EquipmentSmeltingDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		counts, _ := packedInts(proto, 4)
 		ids, _ := packedInts(proto, 5)
 		types, _ := packedInts(proto, 6)
 		if len(counts) == 0 || len(counts) != len(ids) || len(counts) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment grade %d has invalid smelting costs", id)
 		}
 		for i := range counts {
 			if counts[i] == 0 || (types[i] != 4 && types[i] != 8) || (types[i] == 4 && ids[i] != 0) || (types[i] == 8 && ids[i] == 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment grade %d has invalid smelting material", id)
 			}
 			d.Grades[id] = append(d.Grades[id], PromotionCost{Type: types[i], ID: ids[i], Count: counts[i]})
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -117,36 +117,36 @@ func loadEquipmentSmeltingDesign(db *sql.DB) (*EquipmentSmeltingDesign, error) {
 		var group, slot uint64
 		var proto []byte
 		if err := rows.Scan(&group, &slot, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ratios, err := fixed32Floats(proto, 4)
 		growth, growthErr := packedInts(proto, 2)
 		values, valueErr := packedInts(proto, 5)
 		if err != nil || growthErr != nil || valueErr != nil || slot < 1 || slot > 3 || len(ratios) != 4 || len(growth) != 4 || len(values) != 4 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment rank %d/%d has invalid smelting distribution", group, slot)
 		}
 		var total float64
 		for i := range ratios {
 			if ratios[i] < 0 || ratios[i] > 1 || math.IsNaN(ratios[i]) || values[i] == 0 || growth[i] == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment rank %d/%d has invalid smelting value", group, slot)
 			}
 			total += ratios[i]
 			if i != 0 && (values[i] <= values[i-1] || growth[i] <= growth[i-1]) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: equipment rank %d/%d is not increasing", group, slot)
 			}
 		}
 		if math.Abs(total-1) > 1e-5 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: equipment rank %d/%d ratio total %.8f", group, slot, total)
 		}
 		d.Ranks[[2]uint64{group, slot}] = EquipmentSmeltingRank{GrowthPoint: growth, Values: values, Ratio: ratios}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

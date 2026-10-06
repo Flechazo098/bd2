@@ -162,7 +162,7 @@ func Save(gameDir string, in Settings) (Settings, error) {
 		return Settings{}, fmt.Errorf("client config: create temporary config: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err = temporary.Chmod(0o600); err == nil {
 		_, err = temporary.Write(data)
 	}

@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/player"
@@ -23,10 +23,8 @@ func (s *RecipeService) Knows(id uint64) bool {
 	if !s.design.IDs[id] {
 		return false
 	}
-	for _, known := range s.initial {
-		if known == id {
-			return true
-		}
+	if slices.Contains(s.initial, id) {
+		return true
 	}
 	for _, item := range s.items.All() {
 		if item.Type == 7 && item.ID == id && item.Count > 0 {
@@ -75,7 +73,7 @@ func (s *RecipeService) Handle(path string, request []byte) (int, []byte, bool, 
 	for id := range known {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var packed []byte
 	for _, id := range ids {
 		packed = binary.AppendUvarint(packed, id)

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -711,10 +713,7 @@ func (s *CollectionStore) grantCostumesSorted(identity string, costumeIDs, sortI
 		}
 		if base, found := findCostume(s.base, costumeID); found {
 			key := strconv.FormatUint(s.base[base].InvenIndex, 10)
-			before := next.BaseCostumeLevels[key]
-			if before < s.base[base].Level {
-				before = s.base[base].Level
-			}
+			before := max(next.BaseCostumeLevels[key], s.base[base].Level)
 			if before < maxLevel {
 				next.BaseCostumeLevels[key] = before + 1
 				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: s.base[base].InvenIndex, CostumeID: costumeID, Before: before, After: before + 1, SortID: sortID})
@@ -1072,7 +1071,7 @@ func (s *CollectionStore) ActivateCostumePotential(costumeIndex uint64, nodes []
 	next := cloneCollection(s.data)
 	key := strconv.FormatUint(costumeIndex, 10)
 	next.CostumePotential[key] = append(next.CostumePotential[key], nodes...)
-	sort.Slice(next.CostumePotential[key], func(i, j int) bool { return next.CostumePotential[key][i] < next.CostumePotential[key][j] })
+	slices.Sort(next.CostumePotential[key])
 	return s.commit(next)
 }
 
@@ -1202,54 +1201,36 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	out.Characters = append([]Character(nil), in.Characters...)
 	out.Costumes = append([]Costume(nil), in.Costumes...)
 	out.BaseCostumeLevels = make(map[string]uint64, len(in.BaseCostumeLevels))
-	for k, v := range in.BaseCostumeLevels {
-		out.BaseCostumeLevels[k] = v
-	}
+	maps.Copy(out.BaseCostumeLevels, in.BaseCostumeLevels)
 	out.CostumePotential = make(map[string][]uint64, len(in.CostumePotential))
 	for k, v := range in.CostumePotential {
 		out.CostumePotential[k] = append([]uint64(nil), v...)
 	}
 	out.CostumeBurstLevels = make(map[string]uint64, len(in.CostumeBurstLevels))
-	for k, v := range in.CostumeBurstLevels {
-		out.CostumeBurstLevels[k] = v
-	}
+	maps.Copy(out.CostumeBurstLevels, in.CostumeBurstLevels)
 	out.CostumeBurstUpgrades = make(map[string]CostumeBurstUpgradeRecord, len(in.CostumeBurstUpgrades))
 	for k, v := range in.CostumeBurstUpgrades {
 		v.Body = append([]byte(nil), v.Body...)
 		out.CostumeBurstUpgrades[k] = v
 	}
 	out.CharAwake = make(map[string]CharAwakeProgress, len(in.CharAwake))
-	for k, v := range in.CharAwake {
-		out.CharAwake[k] = v
-	}
+	maps.Copy(out.CharAwake, in.CharAwake)
 	out.GachaSelections = make(map[string][]GachaSelection, len(in.GachaSelections))
 	for k, v := range in.GachaSelections {
 		out.GachaSelections[k] = append([]GachaSelection(nil), v...)
 	}
 	out.GachaSelectionChanges = make(map[string]uint64, len(in.GachaSelectionChanges))
-	for k, v := range in.GachaSelectionChanges {
-		out.GachaSelectionChanges[k] = v
-	}
+	maps.Copy(out.GachaSelectionChanges, in.GachaSelectionChanges)
 	out.StepUpProgress = make(map[string]uint64, len(in.StepUpProgress))
-	for k, v := range in.StepUpProgress {
-		out.StepUpProgress[k] = v
-	}
+	maps.Copy(out.StepUpProgress, in.StepUpProgress)
 	out.GachaUsers = make(map[string]GachaUserState, len(in.GachaUsers))
-	for k, v := range in.GachaUsers {
-		out.GachaUsers[k] = v
-	}
+	maps.Copy(out.GachaUsers, in.GachaUsers)
 	out.GachaFixed = make(map[string]GachaFixedState, len(in.GachaFixed))
-	for k, v := range in.GachaFixed {
-		out.GachaFixed[k] = v
-	}
+	maps.Copy(out.GachaFixed, in.GachaFixed)
 	out.GachaApplied = make(map[string]bool, len(in.GachaApplied))
-	for k, v := range in.GachaApplied {
-		out.GachaApplied[k] = v
-	}
+	maps.Copy(out.GachaApplied, in.GachaApplied)
 	out.GachaPointExchange = make(map[string]GachaPointExchange, len(in.GachaPointExchange))
-	for k, v := range in.GachaPointExchange {
-		out.GachaPointExchange[k] = v
-	}
+	maps.Copy(out.GachaPointExchange, in.GachaPointExchange)
 	out.Grants = make(map[string]CollectionGrant, len(in.Grants))
 	for k, v := range in.Grants {
 		out.Grants[k] = cloneGrant(v)

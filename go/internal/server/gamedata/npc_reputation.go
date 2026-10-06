@@ -23,25 +23,25 @@ func LoadNPCReputation(root, version string, pack int) (NPCReputationDesign, err
 		var id uint64
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return d, err
 		}
 		r := NPCReputationRule{ID: id}
 		for f, p := range map[int]*uint64{1: &r.DownHours, 2: &r.GoodInn, 3: &r.GoodPrice} {
 			*p, err = optionalScalar(raw, f)
 			if err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return d, err
 			}
 		}
 		if id == 0 || r.GoodInn > 100 || r.GoodPrice > 100 || r.DownHours > 596523 {
-			rows.Close()
+			_ = rows.Close()
 			return d, fmt.Errorf("gamedata: invalid reputation rule")
 		}
 		d.Groups[id] = r
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return d, err
 	}
@@ -54,7 +54,7 @@ func LoadNPCReputation(root, version string, pack int) (NPCReputationDesign, err
 	if err != nil {
 		return d, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int
 		var raw []byte

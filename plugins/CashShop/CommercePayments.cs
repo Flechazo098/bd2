@@ -6,7 +6,7 @@ namespace Bd2CashShop;
 
 internal static class CommercePayments
 {
-    private static readonly HashSet<long> Applied = new HashSet<long>();
+    private static readonly HashSet<long> Applied = [];
 
     internal static string Receipt(long payment, CommerceProduct quote) =>
         "bd2-local-commerce-v1:" + payment.ToString(CultureInfo.InvariantCulture) + ":" +

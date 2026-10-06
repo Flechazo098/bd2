@@ -209,7 +209,7 @@ func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clie
 	if err != nil {
 		return ResourcePolicy{}, fmt.Errorf("request server resource policy: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	limited := io.LimitReader(response.Body, 64<<10)
 	responseBody, err := io.ReadAll(limited)
 	if err != nil {
@@ -272,10 +272,10 @@ func detectClientVersion(path string) (string, error) {
 		return "", fmt.Errorf("read Brown Dust II client version metadata: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("Brown Dust II client version metadata is not a regular file")
+		return "", errors.New("Brown Dust II client version metadata is not a regular file") //nolint:staticcheck // ST1005
 	}
 	if info.Size() <= 0 || info.Size() > 64<<20 {
-		return "", fmt.Errorf("Brown Dust II client version metadata has an invalid size: %d", info.Size())
+		return "", fmt.Errorf("Brown Dust II client version metadata has an invalid size: %d", info.Size()) //nolint:staticcheck // ST1005
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

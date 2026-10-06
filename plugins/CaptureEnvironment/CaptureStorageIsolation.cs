@@ -43,9 +43,7 @@ internal static class CaptureStorageIsolation
     {
         PropertyInfo persistent = typeof(Application).GetGameProperty(
             "persistentDataPath", BindingFlags.Static | BindingFlags.Public);
-        MethodInfo getter = persistent?.GetGetMethod();
-        if (getter == null)
-            throw new MissingMethodException("Application.persistentDataPath getter not found");
+        MethodInfo getter = (persistent?.GetGetMethod()) ?? throw new MissingMethodException("Application.persistentDataPath getter not found");
         harmony.Patch(getter, prefix: new HarmonyMethod(
             typeof(CaptureStorageIsolation), nameof(PersistentDataPathPrefix)));
 

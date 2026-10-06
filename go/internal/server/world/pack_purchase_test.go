@@ -28,7 +28,7 @@ func TestPaidPackUsesDesignCostAndCurrenciesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.storyCatalog.Packs[709] = gamedata.StoryPack{ID: 709, BuyType: 3, BuyPrice: 37, BuyRewards: []gamedata.Reward{{Type: 2, Count: 8}, {Type: 20, Count: 11}}}
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		if _, err := s.purchaseStoryPack(709, false); err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,11 @@ func TestPackPurchaseFailureRollsBackSQLiteCurrencyTicketAndMarker(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	storage := &purchaseFailStore{Repository: repo}
 	s := testService()
 	s.seed.PackID = 709
@@ -131,7 +135,9 @@ func TestPackPurchaseFailureRollsBackSQLiteCurrencyTicketAndMarker(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, _, _, err := s.Handle("/PackBuy", request); err != nil {
-		op.Rollback()
+		if rollbackErr := op.Rollback(); rollbackErr != nil {
+			t.Error(rollbackErr)
+		}
 		t.Fatal(err)
 	}
 	if err := op.Commit(); err != nil {

@@ -14,7 +14,7 @@ func LoadGachaContentTicketDesign(root, version string) (*GachaContentTicketDesi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d := &GachaContentTicketDesign{IDs: map[uint64]bool{}}
 	for rows.Next() {
 		var id uint64

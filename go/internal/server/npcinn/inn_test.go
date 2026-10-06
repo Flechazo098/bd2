@@ -28,7 +28,9 @@ func innTestServiceWithStore(t *testing.T, store stateio.Store, gold, level, sta
 	if err != nil {
 		t.Fatal(err)
 	}
-	chars.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil })
+	if err := chars.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil }); err != nil {
+		t.Fatal(err)
+	}
 	if err = chars.EnsurePersisted(); err != nil {
 		t.Fatal(err)
 	}
@@ -76,12 +78,18 @@ func TestInnReceiptFailureRollsBackGoldAndHealthTogether(t *testing.T) {
 	if err = op.Rollback(); err != nil && !errors.Is(err, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	next, chars, wallet, _ := innTestServiceWithStore(t, repo, 0, 21, 1)
 	hp, _ := chars.CurrentHealth(71)
 	if hp != 10 || wallet.Snapshot().Gold != 10 {

@@ -24,7 +24,7 @@ func (s *Service) grantFieldMonster(pack int, m gamedata.FieldMonsterDesign, ide
 			return nil, e
 		}
 		for _, r := range rows {
-			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	return s.researchEconomy.Apply(identity, nil, rewards)

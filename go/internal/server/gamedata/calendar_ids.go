@@ -23,7 +23,7 @@ func loadCalendarIDs(root, version, table string) (map[uint64]bool, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := map[uint64]bool{}
 	for rows.Next() {
 		var id uint64

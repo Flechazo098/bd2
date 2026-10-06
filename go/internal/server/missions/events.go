@@ -126,10 +126,7 @@ func (s *Service) recordEventLocked(conditionType, subType, count uint64, unlock
 		if before >= target {
 			continue
 		}
-		increment := count
-		if increment > target-before {
-			increment = target - before
-		}
+		increment := min(count, target-before)
 		next.Progress[name] = before + increment
 		if next.Progress[name] == target {
 			s.applyCompletionDependencies(&next, key)

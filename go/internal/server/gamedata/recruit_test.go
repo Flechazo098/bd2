@@ -3,6 +3,7 @@ package gamedata
 import (
 	"bd2server/internal/server/wire"
 	"database/sql"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -18,9 +19,7 @@ func TestRecruitSpecialDefaultsUseProtoZeroAndValidateConfiguration(t *testing.T
 	}
 	for _, field := range []int{1, 2, 4, 6, 7} {
 		copyFields := map[int][]uint64{}
-		for key, values := range fields {
-			copyFields[key] = values
-		}
+		maps.Copy(copyFields, fields)
 		delete(copyFields, field)
 		if e := decodeRecruitSpecialDefaults(friendshipTestProto(copyFields), &RecruitDesign{}); e == nil {
 			t.Fatalf("missing configuration field %d accepted", field)
@@ -50,7 +49,11 @@ func TestRecruitLoaderRejectsInvalidProtocolRows(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			if _, e = db.Exec("CREATE TABLE MercenaryScoutTable(id INTEGER,ProtoBuf BLOB)"); e != nil {
 				t.Fatal(e)
 			}

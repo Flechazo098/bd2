@@ -142,10 +142,7 @@ func (s *Service) handleDispatch(path string, req []byte, session string) (int, 
 		out = wire.AppendVarint(out, 1, played)
 		preview := dispatchCompletedRewards(job, played)
 		remaining := d.AP * (job.Count - played)
-		bonus := remaining
-		if bonus > job.Bonus {
-			bonus = job.Bonus
-		}
+		bonus := min(remaining, job.Bonus)
 		free := remaining - bonus
 		if free > 0 {
 			preview = append(preview, gamedata.BattleReward{Type: 21, Count: free})
@@ -170,10 +167,7 @@ func (s *Service) handleDispatch(path string, req []byte, session string) (int, 
 		played := dispatchPlayed(job, d.ClearTime)
 		completed := dispatchCompletedRewards(job, played)
 		remaining := d.AP * (job.Count - played)
-		refundBonus := remaining
-		if refundBonus > job.Bonus {
-			refundBonus = job.Bonus
-		}
+		refundBonus := min(remaining, job.Bonus)
 		refundFree := remaining - refundBonus
 		next := s.clone()
 		next.Free += refundFree
@@ -241,10 +235,7 @@ func (s *Service) handleDispatch(path string, req []byte, session string) (int, 
 			return code, nil, true, e
 		}
 		next := s.clone()
-		free := cost
-		if free > next.Free {
-			free = next.Free
-		}
+		free := min(cost, next.Free)
 		bonus := cost - free
 		next.Free -= free
 		next.Bonus -= bonus
@@ -314,10 +305,7 @@ func dispatchPlayed(j dispatchJob, seconds uint64) uint64 {
 	if now <= j.Start {
 		return 0
 	}
-	n := (now - j.Start) / (seconds * 1000)
-	if n > j.Count {
-		n = j.Count
-	}
+	n := min((now-j.Start)/(seconds*1000), j.Count)
 	return n
 }
 func dispatchJobWire(j dispatchJob) []byte {
@@ -345,7 +333,7 @@ func (s *Service) dispatchGrant(identity string, rs []gamedata.BattleReward) ([]
 			if r.Type == 21 || r.Type == 23 {
 				ap = append(ap, r)
 			} else {
-				rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+				rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 			}
 		}
 		s.mu.Unlock()
@@ -370,7 +358,7 @@ func (s *Service) dispatchGrant(identity string, rs []gamedata.BattleReward) ([]
 		case 21, 23:
 			continue
 		case 2, 3, 4, 12, 20:
-			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			currency = append(currency, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		default:
 			items = append(items, r)
 		}

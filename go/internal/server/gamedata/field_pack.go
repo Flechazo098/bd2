@@ -33,14 +33,14 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		var id int
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		values := map[int]uint64{}
 		for _, field := range []int{7, 25, 55, 65} {
 			v, e := packedInts(raw, field)
 			if e != nil || len(v) > 1 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid arena pack %d field %d", id, field)
 			}
 			if len(v) == 1 {
@@ -51,13 +51,13 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 			continue
 		}
 		if id <= 0 || values[25] != uint64(id) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid field pack identity %d", id)
 		}
 		result[id] = FieldPack{ID: uint64(id), Type: values[55], BuyPrice: values[7], UseSchedule: values[65], MapIDs: map[int]bool{}}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -71,7 +71,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		var id int
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		pack, exists := result[id]
@@ -82,7 +82,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		for field, target := range map[int]*uint64{5: &pack.SquadLevel, 6: &pack.TicketID} {
 			v, e := packedInts(raw, field)
 			if e != nil || len(v) > 1 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid field pack opening %d", id)
 			}
 			if len(v) == 1 {
@@ -92,7 +92,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		result[id] = pack
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -105,7 +105,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 	for rows.Next() {
 		var id, packID int
 		if err := rows.Scan(&id, &packID); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if pack, exists := result[packID]; exists {
@@ -113,7 +113,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

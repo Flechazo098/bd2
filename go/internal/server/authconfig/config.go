@@ -25,7 +25,7 @@ type Config struct {
 	PublicURL    string                    `json:"public_url,omitempty"`
 	MasterKeyEnv string                    `json:"master_key_env,omitempty"`
 	Providers    map[string]ProviderConfig `json:"providers,omitempty"`
-	Session      SessionConfig             `json:"session,omitempty"`
+	Session      SessionConfig             `json:"session"`
 }
 
 type ProviderConfig struct {
@@ -68,7 +68,7 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("authconfig: open %s: %w", path, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var config Config
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
@@ -113,7 +113,7 @@ func (c Config) Validate() error {
 		return errors.New("public_url must be an absolute origin without path, query, fragment, or user info")
 	}
 	localhost := publicURL.Hostname() == "127.0.0.1" || publicURL.Hostname() == "localhost" || publicURL.Hostname() == "::1"
-	if publicURL.Scheme != "https" && !(localhost && publicURL.Scheme == "http") {
+	if publicURL.Scheme != "https" && !(localhost && publicURL.Scheme == "http") { //nolint:staticcheck // QF1001
 		return errors.New("public_url must use HTTPS except on localhost")
 	}
 	for name, provider := range c.Providers {

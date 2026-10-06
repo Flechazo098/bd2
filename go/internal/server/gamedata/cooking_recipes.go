@@ -24,7 +24,7 @@ func loadCookingRecipeDesign(db *sql.DB) (*CookingRecipeDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	design := &CookingRecipeDesign{IDs: map[uint64]bool{}}
 	for rows.Next() {
 		var id int64

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -544,12 +545,10 @@ func (s *Service) RecordTacticsClear(uid, stage uint64) error {
 	if _, ok = s.row("TacticsBingoTable", 4, 5, group.V(1), stage); !ok {
 		return errors.New("eventactions: invalid tactics stage")
 	}
-	for _, id := range s.state.Tactics[uid] {
-		if id == stage {
-			return nil
-		}
+	if slices.Contains(s.state.Tactics[uid], stage) {
+		return nil
 	}
 	s.state.Tactics[uid] = append(s.state.Tactics[uid], stage)
-	sort.Slice(s.state.Tactics[uid], func(i, j int) bool { return s.state.Tactics[uid][i] < s.state.Tactics[uid][j] })
+	slices.Sort(s.state.Tactics[uid])
 	return s.save()
 }

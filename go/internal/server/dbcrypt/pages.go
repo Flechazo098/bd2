@@ -28,7 +28,7 @@ func cryptPages(in []byte, encrypt bool) ([]byte, error) {
 	}
 	out := make([]byte, len(in))
 	for start := 0; start < len(in); start += PageSize {
-		var mode cipher.BlockMode = cipher.NewCBCEncrypter(block, Header)
+		mode := cipher.NewCBCEncrypter(block, Header)
 		if !encrypt {
 			mode = cipher.NewCBCDecrypter(block, Header)
 		}

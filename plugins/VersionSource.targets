@@ -1,7 +1,8 @@
 <Project>
   <Target Name="GenerateBD2VersionSource" BeforeTargets="CoreCompile">
     <Error Condition="!Exists('$(BD2VersionConfig)')" Text="Missing repository version config: $(BD2VersionConfig)" />
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Generate-VersionSource.ps1&quot; -Config &quot;$(BD2VersionConfig)&quot; -Output &quot;$(BD2GeneratedVersionSource)&quot; -Plugin &quot;$(BD2PluginVersionKey)&quot;" />
+    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="call &quot;$(BD2RepositoryDir)bd2w.cmd&quot; version-source --config &quot;$(BD2VersionConfig)&quot; --output &quot;$(BD2GeneratedVersionSource)&quot; --plugin &quot;$(BD2PluginVersionKey)&quot;" />
+    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="&quot;$(BD2RepositoryDir)bd2w&quot; version-source --config &quot;$(BD2VersionConfig)&quot; --output &quot;$(BD2GeneratedVersionSource)&quot; --plugin &quot;$(BD2PluginVersionKey)&quot;" />
     <ItemGroup>
       <Compile Include="$(BD2GeneratedVersionSource)" />
     </ItemGroup>

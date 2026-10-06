@@ -203,7 +203,7 @@ func downloadBytes(ctx context.Context, client *http.Client, rawURL string, limi
 	if err != nil {
 		return nil, fmt.Errorf("resource fetch: GET %s: %w", rawURL, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("resource fetch: GET %s: HTTP %s", rawURL, response.Status)
 	}
@@ -230,7 +230,7 @@ func downloadFile(ctx context.Context, client *http.Client, rawURL, target strin
 	if err != nil {
 		return 0, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("HTTP %s", response.Status)
 	}
@@ -239,7 +239,7 @@ func downloadFile(ctx context.Context, client *http.Client, rawURL, target strin
 		return 0, err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	written, copyErr := io.Copy(temporary, response.Body)
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
@@ -270,17 +270,17 @@ func atomicWrite(target string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(mode); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if _, err := temporary.Write(data); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Close(); err != nil {
@@ -317,7 +317,7 @@ func validUnityBundle(path string) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	var magic [7]byte
 	if _, err := io.ReadFull(file, magic[:]); err != nil || string(magic[:]) != "UnityFS" {
 		return 0, false

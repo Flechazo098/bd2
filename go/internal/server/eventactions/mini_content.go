@@ -3,7 +3,7 @@ package eventactions
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -78,7 +78,7 @@ func (s *Service) dailyStory(path string, b []byte, identity string) ([]byte, er
 				}
 			}
 		}
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		slices.Sort(ids)
 		var out []byte
 		for _, id := range ids {
 			out = wire.AppendVarint(out, 1, id)

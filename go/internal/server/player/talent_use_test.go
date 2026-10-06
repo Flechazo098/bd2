@@ -22,7 +22,7 @@ func (e *talentEconomyTest) Apply(identity string, _ []gamedata.Reward, r []game
 	e.calls++
 	var rewards []gamedata.BattleReward
 	for _, v := range r {
-		rewards = append(rewards, gamedata.BattleReward{Type: v.Type, ID: v.ID, Count: v.Count})
+		rewards = append(rewards, gamedata.BattleReward{Type: v.Type, ID: v.ID, Count: v.Count}) //nolint:staticcheck // S1016
 	}
 	items, err := e.inventory.GrantOnce(identity, rewards)
 	if err != nil {
@@ -44,7 +44,9 @@ func talentTest(t *testing.T, store stateio.Store, class uint64) (*TalentUseServ
 	if err != nil {
 		t.Fatal(err)
 	}
-	chars.AttachMaxHealth(func(Character) (uint64, error) { return 100, nil })
+	if err := chars.AttachMaxHealth(func(Character) (uint64, error) { return 100, nil }); err != nil {
+		t.Fatal(err)
+	}
 	if err = chars.EnsurePersisted(); err != nil {
 		t.Fatal(err)
 	}
@@ -163,12 +165,18 @@ func TestTalentReceiptFailureRollsBackRewardCostAndExperience(t *testing.T) {
 	if err = op.Rollback(); err != nil && !errors.Is(err, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	next, chars, wallet, e := talentTest(t, repo, 1)
 	c, _ := chars.Find(77)
 	if c.TalentExp != 0 || wallet.Snapshot().Catalyst != 50 || len(e.inventory.All()) != 0 {
@@ -345,12 +353,18 @@ func TestCharmSQLiteRestartAndNewCharmRefreshDamagedHealth(t *testing.T) {
 	if err = chars.SetCurrentHealth(index, 5); err != nil {
 		t.Fatal(err)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	next, chars, _, _ := talentTest(t, repo, 19)
 	next.design = s.design
 	next.now = time.Now

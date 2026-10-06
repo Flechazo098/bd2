@@ -2,7 +2,6 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
 using Bd2Login;
@@ -241,7 +240,7 @@ internal sealed class WindowsDpapiRefreshCredentialStore : IRefreshCredentialSto
         {
             return default;
         }
-        DataBlob blob = new DataBlob { size = bytes.Length, data = Marshal.AllocHGlobal(bytes.Length) };
+        var blob = new DataBlob { size = bytes.Length, data = Marshal.AllocHGlobal(bytes.Length) };
         Marshal.Copy(bytes, 0, blob.data, bytes.Length);
         return blob;
     }
@@ -341,8 +340,8 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
 
     public bool Contains(string origin)
     {
-        int status = Find(origin, out uint length, out IntPtr data, out IntPtr item);
-        ReleaseFound(length, data, item);
+        int status = Find(origin, out _, out IntPtr data, out IntPtr item);
+        ReleaseFound(data, item);
         if (status == Success)
         {
             return true;
@@ -359,7 +358,7 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
         int status = Find(origin, out uint length, out IntPtr data, out IntPtr item);
         if (status != Success)
         {
-            ReleaseFound(length, data, item);
+            ReleaseFound(data, item);
             throw StatusException(status);
         }
         byte[] bytes = new byte[length];
@@ -371,7 +370,7 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
         finally
         {
             Array.Clear(bytes, 0, bytes.Length);
-            ReleaseFound(length, data, item);
+            ReleaseFound(data, item);
         }
     }
 
@@ -380,12 +379,12 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
         byte[] value = Encoding.UTF8.GetBytes(JsonUtility.ToJson(credential));
         try
         {
-            int status = Find(origin, out uint oldLength, out IntPtr oldData, out IntPtr item);
+            int status = Find(origin, out _, out IntPtr oldData, out IntPtr item);
             if (status == Success)
             {
                 if (oldData != IntPtr.Zero)
                 {
-                    SecKeychainItemFreeContent(IntPtr.Zero, oldData);
+                    ReleaseContent(oldData);
                 }
                 try
                 {
@@ -413,7 +412,7 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
             }
             else
             {
-                ReleaseFound(oldLength, oldData, item);
+                ReleaseFound(oldData, item);
             }
             if (status != Success)
             {
@@ -428,10 +427,10 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
 
     public void Delete(string origin)
     {
-        int status = Find(origin, out uint length, out IntPtr data, out IntPtr item);
+        int status = Find(origin, out _, out IntPtr data, out IntPtr item);
         if (data != IntPtr.Zero)
         {
-            SecKeychainItemFreeContent(IntPtr.Zero, data);
+            ReleaseContent(data);
         }
         if (status == ItemNotFound)
         {
@@ -477,11 +476,11 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
         return Encoding.UTF8.GetBytes("BD2 Login UI OAuth: " + origin);
     }
 
-    private static void ReleaseFound(uint length, IntPtr data, IntPtr item)
+    private static void ReleaseFound(IntPtr data, IntPtr item)
     {
         if (data != IntPtr.Zero)
         {
-            SecKeychainItemFreeContent(IntPtr.Zero, data);
+            ReleaseContent(data);
         }
         ReleaseItem(item);
     }
@@ -492,6 +491,13 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
         {
             CFRelease(item);
         }
+    }
+
+    private static void ReleaseContent(IntPtr data)
+    {
+        int status = SecKeychainItemFreeContent(IntPtr.Zero, data);
+        if (status != Success)
+            LoginRuntime.Log?.LogWarning("macOS Keychain content cleanup failed with OSStatus " + status);
     }
 
     private static Exception StatusException(int status)

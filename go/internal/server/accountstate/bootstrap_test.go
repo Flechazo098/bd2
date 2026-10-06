@@ -38,7 +38,11 @@ func TestInitializationMarkerMakesSchemaOnlyRollbackRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if repository.IsNew() {
 		t.Fatal("schema-only retry incorrectly depends on file creation")
 	}
@@ -76,7 +80,11 @@ func TestInitializationMarkerCommitsCompleteAccountExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if state, err := repository.InitializationState("mail", "wallet"); err != nil || state != InitializationComplete {
 		t.Fatalf("committed state=%d err=%v", state, err)
 	}
@@ -87,7 +95,11 @@ func TestInitializationStateRejectsPartialAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := repository.Save("mail", []byte(`{"version":1}`)); err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/wire"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 )
@@ -41,16 +42,11 @@ func (s *Service) candidates(r gamedata.EventActionRow) []uint64 {
 			ids = append(ids, x.V(2))
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids
 }
 func contains(ids []uint64, id uint64) bool {
-	for _, v := range ids {
-		if v == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, id)
 }
 func voteWire(v *vote) []byte {
 	b := wire.AppendVarint(nil, 1, v.Round)

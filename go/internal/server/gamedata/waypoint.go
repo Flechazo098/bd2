@@ -56,7 +56,7 @@ func loadWaypointPoints(db *sql.DB) (map[uint64]Waypoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var raw []byte

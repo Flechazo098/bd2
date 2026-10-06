@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strconv"
@@ -99,9 +100,7 @@ func (e *Economy) AdditionalCurrencies() (map[int]uint64, error) {
 }
 func (e *Economy) load() (economySnapshot, error) {
 	s := economySnapshot{Balances: map[uint64]uint64{}, Receipts: map[string]economyReceipt{}}
-	for t, n := range e.initial {
-		s.Balances[t] = n
-	}
+	maps.Copy(s.Balances, e.initial)
 	b, err := e.store.Load("event_economy")
 	if err != nil || b == nil {
 		return s, err

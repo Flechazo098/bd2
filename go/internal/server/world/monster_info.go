@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -251,10 +252,8 @@ func (s *Service) authorizeMonsterMap(pack, id int) error {
 	if e != nil {
 		return e
 	}
-	for _, mapID := range maps[id] {
-		if current == mapID {
-			return nil
-		}
+	if slices.Contains(maps[id], current) {
+		return nil
 	}
 	return fmt.Errorf("world: monster outside current map")
 }

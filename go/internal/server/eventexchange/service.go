@@ -238,7 +238,7 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 		}
 		var rewards []gamedata.Reward
 		var changed []byte
-		for n := uint64(0); n < count; n++ {
+		for range count {
 			entries := g.Page(p.Page)
 			var weights []uint64
 			var sum uint64
@@ -299,7 +299,7 @@ func (s *Service) HandleSession(path string, req []byte, session string) (int, [
 			} else {
 				rs := make([]gamedata.BattleReward, len(rewards))
 				for i, r := range rewards {
-					rs[i] = gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count}
+					rs[i] = gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count} //nolint:staticcheck // S1016
 				}
 				bundle, err = s.runtime.ConsumeAndGrant("eventexchange:"+key, uses, rs)
 			}

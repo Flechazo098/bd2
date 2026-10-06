@@ -11,7 +11,11 @@ func TestStoryCatalogEnumeratesSeparateChainsAndContentTicketRules(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, query := range []string{"CREATE TABLE PackTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)", "CREATE TABLE ContentOpenTable(groupId INTEGER,id INTEGER,ProtoBuf BLOB)", "CREATE TABLE QuestTable1(id INTEGER PRIMARY KEY,ProtoBuf BLOB)", "CREATE TABLE QuestTable7(id INTEGER PRIMARY KEY,ProtoBuf BLOB)", "CREATE TABLE QuestTable8(id INTEGER PRIMARY KEY,ProtoBuf BLOB)"} {
 		if _, err = db.Exec(query); err != nil {
 			t.Fatal(err)

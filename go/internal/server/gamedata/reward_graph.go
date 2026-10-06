@@ -50,24 +50,24 @@ func loadRewardGraph(db *sql.DB) (*RewardGraph, error) {
 		var id uint64
 		var raw []byte
 		if e = rows.Scan(&id, &raw); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		gid, e := optionalScalar(raw, 9)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		drop, err := optionalScalar(raw, 1)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		// RBD_DIRECT owns the box itself; RBD_OPEN grants its selected contents.
 		// Design also contains special mode 10 boxes; only the verified OPEN
 		// mode is automatically expanded, other modes retain their entity.
 		if drop != 0 && drop != 1 && drop != 10 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: unsupported random box drop type %d", drop)
 		}
 		g.direct[id] = drop != 0
@@ -75,7 +75,7 @@ func loadRewardGraph(db *sql.DB) (*RewardGraph, error) {
 		g.boxes[id] = gid
 	}
 	e = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if e != nil {
 		return nil, e
 	}
@@ -87,13 +87,13 @@ func loadRewardGraph(db *sql.DB) (*RewardGraph, error) {
 		var id uint64
 		var raw []byte
 		if e = rows.Scan(&id, &raw); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		g.groups[id] = append([]byte(nil), raw...)
 	}
 	e = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	return g, e
 }
 func (g *RewardGraph) SetSampler(f func(uint64) (uint64, error)) {
@@ -208,7 +208,7 @@ func (g *RewardGraph) resolve(rewards []BattleReward, openRoots bool) ([]BattleR
 			if sum == 0 || g.sample == nil {
 				return fmt.Errorf("gamedata: empty weighted reward pool")
 			}
-			for i := uint64(0); i < count; i++ {
+			for range count {
 				if budget == 0 {
 					return fmt.Errorf("gamedata: reward graph operation limit")
 				}

@@ -67,7 +67,7 @@ func TestHiddenPackPurchaseEntryMonstersAndOutsideRestore(t *testing.T) {
 	if _, _, _, err = s.Handle("/PackInGameInfo", r); err == nil {
 		t.Fatal("unbought hidden pack admitted")
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		code, out, ok, err := s.Handle("/PackBuy", r)
 		if err != nil || code != 6 || !ok {
 			t.Fatalf("buy %d %v", code, err)

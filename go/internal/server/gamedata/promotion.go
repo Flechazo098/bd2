@@ -3,6 +3,7 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
+	"maps"
 )
 
 // PromotionCost is one exact CharGrowthTable.ClassupItem{Type,Id,Count} row.
@@ -111,9 +112,7 @@ func characterGrowthPromotions(db *sql.DB, charID int, level, exp uint64, submit
 	}
 
 	remaining := make(map[[2]uint64]uint64, len(requested))
-	for key, count := range requested {
-		remaining[key] = count
-	}
+	maps.Copy(remaining, requested)
 	for _, cost := range cumulative {
 		key := [2]uint64{cost.Type, cost.ID}
 		if remaining[key] < cost.Count {

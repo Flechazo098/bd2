@@ -11,7 +11,11 @@ func TestRecruitNPCResolvesScoutParallelInteractionWithZeroPackField(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err = db.Exec("CREATE TABLE FieldNpcTable(id INTEGER PRIMARY KEY,ProtoBuf BLOB)"); err != nil {
 		t.Fatal(err)
 	}

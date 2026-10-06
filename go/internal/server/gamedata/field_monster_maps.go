@@ -22,13 +22,13 @@ func LoadFieldMonsterMaps(root, version string, pack int) (map[int][]int, error)
 		var id int
 		var scene string
 		if e = rows.Scan(&id, &scene); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		maps[scene] = id
 	}
 	e = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if e != nil {
 		return nil, e
 	}
@@ -41,7 +41,7 @@ func LoadFieldMonsterMaps(root, version string, pack int) (map[int][]int, error)
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int][]int{}
 	for rows.Next() {
 		var b []byte

@@ -15,7 +15,11 @@ func TestAdditionalRewardCurrenciesAndRankChangeItemPersistAndReplay(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eco, items, _ := economyFixture(t, repo, &economyGraph{})
 	eco.AttachOwnedItemDesign(map[uint64]map[uint64]bool{69: {1: true}})
 	rewards := []gamedata.Reward{{Type: 38, Count: 1}, {Type: 39, Count: 20}, {Type: 40, Count: 30}, {Type: 54, Count: 40}, {Type: 70, Count: 50}, {Type: 69, ID: 1, Count: 2}}
@@ -78,12 +82,18 @@ func TestAdditionalRewardCurrenciesAndRankChangeItemPersistAndReplay(t *testing.
 		t.Fatal(err)
 	}
 	_ = op.Rollback()
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, err = accountstate.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	eco, _, _ = economyFixture(t, repo, &economyGraph{})
 	assertBalances(eco)
 }

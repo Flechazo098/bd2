@@ -139,7 +139,10 @@ func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	repo, shop, mailbox, wallet, items := open()
+	var mailbox *mail.Service
+	var wallet *player.Wallet
+	var items *player.Inventory
+	repo, shop, _, _, _ := open()
 	shop.AttachPurchaseHook(func(string, gamedata.CashProductDesign, uint64) error {
 		return fmt.Errorf("injected failure after issuing mail")
 	})
@@ -222,7 +225,7 @@ func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 		t.Fatal("purchase replay selected or charged again")
 	}
 	_ = repo.Close()
-	repo, shop, mailbox, wallet, items = open()
+	repo, _, mailbox, _, _ = open()
 	claim := wire.AppendVarint(nil, 1, 3)
 	claim = wire.AppendVarint(claim, 2, 1)
 	claim = wire.AppendVarint(claim, 2, 2)
@@ -235,7 +238,7 @@ func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 	}
 	rollback(op)
 	_ = repo.Close()
-	repo, shop, mailbox, wallet, items = open()
+	repo, _, mailbox, wallet, items = open()
 	if wallet.Snapshot().Gold != 0 || len(items.All()) != 0 {
 		t.Fatal("claim rollback retained rewards")
 	}
@@ -267,7 +270,11 @@ func TestCashPurchaseMailSQLiteRollbackRestartBatchAndReplay(t *testing.T) {
 	}
 	_ = repo.Close()
 	repo, _, mailbox, wallet, items = open()
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	op, err = repo.BeginOperation()
 	if err != nil {
 		t.Fatal(err)

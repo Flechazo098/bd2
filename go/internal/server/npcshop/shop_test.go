@@ -44,7 +44,11 @@ func TestFailedSaleReceiptRollsBackConcreteInventoryAndReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	starter := &player.Starter{Version: versionconfig.State()}
 	items, err := player.OpenInventory(repo, starter)
 	if err != nil {
@@ -82,7 +86,11 @@ func TestFailedSaleReceiptRollsBackConcreteInventoryAndReward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	reopened, err := player.OpenInventory(repo, starter)
 	if err != nil {
 		t.Fatal(err)

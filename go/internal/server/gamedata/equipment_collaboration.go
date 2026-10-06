@@ -3,7 +3,8 @@ package gamedata
 import (
 	"database/sql"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 )
 
 // IncludeCollaborationURWeapons extends only the UR equipment ticket pool.
@@ -79,17 +80,13 @@ func (c *EquipmentGachaCatalog) includeCollaborationURWeapons(db *sql.DB) error 
 			targets = append(targets, id)
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
+	slices.Sort(targets)
 	// Publish only after all selected products validate successfully.
 	clone := *c
 	clone.Gachas = make(map[uint64]EquipmentGacha, len(c.Gachas))
-	for id, g := range c.Gachas {
-		clone.Gachas[id] = g
-	}
+	maps.Copy(clone.Gachas, c.Gachas)
 	clone.equipment = make(map[uint64]EquipmentDesign, len(c.equipment))
-	for id, d := range c.equipment {
-		clone.equipment[id] = d
-	}
+	maps.Copy(clone.equipment, c.equipment)
 	for _, id := range targets {
 		if err := clone.includeCollaborationWeaponPool(db, id); err != nil {
 			return err
@@ -106,7 +103,7 @@ func (c *EquipmentGachaCatalog) includeCollaborationWeaponPool(db *sql.DB, id ui
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		out := map[uint64][]byte{}
 		for rows.Next() {
 			var id uint64
@@ -188,7 +185,7 @@ func (c *EquipmentGachaCatalog) includeCollaborationWeaponPool(db *sql.DB, id ui
 	for id := range equipment {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, id := range ids {
 		raw := equipment[id]
 		grade, _ := packedInts(raw, 3)
@@ -212,9 +209,7 @@ func (c *EquipmentGachaCatalog) includeCollaborationWeaponPool(db *sql.DB, id ui
 		pool[index].Children = append(pool[index].Children, WeightedEquipment{ID: id, Weight: 1})
 		seen[id] = true
 	}
-	for id, design := range designs {
-		c.equipment[id] = design
-	}
+	maps.Copy(c.equipment, designs)
 	g.Pool = pool
 	g.Grades = make(map[uint64]uint64, len(seen))
 	for id := range seen {

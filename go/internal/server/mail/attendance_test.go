@@ -134,7 +134,7 @@ func TestAttendanceEconomyDoesNotRegrantExistingOpenedMail(t *testing.T) {
 	store := stateio.NewMemory()
 	seed := &Starter{Version: "2.35.10", MailCount: 1, MaxMailID: 100}
 	design := &attendanceDesign{}
-	s, _, wallet := attendanceMailFixture(t, store, seed, design)
+	s, _, _ := attendanceMailFixture(t, store, seed, design)
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	if err := s.EnqueueCompensation("existing:grant", "奖励", "请领取", []gamedata.Reward{{Type: 4, Count: 7}}, now); err != nil {

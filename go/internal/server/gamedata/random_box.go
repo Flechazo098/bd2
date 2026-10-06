@@ -36,27 +36,27 @@ func LoadRandomBoxDesign(root, version string) (*RandomBoxDesign, error) {
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids, err := packedInts(raw, 5)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: random box reward group %d item IDs: %w", id, err)
 		}
 		types, err := packedInts(raw, 6)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: random box reward group %d item types: %w", id, err)
 		}
 		counts, err := packedInts(raw, 4)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: random box reward group %d item counts: %w", id, err)
 		}
 		ratios, err := packedInts(raw, 8)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: random box reward group %d ratios: %w", id, err)
 		}
 		// A single reward is deterministic.  Ratios are presentation/probability
@@ -65,6 +65,10 @@ func LoadRandomBoxDesign(root, version string) (*RandomBoxDesign, error) {
 			continue
 		}
 		groups[id] = []BattleReward{{Type: types[0], ID: ids[0], Count: counts[0]}}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -79,22 +83,26 @@ func LoadRandomBoxDesign(root, version string) (*RandomBoxDesign, error) {
 		var rowID uint64
 		var raw []byte
 		if err := rows.Scan(&rowID, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids, err := packedInts(raw, 4)
 		if err != nil || len(ids) != 1 || ids[0] != rowID {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: malformed random box %d", rowID)
 		}
 		groupIDs, err := packedInts(raw, 9)
 		if err != nil || len(groupIDs) != 1 || groupIDs[0] == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: random box %d reward group: %w", rowID, err)
 		}
 		if rewards, ok := groups[groupIDs[0]]; ok {
 			design.rewards[rowID] = append([]BattleReward(nil), rewards...)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

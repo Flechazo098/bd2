@@ -31,7 +31,11 @@ func TestFieldEquipmentTransactionRollbackAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	s := testService()
 	s.state, err = progress.OpenStore(store)
@@ -103,7 +107,9 @@ func TestFieldEquipmentTransactionRollbackAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.openFieldObject(21, 101, 1001); err != nil {
-		op.Rollback()
+		if rollbackErr := op.Rollback(); rollbackErr != nil {
+			t.Error(rollbackErr)
+		}
 		t.Fatal(err)
 	}
 	if err := op.Commit(); err != nil {
@@ -219,7 +225,11 @@ func TestFieldChestAtomicAwardRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	s := testService()
 	s.state, err = progress.OpenStore(store)
@@ -278,7 +288,9 @@ func TestFieldChestAtomicAwardRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = s.openFieldObject(21, 101, 1001); err != nil {
-		op.Rollback()
+		if rollbackErr := op.Rollback(); rollbackErr != nil {
+			t.Error(rollbackErr)
+		}
 		t.Fatal(err)
 	}
 	if err = op.Commit(); err != nil {

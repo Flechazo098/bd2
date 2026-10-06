@@ -559,13 +559,6 @@ func (s *Service) packUnlocked(packID int) bool {
 	return s.storyCatalog != nil && s.storyPackUnlocked(packID)
 }
 
-func (s *Service) storyCharacters(packID int) []player.Character {
-	if packID != s.seed.PackID {
-		return nil
-	}
-	return s.seed.StoryCharacters
-}
-
 func (s *Service) canClear(packID, quest int) bool {
 	if s.state.QuestCleared(quest, packID, s.questDifficultyFor(packID, quest)) {
 		return true
@@ -625,12 +618,12 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 			if reward.ID == 0 || reward.Count == 0 {
 				return nil, nil, fmt.Errorf("world: invalid item reward type=%d id=%d count=%d", reward.Type, reward.ID, reward.Count)
 			}
-			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	var costumeIDs []uint64
 	for _, reward := range designRewards {
-		if reward.Type == 11 && !(packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 && reward.ID == s.seed.RewardCostume.ID) {
+		if reward.Type == 11 && !(packID == s.seed.PackID && quest == s.seed.BattleUnlockQuestID && s.questDifficultyFor(packID, quest) == 0 && reward.ID == s.seed.RewardCostume.ID) { //nolint:staticcheck // QF1001
 			costumeIDs = append(costumeIDs, reward.ID)
 		}
 	}
@@ -661,7 +654,7 @@ func (s *Service) grantQuestRewards(packID, quest int, designRewards []gamedata.
 			return nil, nil, fmt.Errorf("world: unknown collection reward pack%d", packID)
 		}
 		for _, reward := range quests[quest].CollectionRewards {
-			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count})
+			itemRewards = append(itemRewards, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	var items []player.Item
@@ -814,10 +807,6 @@ func (s *Service) basePackInfoFor(packID int) ([]byte, error) {
 	return wire.AppendBytes(out, 16, group), nil
 }
 
-func (s *Service) firstUnclearedQuest() int {
-	return s.firstUnclearedQuestFor(s.seed.PackID)
-}
-
 func (s *Service) firstUnclearedQuestFor(packID int) int {
 	if s.storyCatalog == nil {
 		return 0
@@ -922,10 +911,6 @@ func (s *Service) clearResponse(packID, quest int, designRewards []gamedata.Rewa
 	return wire.AppendBytes(out, 13, nil)
 }
 
-func (s *Service) packComplete() bool {
-	return s.packCompleteFor(s.seed.PackID)
-}
-
 func (s *Service) packCompleteFor(packID int) bool {
 	if s.storyCatalog == nil {
 		return false
@@ -1017,10 +1002,6 @@ func (s *Service) PictorialDiscovered() []player.Pictorial {
 
 func encodeCostume(c player.Costume) []byte {
 	return player.CostumeWire(c)
-}
-
-func (s *Service) nextQuest(current int) int {
-	return s.nextQuestFor(s.seed.PackID, current)
 }
 
 func (s *Service) nextQuestFor(packID, current int) int {

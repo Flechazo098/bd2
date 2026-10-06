@@ -1,3 +1,4 @@
+using System.Globalization;
 using System;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,10 +23,10 @@ internal static class ServerLoginPreferences
     internal static string Key(string prefix, string origin)
     {
         string normalized = NormalizeOrigin(new Uri(origin, UriKind.Absolute));
-        using SHA256 sha = SHA256.Create();
+        using var sha = SHA256.Create();
         byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(normalized));
         var hex = new StringBuilder(digest.Length * 2);
-        foreach (byte value in digest) hex.Append(value.ToString("x2"));
+        foreach (byte value in digest) hex.Append(value.ToString("x2", CultureInfo.InvariantCulture));
         return prefix + hex;
     }
 

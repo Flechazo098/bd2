@@ -39,10 +39,7 @@ func (s *Service) cafeteriaReward(req []byte, identity string) ([]byte, error) {
 	if last := s.state.CafeteriaLast[receiptKey]; last > 0 && now-last < int64(term)*1000 {
 		return nil, errors.New("eventactions: cafeteria interaction cooldown")
 	}
-	count := row.V(11)
-	if count > cap-s.state.CafeteriaCurrency {
-		count = cap - s.state.CafeteriaCurrency
-	}
+	count := min(row.V(11), cap-s.state.CafeteriaCurrency)
 	rewards := []gamedata.Reward{{Type: row.V(13), ID: row.V(12), Count: count}}
 	bundle, err := s.economy.Apply(identity, nil, rewards)
 	if err != nil {

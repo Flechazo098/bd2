@@ -61,12 +61,12 @@ internal static class LoginController
         }
         try
         {
-            if (!(__instance is Component))
+            if (__instance is not Component)
             {
                 throw new InvalidOperationException("IntroUI is not a Unity component");
             }
             Uri maintenance = CurrentMaintenanceUri();
-            Uri currentRoot = new Uri(maintenance, "/");
+            var currentRoot = new Uri(maintenance, "/");
             if (ServerRoot == null || !SameOrigin(ServerRoot, currentRoot))
             {
                 AccessTokens.Clear();
@@ -79,12 +79,12 @@ internal static class LoginController
                 ServerRoot = currentRoot;
                 EnsureGameRelay();
             }
-			if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && Authentication != null &&
-				Authentication.mode == "oauth" && AccessTokens.IsUsable(NormalizedServerOrigin()))
-			{
-				ContinueWithMaintenance(__instance, true);
-				return false;
-			}
+            if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && Authentication != null &&
+                Authentication.mode == "oauth" && AccessTokens.IsUsable(NormalizedServerOrigin()))
+            {
+                ContinueWithMaintenance(__instance, true);
+                return false;
+            }
             EnsureGameRelay();
             if (Authentication != null)
             {
@@ -109,7 +109,7 @@ internal static class LoginController
 
     private static IEnumerator LoadAuthenticationPolicy(object introUI, Uri expectedRoot, string expectedOrigin)
     {
-        Uri endpoint = new Uri(expectedRoot, "auth/config");
+        var endpoint = new Uri(expectedRoot, "auth/config");
         int generation = Volatile.Read(ref RecoveryGeneration);
         for (int attempt = 0; attempt < 3; attempt++)
         {
@@ -167,7 +167,7 @@ internal static class LoginController
             {
                 AccessTokens.Clear();
                 ContinueMaintenance = true;
-                SendMaintenance.Invoke(introUI, new object[] { true });
+                SendMaintenance.Invoke(introUI, [true]);
             }
             finally
             {
@@ -238,7 +238,7 @@ internal static class LoginController
         EstablishedGameSession = false;
         ConfigureLoginPanel(introUI);
         Type stateType = SetIntroState.GetParameters()[0].ParameterType;
-        SetIntroState.Invoke(introUI, new[] { Enum.ToObject(stateType, 1) });
+        SetIntroState.Invoke(introUI, [Enum.ToObject(stateType, 1)]);
         Log?.LogInfo("event='Login required' reason=" + reason + " origin=" + NormalizedServerOrigin());
     }
 
@@ -322,7 +322,7 @@ internal static class LoginController
             if (!IsCurrentLogin(generation, origin)) { start.device_secret = null; yield break; }
             {
                 ControlProbeResult request = null;
-                yield return AuthRequest(introUI, new Uri(endpoint), UnityWebRequest.kHttpVerbPOST, Array.Empty<byte>(), "Device " + start.device_secret, result => request = result);
+                yield return AuthRequest(introUI, new Uri(endpoint), UnityWebRequest.kHttpVerbPOST, [], "Device " + start.device_secret, result => request = result);
                 if (request == null) yield break;
                 if (!IsCurrentLogin(generation, origin)) { request.Body = null; start.device_secret = null; yield break; }
                 if (request.StatusCode == 202)
@@ -420,7 +420,7 @@ internal static class LoginController
         };
         try
         {
-            OpenPCLoginPopup.Invoke(null, new object[] { confirmed });
+            OpenPCLoginPopup.Invoke(null, [confirmed]);
         }
         catch
         {
@@ -600,7 +600,7 @@ internal static class LoginController
         {
             ContinueMaintenance = true;
             Log?.LogInfo("Authenticated login is requesting maintenance information: automatic=" + automatic);
-            SendMaintenance.Invoke(introUI, new object[] { automatic });
+            SendMaintenance.Invoke(introUI, [automatic]);
         }
         finally
         {
@@ -611,7 +611,7 @@ internal static class LoginController
 
     private static void StartIntroCoroutine(object introUI, IEnumerator routine)
     {
-        if (!(introUI is MonoBehaviour owner) || owner == null)
+        if (introUI is not MonoBehaviour owner || owner == null)
         {
             throw new InvalidOperationException("IntroUI coroutine owner is unavailable");
         }
@@ -642,7 +642,7 @@ internal static class LoginController
     private static void StoreRefresh(TokenResult result)
     {
         string origin = NormalizedServerOrigin();
-        RefreshCredential credential = new RefreshCredential
+        var credential = new RefreshCredential
         {
             version = 2,
             origin = origin,
@@ -809,6 +809,7 @@ internal static class LoginController
     }
 
     [Serializable]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1805", Justification = "JsonUtility populates these fields by reflection; explicit defaults avoid CS0649.")]
     private sealed class DeviceStart
     {
         public string transaction_id = null;
@@ -819,6 +820,7 @@ internal static class LoginController
     }
 
     [Serializable]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1805", Justification = "JsonUtility populates these fields by reflection; explicit defaults avoid CS0649.")]
     private sealed class TokenResult
     {
         public string provider = null;
@@ -829,6 +831,7 @@ internal static class LoginController
     }
 
     [Serializable]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1805", Justification = "JsonUtility populates these fields by reflection; explicit defaults avoid CS0649.")]
     internal sealed class ServerAuthentication
     {
         public string mode = null;

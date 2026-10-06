@@ -49,7 +49,9 @@ func TestObserverUsesInventoryProjectionAndRestoresMemoryOnSaveFailure(t *testin
 	}
 	s.store = store
 	p.count = 1
-	s.BeforeDispatch("/grant", req(1))
+	if err := s.BeforeDispatch("/grant", req(1)); err != nil {
+		t.Fatal(err)
+	}
 	p.count = 2
 	b, e := s.AfterDispatch("/grant", req(1), nil)
 	if e != nil || len(b) == 0 {
@@ -103,7 +105,9 @@ func TestReadOnlyBatchHasNoObserverWritesButRealDeltaNotifiesOnce(t *testing.T) 
 	// Even if an upstream replay temporarily exposes the same before/after
 	// delta, the committed request receipt must not increment tasks twice.
 	p.count = 1
-	s.BeforeDispatch("/grant", req(58))
+	if err := s.BeforeDispatch("/grant", req(58)); err != nil {
+		t.Fatal(err)
+	}
 	p.count = 2
 	b, e = s.AfterDispatch("/grant", req(58), nil)
 	if e != nil || len(b) != 0 || counter.writes != 1 {

@@ -16,16 +16,16 @@ func LoadOwnedEventItemDesign(root, version string) (map[uint64]map[uint64]bool,
 		for rows.Next() {
 			var id uint64
 			if e = rows.Scan(&id); e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			out[typ][id] = true
 		}
 		if e = rows.Err(); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 	return out, nil
 }

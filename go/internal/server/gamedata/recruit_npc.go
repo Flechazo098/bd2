@@ -98,7 +98,7 @@ func loadRecruitNPCQuestTypes(db *sql.DB, packID int, npc *RecruitNPC) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var quest uint64
 		var raw []byte

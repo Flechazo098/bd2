@@ -8,13 +8,14 @@ using UnityEngine;
 
 namespace Bd2CaptureEnvironment;
 
-[BepInPlugin(Guid, Name, Version)]
+[BepInPlugin(PluginId, Name, Version)]
 public sealed class Plugin : BaseUnityPlugin
 {
-    public const string Guid = "bd2.capture.environment";
+    public const string PluginId = "bd2.capture.environment";
     public const string Name = "BD2 Capture Environment";
     public const string Version = Bd2Build.Versions.Plugin;
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
     private void Awake()
     {
         try
@@ -23,7 +24,10 @@ public sealed class Plugin : BaseUnityPlugin
             CaptureStorageIsolation.Initialize(Paths.GameRootPath, Logger);
             CaptureWriter.Initialize(Paths.GameRootPath, Logger);
 
-            var harmony = new Harmony(Guid);
+            // Harmony.Dispose calls UnpatchSelf; these hooks live until process exit.
+#pragma warning disable CA2000
+            var harmony = new Harmony(PluginId);
+#pragma warning restore CA2000
             CaptureStorageIsolation.Install(harmony);
             string effectiveDataPath = Application.persistentDataPath;
             if (!string.Equals(
@@ -47,6 +51,8 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnApplicationQuit()
     {
         CaptureWriter.Stop();

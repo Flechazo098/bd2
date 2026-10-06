@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -160,7 +160,7 @@ func (s *Service) shopWire(v snapshot, id uint64) []byte {
 	for n := range s.design.Products[id] {
 		ids = append(ids, n)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, n := range ids {
 		p := wire.AppendVarint(nil, 1, n)
 		p = wire.AppendVarint(p, 2, s.bought(v, id, n))
@@ -175,7 +175,7 @@ func (s *Service) allShops(v snapshot, field int) []byte {
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var b []byte
 	for _, id := range ids {
 		b = wire.AppendBytes(b, field, s.shopWire(v, id))
@@ -305,7 +305,7 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 	for id := range changed {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	for _, id := range ids {
 		b = wire.AppendBytes(b, 2, s.shopWire(v, id))
 	}

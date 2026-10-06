@@ -78,27 +78,27 @@ func loadCharacterStatDesign(db *sql.DB) (*CharacterStatDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		growthIDs, err := packedInts(proto, 1)
 		if err != nil || len(growthIDs) != 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d growth id %v: %w", id, growthIDs, err)
 		}
 		health, found, err := fixed64Double(proto, 11)
 		if err != nil || !found {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d health: %w", id, err)
 		}
 		attack, _, err := fixed64Double(proto, 17)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d attack: %w", id, err)
 		}
 		magic, _, err := fixed64Double(proto, 14)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character %d magic: %w", id, err)
 		}
 		design.characters[id] = characterStatBase{GrowthID: growthIDs[0], Base: BaseStats{Health: health, Attack: attack, Magic: magic}}
@@ -118,12 +118,12 @@ func loadCharacterStatDesign(db *sql.DB) (*CharacterStatDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		groups, err := packedInts(proto, 1)
 		if err != nil || len(groups) != 1 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character growth %d group %v: %w", id, groups, err)
 		}
 		design.growthGroups[id] = groups[0]
@@ -143,22 +143,22 @@ func loadCharacterStatDesign(db *sql.DB) (*CharacterStatDesign, error) {
 		var group, level uint64
 		var proto []byte
 		if err := rows.Scan(&group, &level, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		health, _, err := fixed64Double(proto, 6)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character level %d/%d health: %w", group, level, err)
 		}
 		attack, _, err := fixed64Double(proto, 12)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character level %d/%d attack: %w", group, level, err)
 		}
 		magic, _, err := fixed64Double(proto, 10)
 		if err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: character level %d/%d magic: %w", group, level, err)
 		}
 		design.levelRatios[[2]uint64{group, level}] = BaseStats{Health: health, Attack: attack, Magic: magic}

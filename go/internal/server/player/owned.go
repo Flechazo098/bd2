@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"sort"
 	"strconv"
@@ -291,9 +292,7 @@ func (s *Inventory) GrantOnce(identity string, rewards []gamedata.BattleReward) 
 func cloneOwnedSnapshot(current ownedSnapshot) ownedSnapshot {
 	next := ownedSnapshot{Version: current.Version, NextIndex: current.NextIndex,
 		Items: append([]Item(nil), current.Items...), Granted: make(map[string]bool, len(current.Granted)+1), GrantItems: make(map[string][]uint64, len(current.GrantItems)+1)}
-	for k, v := range current.Granted {
-		next.Granted[k] = v
-	}
+	maps.Copy(next.Granted, current.Granted)
 	for k, v := range current.GrantItems {
 		next.GrantItems[k] = append([]uint64(nil), v...)
 	}
@@ -432,9 +431,7 @@ func (s *Inventory) ConsumeAndRefund(requested []Item, refunds []gamedata.Growth
 	defer s.mu.Unlock()
 	next := ownedSnapshot{Version: s.owned.Version, NextIndex: s.owned.NextIndex,
 		Items: append([]Item(nil), s.owned.Items...), Granted: make(map[string]bool, len(s.owned.Granted)), GrantItems: make(map[string][]uint64, len(s.owned.GrantItems))}
-	for k, v := range s.owned.Granted {
-		next.Granted[k] = v
-	}
+	maps.Copy(next.Granted, s.owned.Granted)
 	for k, v := range s.owned.GrantItems {
 		next.GrantItems[k] = append([]uint64(nil), v...)
 	}

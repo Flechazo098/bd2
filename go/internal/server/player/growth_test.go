@@ -27,8 +27,12 @@ func TestCharImmortalReturnsFullOwnedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	characters.SetCurrentHealth(owned[0].InvenIndex, 0)
-	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{6010: 42}, FullRestore: map[[2]uint64]bool{{42, 1}: true}})
+	if err := characters.SetCurrentHealth(owned[0].InvenIndex, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{6010: 42}, FullRestore: map[[2]uint64]bool{{42, 1}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	packed := binary.AppendUvarint(nil, owned[0].InvenIndex)
 	request := wire.AppendBytes(wire.AppendVarint(nil, 1, 23), 2, packed)
 	code, response, ok, err := characters.Handle("/CharImmortal", request)
@@ -169,8 +173,12 @@ func TestGrowthAndImmortalShareDynamicMaximumHealth(t *testing.T) {
 	if hp, _, _ := wire.Varint(grown, 3); hp != 513 {
 		t.Fatalf("grown HP=%d want 513", hp)
 	}
-	characters.SetCurrentHealth(77, 0)
-	characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{350: 42}, FullRestore: map[[2]uint64]bool{{42, 0}: true}})
+	if err := characters.SetCurrentHealth(77, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := characters.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{350: 42}, FullRestore: map[[2]uint64]bool{{42, 0}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	immortal := wire.AppendVarint(wire.AppendVarint(nil, 1, 12), 2, 77)
 	_, response, _, err = characters.Handle("/CharImmortal", immortal)
 	if err != nil {

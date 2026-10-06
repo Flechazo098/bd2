@@ -13,17 +13,16 @@ internal static class RewardBuffRefresh
 {
     internal static void Install(Harmony harmony)
     {
-        var target = typeof(DataManager).GetGameMethod("AddRewardInfoBundle",
+        MethodInfo target = typeof(DataManager).GetGameMethod("AddRewardInfoBundle",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null,
-            new[] { typeof(RewardDBInfoBundle), typeof(List<ItemBaseInfo>).MakeByRefType(), typeof(bool) }, null);
-        if (target == null) throw new MissingMethodException("DataManager.AddRewardInfoBundle");
+            [typeof(RewardDBInfoBundle), typeof(List<ItemBaseInfo>).MakeByRefType(), typeof(bool)], null) ?? throw new MissingMethodException("DataManager.AddRewardInfoBundle");
         harmony.Patch(target, postfix: new HarmonyMethod(typeof(RewardBuffRefresh), nameof(Refresh)));
     }
 
     private static void Refresh(RewardDBInfoBundle __0, bool __2)
     {
         if (__0 == null || !__2) return;
-        foreach (var item in __0.ViewItemInfo)
+        foreach (ItemDBInfo item in __0.ViewItemInfo)
         {
             if (item.Type != (int)EElementType.BuffItem) continue;
             ContentsPacket.SendRefreshCollectionBuff(null);

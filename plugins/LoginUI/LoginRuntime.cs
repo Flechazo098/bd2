@@ -61,7 +61,7 @@ internal static class LoginRuntime
         FieldInfo maintenanceUri = serverURLInfo?.GetGameField(
             nameof(BDNetwork.ServerURLInfo.MaintenanceUri),
             BindingFlags.Static | BindingFlags.Public);
-        Uri result = maintenanceUri?.GetValue(null) as Uri;
+        var result = maintenanceUri?.GetValue(null) as Uri;
         if (result == null || (result.Scheme != Uri.UriSchemeHttp && result.Scheme != Uri.UriSchemeHttps))
         {
             throw new InvalidOperationException("current server maintenance URL is unavailable");
@@ -76,7 +76,7 @@ internal static class LoginRuntime
             nameof(UIManager.OpenPCLoginPopupUI),
             BindingFlags.Static | BindingFlags.Public,
             null,
-            new[] { typeof(Action) },
+            [typeof(Action)],
             null);
         return method != null && method.ReturnType == typeof(void) ? method : null;
     }

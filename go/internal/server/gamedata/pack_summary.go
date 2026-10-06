@@ -21,7 +21,7 @@ func loadPackSummaryTargets(db *sql.DB) (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := map[int]bool{}
 	for rows.Next() {
 		var id int

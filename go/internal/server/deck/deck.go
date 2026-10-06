@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sync"
 
@@ -247,13 +248,9 @@ func clone(x state) state {
 		y.Waypoints[k] = append([]uint64(nil), v...)
 	}
 	y.Costumes = map[uint64]uint64{}
-	for k, v := range x.Costumes {
-		y.Costumes[k] = v
-	}
+	maps.Copy(y.Costumes, x.Costumes)
 	y.Packs = map[uint64]uint64{}
-	for k, v := range x.Packs {
-		y.Packs[k] = v
-	}
+	maps.Copy(y.Packs, x.Packs)
 	return y
 }
 func checkSeq(req []byte) error {

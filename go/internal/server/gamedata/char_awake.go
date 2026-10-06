@@ -65,7 +65,7 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		counts, _ := packedInts(proto, 1)
@@ -75,26 +75,30 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		statType, _ := packedInts(proto, 5)
 		statValue, hasStatValue, err := fixed64Double(proto, 6)
 		if err != nil || len(protoID) != 1 || protoID[0] != id || len(statType) != 1 || !hasStatValue || math.IsNaN(statValue) || math.IsInf(statValue, 0) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid CharAwakeGrowthTable row %d", id)
 		}
 		if len(counts) != len(ids) || len(counts) != len(types) {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: mismatched CharAwakeGrowthTable costs %d", id)
 		}
 		entry := CharAwakeGrowth{ID: id, StatType: statType[0], StatValue: statValue}
 		if entry.StatType == 0 || entry.StatType > 20 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: unsupported awakening stat type %d in row %d", entry.StatType, id)
 		}
 		for i := range counts {
 			if counts[i] == 0 || (types[i] != 4 && types[i] != 8) || (types[i] == 4 && ids[i] != 0) || (types[i] == 8 && ids[i] == 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid awakening cost in row %d", id)
 			}
 			entry.Costs = append(entry.Costs, CharAwakeCost{Type: types[i], ID: ids[i], Count: counts[i]})
 		}
 		growth[id] = entry
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -109,23 +113,27 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		var id uint64
 		var proto []byte
 		if err := rows.Scan(&id, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		growthIDs, _ := packedInts(proto, 1)
 		protoID, _ := packedInts(proto, 2)
 		if len(protoID) != 1 || protoID[0] != id || len(growthIDs) == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid CharImprintTable row %d", id)
 		}
 		for _, growthID := range growthIDs {
 			entry, ok := growth[growthID]
 			if !ok || len(entry.Costs) == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: imprint %d has invalid growth %d", id, growthID)
 			}
 			imprints[id] = append(imprints[id], entry)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -140,7 +148,7 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		var rowID uint64
 		var proto []byte
 		if err := rows.Scan(&rowID, &proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		active, _ := packedInts(proto, 1)
@@ -150,14 +158,14 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		slot2, _ := packedInts(proto, 5)
 		slot3, _ := packedInts(proto, 6)
 		if len(active) != 1 || active[0] != 1 || len(unique) != 1 || unique[0] != rowID || len(slot1) != 1 || len(slot2) != 1 || len(slot3) != 1 || len(awakeIDs) == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid CharAwakeTable row %d", rowID)
 		}
 		entry := CharAwakeCharacter{UniqueCharID: rowID, Active: true, ImprintIDs: [3]uint64{slot1[0], slot2[0], slot3[0]}}
 		for i, imprintID := range entry.ImprintIDs {
 			levels, ok := imprints[imprintID]
 			if !ok {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: awakening %d has unknown imprint %d", rowID, imprintID)
 			}
 			entry.ImprintGrowth[i] = append([]CharAwakeGrowth(nil), levels...)
@@ -165,16 +173,20 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 		for i, growthID := range awakeIDs {
 			awakeGrowth, ok := growth[growthID]
 			if !ok || (i > 0 && len(awakeGrowth.Costs) != 0) {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: awakening %d has invalid growth %d", rowID, growthID)
 			}
 			entry.AwakeGrowth = append(entry.AwakeGrowth, awakeGrowth)
 		}
 		if len(entry.AwakeGrowth[0].Costs) == 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: awakening %d has no activation cost", rowID)
 		}
 		design.Characters[rowID] = entry
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -192,13 +204,13 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 	for rows.Next() {
 		var row stageRow
 		if err := rows.Scan(&row.id, &row.proto); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		sourceRows = append(sourceRows, row)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -214,23 +226,17 @@ func loadCharAwakeDesign(db *sql.DB) (*CharAwakeDesign, error) {
 			continue
 		}
 		if len(growthID) != 1 || len(grade) != 1 || len(growthGrade) != 1 {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid awakening character stage %d", id)
 		}
 		var growthProto []byte
 		if err := db.QueryRow("SELECT ProtoBuf FROM CharGrowthTable WHERE id=?", growthID[0]).Scan(&growthProto); err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: awakening character %d growth: %w", id, err)
 		}
 		maximum, _ := packedInts(growthProto, 9)
 		if len(maximum) != 1 || maximum[0] == 0 {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid awakening character maximum %d", id)
 		}
 		design.Stages[id] = CharAwakeCharacterStage{UniqueCharID: unique[0], Grade: grade[0], GrowthGrade: growthGrade[0], MaximumLevel: maximum[0]}
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	if len(design.Characters) == 0 || len(design.Stages) == 0 {
 		return nil, fmt.Errorf("gamedata: awakening design is empty")

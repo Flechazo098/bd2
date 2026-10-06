@@ -16,7 +16,11 @@ func TestStoreRequiresAndClearsExactMasterKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for index, value := range key {
 		if value != 0 {
 			t.Fatalf("master key byte %d was retained by the caller buffer", index)
@@ -38,7 +42,9 @@ func TestStoreMigratesSchemaV1ToV2(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DROP TABLE refresh_attempts; UPDATE metadata SET value='1' WHERE key='schema_version'`); err != nil {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -48,7 +54,11 @@ func TestStoreMigratesSchemaV1ToV2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var version int
 	if err := reopened.db.QueryRow(`SELECT CAST(value AS INTEGER) FROM metadata WHERE key='schema_version'`).Scan(&version); err != nil {
 		t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"bd2server/internal/server/wire"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"time"
 )
@@ -53,9 +54,7 @@ func (e *Economy) refreshAP(s *economySnapshot) error {
 	if !reset {
 		return nil
 	}
-	for typ, max := range e.apCaps {
-		s.Balances[typ] = max
-	}
+	maps.Copy(s.Balances, e.apCaps)
 	clock.Next = next
 	raw, err := json.Marshal(clock)
 	if err != nil {

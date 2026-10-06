@@ -22,7 +22,7 @@ func LoadAchievementLevelDesign(root, version string) (*AchievementLevelDesign, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d := &AchievementLevelDesign{}
 	for rows.Next() {
 		var raw []byte

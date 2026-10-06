@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"sort"
@@ -330,9 +331,7 @@ func (s *EquipmentInventory) grantLocked(identity string, entry Equipment) (Equi
 	next := equipmentSnapshot{Version: s.owned.Version, NextIndex: s.owned.NextIndex + 1,
 		Equipment: append([]Equipment(nil), s.owned.Equipment...), Granted: make(map[string]uint64, len(s.owned.Granted)+1)}
 	next.Equipment = append(next.Equipment, entry)
-	for k, v := range s.owned.Granted {
-		next.Granted[k] = v
-	}
+	maps.Copy(next.Granted, s.owned.Granted)
 	next.Granted[identity] = entry.InvenIndex
 	if err := s.commitLocked(next, "grant"); err != nil {
 		return Equipment{}, err
@@ -541,7 +540,7 @@ func (s *EquipmentInventory) optionRerollRequest(request []byte) (int, []byte, b
 		}
 		if locked {
 			lockedCount++
-		} else if canReroll && !(rerollType == 1 && i == 0) {
+		} else if canReroll && !(rerollType == 1 && i == 0) { //nolint:staticcheck // QF1001
 			unlockedRerollable++
 		}
 	}
@@ -1767,12 +1766,11 @@ func validEquipmentMark(raw []byte) bool {
 		return false
 	}
 	left := parts[0]
-	if strings.HasPrefix(left, "~") {
-		icon, err := strconv.Atoi(strings.TrimPrefix(left, "~"))
+	if suffix, found := strings.CutPrefix(left, "~"); found {
+		icon, err := strconv.Atoi(suffix)
 		return err == nil && icon >= 1 && icon <= 15
 	}
-	if strings.HasPrefix(left, "_") {
-		text := strings.TrimPrefix(left, "_")
+	if text, found := strings.CutPrefix(left, "_"); found {
 		return utf8.RuneCountInString(text) == 1 && len([]byte(text)) <= 2
 	}
 	return len(left) >= 1 && len([]byte(left)) <= 2
@@ -1864,9 +1862,7 @@ func cloneEquipmentSnapshot(current equipmentSnapshot) equipmentSnapshot {
 	for i := range next.Equipment {
 		next.Equipment[i] = cloneEquipment(next.Equipment[i])
 	}
-	for key, value := range current.Granted {
-		next.Granted[key] = value
-	}
+	maps.Copy(next.Granted, current.Granted)
 	return next
 }
 
@@ -2044,9 +2040,7 @@ func (s *EquipmentInventory) use(request []byte) (int, []byte, bool, error) {
 	defer s.mu.Unlock()
 	next := equipmentSnapshot{Version: s.owned.Version, NextIndex: s.owned.NextIndex,
 		Equipment: append([]Equipment(nil), s.owned.Equipment...), Granted: make(map[string]uint64, len(s.owned.Granted))}
-	for k, v := range s.owned.Granted {
-		next.Granted[k] = v
-	}
+	maps.Copy(next.Granted, s.owned.Granted)
 	position := -1
 	for i, current := range next.Equipment {
 		if current.InvenIndex == equipmentIndex {

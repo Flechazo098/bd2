@@ -19,7 +19,7 @@ internal static class EventRequestDiagnostics
 {
     private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
     private sealed class Sample { internal int Count; internal float Last, Logged; internal bool Burst; }
-    private static readonly Dictionary<string, Sample> Samples = new Dictionary<string, Sample>();
+    private static readonly Dictionary<string, Sample> Samples = [];
 
     internal static void Install(Harmony harmony)
     {
@@ -65,7 +65,7 @@ internal static class EventRequestDiagnostics
     private static string Callers()
     {
         var text = new StringBuilder();
-        foreach (StackFrame frame in new StackTrace(false).GetFrames() ?? Array.Empty<StackFrame>())
+        foreach (StackFrame frame in new StackTrace(false).GetFrames() ?? [])
         {
             MethodBase method = frame.GetMethod();
             if (method?.DeclaringType == null || method.DeclaringType == typeof(EventRequestDiagnostics)) continue;

@@ -57,7 +57,11 @@ func TestFieldBatchSQLiteAtomicResetAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	s := sqliteFieldService(t, store)
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
@@ -190,7 +194,11 @@ func TestFieldEffectsSQLitePersistenceRepeatAndBattleConsumption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { repo.Close() }()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	s := sqliteFieldService(t, store)
 	designs := map[int]gamedata.FieldObjectDesign{21: {Objects: map[int]gamedata.FieldRewardObject{
@@ -310,7 +318,11 @@ func TestInstalledFieldChestAndHealingObjectSQLiteSettlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	store := &fieldRewardFailStore{Repository: repo}
 	s := sqliteFieldService(t, store).WithFieldObjects(map[int]gamedata.FieldObjectDesign{21: chests, 1: traps})
 	s.fieldBuffs = buffs
@@ -342,7 +354,9 @@ func TestInstalledFieldChestAndHealingObjectSQLiteSettlement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.characters.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil })
+	if err := s.characters.AttachMaxHealth(func(player.Character) (uint64, error) { return 100, nil }); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.characters.EnsurePersisted(); err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,11 @@ func TestNPCShopCatalogKeepsCompositeProductKeysAndRejectsOrphans(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, query := range []string{"CREATE TABLE ShopTable(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE ProductTable(id INTEGER,groupId INTEGER,ProtoBuf BLOB)", "CREATE TABLE SellItemTable(id INTEGER,ProtoBuf BLOB)"} {
 		if _, err = db.Exec(query); err != nil {
 			t.Fatal(err)
@@ -47,7 +51,11 @@ func TestSellCatalogUsesTypesAndRejectsAmbiguousDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, q := range []string{"CREATE TABLE ShopTable(id INTEGER,ProtoBuf BLOB)", "CREATE TABLE ProductTable(id INTEGER,groupId INTEGER,ProtoBuf BLOB)", "CREATE TABLE SellItemTable(id INTEGER,ProtoBuf BLOB)"} {
 		if _, err = db.Exec(q); err != nil {
 			t.Fatal(err)

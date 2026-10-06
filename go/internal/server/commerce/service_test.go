@@ -281,7 +281,11 @@ func TestSQLiteAccountTransactionRollsBackCostRewardAndReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	wallet, err = player.OpenWallet(repo, player.Currency{})
 	if err != nil {
 		t.Fatal(err)

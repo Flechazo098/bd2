@@ -78,7 +78,11 @@ func TestRecruitSQLiteFailureAfterConsumeRollsBackAllDomains(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	inventory, e = OpenInventory(repo, starter)
 	if e != nil {
 		t.Fatal(e)
@@ -267,7 +271,7 @@ func TestRecruitInvalidSpecialRequestsDoNotPersistRotation(t *testing.T) {
 	if _, exists := s.collection.Grant("special-recruit-state"); exists {
 		t.Fatal("invalid buy wrote rotation")
 	}
-	s.wallet.state.Currency.FreeJewelry = 0
+	s.wallet.state.Currency.FreeJewelry = 0 //nolint:staticcheck // QF1008
 	if _, _, _, e := s.Handle("/CharSpecialScoutReset", wire.AppendVarint(nil, 1, 2)); e == nil {
 		t.Fatal("unaffordable reset accepted")
 	}

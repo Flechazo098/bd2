@@ -38,7 +38,7 @@ func (e *attendanceTransactionEconomy) Apply(identity string, costs, rewards []g
 	var items []gamedata.BattleReward
 	for _, r := range rewards {
 		if r.Type == 9 || r.Type == 8 {
-			items = append(items, gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count})
+			items = append(items, gamedata.BattleReward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		}
 	}
 	if _, err := e.inventory.GrantOnce(identity, items); err != nil {
@@ -224,7 +224,7 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, wallet, inv, svc, mailbox, eco = open()
+	repo, wallet, inv, svc, mailbox, _ = open()
 	if !reflect.DeepEqual(mailState(repo), issuedMail) {
 		t.Fatal("mail claim/history persisted after failed batch")
 	}
@@ -246,8 +246,12 @@ func TestAttendanceBatchRollsBackAndSuccessfulRetryGrantsOnce(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	repo, wallet, inv, svc, mailbox, eco = open()
-	defer repo.Close()
+	repo, wallet, inv, svc, mailbox, _ = open()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	items := inv.All()
 	if wallet.Snapshot().Gold != 112 || len(items) != 1 || items[0].Type != 9 || items[0].ID != 987 || items[0].Count != 1 {
 		t.Fatalf("successful attendance not persisted exactly once: wallet=%+v items=%+v", wallet.Snapshot(), items)

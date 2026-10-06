@@ -18,7 +18,11 @@ func cachePlain(t *testing.T, value int) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err = db.Exec(fmt.Sprintf("CREATE TABLE test(value INTEGER);INSERT INTO test VALUES(%d)", value)); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +30,11 @@ func cachePlain(t *testing.T, value int) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var raw []byte
 	err = conn.Raw(func(v any) error {
 		var e error
@@ -72,14 +80,16 @@ func TestDatabaseCacheSingleFlightReadOnlyAndLifetime(t *testing.T) {
 	cacheArchive(t, root, 1)
 	plain := cachePlain(t, 7)
 	c := NewDatabaseCache(1 << 20)
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var loads atomic.Int32
 	c.loader = func(string, string, string) ([]byte, error) { loads.Add(1); return plain, nil }
 	var wg sync.WaitGroup
-	for i := 0; i < 12; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 12 {
+		wg.Go(func() {
 			err := c.WithDatabase(root, "v1", "common", func(db *sql.DB) error {
 				var n int
 				if err := db.QueryRow("SELECT value FROM test").Scan(&n); err != nil {
@@ -96,7 +106,7 @@ func TestDatabaseCacheSingleFlightReadOnlyAndLifetime(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if loads.Load() != 1 {
@@ -124,7 +134,11 @@ func TestDatabaseCacheFailureRetryReplacementAndEviction(t *testing.T) {
 	cacheArchive(t, root, 1)
 	plain := cachePlain(t, 1)
 	c := NewDatabaseCache(int64(len(plain)))
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	var loads int
 	c.loader = func(string, string, string) ([]byte, error) {
 		loads++
@@ -180,7 +194,11 @@ func TestDatabaseCacheMutationDuringLoadFailsAndDoesNotPoison(t *testing.T) {
 	cacheArchive(t, root, 1)
 	plain := cachePlain(t, 3)
 	c := NewDatabaseCache(1 << 20)
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	calls := 0
 	c.loader = func(string, string, string) ([]byte, error) {
 		calls++
@@ -274,7 +292,11 @@ func TestDatabaseCacheRootAndVersionIsolation(t *testing.T) {
 	}
 	plainA, plainB, plainV2 := cachePlain(t, 1), cachePlain(t, 2), cachePlain(t, 3)
 	c := NewDatabaseCache(1 << 20)
-	defer c.Close()
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	loads := 0
 	c.loader = func(root, version, _ string) ([]byte, error) {
 		loads++

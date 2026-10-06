@@ -19,7 +19,9 @@ func TestImmortalRequiresDesignedDeadTalentAndReplaysSameSequence(t *testing.T) 
 		t.Fatal(err)
 	}
 	s.maxHealth = func(Character) (uint64, error) { return 700, nil }
-	s.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{999: 88}, FullRestore: map[[2]uint64]bool{{88, 3}: true}})
+	if err := s.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{999: 88}, FullRestore: map[[2]uint64]bool{{88, 3}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("a")
 	req := wire.AppendVarint(wire.AppendVarint(nil, 1, 12), 2, 77)
 	_, body, _, err := s.Handle("/CharImmortal", req)
@@ -33,8 +35,12 @@ func TestImmortalRequiresDesignedDeadTalentAndReplaysSameSequence(t *testing.T) 
 	if _, _, _, err := s.Handle("/CharImmortal", wire.AppendVarint(wire.AppendVarint(nil, 1, 13), 2, 77)); err == nil {
 		t.Fatal("alive new request restored")
 	}
-	s.SetCurrentHealth(77, 0)
-	s.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{999: 88}, FullRestore: map[[2]uint64]bool{{88, 2}: true}})
+	if err := s.SetCurrentHealth(77, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AttachImmortalDesign(&gamedata.ImmortalDesign{Characters: map[uint64]uint64{999: 88}, FullRestore: map[[2]uint64]bool{{88, 2}: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, _, err := s.Handle("/CharImmortal", wire.AppendVarint(wire.AppendVarint(nil, 1, 14), 2, 77)); err == nil {
 		t.Fatal("wrong talent level revived")
 	}

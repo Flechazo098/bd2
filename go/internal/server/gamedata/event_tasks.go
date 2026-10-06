@@ -64,7 +64,7 @@ func loadEventTasksDesign(db *sql.DB) (*EventTasksDesign, error) {
 		if e != nil {
 			return e
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var p []byte
 			if e = rows.Scan(&p); e != nil {
@@ -217,7 +217,7 @@ func loadEventTasksDesign(db *sql.DB) (*EventTasksDesign, error) {
 			return e
 		}
 		for _, v := range rs {
-			r.Rewards = append(r.Rewards, Reward{v.Type, v.ID, v.Count})
+			r.Rewards = append(r.Rewards, Reward{v.Type, v.ID, v.Count}) //nolint:staticcheck // S1016
 		}
 		d.PassBuys[g] = append(d.PassBuys[g], r)
 		return nil

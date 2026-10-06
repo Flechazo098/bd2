@@ -31,29 +31,29 @@ func LoadFieldSettingsDesign(root, version string) (*FieldSettingsDesign, error)
 	for rows.Next() {
 		var id uint64
 		if e = rows.Scan(&id, &raw); e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if id == 0 || id > 2147483647 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid talent identity")
 		}
 		classes[id], e = optionalScalar(raw, 4)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 	}
 	if e = rows.Err(); e != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, e
 	}
-	rows.Close()
+	_ = rows.Close()
 	rows, e = db.Query("SELECT id,ProtoBuf FROM CharTable")
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		if e = rows.Scan(&id, &raw); e != nil {

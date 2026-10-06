@@ -81,7 +81,11 @@ func TestLoginPurchaseCountsRestoredFromSQLiteGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	collection, err = player.OpenCollectionStore(repository, nil)
 	if err != nil {
 		t.Fatal(err)

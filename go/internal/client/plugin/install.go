@@ -125,7 +125,7 @@ func installData(spec Spec, pluginDir string, sourceData []byte) (Result, error)
 		return Result{}, fmt.Errorf("clientplugin: create temporary plugin: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if _, err = io.Copy(temporary, bytes.NewReader(sourceData)); err == nil {
 		err = temporary.Sync()
 	}

@@ -22,7 +22,7 @@ public static class Game
         internal readonly Dictionary<int, MemberName> Tokens;
         internal Index()
         {
-            using (var stream = typeof(Game).Assembly.GetManifestResourceStream("BD2.GameNames.names.json.gz"))
+            using (Stream stream = typeof(Game).Assembly.GetManifestResourceStream("BD2.GameNames.names.json.gz"))
             using (var gzip = new GZipStream(stream ?? throw new InvalidDataException("BD2.GameNames: embedded table missing"), CompressionMode.Decompress))
                 Table = (NameTable)new DataContractJsonSerializer(typeof(NameTable)).ReadObject(gzip);
             if (Table.schema_version != 1) throw new InvalidDataException("BD2.GameNames: unsupported table schema");
@@ -30,10 +30,10 @@ public static class Game
             Tokens = Table.members.ToDictionary(m => m.token);
         }
     }
-    private static readonly Lazy<Index> Names = new Lazy<Index>(() => new Index());
-    private static readonly ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
-    private static readonly ConcurrentDictionary<string, MemberInfo> MemberCache = new ConcurrentDictionary<string, MemberInfo>();
-    private static readonly object ValidationLock = new object();
+    private static readonly Lazy<Index> Names = new(() => new Index());
+    private static readonly ConcurrentDictionary<string, Type> TypeCache = new();
+    private static readonly ConcurrentDictionary<string, MemberInfo> MemberCache = new();
+    private static readonly object ValidationLock = new();
     private static string ValidatedStamp;
     /// <summary>Gets the game version embedded in this package.</summary>
     public static string GameVersion => Names.Value.Table.game_version;
@@ -42,18 +42,18 @@ public static class Game
     public static string TypeName(string readableFullName)
     {
         if (readableFullName == null) throw new ArgumentNullException(nameof(readableFullName));
-        return Names.Value.Types.TryGetValue(readableFullName.Replace('/', '+'), out var entry) ? entry.original : readableFullName;
+        return Names.Value.Types.TryGetValue(readableFullName.Replace('/', '+'), out TypeName entry) ? entry.original : readableFullName;
     }
 
     /// <summary>Finds a readable type in Assembly-CSharp or loaded assemblies; returns null when absent.</summary>
     public static Type FindType(string readableFullName)
     {
         if (readableFullName == null) throw new ArgumentNullException(nameof(readableFullName));
-        if (TypeCache.TryGetValue(readableFullName, out var cached)) return cached;
+        if (TypeCache.TryGetValue(readableFullName, out Type cached)) return cached;
         string original = TypeName(readableFullName);
         Type found = GameAssembly().GetType(original, false);
         if (found == null)
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
                 found = assembly.GetType(original, false);
                 if (found != null) break;
@@ -69,7 +69,7 @@ public static class Game
         if (readable == null) throw new ArgumentNullException(nameof(readable));
         // Metadata tokens retain declaration identity through inheritance and closed generics.
         // A hidden literal member must not be mistaken for a renamed member of a base class.
-        if (member.DeclaringType.Assembly.GetName().Name == Names.Value.Table.assembly_name && Names.Value.Tokens.TryGetValue(member.MetadataToken, out var entry))
+        if (member.DeclaringType.Assembly.GetName().Name == Names.Value.Table.assembly_name && Names.Value.Tokens.TryGetValue(member.MetadataToken, out MemberName entry))
             return entry.kind == kind && entry.readable == readable;
         return member.Name == readable;
     }
@@ -88,7 +88,7 @@ public static class Game
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-        var reflected = kind switch
+        IEnumerable<MemberInfo> reflected = kind switch
         {
             GameMemberKind.Method => type.GetMethods(all).Cast<MemberInfo>(),
             GameMemberKind.Field => type.GetFields(all).Cast<MemberInfo>(),
@@ -96,7 +96,7 @@ public static class Game
             GameMemberKind.Event => type.GetEvents(all).Cast<MemberInfo>(),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
-        var names = reflected.Where(m => Matches(m, key, readable)).Select(m => m.Name).Distinct().ToArray();
+        string[] names = reflected.Where(m => Matches(m, key, readable)).Select(m => m.Name).Distinct().ToArray();
         if (names.Length == 0) return readable;
         if (names.Length != 1) throw new AmbiguousMatchException(type.FullName + "." + readable + ": supply the member signature");
         return names[0];
@@ -110,9 +110,9 @@ public static class Game
     {
         if (method == null) throw new ArgumentNullException(nameof(method));
         if (readable == null) throw new ArgumentNullException(nameof(readable));
-        if (method.DeclaringType.Assembly.GetName().Name == Names.Value.Table.assembly_name && Names.Value.Tokens.TryGetValue(method.MetadataToken, out var entry))
+        if (method.DeclaringType.Assembly.GetName().Name == Names.Value.Table.assembly_name && Names.Value.Tokens.TryGetValue(method.MetadataToken, out MemberName entry))
         {
-            var p = entry.parameters.SingleOrDefault(n => n.readable == readable);
+            ParameterName p = entry.parameters.SingleOrDefault(n => n.readable == readable);
             if (p != null) return p.original;
         }
         return readable;
@@ -144,7 +144,7 @@ public static class Game
         if (readable == null) throw new ArgumentNullException(nameof(readable));
         if (type == null) return null;
         string key = type.AssemblyQualifiedName + "|" + kind + "|" + readable + "|" + (int)flags + "|" + (parameters == null ? "*" : string.Join(";", parameters.Select(p => p.AssemblyQualifiedName)));
-        if (MemberCache.TryGetValue(key, out var cached)) return (T)cached;
+        if (MemberCache.TryGetValue(key, out MemberInfo cached)) return (T)cached;
         T found = resolve();
         if (found != null) MemberCache.TryAdd(key, found);
         return found;
@@ -161,7 +161,7 @@ public static class Game
         if (type == null) return null;
         MethodInfo Resolve()
         {
-            var candidates = type.GetMethods(flags).Where(m => Matches(m, "method", readable)).ToArray();
+            MethodInfo[] candidates = type.GetMethods(flags).Where(m => Matches(m, "method", readable)).ToArray();
             if (candidates.Length == 0) return null;
             return (MethodInfo)(binder ?? Type.DefaultBinder).SelectMethod(flags, candidates, parameters, modifiers);
         }
@@ -171,7 +171,7 @@ public static class Game
     }
     private static T Single<T>(IEnumerable<T> members, Type type, string readable) where T : MemberInfo
     {
-        var candidates = members.Take(2).ToArray();
+        T[] candidates = members.Take(2).ToArray();
         if (candidates.Length > 1) throw new AmbiguousMatchException(type.FullName + "." + readable + ": supply the member signature");
         return candidates.FirstOrDefault();
     }
@@ -203,30 +203,30 @@ public static class Game
     {
         try
         {
-            var table = Names.Value.Table;
+            NameTable table = Names.Value.Table;
             string stamp = table.game_version + "|" + table.assembly_sha256 + "|" + table.mapping_sha256;
-            var metadata = plugin?.GetCustomAttributes<AssemblyMetadataAttribute>().SingleOrDefault(a => a.Key == "BD2.GameNames");
+            AssemblyMetadataAttribute metadata = plugin?.GetCustomAttributes<AssemblyMetadataAttribute>().SingleOrDefault(a => a.Key == "BD2.GameNames");
             if (expectedVersion != table.game_version || plugin != null && metadata?.Value != stamp)
                 throw new InvalidDataException("plugin/table mismatch; rebuild the plugin and BD2.GameNames together");
             lock (ValidationLock)
             {
                 if (ValidatedStamp != stamp)
                 {
-                    var assembly = GameAssembly();
+                    Assembly assembly = GameAssembly();
                     if (assembly.ManifestModule.ModuleVersionId.ToString() != table.assembly_mvid)
                         throw new InvalidDataException("Assembly-CSharp MVID mismatch");
                     using (var sha = SHA256.Create())
-                    using (var stream = File.OpenRead(assembly.Location))
+                    using (FileStream stream = File.OpenRead(assembly.Location))
                     {
                         string actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
                         if (actual != table.assembly_sha256) throw new InvalidDataException("Assembly-CSharp SHA-256 mismatch");
                     }
                     const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-                    var app = FindType("AppManager") ?? throw new TypeLoadException("AppManager");
-                    var intro = FindType("IntroUI") ?? throw new TypeLoadException("IntroUI");
-                    var network = FindType("BDNetwork.NetworkManager") ?? throw new TypeLoadException("BDNetwork.NetworkManager");
+                    Type app = FindType("AppManager") ?? throw new TypeLoadException("AppManager");
+                    Type intro = FindType("IntroUI") ?? throw new TypeLoadException("IntroUI");
+                    Type network = FindType("BDNetwork.NetworkManager") ?? throw new TypeLoadException("BDNetwork.NetworkManager");
                     if (app.GetGameProperty("IsPlatformLogin", all)?.PropertyType != typeof(bool) ||
-                        intro.GetGameMethod("SendMaintenanceInfo", all, null, new[] { typeof(bool) }, null) == null ||
+                        intro.GetGameMethod("SendMaintenanceInfo", all, null, [typeof(bool)], null) == null ||
                         network.GetGameMethod("GetPachedGameDataPath", all, null, Type.EmptyTypes, null)?.ReturnType != typeof(string))
                         throw new MissingMemberException("known game-name probes failed");
                     ValidatedStamp = stamp;

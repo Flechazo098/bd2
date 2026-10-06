@@ -24,11 +24,13 @@ func TestAchievementUpdateEmitsAbsoluteNotificationWithoutChangingEmptyResponse(
 		t.Fatal(err)
 	}
 	server, _ := NewServer(fakeLogin{}, counter)
-	server.AttachResponseObserver(observer)
+	if err := server.AttachResponseObserver(observer); err != nil {
+		t.Fatal(err)
+	}
 	logged := login(t, server)
 	request := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 987), 3, 1)
 	body, _ := cryptox.EncryptBase64Payload(request, server.KeyForTest())
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		reply, err := server.DispatchRaw("/AchievementUpdate", []byte(body), "s="+logged.Cookie)
 		if err != nil {
 			t.Fatal(err)

@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <Import Project="../PackageMetadata.props" />
   <PropertyGroup>
+    <RootNamespace>BD2.GameNames</RootNamespace>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
     <TargetFramework>netstandard2.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AssemblyName>BD2.GameNames</AssemblyName>
@@ -23,5 +25,6 @@
     <Compile Include="Game.cs;GameMemberKind.cs;NameTable.cs" />
     <EmbeddedResource Include="$(GameNamesTable).gz" LogicalName="BD2.GameNames.names.json.gz" />
     <None Include="README.md" Pack="true" PackagePath="README.md" />
+    <None Include="LICENSE" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>

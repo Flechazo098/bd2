@@ -32,7 +32,7 @@ func newCharAwakeHarness(t *testing.T) (*CharAwakeService, *CollectionStore, *In
 	}
 	characters := &CharacterStore{characters: []Character{{InvenIndex: 77, ID: 354, Level: 100}}}
 	character := gamedata.CharAwakeCharacter{UniqueCharID: 35, Active: true}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		character.ImprintGrowth[i] = []gamedata.CharAwakeGrowth{{
 			ID: uint64(i + 1), StatType: uint64(i*2 + 1), StatValue: float64(i + 1),
 			Costs: []gamedata.CharAwakeCost{{Type: 8, ID: uint64(701 + i), Count: 1}, {Type: 4, Count: 100}},

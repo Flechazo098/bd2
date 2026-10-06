@@ -52,7 +52,7 @@ func runClient(args []string, options clientRunOptions) error {
 	if err != nil {
 		return err
 	}
-	defer logCloser.Close()
+	defer func() { _ = logCloser.Close() }()
 	logger.Info("bd2client starting", "log_path", logPath)
 
 	var versions clientconfig.ReleaseVersions

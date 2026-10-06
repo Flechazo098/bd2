@@ -29,12 +29,12 @@ func loadEventFieldPacks(db *sql.DB) (map[int]EventFieldPack, error) {
 		var id int
 		var raw []byte
 		if err = rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		kind, e := optionalScalar(raw, 55)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		if kind != 100 {
@@ -42,30 +42,30 @@ func loadEventFieldPacks(db *sql.DB) (map[int]EventFieldPack, error) {
 		}
 		protoID, e := optionalScalar(raw, 25)
 		if e != nil || protoID != uint64(id) || id <= 0 {
-			rows.Close()
+			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid hidden pack %d", id)
 		}
 		p := EventFieldPack{ID: id, InitialPosition: "{}"}
 		if p.BuyType, err = optionalScalar(raw, 11); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if p.BuyPrice, err = optionalScalar(raw, 7); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		rewards, e := eventGameRewards(raw, 10, 9, 8)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		for _, r := range rewards {
-			p.BuyRewards = append(p.BuyRewards, Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+			p.BuyRewards = append(p.BuyRewards, Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		}
 		packs[id] = p
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func loadEventFieldPacks(db *sql.DB) (map[int]EventFieldPack, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, packID int
 		if err = rows.Scan(&id, &packID); err != nil {

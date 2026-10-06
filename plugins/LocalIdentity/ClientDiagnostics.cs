@@ -4,7 +4,6 @@ using static BD2.GameNames.Game;
 using System.Reflection;
 using BepInEx.Logging;
 using HarmonyLib;
-using UnityEngine;
 using System.Diagnostics;
 using System.Threading;
 
@@ -51,7 +50,7 @@ internal static class ClientDiagnostics
         FieldInfo timeout = __instance.GetType().GetGameField(
             "_maintenanceTimeoutCts",
             BindingFlags.Instance | BindingFlags.NonPublic);
-        CancellationTokenSource source = timeout?.GetValue(__instance) as CancellationTokenSource;
+        var source = timeout?.GetValue(__instance) as CancellationTokenSource;
         source?.Cancel();
         Log?.LogInfo("Maintenance timeout guard cancelled after successful response");
     }
@@ -67,27 +66,17 @@ internal static class ClientDiagnostics
     internal static void InstallDatabaseDiagnostics(Harmony harmony)
     {
         Type rawDataManager = typeof(RawDataManager);
-        MethodInfo dbLoad = rawDataManager?.GetGameMethod(
+        MethodInfo dbLoad = (rawDataManager?.GetGameMethod(
             nameof(RawDataManager.DBLoad),
-            BindingFlags.Instance | BindingFlags.Public);
-        if (dbLoad == null)
-        {
-            throw new MissingMethodException("RawDataManager.DBLoad was not found");
-        }
-
+            BindingFlags.Instance | BindingFlags.Public)) ?? throw new MissingMethodException("RawDataManager.DBLoad was not found");
         harmony.Patch(
             dbLoad,
             prefix: new HarmonyMethod(typeof(ClientDiagnostics), nameof(DBLoadPrefix)));
 
         Type clientLocalInfo = typeof(Proto.Local.ClientLocalInfo);
-        MethodInfo loadDB = clientLocalInfo?.GetGameMethod(
+        MethodInfo loadDB = (clientLocalInfo?.GetGameMethod(
             nameof(Proto.Local.ClientLocalInfo.LoadDB),
-            BindingFlags.Static | BindingFlags.Public);
-        if (loadDB == null)
-        {
-            throw new MissingMethodException("ClientLocalInfo.LoadDB was not found");
-        }
-
+            BindingFlags.Static | BindingFlags.Public)) ?? throw new MissingMethodException("ClientLocalInfo.LoadDB was not found");
         harmony.Patch(
             loadDB,
             prefix: new HarmonyMethod(typeof(ClientDiagnostics), nameof(ClientLocalLoadPrefix)),
@@ -101,7 +90,7 @@ internal static class ClientDiagnostics
     {
         string dbName = __0.dbName ?? "<unknown>";
         Action original = __1;
-        Stopwatch elapsed = Stopwatch.StartNew();
+        var elapsed = Stopwatch.StartNew();
         Log?.LogInfo("DBLoad start: " + dbName);
         __1 = delegate
         {

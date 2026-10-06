@@ -34,7 +34,7 @@ func loadEquipmentStatDesign(db *sql.DB) (*EquipmentStatDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	d := &EquipmentStatDesign{Options: map[[2]uint64]EquipmentStatRule{}}
 	for rows.Next() {
 		var group, id uint64

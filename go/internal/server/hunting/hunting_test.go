@@ -129,7 +129,7 @@ func TestHuntingRepeatEnterReceiptAPAndDefeated(t *testing.T) {
 		t.Fatal(err)
 	}
 	var inactive bool
-	wire.Walk(info, func(f wire.Field) error {
+	if err := wire.Walk(info, func(f wire.Field) error {
 		if f.Number == 4 {
 			id, _, _ := wire.Varint(f.Value, 1)
 			active, _, _ := wire.Varint(f.Value, 6)
@@ -138,7 +138,9 @@ func TestHuntingRepeatEnterReceiptAPAndDefeated(t *testing.T) {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if !inactive {
 		t.Fatal("info resurrected defeated monster")
 	}
@@ -264,7 +266,9 @@ func TestHuntingRewardAPCallbackDoesNotDeadlock(t *testing.T) {
 	s.AttachRewards(func(id string, _ []gamedata.Reward) ([]byte, error) {
 		return nil, s.ExchangeAPOnce(id, nil, []gamedata.Reward{{Type: 21, Count: 3}})
 	})
-	s.EnsureForPack(1)
+	if _, err := s.EnsureForPack(1); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { _, _, e := s.CompleteBattle(1, 5, 1, 1, "apreward"); done <- e }()
 	select {
@@ -291,7 +295,9 @@ func TestHuntingAPDailyRefreshPreservesBonus(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 4, 23, 59, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
-	s.HuntingAP()
+	if _, _, err := s.HuntingAP(); err != nil {
+		t.Fatal(err)
+	}
 	now = now.Add(2 * time.Minute)
 	free, bonus, e := s.HuntingAP()
 	if e != nil || free != 90 || bonus != 7 {

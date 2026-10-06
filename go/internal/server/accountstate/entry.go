@@ -65,7 +65,7 @@ func (t *Tx) ListEntries(domain, bucket string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("accountstate: list entries: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	entries := make(map[string][]byte)
 	for rows.Next() {
 		var key string
@@ -144,7 +144,7 @@ func (r *Repository) LoadEntry(domain, bucket, key string) ([]byte, bool, error)
 	if err != nil {
 		return nil, false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	return tx.LoadEntry(domain, bucket, key)
 }
 
@@ -160,7 +160,7 @@ func (r *Repository) ListEntries(domain, bucket string) (map[string][]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	return tx.ListEntries(domain, bucket)
 }
 
@@ -176,7 +176,7 @@ func (r *Repository) PutEntry(domain, bucket, key string, payload []byte) error 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := tx.PutEntry(domain, bucket, key, payload); err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (r *Repository) DeleteEntry(domain, bucket, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	deleted, err := tx.DeleteEntry(domain, bucket, key)
 	if err != nil {
 		return false, err

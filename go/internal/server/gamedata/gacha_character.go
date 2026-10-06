@@ -28,7 +28,7 @@ func loadCostumeCharacterFamily(db *sql.DB, costumeID uint64) (uint64, []uint64,
 	if err != nil {
 		return 0, nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result uint64
 	var family []uint64
 	for rows.Next() {

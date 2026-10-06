@@ -248,7 +248,7 @@ func (s *Service) handleOverwhelm(request []byte) (int, []byte, bool, error) {
 					}
 					rewards := make([]gamedata.Reward, 0, len(rs))
 					for _, r := range rs {
-						rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count})
+						rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 					}
 					reward, e = s.researchEconomy.Apply(m.Instance, m.Costs, rewards)
 				} else {

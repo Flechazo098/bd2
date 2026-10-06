@@ -10,7 +10,11 @@ func TestCookingRecipesReadCatalogIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, err := db.Exec("CREATE TABLE CookingTable(id INTEGER); INSERT INTO CookingTable VALUES(503),(707)"); err != nil {
 		t.Fatal(err)
 	}

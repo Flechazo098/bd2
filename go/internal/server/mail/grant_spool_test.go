@@ -68,7 +68,7 @@ func TestGrantSpoolImportsDynamicMailOnceAcrossOpenAndRestart(t *testing.T) {
 	if len(service.Starter.Mails) != 0 {
 		t.Fatal("starter changed")
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		code, response, handled, err := service.Handle("/MailInfo", request)
 		if err != nil || !handled || code != packetCode {
 			t.Fatalf("code=%d handled=%v err=%v", code, handled, err)
@@ -146,7 +146,11 @@ func TestGrantSpoolPersistsIssuedIdentityInSQLiteRequestTransaction(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	service, _, _ = spoolTestService(t, repository)
 	if err := service.AttachGrantSpoolPath(path); err != nil {
 		t.Fatal(err)
@@ -319,7 +323,9 @@ func TestGrantSpoolOneUseContentTicketItemDBInfoPersistsAndIsIdempotent(t *testi
 		t.Fatalf("content ticket not stored: %+v", got)
 	}
 	service, inventory, _ = spoolTestService(t, store)
-	service.AttachContentTickets(&gamedata.GachaContentTicketDesign{IDs: map[uint64]bool{450030: true, 660003: true}})
+	if err := service.AttachContentTickets(&gamedata.GachaContentTicketDesign{IDs: map[uint64]bool{450030: true, 660003: true}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.AttachGrantSpoolPath(path); err != nil {
 		t.Fatal(err)
 	}

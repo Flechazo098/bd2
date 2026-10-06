@@ -46,14 +46,18 @@ func connectTestService(t *testing.T, store stateio.Store) (*CostumePotentialSer
 	if e != nil {
 		t.Fatal(e)
 	}
-	s.AttachConnectStore(store)
+	if err := s.AttachConnectStore(store); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("test")
-	chars.AttachMaxHealth(func(c Character) (uint64, error) {
+	if err := chars.AttachMaxHealth(func(c Character) (uint64, error) {
 		if c.ConnectPotentialCostume == 200 {
 			return 50, nil
 		}
 		return 100, nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return s, chars
 }
 func connectRequest(seq uint64, rows ...[2]uint64) []byte {
@@ -153,7 +157,9 @@ func TestPotentialConnectSQLiteFailureRollsBackLinkAndHealth(t *testing.T) {
 		t.Fatal(e)
 	}
 	s, _ := connectTestService(t, repo)
-	s.AttachConnectStore(connectFailStore{repo})
+	if err := s.AttachConnectStore(connectFailStore{repo}); err != nil {
+		t.Fatal(err)
+	}
 	op, e := repo.BeginOperation()
 	if e != nil {
 		t.Fatal(e)
@@ -165,12 +171,18 @@ func TestPotentialConnectSQLiteFailureRollsBackLinkAndHealth(t *testing.T) {
 	if e = op.Rollback(); e != nil && !errors.Is(e, stateio.ErrStateRecoveryRequired) {
 		t.Fatal(e)
 	}
-	repo.Close()
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	repo, e = accountstate.Open(path)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer repo.Close()
+	defer func() {
+		if err := repo.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	next, chars := connectTestService(t, repo)
 	c, _ := chars.Find(77)
 	if c.ConnectPotentialCostume != 0 || c.HP != 80 {
@@ -223,8 +235,12 @@ func TestPotentialConnectionCollectionCharacterFallbackPersistsAcrossRestart(t *
 		t.Fatal("collection connection lost after restart")
 	}
 	s.collection = collection
-	chars.AttachCollection(collection)
-	s.AttachConnectStore(store)
+	if err := chars.AttachCollection(collection); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AttachConnectStore(store); err != nil {
+		t.Fatal(err)
+	}
 	s.BeginSession("test")
 	_, again, _, e := s.Handle("/CostumePotentialConnect", b)
 	if e != nil || !bytes.Equal(response, again) {

@@ -19,7 +19,7 @@ func LoadSkyWayOverwhelm(root, version string) ([]SkyWayOverwhelmRule, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []SkyWayOverwhelmRule
 	for rows.Next() {
 		var b []byte
@@ -87,7 +87,7 @@ func LoadOverwhelmQuest(root, version string, pack, quest int) (OverwhelmQuestRu
 	if e != nil {
 		return r, e
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uint64
 		var raw []byte

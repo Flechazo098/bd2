@@ -140,7 +140,7 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		var id uint64
 		var raw []byte
 		if err := rows.Scan(&id, &raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		if _, exists := c.Gachas[id]; exists {
@@ -157,7 +157,7 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		candidates = append(candidates, ticketCandidate{id, count[0], reward[0], append([]uint64(nil), tickets...)})
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -167,7 +167,6 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		id := candidate.id
 		pool, equipmentOnly, err := classifyEquipmentRewardPool(db, candidate.reward)
 		if err != nil {
-			rows.Close()
 			return nil, fmt.Errorf("gamedata: ticket gacha %d: %w", id, err)
 		}
 		if !equipmentOnly {
@@ -177,17 +176,9 @@ func LoadEquipmentGachaGroups(root, version string, groupIDs []uint64) (*Equipme
 		c.Gachas[id] = g
 		for _, item := range pool {
 			if err := c.loadEquipmentTree(db, item); err != nil {
-				rows.Close()
 				return nil, err
 			}
 		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	for id, g := range c.Gachas {
 		g.Grades = map[uint64]uint64{}
@@ -392,16 +383,20 @@ func loadOptionGroups(db *sql.DB, ids []uint64) ([]OptionGroup, error) {
 		for rows.Next() {
 			var raw []byte
 			if err := rows.Scan(&raw); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			id, _ := packedInts(raw, 5)
 			weight, _ := packedInts(raw, 2)
 			if len(id) != 1 || len(weight) != 1 || weight[0] == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: malformed equipment option group %d", groupID)
 			}
 			g.Choices = append(g.Choices, WeightedOption{ID: id[0], Weight: weight[0]})
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
 		}
 		if err := rows.Close(); err != nil {
 			return nil, err
@@ -574,17 +569,6 @@ func (g EquipmentGacha) rollWith(sr, ur uint64, fixed EquipmentFixedDesign, draw
 	return out, state, nil
 }
 
-func containsEquipment(item WeightedEquipment, id uint64) bool {
-	if item.ID != 0 {
-		return item.ID == id
-	}
-	for _, child := range item.Children {
-		if containsEquipment(child, id) {
-			return true
-		}
-	}
-	return false
-}
 func rollEquipmentChoiceWith(pool []WeightedEquipment, draw func(uint64) (uint64, error)) (uint64, error) {
 	var total uint64
 	for _, item := range pool {

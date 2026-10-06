@@ -26,18 +26,18 @@ func LoadGameplayAchievementGrades(root, version string) (GameplayAchievementGra
 			var id uint64
 			var raw []byte
 			if err := rows.Scan(&id, &raw); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return d, err
 			}
 			grade, err := packedInts(raw, spec.field)
 			if err != nil || len(grade) != 1 || grade[0] == 0 {
-				rows.Close()
+				_ = rows.Close()
 				return d, fmt.Errorf("gamedata: invalid achievement grade %s/%d", spec.table, id)
 			}
 			spec.target[id] = grade[0]
 		}
 		err = rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return d, err
 		}

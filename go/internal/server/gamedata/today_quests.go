@@ -43,7 +43,7 @@ func LoadTodayQuests(root, version string) (*TodayQuestCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int
 		var raw []byte

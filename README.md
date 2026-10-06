@@ -32,6 +32,18 @@
 
 默认执行测试与静态检查；`-SkipTests` 跳过这些检查；`-SchedulesOnly` 只导出活动日历编排信息。
 
+## 其他命令
+
+在仓库根目录运行：
+
+```powershell
+.\bd2w check-csharp
+.\bd2w check-csharp LoginUI GameNames
+.\bd2w sdk pack --game-dir '<客户端目录>'
+.\bd2w sdk verify --game-dir '<客户端目录>'
+.\bd2w sdk update-names --game-dir '<客户端目录>' --game-mapping '<映射文件>'
+```
+
 ## 客户端插件项目
 
 - `plugins/LocalIdentity/`：本地服务端客户端专用插件。

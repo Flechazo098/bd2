@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 // Food is decoded from FoodTable, including materials so that the server can
@@ -30,7 +31,7 @@ func loadFoodDesign(db *sql.DB) (*FoodDesign, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	design := &FoodDesign{Foods: map[uint64]Food{}}
 	for rows.Next() {
 		var id uint64
@@ -91,13 +92,8 @@ func (f Food) Recovery(characterID, maximum, count uint64) (uint64, error) {
 		return 0, errors.New("gamedata: food is not a supported recovery dish")
 	}
 	point := f.Point
-	if f.Type == 1 {
-		for _, favorite := range f.FavoriteUniqueCharIDs {
-			if favorite == characterID/10 {
-				point = f.FavoritePoint
-				break
-			}
-		}
+	if f.Type == 1 && slices.Contains(f.FavoriteUniqueCharIDs, characterID/10) {
+		point = f.FavoritePoint
 	}
 	if point == 0 {
 		return 0, errors.New("gamedata: food has no recovery effect")

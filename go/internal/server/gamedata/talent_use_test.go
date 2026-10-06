@@ -13,7 +13,11 @@ func TestTalentUseLoaderJoinsCharacterLevelRewardsAndFood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"TalentTable", "CharTable", "TalentRewardTable", "FoodBuffTable", "FoodTable"} {
 		if _, err = db.Exec("CREATE TABLE " + table + "(id INTEGER,ProtoBuf BLOB)"); err != nil {
 			t.Fatal(err)

@@ -21,7 +21,7 @@ import (
 //go:embed web/index.html
 var webFS embed.FS
 
-var errGameAlreadyRunning = errors.New("Brown Dust II is already running")
+var errGameAlreadyRunning = errors.New("Brown Dust II is already running") //nolint:staticcheck // ST1005
 
 type Options struct {
 	InitialGameDir      string
@@ -226,7 +226,7 @@ func (s *Studio) Resources(input Request) (Response, error) {
 		defer cancel()
 		policy, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), s.options.Versions)
 		message := "The client will use the release-locked official CDN"
-		if policy.Mode == clientconfig.CDNLocal {
+		if policy.Mode == clientconfig.CDNLocal { //nolint:staticcheck // QF1003
 			message = "Local resources verified"
 		} else if policy.Mode == clientconfig.CDNServer {
 			message = "Server resource policy verified"

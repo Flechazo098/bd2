@@ -48,8 +48,7 @@ internal static class SystemTimeZoneRegion
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                DynamicTimeZoneInformation information;
-                if (GetDynamicTimeZoneInformation(out information) == uint.MaxValue) return string.Empty;
+                if (GetDynamicTimeZoneInformation(out DynamicTimeZoneInformation information) == uint.MaxValue) return string.Empty;
                 return information.TimeZoneKeyName ?? string.Empty;
             }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

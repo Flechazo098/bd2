@@ -26,19 +26,19 @@ func LoadMiniContentDesign(root, version string) (*MiniContentDesign, error) {
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		id, e := optionalScalar(raw, 2)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		var r Reward
 		for field, target := range map[int]*uint64{10: &r.Type, 9: &r.ID, 8: &r.Count} {
 			v, e := optionalScalar(raw, field)
 			if e != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, e
 			}
 			*target = v
@@ -46,7 +46,7 @@ func LoadMiniContentDesign(root, version string) (*MiniContentDesign, error) {
 		d.Stories[id] = r
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -57,23 +57,23 @@ func LoadMiniContentDesign(root, version string) (*MiniContentDesign, error) {
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		id, e := optionalScalar(raw, 1)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		group, e := optionalScalar(raw, 2)
 		if e != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, e
 		}
 		d.Groups[group] = append(d.Groups[group], id)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err == nil {
 		for group, ids := range d.Groups {
 			for _, id := range ids {

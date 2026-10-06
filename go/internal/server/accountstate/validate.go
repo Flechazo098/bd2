@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,7 +132,7 @@ func duplicateIndexProblems(code string, path []string, values []uint64) []Probl
 			duplicates = append(duplicates, value)
 		}
 	}
-	sort.Slice(duplicates, func(i, j int) bool { return duplicates[i] < duplicates[j] })
+	slices.Sort(duplicates)
 	problems := make([]Problem, 0, len(duplicates))
 	for _, value := range duplicates {
 		problems = append(problems, Problem{Code: code, Path: path, Message: "duplicate inventory identity", RelatedIDs: []uint64{value}})
@@ -206,7 +207,7 @@ func (r *Repository) Validate() ([]Problem, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	return tx.Validate()
 }
 
@@ -313,7 +314,7 @@ func indexedEntries(tx *sql.Tx, domain, bucket string, readUseChar bool) ([]uint
 	if err != nil {
 		return nil, nil, fmt.Errorf("accountstate: list %s.%s for validation: %w", domain, bucket, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var indices []uint64
 	var users []namedIndex
 	for rows.Next() {
@@ -349,7 +350,7 @@ func namedUintEntries(tx *sql.Tx, domain, bucket string) ([]namedIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var entries []namedIndex
 	for rows.Next() {
 		var entry namedIndex
@@ -370,7 +371,7 @@ func boolEntries(tx *sql.Tx, domain, bucket string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	entries := make(map[string]bool)
 	for rows.Next() {
 		var key string
@@ -391,7 +392,7 @@ func indexedGrantEntries(tx *sql.Tx) ([]indexedGrant, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var grants []indexedGrant
 	for rows.Next() {
 		var grant indexedGrant

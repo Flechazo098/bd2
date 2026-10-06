@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"bd2server/internal/server/gamedata"
 	"bd2server/internal/server/wire"
@@ -28,12 +28,7 @@ func (s *Store) ActivatedWaypoint(pack, id uint64) bool {
 	return hasWaypoint(s.state.Waypoints[pack], id)
 }
 func hasWaypoint(points []uint64, id uint64) bool {
-	for _, p := range points {
-		if p == id {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(points, id)
 }
 
 func validWaypointState(packs map[uint64][]uint64) error {
@@ -75,7 +70,7 @@ func (s *Store) handleWaypoint(path string, req []byte) (int, []byte, bool, erro
 	}
 	if path == "/WaypointInfo" {
 		ids := append([]uint64(nil), s.state.Waypoints[pack]...)
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		slices.Sort(ids)
 		var packed []byte
 		for _, id := range ids {
 			if _, known := design.Points[id]; !known {

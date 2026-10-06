@@ -9,10 +9,11 @@ namespace Bd2LoginUI;
 
 internal static partial class PlatformControlHttp
 {
-    private static readonly object PoolLock = new object();
-    private static readonly CancellationTokenSource ShutdownCancellation = new CancellationTokenSource();
-    private static readonly Dictionary<string, WindowsPool> WindowsPools = new Dictionary<string, WindowsPool>();
-    private static readonly Dictionary<IntPtr, WindowsRequest> WindowsRequests = new Dictionary<IntPtr, WindowsRequest>();
+    private static readonly string[] HeaderSeparators = ["\r\n"];
+    private static readonly object PoolLock = new();
+    private static readonly CancellationTokenSource ShutdownCancellation = new();
+    private static readonly Dictionary<string, WindowsPool> WindowsPools = [];
+    private static readonly Dictionary<IntPtr, WindowsRequest> WindowsRequests = [];
     private static readonly WinHttpCallback WindowsCallback = OnWindowsStatus;
     private static bool shuttingDown;
 
@@ -56,7 +57,7 @@ internal static partial class PlatformControlHttp
         lock (PoolLock)
         {
             if (shuttingDown) throw new OperationCanceledException();
-            List<string> stale = new List<string>();
+            var stale = new List<string>();
             foreach (KeyValuePair<string, WindowsPool> entry in WindowsPools)
                 if (entry.Value.Users == 0 && (DateTime.UtcNow - entry.Value.LastUsed > TimeSpan.FromMinutes(2) || WindowsPools.Count >= 16))
                     stale.Add(entry.Key);
@@ -96,11 +97,12 @@ internal static partial class PlatformControlHttp
     // Every native API invocation and handle close is serialized. Async operations
     // return immediately; WinHTTP owns outstanding I/O until HANDLE_CLOSING.
     // Pinned buffers remain alive until that final callback, including cancellation.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "SendWindows finally disposes Ready and Closed after HANDLE_CLOSING and cancellation registration completion.")]
     private sealed class WindowsRequest
     {
-        internal readonly object Gate = new object();
-        internal readonly AutoResetEvent Ready = new AutoResetEvent(false);
-        internal readonly ManualResetEvent Closed = new ManualResetEvent(false);
+        internal readonly object Gate = new();
+        internal readonly AutoResetEvent Ready = new(false);
+        internal readonly ManualResetEvent Closed = new(false);
         internal IntPtr Handle;
         internal bool Closing;
         internal uint Status, Read;
@@ -163,12 +165,12 @@ internal static partial class PlatformControlHttp
     }
 
     private static Response SendWindows(Uri uri, string method, byte[] body, string authorization,
-        int timeoutSeconds, CancellationToken token, int maxResponseBytes, IReadOnlyDictionary<string, string> requestHeaders)
+        int timeoutSeconds, int maxResponseBytes, IReadOnlyDictionary<string, string> requestHeaders, CancellationToken token)
     {
         NativeProxySettings proxy = NativeProxyPolicy.Resolve(uri);
         token.ThrowIfCancellationRequested();
         WindowsPool pool = AcquireWindows(uri, proxy);
-        WindowsRequest state = new WindowsRequest();
+        var state = new WindowsRequest();
         GCHandle bodyPin = default, readPin = default;
         bool callbackInstalled = false, reusable = false;
         try
@@ -198,7 +200,7 @@ internal static partial class PlatformControlHttp
                 state.Wait(0x20000, token);
                 uint status = 0, size = 4;
                 state.Invoke(() => WinHttpQueryHeaders(state.Handle, 19 | 0x20000000, null, out status, ref size, IntPtr.Zero));
-                Dictionary<string, string> responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 size = 0;
                 lock (state.Gate)
                 {
@@ -213,31 +215,29 @@ internal static partial class PlatformControlHttp
                     try
                     {
                         state.Invoke(() => WinHttpQueryHeadersText(state.Handle, 22, null, buffer, ref size, IntPtr.Zero));
-                        foreach (string line in (Marshal.PtrToStringUni(buffer) ?? "").Split(new[] { "\r\n" }, StringSplitOptions.None)) KeepResponseHeader(responseHeaders, line);
+                        foreach (string line in (Marshal.PtrToStringUni(buffer) ?? "").Split(HeaderSeparators, StringSplitOptions.None)) KeepResponseHeader(responseHeaders, line);
                     }
                     finally { for (int i = 0; i < capacity; i++) Marshal.WriteByte(buffer, i, 0); Marshal.FreeHGlobal(buffer); }
                 }
                 byte[] readBuffer = new byte[16384];
                 readPin = GCHandle.Alloc(readBuffer, GCHandleType.Pinned);
-                using (MemoryStream response = new MemoryStream())
+                using var response = new MemoryStream();
+                try
                 {
-                    try
+                    while (true)
                     {
-                        while (true)
-                        {
-                            state.Invoke(() => WinHttpReadData(state.Handle, readPin.AddrOfPinnedObject(), (uint)readBuffer.Length, IntPtr.Zero));
-                            state.Wait(0x80000, token);
-                            if (state.Read == 0) break;
-                            if (response.Length + state.Read > maxResponseBytes) return Failure("Control response exceeded limit");
-                            response.Write(readBuffer, 0, (int)state.Read);
-                        }
-                        token.ThrowIfCancellationRequested();
-                        byte[] data = response.ToArray();
-                        reusable = true;
-                        return new Response { StatusCode = (int)status, Data = data, Body = Encoding.UTF8.GetString(data), Headers = responseHeaders, RefreshInvalid = IsRefreshInvalid(responseHeaders) };
+                        state.Invoke(() => WinHttpReadData(state.Handle, readPin.AddrOfPinnedObject(), (uint)readBuffer.Length, IntPtr.Zero));
+                        state.Wait(0x80000, token);
+                        if (state.Read == 0) break;
+                        if (response.Length + state.Read > maxResponseBytes) return Failure("Control response exceeded limit");
+                        response.Write(readBuffer, 0, (int)state.Read);
                     }
-                    finally { if (response.TryGetBuffer(out ArraySegment<byte> used)) Array.Clear(used.Array, used.Offset, used.Count); }
+                    token.ThrowIfCancellationRequested();
+                    byte[] data = response.ToArray();
+                    reusable = true;
+                    return new Response { StatusCode = (int)status, Data = data, Body = Encoding.UTF8.GetString(data), Headers = responseHeaders, RefreshInvalid = IsRefreshInvalid(responseHeaders) };
                 }
+                finally { if (response.TryGetBuffer(out ArraySegment<byte> used)) Array.Clear(used.Array, used.Offset, used.Count); }
             }
         }
         catch (System.ComponentModel.Win32Exception error)
@@ -267,12 +267,12 @@ internal static partial class PlatformControlHttp
     [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr WinHttpOpen(string agent, uint access, string proxy, string bypass, uint flags);
     [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr WinHttpConnect(IntPtr session, string server, ushort port, uint reserved);
     [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr WinHttpOpenRequest(IntPtr connection, string verb, string path, string version, string referer, IntPtr acceptTypes, uint flags);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSetTimeouts(IntPtr handle, int resolve, int connect, int send, int receive);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSetOption(IntPtr handle, uint option, ref uint value, uint size);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSendRequest(IntPtr request, string headers, uint headersLength, IntPtr body, uint bodyLength, uint totalLength, UIntPtr context);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpReceiveResponse(IntPtr request, IntPtr reserved);
-    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpQueryHeaders(IntPtr request, uint info, string name, out uint value, ref uint size, IntPtr index);
-    [DllImport("winhttp.dll", EntryPoint = "WinHttpQueryHeaders", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpQueryHeadersText(IntPtr request, uint info, string name, IntPtr value, ref uint size, IntPtr index);
-    [DllImport("winhttp.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpReadData(IntPtr request, IntPtr buffer, uint capacity, IntPtr read);
-    [DllImport("winhttp.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpCloseHandle(IntPtr handle);
+    [DllImport("winhttp.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSetTimeouts(IntPtr handle, int resolve, int connect, int send, int receive);
+    [DllImport("winhttp.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSetOption(IntPtr handle, uint option, ref uint value, uint size);
+    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpSendRequest(IntPtr request, string headers, uint headersLength, IntPtr body, uint bodyLength, uint totalLength, UIntPtr context);
+    [DllImport("winhttp.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpReceiveResponse(IntPtr request, IntPtr reserved);
+    [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpQueryHeaders(IntPtr request, uint info, string name, out uint value, ref uint size, IntPtr index);
+    [DllImport("winhttp.dll", EntryPoint = "WinHttpQueryHeaders", CharSet = CharSet.Unicode, SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpQueryHeadersText(IntPtr request, uint info, string name, IntPtr value, ref uint size, IntPtr index);
+    [DllImport("winhttp.dll", SetLastError = true)][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpReadData(IntPtr request, IntPtr buffer, uint capacity, IntPtr read);
+    [DllImport("winhttp.dll")][return: MarshalAs(UnmanagedType.Bool)] private static extern bool WinHttpCloseHandle(IntPtr handle);
 }

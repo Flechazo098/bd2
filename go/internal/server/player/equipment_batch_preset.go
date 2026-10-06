@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -124,7 +125,7 @@ func (s *EquipmentInventory) batchUse(request []byte) (int, []byte, bool, error)
 	for index := range affected {
 		characterIndices = append(characterIndices, index)
 	}
-	sort.Slice(characterIndices, func(i, j int) bool { return characterIndices[i] < characterIndices[j] })
+	slices.Sort(characterIndices)
 	var response []byte
 	for _, index := range characterIndices {
 		if character, found := s.characters.Find(index); found {

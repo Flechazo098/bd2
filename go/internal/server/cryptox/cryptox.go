@@ -38,7 +38,7 @@ func SessionKey(userKey string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: got %d bytes", ErrInvalidKey, len(userKey))
 	}
 	for _, c := range []byte(userKey) {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') { //nolint:staticcheck // QF1001
 			return nil, fmt.Errorf("%w: session key is not hexadecimal ASCII", ErrInvalidKey)
 		}
 	}

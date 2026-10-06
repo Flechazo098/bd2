@@ -44,7 +44,7 @@ func battleDeckPhasesFromDB(db *sql.DB, monsterID, deckID uint64) ([]BattlePhase
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var phases []BattlePhase
 	selected := false
 	for rows.Next() {

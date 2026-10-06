@@ -105,7 +105,11 @@ func TestBatchUsesOneAccountTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for name, content := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
 		if err := repository.Save(name, []byte(content)); err != nil {
 			t.Fatal(err)
@@ -129,7 +133,11 @@ func TestBatchUsesOneAccountTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer verified.Close()
+	defer func() {
+		if err := verified.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for name, want := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
 		var got []byte
 		err := verified.QueryRow(`SELECT payload FROM domain_state WHERE name=?`, name).Scan(&got)
@@ -452,7 +460,11 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer repository.Close()
+			defer func() {
+				if err := repository.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			for name, content := range map[string]string{"wallet": "old-wallet", "items": "old-items"} {
 				if err := repository.Save(name, []byte(content)); err != nil {
 					t.Fatal(err)
@@ -477,7 +489,9 @@ func TestAuthenticatedRequestTransactionCommitsOrRollsBackAllFiles(t *testing.T)
 						t.Fatal(openErr)
 					}
 					err = reader.QueryRow(`SELECT payload FROM domain_state WHERE name=?`, name).Scan(&got)
-					reader.Close()
+					if err := reader.Close(); err != nil {
+						t.Error(err)
+					}
 				} else {
 					got, err = repository.Load(name)
 				}

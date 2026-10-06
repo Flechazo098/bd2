@@ -73,7 +73,9 @@ func TestMonsterLifetimeSurvivesReaderRestartWithoutRenewal(t *testing.T) {
 	s2 := testService()
 	s2.monsterLoader = s.monsterLoader
 	s2.monsterNow = s.monsterNow
-	s2.AttachFieldMonsterState(store)
+	if err := s2.AttachFieldMonsterState(store); err != nil {
+		t.Fatal(err)
+	}
 	_, again, _, err := s2.Handle("/MonsterInfo", request)
 	if err != nil || !bytes.Equal(first, again) {
 		t.Fatal("restart renewed finite monster lifetime")

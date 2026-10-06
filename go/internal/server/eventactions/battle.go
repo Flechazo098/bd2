@@ -124,9 +124,9 @@ func (s *Service) tacticsLines(uid uint64) uint64 {
 	n := uint64(5) - g.V(4)
 	clear := s.state.Tactics[uid]
 	var lines uint64
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		row, col := true, true
-		for j := uint64(0); j < n; j++ {
+		for j := range n {
 			row = row && contains(clear, i*n+j+1)
 			col = col && contains(clear, j*n+i+1)
 		}
@@ -138,7 +138,7 @@ func (s *Service) tacticsLines(uid uint64) uint64 {
 		}
 	}
 	a, b := true, true
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		a = a && contains(clear, i*n+i+1)
 		b = b && contains(clear, i*n+(n-i))
 	}
