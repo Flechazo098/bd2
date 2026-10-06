@@ -485,27 +485,7 @@ func (s *Store) Handle(path string, req []byte) (int, []byte, bool, error) {
 	case "/WaypointSave", "/WaypointUse":
 		return s.handleWaypoint(path, req)
 	case "/CostumeUse":
-		raw, ok, e := wire.Bytes(req, 2)
-		if e != nil || !ok {
-			return 0, nil, true, errors.New("deck: invalid costume use")
-		}
-		cost, ok, e := wire.Varint(raw, 1)
-		if e != nil || !ok || cost == 0 {
-			return 0, nil, true, errors.New("deck: invalid costume")
-		}
-		char, ok, e := wire.Varint(raw, 2)
-		if e != nil || !ok || char == 0 {
-			return 0, nil, true, errors.New("deck: invalid costume character")
-		}
-		if e = checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		n := clone(s.state)
-		n.Costumes[char] = cost
-		e = s.commit(n)
-		return 41, nil, true, e
+		return s.handleCostumeUse(req)
 	case "/SaveTotalBattlePower":
 		power, ok, e := wire.Varint(req, 2)
 		if e != nil || !ok || power == 0 {

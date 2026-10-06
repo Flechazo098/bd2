@@ -360,6 +360,9 @@ func serve(args []string) (serveErr error) {
 	if err := login.AttachPresetSlots(deckStateStore); err != nil {
 		return fmt.Errorf("attach preset slots to login: %w", err)
 	}
+	if err := login.AttachPortrait(deckStateStore); err != nil {
+		return fmt.Errorf("attach persisted portrait to login: %w", err)
+	}
 	ownedItems, err := player.OpenInventory(stateRepository, starter)
 	if err != nil {
 		return fmt.Errorf("load owned inventory: %w", err)
