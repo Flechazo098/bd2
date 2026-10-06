@@ -15,12 +15,8 @@ type StoryCharacterCatalog struct {
 }
 
 func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCostumes ...uint64) (*StoryCharacterCatalog, error) {
-	var placeholder uint64
 	if len(placeholderCostumes) > 1 {
 		return nil, fmt.Errorf("gamedata: multiple story placeholders")
-	}
-	if len(placeholderCostumes) == 1 {
-		placeholder = placeholderCostumes[0]
 	}
 	db, cleanup, err := openStatDatabase(root, version)
 	if err != nil {
@@ -85,12 +81,8 @@ func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCos
 				if err != nil {
 					return nil, err
 				}
-				for _, story := range formation.StoryCostumes {
-					if story.UniqueCharacterID == unique && (placeholder == 0 || story.CostumeID != placeholder) {
-						costume = story.CostumeID
-						break
-					}
-				}
+				// CharGroup supplies battle instances. StoryCharGroup supplies
+				// cosmetic field actors and cannot override a battle costume.
 				base, err := stats.BaseStats(row.CharacterID, row.Level)
 				if err != nil {
 					return nil, err
