@@ -36,6 +36,7 @@ type Service struct {
 	monsterHunt        MonsterHuntRuntime
 	eventBattles       []EventBattleRuntime
 	fieldMonsters      FieldMonsterRuntime
+	consumeFieldBuff   func(string) error
 }
 type FieldMonsterRuntime interface {
 	BeginFieldMonsterBattle(int, uint64, uint64) (string, bool, error)
@@ -43,6 +44,8 @@ type FieldMonsterRuntime interface {
 }
 
 func (s *Service) AttachFieldMonsters(runtime FieldMonsterRuntime) { s.fieldMonsters = runtime }
+
+func (s *Service) AttachFieldBuffConsume(consume func(string) error) { s.consumeFieldBuff = consume }
 
 // EventBattleRuntime owns event stage eligibility, costs and settlement while
 // the normal battle service transports the client's turn simulation.
@@ -339,11 +342,17 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		}
 		// The local engine is the normal deterministic engine.
 		response = wire.AppendVarint(response, 6, 1)
+		seq, _, _ := wire.Varint(request, 1)
+		identity := fmt.Sprintf("%s:%d", s.activeSession, seq)
+		if s.consumeFieldBuff != nil {
+			if err := s.consumeFieldBuff(identity); err != nil {
+				return 0, nil, true, fmt.Errorf("battle: consume field buff: %w", err)
+			}
+		}
 		state.entered, state.index, state.round, state.initialBlue = true, 0, 0, nil
 		state.monster, state.deck, state.pack = monster, deck, packID
 		state.mode = mode
-		seq, _, _ := wire.Varint(request, 1)
-		state.enterReceipt = fmt.Sprintf("%s:%d", s.activeSession, seq)
+		state.enterReceipt = identity
 		state.fieldInstance = fieldInstance
 		state.phases, state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = phases, 0, false, 0, nil
 		slog.Info("team trace: battle entered", "pack", packID, "monster", monster, "enemyDeck", deck, "mode", mode)

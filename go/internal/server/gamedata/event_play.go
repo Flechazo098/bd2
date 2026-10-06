@@ -24,6 +24,7 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 		return nil, e
 	}
 	names := []string{"PackEventHubTable", "PackEventListTable", "PackEventStoryGroupTable", "PackEventStoryTable", "PackEventBattleGroupTable", "PackEventBattleTable", "PackEventMiniGameTable", "FieldMiniGameRewardTable", "FieldMiniGameSpeedTable", "RhythmGameMusicTable", "RhythmGameGradeTable", "SichuanStageTable", "SichuanEventTable", "SichuanRewardTable", "HopscotchStageTable", "HopscotchRewardTable", "HopscotchDefaultTable", "FieldMiniGameSurvivalTable", "ActionGameDefaultTable", "ActionGameMissionTable", "ActionGameStageTable", "FieldMiniGameCharTable", "FieldMiniGameMapTable", "FieldMiniGameUpgradeTable", "FieldMiniGameUpgradeGroupTable", "FieldMiniGameSkillGroupTable", "FieldMiniGameSkillTable", "FieldMiniGameCharLevelTable", "FieldMiniGameMonsterTable", "FieldMiniGameSurvivalItemTable", "FieldMiniGameSurvivalBoxTable", "MGDRewardTable", "MGDWaveTable", "MGDDefaultTable"}
+	names = append(names, "EventLostCoinTable")
 	for _, name := range names {
 		rows, e := db.Query("SELECT ProtoBuf FROM " + name)
 		if e != nil {

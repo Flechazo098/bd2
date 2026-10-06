@@ -281,6 +281,14 @@ func (s *Service) Handle(path string, request []byte) (int, []byte, bool, error)
 		return s.handleFieldObjectInfo(request)
 	case "/FieldObjectReward":
 		return s.handleFieldObjectReward(request)
+	case "/FieldObjectRewardList":
+		return s.handleFieldObjectRewardList(request)
+	case "/FieldObjectPreview":
+		return s.handleFieldObjectPreview(request)
+	case "/FieldObjectRespawn":
+		return s.handleFieldObjectRespawn(request)
+	case "/FieldObjecPositionUpdate", "/FieldObjectPositionUpdate":
+		return s.handleFieldObjectPosition(request)
 	case "/FieldObjectResearch":
 		return s.handleFieldResearch(request)
 	case "/PackRewardObjectCount":
@@ -693,8 +701,16 @@ func (s *Service) packInfo() ([]byte, error) {
 
 func (s *Service) packInfoFor(packID int) ([]byte, error) {
 	out, err := s.basePackInfoFor(packID)
-	if err != nil || s.huntingGround == nil {
+	if err != nil {
 		return out, err
+	}
+	buffs, err := s.fieldBuffInfo()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, buffs...)
+	if s.huntingGround == nil {
+		return out, nil
 	}
 	ground, err := s.huntingGround.EnsureForPack(packID)
 	if err != nil {

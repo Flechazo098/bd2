@@ -10,6 +10,7 @@ import (
 type FieldBuffDesign struct {
 	ID, Type, TargetType uint64
 	Value                float64
+	Time                 float64
 }
 
 func optionalDouble(raw []byte, field int) (float64, error) {
@@ -57,6 +58,9 @@ func LoadFieldBuffDesign(root, version string) (map[uint64]FieldBuffDesign, erro
 			return nil, x
 		}
 		r.Value = v
+		if r.Time, e = optionalDouble(raw, 5); e != nil {
+			return nil, e
+		}
 		if id == 0 {
 			return nil, fmt.Errorf("gamedata: invalid field buff")
 		}

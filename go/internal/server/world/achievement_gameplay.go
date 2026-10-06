@@ -388,7 +388,7 @@ func (s *Service) GameplayAchievementProvider(design *gamedata.AchievementCounte
 				if !known {
 					return nil, fmt.Errorf("achievement: opened field design absent")
 				}
-				period, err := s.fieldObjectPeriod(obj)
+				period, err := s.fieldObjectPeriodFor(pack, obj)
 				if err != nil {
 					continue
 				}
