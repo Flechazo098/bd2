@@ -5,6 +5,7 @@ import "fmt"
 type StoryCharacterDesign struct {
 	CharacterID, UniqueCharacterID, Level, CostumeID, HP, Order uint64
 	TemporaryPack                                               uint64
+	InitialTalentLevel                                          uint64
 }
 
 // StoryCharacterCatalog contains only authored temporary character rows.
@@ -32,6 +33,7 @@ func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCos
 	}
 	catalog := &StoryCharacterCatalog{formations: map[int]map[int]QuestFormation{}, characters: map[[2]int][]StoryCharacterDesign{}}
 	instances := map[[3]uint64]uint64{}
+	initialTalents := map[uint64]uint64{}
 	for _, pack := range packs {
 		formations, err := loadQuestFormationsDB(db, pack)
 		if err != nil {
@@ -62,6 +64,23 @@ func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCos
 				if characterType != 1 || temporaryPack == 0 {
 					continue
 				}
+				talentID, err := optionalScalar(data, 18)
+				if err != nil {
+					return nil, err
+				}
+				var talentLevel uint64
+				if talentID != 0 {
+					// CharDBInfo.talent_level is the TalentSkillTable row ID,
+					// independent of the authored battle character level.
+					var known bool
+					talentLevel, known = initialTalents[talentID]
+					if !known {
+						if err := db.QueryRow("SELECT MIN(skill.id) FROM TalentTable talent JOIN TalentSkillTable skill ON skill.groupId=talent.talentSkillGroupId WHERE talent.id=? AND skill.id>0", talentID).Scan(&talentLevel); err != nil {
+							return nil, fmt.Errorf("gamedata: story character %d initial talent %d: %w", row.CharacterID, talentID, err)
+						}
+						initialTalents[talentID] = talentLevel
+					}
+				}
 				costume, err := requiredScalar(data, 5)
 				if err != nil {
 					return nil, err
@@ -85,7 +104,11 @@ func LoadStoryCharacterCatalog(root, version string, packs []int, placeholderCos
 				}
 				instances[instance] = costume
 				key := [2]int{pack, quest}
-				catalog.characters[key] = append(catalog.characters[key], StoryCharacterDesign{row.CharacterID, unique, row.Level, costume, uint64(base.Health), row.Order, temporaryPack})
+				catalog.characters[key] = append(catalog.characters[key], StoryCharacterDesign{
+					CharacterID: row.CharacterID, UniqueCharacterID: unique, Level: row.Level,
+					CostumeID: costume, HP: uint64(base.Health), Order: row.Order,
+					TemporaryPack: temporaryPack, InitialTalentLevel: talentLevel,
+				})
 			}
 		}
 	}

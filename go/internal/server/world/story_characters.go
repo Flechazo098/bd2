@@ -42,7 +42,7 @@ func (s *Service) ResolveStoryParty(packID, questID int) ([]player.Character, er
 			return nil, fmt.Errorf("world: story instance namespace overflow")
 		}
 		index := player.StoryCharacterIndexBase | uint64(packID)<<40 | d.CharacterID<<8 | d.Level
-		temporary = append(temporary, player.Character{InvenIndex: index, ID: d.CharacterID, HP: d.HP, Level: d.Level, CostumeID: d.CostumeID})
+		temporary = append(temporary, player.Character{InvenIndex: index, ID: d.CharacterID, HP: d.HP, Level: d.Level, CostumeID: d.CostumeID, TalentLevel: d.InitialTalentLevel})
 	}
 	if s.characters == nil {
 		return nil, fmt.Errorf("world: story character store unavailable")
