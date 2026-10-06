@@ -206,6 +206,12 @@ func (s *Service) openFieldObject(pack, group, id int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if design.RewardGraph != nil {
+		selected, err = design.RewardGraph.ResolveGranted(selected)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, r := range selected {
 		if r.Count == 0 {
 			return nil, fmt.Errorf("world: empty field reward")
