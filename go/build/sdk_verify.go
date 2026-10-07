@@ -124,12 +124,8 @@ func (t task) sdkVerify(args []string) (result error) {
 		return err
 	}
 	command := func(args ...string) error { _, err := t.sdkCommand(workspace, nil, false, args...); return err }
-	runtime := filepath.Join(output, "BD2.GameNames.dll")
 	plugin := filepath.Join(output, "ExamplePlugin.dll")
 	assembly := filepath.Join(managed, "Assembly-CSharp.dll")
-	if err = command(tool, "verify-runtime", table, runtime); err != nil {
-		return err
-	}
 	if err = command(tool, "verify-navigation", sdk); err != nil {
 		return err
 	}

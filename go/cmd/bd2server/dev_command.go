@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bd2server/internal/server/app"
 	"errors"
 	"fmt"
 	"os"
@@ -27,8 +28,8 @@ func runDevelopmentCommand(args []string) (bool, error) {
 	serveArgs = appendDefaultFlag(serveArgs, "--resource-config", filepath.Join(root, ".build", "config", "resources.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--game-config", filepath.Join(root, ".build", "config", "game.json"))
 	serveArgs = appendDefaultFlag(serveArgs, "--data-dir", filepath.Join(root, "data"))
-	serveArgs = appendDefaultFlag(serveArgs, "--state", filepath.Join(root, "data", "state", "state.db"))
-	return true, serve(serveArgs)
+	serveArgs = appendDefaultFlag(serveArgs, "--state-dir", filepath.Join(root, "data", "state"))
+	return true, app.Serve(serveArgs)
 }
 
 func findDevelopmentRoot() (string, error) {

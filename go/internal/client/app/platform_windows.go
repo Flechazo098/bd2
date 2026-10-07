@@ -54,18 +54,8 @@ func ShowFatalError(err error) {
 // despite inheriting no console from the parent process.
 const createNoWindow = 0x08000000
 
-func hiddenCommand(name string, args ...string) *exec.Cmd {
-	command := exec.Command(name, args...)
-	command.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: createNoWindow,
-	}
-	return command
-}
-
 // visibleCommand suppresses a console allocation without hiding the GUI
-// window created by the child process. It must be used for the game itself;
-// hiddenCommand is reserved for background helper processes.
+// window created by the child process.
 func visibleCommand(name string, args ...string) *exec.Cmd {
 	command := exec.Command(name, args...)
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNoWindow}

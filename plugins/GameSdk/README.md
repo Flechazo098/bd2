@@ -25,7 +25,7 @@
 
 ```powershell
 dotnet nuget add source 'D:\NuGet\BD2' --name BD2
-dotnet add MyPlugin.csproj package BD2.GameSdk --version 0.2.2-game.2.35.10
+dotnet add MyPlugin.csproj package BD2.GameSdk --version 0.2.3-game.2.35.10
 ```
 
 Visual Studio / Rider 也可在 NuGet 包管理界面添加该源。
@@ -41,7 +41,7 @@ Visual Studio / Rider 也可在 NuGet 包管理界面添加该源。
     <BD2GameVersion>2.35.10</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="BD2.GameSdk" Version="0.2.2-game.2.35.10" PrivateAssets="all" />
+    <PackageReference Include="BD2.GameSdk" Version="0.2.3-game.2.35.10" PrivateAssets="all" />
   </ItemGroup>
 </Project>
 ```
@@ -82,7 +82,7 @@ IDE 项目加载时构建会准备可读引用，CLI 首次构建同样会自动
 
 构建核对声明值、SDK 内嵌表、真实游戏 DLL 指纹。缺少声明或版本不匹配会报错；不会自动选用其他版本。NuGet 项目仍需安装带对应游戏版本的包。
 
-仓库默认缓存根为 `.build/game-sdk`，与源码位于同一盘。第三方 NuGet 项目默认使用 `%LOCALAPPDATA%\BD2\GameSdk\navigation`；可在本机 `Directory.Build.props` 设置 `BD2GameSdkCache`，或设置环境变量 `BD2_GAME_SDK_CACHE`。 `obj` 不影响共享缓存。缺失的共享源码可在下次准备时从 PDB 恢复，只有删除共享缓存才会触发重新生成。
+仓库默认缓存根为 `.build/game-sdk`，与源码位于同一盘。第三方 NuGet 项目默认使用 `%LOCALAPPDATA%\BD2\GameSdk\navigation`；可在本机 `Directory.Build.props` 设置 `BD2GameSdkCache`，或设置环境变量 `BD2_GAME_SDK_CACHE`。 `obj` 不影响共享缓存。缺失的共享源码可在下次准备时从 PDB 恢复。真实游戏 DLL、映射表、游戏依赖、生成逻辑或反编译依赖改变时会生成新的缓存。
 
 `lib` 中的程序集仅供开发导航，**不要部署或执行**。这里展示的是当前 DLL 的反编译源码，局部变量名和语法可能与原始工程不同。导航 PDB 对应可读程序集，不能用于真实混淆游戏 DLL 的逐行调试。
 
@@ -109,7 +109,7 @@ owner.StartCoroutine(Game.MemberName(owner.GetType(), "ReadableCoroutineName"));
 
 `GetGameMethod/GetGameField/GetGameProperty/GetGameEvent` 采用 .NET 反射约定：查不到返回 null，重载歧义抛出 `AmbiguousMatchException`，null 名字参数抛出 `ArgumentNullException`。`MemberName` 的成员种类使用 `GameMemberKind` 枚举。未知映射保留字面名，普通 UI 文案、`nameof` 字符串和协程常量都不会被 reobf 自动替换。
 
-`Game.FindType` 保留给运行时才知道类型名称的查询。只做字符串反射的项目可单独安装 `BD2.GameNames`，启动时用 `Game.ValidateGame(...)`。这种方式没有可读游戏类型引用，也没有编译指纹，使用 SDK 的项目必须用 `Game.Validate(typeof(MyPlugin).Assembly, ...)`。
+`Game.FindType` 保留给运行时才知道类型名称的查询。只做字符串反射的项目可单独安装 `BD2.GameNames`，首次调用 `Game` API 时自动核对游戏 DLL 与名字表。SDK 项目在 reobf 时自动写入模块初始化器，在插件代码执行前核对插件编译指纹、运行时名字表和游戏 DLL；即使插件只使用可读类型、没有调用 `Game` API，也会自动检查，无需编写启动校验代码。
 
 ## 构建与部署
 

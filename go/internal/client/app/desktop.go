@@ -31,6 +31,7 @@ func Run(runOptions Options) error {
 	studio.log().Info("starting native client window", "windows_engine", "WebView2", "macos_engine", "WKWebView")
 	err = wails.Run(&options.App{
 		Title:            "BD2 Client Studio",
+		Frameless:        true,
 		Width:            1080,
 		Height:           720,
 		MinWidth:         860,
@@ -52,13 +53,12 @@ func Run(runOptions Options) error {
 		},
 		Windows: &windows.Options{
 			Theme:                windows.Light,
-			BackdropType:         windows.Mica,
 			DisablePinchZoom:     true,
 			IsZoomControlEnabled: false,
 			EnableSwipeGestures:  false,
 		},
 		Mac: &mac.Options{
-			TitleBar:    mac.TitleBarDefault(),
+			TitleBar:    &mac.TitleBar{HideTitle: true, HideTitleBar: true, FullSizeContent: true, TitlebarAppearsTransparent: true},
 			Appearance:  mac.NSAppearanceNameAqua,
 			DisableZoom: true,
 		},

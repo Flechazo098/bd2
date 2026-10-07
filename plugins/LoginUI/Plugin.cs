@@ -43,7 +43,6 @@ public sealed class Plugin : BaseUnityPlugin
                 DisposeGameRelay();
                 PlatformControlHttp.Shutdown();
             };
-            Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             EnsureRecoveryHost();
             InitializeCredentials();
             InitializeBranding();

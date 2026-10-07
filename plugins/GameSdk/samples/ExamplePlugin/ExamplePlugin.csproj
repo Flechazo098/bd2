@@ -11,7 +11,7 @@
     <!-- GameDir belongs in local Directory.Build.props or on the command line. -->
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="BD2.GameSdk" Version="0.2.2-game.2.35.10" PrivateAssets="all" />
+    <PackageReference Include="BD2.GameSdk" Version="0.2.3-game.2.35.10" PrivateAssets="all" />
     <!-- Adjust these references as needed. -->
     <Reference Include="Unity.TextMeshPro">
       <HintPath>$(BD2ManagedDir)/Unity.TextMeshPro.dll</HintPath>

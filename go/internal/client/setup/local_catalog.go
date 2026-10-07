@@ -137,11 +137,6 @@ func readCatalog(path string) ([]byte, error) {
 	return raw, nil
 }
 
-func validateLocalCatalog(raw []byte, release string) error {
-	_, err := localizeCatalogIDs(raw, release)
-	return err
-}
-
 func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 	document, ids, err := decodeCatalog(raw)
 	if err != nil {
@@ -183,31 +178,6 @@ func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 		return nil, fmt.Errorf("encode localized ServerData catalog: %w", err)
 	}
 	return localized, nil
-}
-
-func localizeCatalogIDs(raw []byte, release string) ([]string, error) {
-	_, ids, err := decodeCatalog(raw)
-	if err != nil {
-		return nil, err
-	}
-	remoteCount := 0
-	for _, internalID := range ids {
-		if !strings.HasPrefix(internalID, remoteCatalogPrefix) {
-			continue
-		}
-		relative, err := catalogBundlePath(internalID)
-		if err != nil {
-			return nil, err
-		}
-		if info, err := os.Stat(filepath.Join(release, relative)); err != nil || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("local ServerData catalog references a missing bundle: %s", relative)
-		}
-		remoteCount++
-	}
-	if remoteCount == 0 {
-		return nil, errors.New("local ServerData catalog has no CDN bundle entries")
-	}
-	return ids, nil
 }
 
 func decodeCatalog(raw []byte) (map[string]json.RawMessage, []string, error) {

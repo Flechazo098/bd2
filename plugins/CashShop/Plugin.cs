@@ -56,7 +56,6 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
-            Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             harmony = new Harmony("bd2.cashshop");
             Patch(typeof(PlatformManager), "Purchase", nameof(Purchase), false, 3);
             Patch(typeof(PlatformManager), "FinishPurchase", nameof(Suppress), false, 2);

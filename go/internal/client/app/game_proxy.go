@@ -28,16 +28,3 @@ func gameProxyEnvironment(environment []string, proxyURL string) []string {
 	}
 	return result
 }
-
-// LaunchServices needs explicit empty values when the player selects direct.
-func gameOpenArguments(target string, environment []string, proxyURL string) []string {
-	args := []string{target}
-	for _, entry := range gameProxyEnvironment(environment, proxyURL) {
-		key, _, found := strings.Cut(entry, "=")
-		if found && isGameProxyEnvironmentKey(key) {
-			args = append(args, "--env", entry)
-		}
-	}
-	args = append(args, "--args")
-	return append(args, gameLaunchArguments()...)
-}

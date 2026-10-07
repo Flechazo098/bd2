@@ -29,7 +29,6 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
-            Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             Routing = ClientRouting.Load(Logger);
             if (Interlocked.Exchange(ref ShutdownHooksInstalled, 1) == 0)
             {
@@ -64,6 +63,7 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("maintenance timeout guard", () => ClientDiagnostics.InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => LocalAccountPolicy.InstallAgeGatePersistence(harmony));
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
+            TryInstall("commission navigation completion", () => CommissionNavigation.Install(harmony, Logger));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");
         }
         catch (Exception ex)

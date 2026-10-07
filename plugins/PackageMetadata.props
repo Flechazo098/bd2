@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <BD2PackageVersion>0.2.2</BD2PackageVersion>
+    <BD2PackageVersion>0.2.3</BD2PackageVersion>
     <Version Condition="'$(Version)' == ''">$(BD2PackageVersion)</Version>
     <Authors>Flechazo</Authors>
     <RepositoryUrl>https://github.com/Flechazo098/bd2</RepositoryUrl>
