@@ -7,12 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <IsPackable>false</IsPackable>
-    <!-- The navigation cache hashes this DLL. Unrelated repository commits
-         must not change it through informational-version metadata. -->
-    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <!-- Source Link embeds commit URLs in the tool PDB. Its checksum is also
-         embedded in this DLL, so it must not vary with unrelated commits. -->
-    <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
@@ -20,5 +14,10 @@
     <Compile Include="../GameNames/NameTable.cs" Link="NameTable.cs" />
     <Compile Remove="samples/**/*.cs;Package/**/*.cs" />
     <EmbeddedResource Include="../GameNames/Mappings/names.json.gz" LogicalName="BD2.GameNames.names.json.gz" />
+    <!-- Embed the complete generation source set so packaged tools fingerprint
+         generation logic independently of CLI, validation and assembly metadata. -->
+    <EmbeddedResource Include="Generation/**/*.cs" Exclude="Generation/NameGenerator.cs" LogicalName="BD2.GameSdk.Generation.%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../GameNames/NameTable.cs" LogicalName="BD2.GameSdk.Generation.NameTable.cs" />
+    <EmbeddedResource Include="Generation/NameGenerator.cs" LogicalName="BD2.GameSdk.Names.NameGenerator.cs" />
   </ItemGroup>
 </Project>

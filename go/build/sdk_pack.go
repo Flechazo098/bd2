@@ -52,9 +52,6 @@ func (t task) sdkPack(args []string) (result error) {
 	if err = command("pack", filepath.Join(t.root, "plugins", "GameNames", "GameNames.csproj"), "-c", "Release", "--nologo", "-o", o.outputDirectory, "-p:Version="+version, "-p:GameNamesTable="+table, "-p:BaseIntermediateOutputPath="+runtimeObj, "-p:OutputPath="+runtimeBin); err != nil {
 		return err
 	}
-	if err = command(toolDLL, "verify-runtime", table, filepath.Join(runtimeBin, "BD2.GameNames.dll")); err != nil {
-		return err
-	}
 	project := filepath.Join(t.root, "plugins", "GameSdk", "Package", "BD2.GameSdk.Package.csproj")
 	config := filepath.Join(workspace, "NuGet.Config")
 	if err = sdkNugetConfig(config, o.outputDirectory, ""); err != nil {

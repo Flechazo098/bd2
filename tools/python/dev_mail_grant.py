@@ -8,10 +8,10 @@ by an explicitly configured local bd2server.
 Example:
   python tools/python/dev_mail_grant.py serve `
     --game-data E:\\bd2\\dl\\GameData --game-data-version 20260923193640 `
-    --output data\\dev\\mail-grants-spool.json
+    --output data\\dev\\mail-grants-spool.json --account-id OWNER_ACCOUNT_ID
 
   python tools/python/dev_mail_grant.py grant `
-    --output data\\dev\\currency-grants.json --identity test-grant-1 `
+    --output data\\dev\\currency-grants.json --account-id OWNER_ACCOUNT_ID --identity test-grant-1 `
     --attachment 4:0:10000 --attachment 3:0:100
 """
 
@@ -486,8 +486,11 @@ def attachment(value: str) -> dict[str, int]:
 
 
 def _validate_grant(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"identity", "title", "body", "sent_at", "rewards"}:
-        raise ValueError("发放记录必须只包含 identity、title、body、sent_at、rewards")
+    if not isinstance(value, dict) or set(value) != {"account_id", "identity", "title", "body", "sent_at", "rewards"}:
+        raise ValueError("发放记录必须只包含 account_id、identity、title、body、sent_at、rewards")
+    account_id = value["account_id"]
+    if not isinstance(account_id,str) or not account_id.strip() or account_id != account_id.strip() or len(account_id)>500:
+        raise ValueError("account_id 必须明确指定一个有效收件账号")
     identity, title, body = value["identity"], value["title"], value["body"]
     if not isinstance(identity, str) or not identity.strip() or len(identity) > 500:
         raise ValueError("identity 不能为空且不超过 500 字符")
@@ -504,22 +507,23 @@ def _validate_grant(value: Any) -> dict[str, Any]:
 
 def load_grants(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"version": 1, "grants": []}
+        return {"version": 2, "grants": []}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"无法读取邮件发放文件 {path}: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != {"version", "grants"} or type(value["version"]) is not int or value["version"] != 1 or not isinstance(value["grants"], list):
-        raise ValueError("邮件发放文件必须只包含 version=1 和 grants 数组")
+    if not isinstance(value, dict) or set(value) != {"version", "grants"} or type(value["version"]) is not int or value["version"] != 2 or not isinstance(value["grants"], list):
+        raise ValueError("邮件发放文件必须只包含 version=2 和 grants 数组")
     grants = [_validate_grant(entry) for entry in value["grants"]]
-    identities = [entry["identity"] for entry in grants]
+    identities = [(entry["account_id"],entry["identity"]) for entry in grants]
     if len(set(identities)) != len(identities):
         raise ValueError("邮件发放文件包含重复 identity")
-    return {"version": 1, "grants": grants}
+    return {"version": 2, "grants": grants}
 
 
 def grant(args: argparse.Namespace) -> int:
     entry = _validate_grant({
+        "account_id": args.account_id,
         "identity": args.identity.strip() if args.identity is not None else str(uuid.uuid4()),
         "title": args.title.strip(),
         "body": args.body.strip(),
@@ -529,7 +533,7 @@ def grant(args: argparse.Namespace) -> int:
     output = args.output.resolve()
     with grant_file_lock(output):
         value = load_grants(output)
-        existing = next((item for item in value["grants"] if item["identity"] == entry["identity"]), None)
+        existing = next((item for item in value["grants"] if item["account_id"] == entry["account_id"] and item["identity"] == entry["identity"]), None)
         if existing is not None:
             if any(existing[key] != entry[key] for key in ("title", "body", "rewards")):
                 raise ValueError(f"identity {entry['identity']!r} 已存在且内容不同")
@@ -543,13 +547,16 @@ def grant(args: argparse.Namespace) -> int:
 
 
 class MailGrantStore:
-    def __init__(self, output: Path, items: list[dict[str, Any]]):
+    def __init__(self, output: Path, items: list[dict[str, Any]], account_id: str):
+        if not isinstance(account_id,str) or not account_id.strip() or account_id!=account_id.strip() or len(account_id)>500:
+            raise ValueError("account_id 必须明确指定一个有效收件账号")
+        self.account_id = account_id
         self.output = output.resolve()
         self.items = items
         self.item_keys = {(item["element_type"], item["id"]) for item in items}
         self.lock = threading.Lock()
         if not self.output.exists():
-            atomic_json(self.output, {"version": 1, "grants": []})
+            atomic_json(self.output, {"version": 2, "grants": []})
 
     def grant(self, payload: Any) -> dict[str, Any]:
         with self.lock:
@@ -575,6 +582,7 @@ class MailGrantStore:
 
         now = int(time.time() * 1000)
         entry = _validate_grant({
+            "account_id": self.account_id,
             "identity": str(uuid.uuid4()),
             "title": title,
             "body": body,
@@ -706,13 +714,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(args: argparse.Namespace) -> int:
     items = load_items(args.game_data, args.game_data_version)
-    store = MailGrantStore(args.output, items)
+    store = MailGrantStore(args.output, items,args.account_id)
     settings = DevelopmentSettingsStore(args.settings_output, load_inventory_limits(args.game_data, args.game_data_version))
     Handler.store = store
     Handler.settings = settings
     server = ThreadingHTTPServer((args.listen_host, args.listen_port), Handler)
     print(f"已读取 {len(items)} 个可由 ItemDBInfo 领取的 GameData 物品。")
     print(f"浏览器打开：http://{args.listen_host}:{args.listen_port}/")
+    print(f"收件账号：{store.account_id}")
     print(f"动态邮件队列：{store.output}")
     print(f"开发工具配置：{settings.path}")
     print("此服务不修改 data/state；bd2server 每次 /MailInfo 导入队列并唯一分配邮件 ID。")
@@ -731,13 +740,15 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser("serve", help="start the loopback browser UI")
     command.add_argument("--game-data", type=Path, required=True, help="GameData root")
     command.add_argument("--game-data-version", required=True, help="validated GameData version")
-    command.add_argument("--output", type=Path, required=True, help="version=1 dynamic mail grant spool")
+    command.add_argument("--account-id", required=True, help="exact recipient account ID; no broadcast default")
+    command.add_argument("--output", type=Path, required=True, help="version=2 account-addressed dynamic mail grant spool")
     command.add_argument("--settings-output", type=Path, default=Path("data/dev/dev-tools.json"), help="development settings JSON")
     command.add_argument("--listen-host", default="127.0.0.1", help="loopback host (default: 127.0.0.1)")
     command.add_argument("--listen-port", default=8765, type=int, help="loopback port (default: 8765)")
     command.set_defaults(run=serve)
     command = commands.add_parser("grant", help="append one durable currency or draw ticket mail grant (standard library only)")
-    command.add_argument("--output", type=Path, required=True, help="version=1 development mail grants JSON")
+    command.add_argument("--account-id", required=True, help="exact recipient account ID; no broadcast default")
+    command.add_argument("--output", type=Path, required=True, help="version=2 account-addressed mail grants JSON")
     command.add_argument("--attachment", type=attachment, action="append", required=True, metavar="TYPE:ID:COUNT", help="supported currency or draw ticket reward; repeat to include multiple attachments in one mail")
     command.add_argument("--identity", help="stable idempotency identity (default: a new UUID)")
     command.add_argument("--title", default="开发测试物品", help="mail title (maximum 500 characters)")

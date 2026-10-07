@@ -20,7 +20,7 @@
 | 14 | 32 | payload 的 SHA-256 原始摘要 |
 | 46 | payload 长度 | 按固定顺序编码的记录 |
 
-定义在 `go/internal/server/calendar/records.go` ，自行查看。
+定义在 `go/internal/server/domain/events/calendar/protocol_adapter.go` ，自行查看。
 
 ## 更新和验证
 

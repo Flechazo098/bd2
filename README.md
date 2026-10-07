@@ -18,7 +18,7 @@
 
 客户端窗口在插件准备完成后打开。首次生成完整游戏源码或者在 SDK / 游戏更新后可能等待数分钟，后续启动复用共享缓存。
 
-将 `go/config.example.json` 复制为 `go/config.json`，将 `game_directory` 改为本机 Brown Dust II 安装目录。仍可在 `run` 后使用 `--game-dir` 临时覆盖。
+将 `go/config.example.json` 改名为 `go/config.json`，将 `game_directory` 改为本机 Brown Dust II 安装目录。仍可在 `run` 后使用 `--game-dir` 临时覆盖。
 
 发布脚本统一使用 `-tags release` 编译。
 

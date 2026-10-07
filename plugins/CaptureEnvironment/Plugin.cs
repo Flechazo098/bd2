@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Text;
-using BD2.GameNames;
 using BepInEx;
 using HarmonyLib;
 using UnityEngine;
@@ -20,7 +19,6 @@ public sealed class Plugin : BaseUnityPlugin
     {
         try
         {
-            Game.Validate(typeof(Plugin).Assembly, Bd2Build.Versions.Game, message => Logger.LogInfo(message));
             CaptureStorageIsolation.Initialize(Paths.GameRootPath, Logger);
             CaptureWriter.Initialize(Paths.GameRootPath, Logger);
 

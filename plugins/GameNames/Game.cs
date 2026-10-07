@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -28,13 +29,13 @@ public static class Game
             if (Table.schema_version != 1) throw new InvalidDataException("BD2.GameNames: unsupported table schema");
             Types = Table.types.ToDictionary(t => t.readable, StringComparer.Ordinal);
             Tokens = Table.members.ToDictionary(m => m.token);
+            ValidateGame(Table);
         }
     }
     private static readonly Lazy<Index> Names = new(() => new Index());
     private static readonly ConcurrentDictionary<string, Type> TypeCache = new();
     private static readonly ConcurrentDictionary<string, MemberInfo> MemberCache = new();
-    private static readonly object ValidationLock = new();
-    private static string ValidatedStamp;
+    static Game() => _ = Names.Value;
     /// <summary>Gets the game version embedded in this package.</summary>
     public static string GameVersion => Names.Value.Table.game_version;
 
@@ -185,59 +186,32 @@ public static class Game
     public static EventInfo GetGameEvent(this Type type, string readable, BindingFlags flags) => Cached(type, "event", readable, flags, null,
         () => Single(type.GetEvents(flags).Where(m => Matches(m, "event", readable)), type, readable));
 
-    /// <summary>Validate plugin/table version, binary fingerprint and known metadata entries before installing patches.</summary>
-    public static void Validate(Assembly plugin, Action<string> log = null) => Validate(plugin, GameVersion, log);
-
-    /// <summary>Validates only the game binary against the embedded table for plugins that do not use the compiler SDK.</summary>
-    public static void ValidateGame(Action<string> log = null) => ValidateCore(null, GameVersion, log);
-
-    /// <summary>Validates a compiler SDK plugin, its expected game version, the table and the game binary. Throws on mismatch.</summary>
-    public static void Validate(Assembly plugin, string expectedVersion, Action<string> log)
+    internal static void InitializePlugin(string expectedStamp)
     {
-        if (plugin == null) throw new ArgumentNullException(nameof(plugin));
-        if (expectedVersion == null) throw new ArgumentNullException(nameof(expectedVersion));
-        ValidateCore(plugin, expectedVersion, log);
+        NameTable table = Names.Value.Table;
+        string stamp = table.game_version + "|" + table.assembly_sha256 + "|" + table.mapping_sha256;
+        if (expectedStamp != stamp)
+            throw new InvalidDataException("BD2.GameNames: plugin/table mismatch; rebuild the plugin and deploy the matching BD2.GameNames.dll");
     }
 
-    private static void ValidateCore(Assembly plugin, string expectedVersion, Action<string> log)
+    private static void ValidateGame(NameTable table)
     {
-        try
-        {
-            NameTable table = Names.Value.Table;
-            string stamp = table.game_version + "|" + table.assembly_sha256 + "|" + table.mapping_sha256;
-            AssemblyMetadataAttribute metadata = plugin?.GetCustomAttributes<AssemblyMetadataAttribute>().SingleOrDefault(a => a.Key == "BD2.GameNames");
-            if (expectedVersion != table.game_version || plugin != null && metadata?.Value != stamp)
-                throw new InvalidDataException("plugin/table mismatch; rebuild the plugin and BD2.GameNames together");
-            lock (ValidationLock)
-            {
-                if (ValidatedStamp != stamp)
-                {
-                    Assembly assembly = GameAssembly();
-                    if (assembly.ManifestModule.ModuleVersionId.ToString() != table.assembly_mvid)
-                        throw new InvalidDataException("Assembly-CSharp MVID mismatch");
-                    using (var sha = SHA256.Create())
-                    using (FileStream stream = File.OpenRead(assembly.Location))
-                    {
-                        string actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-                        if (actual != table.assembly_sha256) throw new InvalidDataException("Assembly-CSharp SHA-256 mismatch");
-                    }
-                    const BindingFlags all = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-                    Type app = FindType("AppManager") ?? throw new TypeLoadException("AppManager");
-                    Type intro = FindType("IntroUI") ?? throw new TypeLoadException("IntroUI");
-                    Type network = FindType("BDNetwork.NetworkManager") ?? throw new TypeLoadException("BDNetwork.NetworkManager");
-                    if (app.GetGameProperty("IsPlatformLogin", all)?.PropertyType != typeof(bool) ||
-                        intro.GetGameMethod("SendMaintenanceInfo", all, null, [typeof(bool)], null) == null ||
-                        network.GetGameMethod("GetPachedGameDataPath", all, null, Type.EmptyTypes, null)?.ReturnType != typeof(string))
-                        throw new MissingMemberException("known game-name probes failed");
-                    ValidatedStamp = stamp;
-                }
-            }
-            log?.Invoke("BD2.GameNames self-check passed: game=" + table.game_version + ", MVID=" + table.assembly_mvid);
-        }
-        catch (Exception ex)
-        {
-            log?.Invoke("BD2.GameNames SELF-CHECK FAILED: expected game=" + expectedVersion + "; " + ex.Message + "; game patches will not be installed");
-            throw;
-        }
+        Assembly assembly = GameAssembly();
+        if (assembly.ManifestModule.ModuleVersionId.ToString() != table.assembly_mvid)
+            throw new InvalidDataException("BD2.GameNames: Assembly-CSharp MVID mismatch; deploy the SDK and plugin for this game version");
+        using var sha = SHA256.Create();
+        using FileStream stream = File.OpenRead(assembly.Location);
+        string actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+        if (actual != table.assembly_sha256)
+            throw new InvalidDataException("BD2.GameNames: Assembly-CSharp SHA-256 mismatch; deploy the SDK and plugin for this game version");
     }
+}
+
+/// <summary>Runtime entry point used by the module initializer inserted by the SDK.</summary>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public static class RuntimeCompatibility
+{
+    /// <summary>Checks the plugin's build fingerprint against the installed runtime and game.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public static void InitializePlugin(string expectedStamp) => Game.InitializePlugin(expectedStamp);
 }

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"bd2server/internal/server/cryptox"
+	"bd2server/internal/server/protocol/cryptox"
 )
 
 type Envelope struct {

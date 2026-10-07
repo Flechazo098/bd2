@@ -15,7 +15,6 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Awake()
     {
-        Game.Validate(typeof(Plugin).Assembly);
         MethodInfo target = Game.Method<IntroUI>(ui => ui.SetVersionText());
         versionTextField = typeof(IntroUI).GetGameField("_textVersion", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new MissingFieldException("IntroUI._textVersion");

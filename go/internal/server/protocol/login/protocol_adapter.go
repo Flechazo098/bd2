@@ -1,0 +1,443 @@
+package login
+
+import (
+	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/protocol/cryptox"
+	"bd2server/internal/server/protocol/wire"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+func (s *LoginSeed) SeedHuntingAP() (free, bonus uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, err
+	}
+	if free, _, err = wire.Varint(s.UserInfo, 20); err != nil {
+		return 0, 0, err
+	}
+	bonus, _, err = wire.Varint(s.UserInfo, 21)
+	return
+}
+
+func (s *LoginSeed) SeedInventorySlots() (items, storage, equipment, equipmentStorage uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	values := []*uint64{&items, &storage, &equipment, &equipmentStorage}
+	for i, field := range []int{5, 6, 10, 15} {
+		value, _, readErr := wire.Varint(s.UserInfo, field)
+		if readErr != nil {
+			return 0, 0, 0, 0, readErr
+		}
+		*values[i] = value
+	}
+	return items, storage, equipment, equipmentStorage, nil
+}
+
+// SeedCurrencies returns the immutable starting balances embedded in the
+// versioned UserDBInfo template. Mutable balances live in player.Wallet.
+func (s *LoginSeed) SeedCurrencies() (gold, freeJewelry, jewelry, mileage uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	read := func(field int) (uint64, error) {
+		value, found, readErr := wire.Varint(s.UserInfo, field)
+		if readErr != nil {
+			return 0, readErr
+		}
+		if !found {
+			return 0, nil
+		}
+		return value, nil
+	}
+	if gold, err = read(7); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if freeJewelry, err = read(8); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if jewelry, err = read(9); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	if mileage, err = read(23); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return gold, freeJewelry, jewelry, mileage, nil
+}
+
+func (s *LoginSeed) SeedHopePowder() (uint64, error) {
+	if err := s.Validate(); err != nil {
+		return 0, err
+	}
+	value, found, err := wire.Varint(s.UserInfo, 24)
+	if err != nil || !found {
+		return value, err
+	}
+	return value, nil
+}
+
+func (s *LoginSeed) SeedCatalyst() (uint64, error) {
+	if err := s.Validate(); err != nil {
+		return 0, err
+	}
+	value, _, err := wire.Varint(s.UserInfo, 11)
+	return value, err
+}
+
+func (s *LoginSeed) SeedEquipmentMileage() (mileage, exchangeGage uint64, err error) {
+	if err = s.Validate(); err != nil {
+		return 0, 0, err
+	}
+	if mileage, _, err = wire.Varint(s.UserInfo, 67); err != nil {
+		return 0, 0, err
+	}
+	if exchangeGage, _, err = wire.Varint(s.UserInfo, 68); err != nil {
+		return 0, 0, err
+	}
+	return mileage, exchangeGage, nil
+}
+
+// Load reads one versioned seed file. Relative paths are intentionally left to
+// the caller; production code can therefore choose an explicit local asset.
+func Load(path string) (*LoginSeed, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("account: read seed: %w", err)
+	}
+	var disk diskSeed
+	if err := json.Unmarshal(data, &disk); err != nil {
+		return nil, fmt.Errorf("account: decode seed JSON: %w", err)
+	}
+	user, err := base64.StdEncoding.DecodeString(disk.UserInfoBase64)
+	if err != nil {
+		return nil, fmt.Errorf("account: decode user_info_base64: %w", err)
+	}
+	other, err := base64.StdEncoding.DecodeString(disk.ResponseFieldsBase64)
+	if err != nil {
+		return nil, fmt.Errorf("account: decode response_fields_base64: %w", err)
+	}
+	seed := &LoginSeed{Version: disk.Version, PacketCode: disk.PacketCode, UserInfo: user, ResponseFields: other}
+	if err := seed.Validate(); err != nil {
+		return nil, err
+	}
+	return seed, nil
+}
+
+func (s *LoginSeed) Write(path string) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(diskSeed{
+		Version: s.Version, PacketCode: s.PacketCode,
+		UserInfoBase64:       base64.StdEncoding.EncodeToString(s.UserInfo),
+		ResponseFieldsBase64: base64.StdEncoding.EncodeToString(s.ResponseFields),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(filepath.Clean(path), data, 0o644); err != nil {
+		return fmt.Errorf("account: write seed: %w", err)
+	}
+	return nil
+}
+
+// Validate verifies the minimum protocol contract and makes sure a captured
+// user_key cannot accidentally be committed to a local seed.
+func (s *LoginSeed) Validate() error {
+	if s == nil || s.Version == "" || s.PacketCode <= 0 || len(s.UserInfo) == 0 {
+		return ErrInvalidSeed
+	}
+	if _, found, err := wire.Bytes(s.UserInfo, 3); err != nil {
+		return fmt.Errorf("%w: malformed UserInfo: %v", ErrInvalidSeed, err)
+	} else if found {
+		return fmt.Errorf("%w: UserInfo contains user_key", ErrInvalidSeed)
+	}
+	if err := wire.Walk(s.ResponseFields, func(field wire.Field) error {
+		if field.Number == 1 {
+			return fmt.Errorf("%w: response fields contain UserInfo", ErrInvalidSeed)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Encode makes a fresh encrypted LoginUser HTTP envelope. sessionKey belongs
+// to the new local session; no value from a capture is used at runtime.
+func (s *LoginSeed) Encode(ctx command.Context, sessionKey string, now time.Time) ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	proto, err := s.Login(ctx, nil, []byte(sessionKey))
+	if err != nil {
+		return nil, err
+	}
+	data, err := cryptox.EncryptBase64Payload(proto, cryptox.Key())
+	if err != nil {
+		return nil, err
+	}
+	envelope := struct {
+		ErrorType     int    `json:"errorType"`
+		PacketCode    int    `json:"packetCode"`
+		Length        int    `json:"length"`
+		Data          string `json:"data"`
+		ServerNowTime int64  `json:"serverNowTime"`
+	}{
+		ErrorType: 0, PacketCode: s.PacketCode,
+		Length: base64.StdEncoding.EncodedLen(len(proto)), Data: data,
+		ServerNowTime: now.UnixMilli(),
+	}
+	return json.Marshal(envelope)
+}
+
+// Login constructs the decoded LoginUser protobuf for one fresh local
+// session. request is the already-decrypted LoginUser protobuf. The reply
+// is deliberately protobuf-only so the session/transport layer owns its
+// packet-code and HTTP envelope policy.
+func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	if len(request) != 0 {
+		if _, found, err := wire.Varint(request, 1); err != nil || !found {
+			return nil, fmt.Errorf("account: LoginUser request has no sequence: %w", err)
+		}
+	}
+	if len(sessionKey) != cryptox.AESKeySize {
+		return nil, fmt.Errorf("account: session key: %w", cryptox.ErrInvalidKey)
+	}
+	if _, err := cryptox.SessionKey(string(sessionKey)); err != nil {
+		return nil, fmt.Errorf("account: session key: %w", err)
+	}
+	user := append([]byte(nil), s.UserInfo...)
+	if s.newbieStep != nil {
+		step := s.newbieStep.NewbieStep()
+		if step > math.MaxInt32 {
+			return nil, errors.New("account: newbie step exceeds protocol range")
+		}
+		var err error
+		user, _, err = wire.ReplaceVarint(user, 39, step)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.additionalCurrencies != nil {
+		values, err := s.additionalCurrencies.AdditionalCurrencies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for field, value := range values {
+			if value > math.MaxInt32 {
+				return nil, errors.New("account: additional currency exceeds protocol range")
+			}
+			user, _, err = wire.ReplaceVarint(user, field, value)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if s.monsterHuntSlots != nil {
+		count := s.monsterHuntSlots.PresetSlotCount()
+		if count > math.MaxInt32 {
+			return nil, errors.New("account: monster hunt preset slots exceed protocol range")
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 52, count); err != nil {
+			return nil, err
+		}
+	}
+	if s.huntingAP != nil {
+		free, bonus, err := s.huntingAP.HuntingAP(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("account: hunting AP: %w", err)
+		}
+		if free > math.MaxInt32 || bonus > math.MaxInt32 {
+			return nil, errors.New("account: hunting AP exceeds protocol range")
+		}
+		if user, _, err = wire.ReplaceVarint(user, 20, free); err != nil {
+			return nil, err
+		}
+		if user, _, err = wire.ReplaceVarint(user, 21, bonus); err != nil {
+			return nil, err
+		}
+	}
+	if s.levelReward != nil {
+		claimed, err := s.levelReward.LevelRewardCount()
+		if err != nil {
+			return nil, fmt.Errorf("account: level reward: %w", err)
+		}
+		if claimed > math.MaxInt32 {
+			return nil, errors.New("account: level reward exceeds protocol range")
+		}
+		if user, _, err = wire.ReplaceVarint(user, 13, claimed); err != nil {
+			return nil, err
+		}
+	}
+	if s.achievementExp != nil {
+		experience, err := s.achievementExp.AchievementExperience()
+		if err != nil {
+			return nil, fmt.Errorf("account: achievement experience: %w", err)
+		}
+		if experience > math.MaxInt32 {
+			return nil, errors.New("account: achievement experience exceeds protocol range")
+		}
+		user, _, err = wire.ReplaceVarint(user, 12, experience)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.lastPlayedPack != nil {
+		packID, err := s.lastPlayedPack.LastPlayedPackID(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("account: last played pack: %w", err)
+		}
+		if packID > 0 {
+			if user, _, err = wire.ReplaceVarint(user, 4, packID); err != nil {
+				return nil, fmt.Errorf("account: replace last played pack: %w", err)
+			}
+		}
+	}
+	if s.currencies != nil {
+		gold, freeJewelry, jewelry, mileage := s.currencies.Currencies(ctx)
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 7, gold); err != nil {
+			return nil, fmt.Errorf("account: replace gold: %w", err)
+		}
+		if user, _, err = wire.ReplaceVarint(user, 8, freeJewelry); err != nil {
+			return nil, fmt.Errorf("account: replace free jewelry: %w", err)
+		}
+		if user, _, err = wire.ReplaceVarint(user, 9, jewelry); err != nil {
+			return nil, fmt.Errorf("account: replace jewelry: %w", err)
+		}
+		if user, _, err = wire.ReplaceVarint(user, 23, mileage); err != nil {
+			return nil, fmt.Errorf("account: replace mileage: %w", err)
+		}
+		if provider, ok := s.currencies.(CatalystProvider); ok {
+			if user, _, err = wire.ReplaceVarint(user, 11, provider.CatalystBalance(ctx)); err != nil {
+				return nil, fmt.Errorf("account: replace catalyst: %w", err)
+			}
+		}
+		if provider, ok := s.currencies.(HopePowderProvider); ok {
+			if user, _, err = wire.ReplaceVarint(user, 24, provider.HopePowderBalance(ctx)); err != nil {
+				return nil, fmt.Errorf("account: replace hope powder: %w", err)
+			}
+		}
+		if provider, ok := s.currencies.(EquipmentMileageProvider); ok {
+			equipMileage, exchangeGage := provider.EquipmentMileageBalances(ctx)
+			if user, _, err = wire.ReplaceVarint(user, 67, equipMileage); err != nil {
+				return nil, fmt.Errorf("account: replace equipment mileage: %w", err)
+			}
+			if user, _, err = wire.ReplaceVarint(user, 68, exchangeGage); err != nil {
+				return nil, fmt.Errorf("account: replace equipment mileage exchange gauge: %w", err)
+			}
+		}
+	}
+	if s.firstGacha != nil {
+		value := uint64(0)
+		if s.firstGacha.FirstGachaCompleted() {
+			value = 1
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 27, value); err != nil {
+			return nil, fmt.Errorf("account: replace first gacha: %w", err)
+		}
+	}
+	if s.purchaseCounts != nil {
+		var err error
+		if user, err = replaceRepeatedBytes(user, 26, s.purchaseCounts.PurchaseCountDBInfos(ctx)); err != nil {
+			return nil, fmt.Errorf("account: replace purchase counts: %w", err)
+		}
+	}
+	if s.presetSlots != nil {
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 28, s.presetSlots.PresetSlotCount()); err != nil {
+			return nil, fmt.Errorf("account: replace preset slots: %w", err)
+		}
+	}
+	if s.inventorySlots != nil {
+		items, storage, equipment, equipmentStorage, err := s.inventorySlots.UserInventorySlots(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("account: inventory slots: %w", err)
+		}
+		for field, value := range map[int]uint64{5: items, 6: storage, 10: equipment, 15: equipmentStorage} {
+			if user, _, err = wire.ReplaceVarint(user, field, value); err != nil {
+				return nil, fmt.Errorf("account: replace inventory slot field %d: %w", field, err)
+			}
+		}
+	}
+	if s.friendshipAP != nil {
+		remaining, err := s.friendshipAP.FriendshipAP()
+		if err != nil {
+			return nil, fmt.Errorf("account: friendship AP: %w", err)
+		}
+		if user, _, err = wire.ReplaceVarint(user, 69, remaining); err != nil {
+			return nil, err
+		}
+		if user, _, err = wire.ReplaceVarint(user, 70, 0); err != nil {
+			return nil, err
+		}
+	}
+	user = wire.AppendBytes(user, 3, sessionKey)
+	if s.portrait != nil {
+		portrait := s.portrait.PortraitCostume()
+		if portrait > math.MaxInt32 {
+			return nil, fmt.Errorf("account: portrait costume overflow")
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 14, portrait); err != nil {
+			return nil, err
+		}
+	}
+	projected, projectionErr := s.projectAutoRevive(ctx, user)
+	if projectionErr != nil {
+		return nil, projectionErr
+	}
+	return append(wire.AppendBytes(nil, 1, projected), s.ResponseFields...), nil
+}
+
+func replaceRepeatedBytes(data []byte, number int, values [][]byte) ([]byte, error) {
+	result := make([]byte, 0, len(data))
+	if err := wire.Walk(data, func(field wire.Field) error {
+		if field.Number != number {
+			result = append(result, data[field.Start:field.End]...)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	for _, value := range values {
+		result = wire.AppendBytes(result, number, value)
+	}
+	return result, nil
+}
+
+func (s *LoginSeed) projectAutoRevive(ctx command.Context, user []byte) ([]byte, error) {
+	if s.autoReviveSettings == nil {
+		return user, nil
+	}
+	on, index, e := s.autoReviveSettings.AutoReviveSettings(ctx)
+	if e != nil {
+		return nil, e
+	}
+	if index > 9223372036854775807 {
+		return nil, fmt.Errorf("account: automatic recovery caster overflow")
+	}
+	n := uint64(0)
+	if on {
+		n = 1
+	}
+	user, _, e = wire.ReplaceVarint(user, 49, n)
+	if e != nil {
+		return nil, e
+	}
+	user, _, e = wire.ReplaceVarint(user, 50, index)
+	return user, e
+}
