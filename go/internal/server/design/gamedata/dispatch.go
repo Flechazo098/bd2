@@ -9,7 +9,7 @@ import (
 
 type DispatchDesign struct {
 	Group, ID, Pack, Difficulty, TypeGroup, TypeID, AP, ClearTime, Growth uint64
-	GroundID                                                              uint64
+	GroundID, APType                                                      uint64
 	Rewards                                                               []BattleReward
 	boxes                                                                 map[uint64]*dispatchGroup
 }
@@ -63,6 +63,7 @@ func LoadDispatchDesign(root, version string, group, id uint64) (*DispatchDesign
 		}
 		ids, err = packedInts(raw, 15)
 		boss, _ = optionalScalar(raw, 4)
+		d.APType, _ = optionalScalar(raw, 1)
 	}
 	if err != nil {
 		return nil, err

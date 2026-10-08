@@ -46,7 +46,11 @@ type Service struct {
 	currentPack         func(command.Context) (int, error)
 	load                func(int) (*gamedata.HuntingPack, error)
 	dispatchLoad        func(uint64, uint64) (*gamedata.DispatchDesign, error)
-	dispatchEligibility func(*gamedata.DispatchDesign) error
+	dispatchEligibility func(command.Context, *gamedata.DispatchDesign) error
+	dispatchCosts       func(command.Context, *gamedata.DispatchDesign, uint64) ([]gamedata.Reward, error)
+	dispatchExchange    func(command.Context, string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
+	dispatchBonus       func(*gamedata.DispatchDesign, []gamedata.BattleReward) ([]gamedata.BattleReward, error)
+	dispatchProgress    func(command.Context, uint64) error
 	eligibility         func(ctx command.Context, _ int, _ uint64) error
 	grant               func(command.Context, string, []gamedata.Reward) ([]byte, error)
 	apDesign            *gamedata.HuntingAPDesign

@@ -4,51 +4,6 @@ import (
 	"fmt"
 )
 
-type SkyWayOverwhelmRule struct {
-	Group, Map, APType, Boss, BossAP uint64
-	Monsters, AP                     []uint64
-}
-
-func LoadSkyWayOverwhelm(root, version string) ([]SkyWayOverwhelmRule, error) {
-	db, done, e := openStatDatabase(root, version)
-	if e != nil {
-		return nil, e
-	}
-	defer done()
-	rows, e := db.Query("SELECT ProtoBuf FROM SkyWayFieldTable")
-	if e != nil {
-		return nil, e
-	}
-	defer func() { _ = rows.Close() }()
-	var out []SkyWayOverwhelmRule
-	for rows.Next() {
-		var b []byte
-		if e = rows.Scan(&b); e != nil {
-			return nil, e
-		}
-		r := SkyWayOverwhelmRule{}
-		for f, p := range map[int]*uint64{10: &r.Group, 13: &r.Map, 1: &r.APType, 4: &r.Boss, 3: &r.BossAP} {
-			*p, e = optionalScalar(b, f)
-			if e != nil {
-				return nil, e
-			}
-		}
-		r.Monsters, e = packedInts(b, 15)
-		if e != nil {
-			return nil, e
-		}
-		r.AP, e = packedInts(b, 14)
-		if e != nil {
-			return nil, e
-		}
-		if len(r.Monsters) != len(r.AP) {
-			return nil, fmt.Errorf("gamedata: malformed skyway AP mapping")
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
 type OverwhelmQuestRule struct {
 	Type, Count uint64
 	Targets     []uint64

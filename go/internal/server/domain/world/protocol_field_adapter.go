@@ -77,8 +77,18 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 			if e = s.overwhelmHunting.ValidateBattle(ctx, pack, 5, m.ID, m.Deck); e != nil {
 				return 275, nil, true, e
 			}
+		} else if gamedata.IsSkyWayMode(m.Mode) {
+			definition, found, e := s.findFieldMonster(pack, int(m.ID))
+			if e != nil || !found || definition.UseBattleSkip != 1 {
+				return 275, nil, true, fmt.Errorf("world: SkyWay monster cannot be overwhelmed")
+			}
+			m.Instance, e = s.SkyWayBeginBattle(ctx, pack, m.Mode, m.ID, m.Deck)
+			if e != nil {
+				return 275, nil, true, e
+			}
+			m.Definition = definition
 		} else {
-			if m.Mode != 1 && m.Mode != 2 && m.Mode != 4 && (m.Mode < 9 || m.Mode > 15) {
+			if m.Mode != 1 && m.Mode != 2 && m.Mode != 4 {
 				return 275, nil, true, fmt.Errorf("world: unavailable overwhelm battle mode %d", m.Mode)
 			}
 			definition, found, e := s.findFieldMonster(pack, int(m.ID))
@@ -104,44 +114,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 			if !validDeck {
 				return 275, nil, true, fmt.Errorf("world: overwhelm deck mismatch")
 			}
-			if m.Mode >= 9 && m.Mode <= 15 {
-				mapID, e := s.currentFieldMap(ctx, pack)
-				if e != nil {
-					return 275, nil, true, e
-				}
-				found := false
-				for _, rule := range s.overwhelmSky {
-					if rule.Map != uint64(mapID) || rule.Group+8 != m.Mode {
-						continue
-					}
-					cost := uint64(0)
-					if rule.Boss == m.ID {
-						found = true
-						cost = rule.BossAP
-					} else {
-						for i, id := range rule.Monsters {
-							if id == m.ID {
-								found = true
-								cost = rule.AP[i]
-							}
-						}
-					}
-					if found {
-						typ := uint64(21)
-						if rule.APType == 2 {
-							typ = 23
-						}
-						if cost > 0 {
-							m.Costs = []gamedata.Reward{{Type: typ, Count: cost}}
-						}
-						break
-					}
-				}
-				if !found {
-					return 275, nil, true, fmt.Errorf("world: skyway monster does not match current dungeon")
-				}
-				m.Instance = fmt.Sprintf("skyway:%s:%d", identity, m.ID)
-			} else if m.Mode == 2 {
+			if m.Mode == 2 {
 				if int(m.Group) != definition.GroupID || definition.GroupID == 0 || !s.monsterEligible(pack, definition) {
 					return 275, nil, true, ErrInvalidRequest
 				}
@@ -208,6 +181,16 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 				return 275, nil, true, e
 			}
 			bundle = append(bundle, reward...)
+			for _, row := range monsters {
+				response = wire.AppendBytes(response, 1, row)
+			}
+		} else if gamedata.IsSkyWayMode(m.Mode) {
+			reward, bonus, monsters, e := s.SkyWayCompleteBattle(ctx, pack, m.Mode, m.ID, m.Deck, m.Instance, fmt.Sprintf("%s:%d", identity, m.ID))
+			if e != nil {
+				return 275, nil, true, e
+			}
+			bundle = append(bundle, reward...)
+			bundle = append(bundle, bonus...)
 			for _, row := range monsters {
 				response = wire.AppendBytes(response, 1, row)
 			}
@@ -349,6 +332,21 @@ func (s *Service) handleMonsterInfo(ctx command.Context, request []byte) (int, [
 	pack, e := s.CurrentPackID(ctx)
 	if e != nil || !s.packUnlocked(ctx, pack) || s.monsterLoader == nil {
 		return 0, nil, true, ErrInvalidRequest
+	}
+	if s.skyway != nil && pack == s.skyway.design.Pack {
+		v, err := s.skyway.load(ctx)
+		if err != nil {
+			return 51, nil, true, err
+		}
+		stage, ok := s.skyway.design.Stage(v.Run.Group, v.Run.ID)
+		if !ok {
+			return 51, nil, true, nil
+		}
+		var out []byte
+		for _, row := range s.skyway.monsters(stage, v.Run) {
+			out = wire.AppendBytes(out, 1, row)
+		}
+		return 51, out, true, nil
 	}
 	design, e := s.monsterLoader(pack)
 	if e != nil {
@@ -861,7 +859,7 @@ func (s *Service) handleFieldObjectReward(ctx command.Context, request []byte) (
 	}
 	response, err := s.openFieldObjectResponse(ctx, pack, int(group), int(id))
 	if err != nil {
-		return 0, nil, true, err
+		return 0, nil, true, fmt.Errorf("field object reward pack=%d group=%d object=%d: %w", pack, group, id, err)
 	}
 	return 29, response, true, nil
 }

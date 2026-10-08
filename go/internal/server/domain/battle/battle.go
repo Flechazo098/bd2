@@ -26,6 +26,7 @@ type Service struct {
 	onMonsterWin       func(ctx command.Context) error
 	commitHealth       func(ctx command.Context, _ map[uint64]uint64) error
 	hunting            HuntingRuntime
+	skyway             SkyWayRuntime
 	monsterHunt        MonsterHuntRuntime
 	eventBattles       []EventBattleRuntime
 	fieldMonsters      FieldMonsterRuntime
@@ -83,6 +84,14 @@ type HuntingRuntime interface {
 	CompleteBattle(ctx command.Context, pack int, mode, monster, deck uint64, receipt string) ([]byte, [][]byte, error)
 }
 
+type SkyWayRuntime interface {
+	SkyWayBeginBattle(command.Context, int, uint64, uint64, uint64) (string, error)
+	SkyWayCompleteBattle(command.Context, int, uint64, uint64, uint64, string, string) ([]byte, []byte, [][]byte, error)
+	SkyWayBattleStarted(command.Context, uint64, string) error
+}
+
+func (s *Service) AttachSkyWay(runtime SkyWayRuntime) { s.skyway = runtime }
+
 const huntingGroundMode = 5
 
 func (s *Service) AttachHunting(runtime HuntingRuntime) {
@@ -91,6 +100,7 @@ func (s *Service) AttachHunting(runtime HuntingRuntime) {
 
 type battleState struct {
 	entered       bool
+	retryable     bool
 	index         uint64
 	round         uint64
 	monster       uint64

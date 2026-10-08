@@ -3,7 +3,11 @@ package app
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/battle/monsterhunt"
+	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
+	"bd2server/internal/server/domain/world"
+	"bd2server/internal/server/protocol/wire"
+	"encoding/binary"
 	"fmt"
 )
 
@@ -15,7 +19,8 @@ type designCatalog struct {
 	fieldBuffs               map[uint64]gamedata.FieldBuffDesign
 	recovery                 *gamedata.PackRecoveryPolicy
 	researchCharacters       map[uint64]bool
-	overwhelmSky             []gamedata.SkyWayOverwhelmRule
+	skyway                   *gamedata.SkyWayDesign
+	skywaySchedules          []world.SkyWaySchedule
 	eventPlay                *gamedata.EventPlayCatalog
 	monsterHunt              *monsterhunt.Rules
 	presetDesign             *gamedata.PresetDesign
@@ -345,7 +350,50 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.overwhelmSky, err = gamedata.LoadSkyWayOverwhelm(gameData, gameDataVersion)
+	d.skyway, err = gamedata.LoadSkyWayDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, err
+	}
+	_, schedule, handled, err := seeds.defaults.Handle(command.Context{}, "/SkyWayScheduleInfo", wire.AppendVarint(nil, 1, 1))
+	if err != nil || !handled {
+		return nil, fmt.Errorf("load SkyWay schedule policy: %w", err)
+	}
+	err = wire.Walk(schedule, func(f wire.Field) error {
+		if f.Number != 1 || f.Type != 2 {
+			return fmt.Errorf("invalid SkyWay schedule seed")
+		}
+		var row world.SkyWaySchedule
+		row.Group, _, err = wire.Varint(f.Value, 1)
+		if err != nil {
+			return err
+		}
+		row.Bonus, _, err = wire.Varint(f.Value, 3)
+		if err != nil {
+			return err
+		}
+		err = wire.Walk(f.Value, func(day wire.Field) error {
+			if day.Number != 2 {
+				return nil
+			}
+			if day.Type != 0 && day.Type != 2 {
+				return fmt.Errorf("invalid SkyWay day seed")
+			}
+			for rest := day.Value; len(rest) > 0; {
+				v, n := binary.Uvarint(rest)
+				if n <= 0 {
+					return wire.ErrMalformed
+				}
+				row.Days = append(row.Days, v)
+				rest = rest[n:]
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		d.skywaySchedules = append(d.skywaySchedules, row)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

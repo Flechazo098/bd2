@@ -47,7 +47,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 				values[field] = v[0]
 			}
 		}
-		if values[55] != 3 && values[55] != 10 {
+		if values[55] != 3 && values[55] != 5 && values[55] != 10 {
 			continue
 		}
 		if id <= 0 || values[25] != uint64(id) {

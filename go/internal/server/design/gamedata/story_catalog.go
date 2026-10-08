@@ -70,7 +70,7 @@ func loadStoryCatalog(db *sql.DB) (*StoryCatalog, error) {
 			_ = rows.Close()
 			return nil, err
 		}
-		if kind != 0 && kind != 1000 {
+		if kind != 0 && kind != 5 && kind != 1000 {
 			continue
 		}
 		protoID, err := read(25)

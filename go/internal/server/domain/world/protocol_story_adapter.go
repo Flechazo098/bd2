@@ -362,6 +362,14 @@ func (s *Service) resolveActivePartyWires(ctx command.Context, packID, questID i
 func (s *Service) storyPackDBInfoRows(ctx command.Context) [][]byte {
 	ids := make([]int, 0, len(s.storyCatalog.Packs))
 	for id := range s.storyCatalog.Packs {
+		if s.storyCatalog.Packs[id].Type == 5 {
+			if s.collection == nil {
+				continue
+			}
+			if _, owned := s.collection.Grant(packPurchaseIdentity(id)); !owned {
+				continue
+			}
+		}
 		if s.storyPackUnlocked(ctx, id) {
 			ids = append(ids, id)
 		}
@@ -400,7 +408,7 @@ func (s *Service) storyPackDBInfoRows(ctx command.Context) [][]byte {
 		rows = append(rows, row)
 	}
 	if saved, found := s.state.Position(); found {
-		if pack, arena := s.fieldPacks[saved.PackID]; arena && pack.MapIDs[saved.Position.MapID] {
+		if pack, arena := s.fieldPacks[saved.PackID]; arena && pack.Type != 5 && pack.MapIDs[saved.Position.MapID] {
 			rows = append(rows, wire.AppendVarint(wire.AppendVarint(nil, 1, uint64(saved.PackID)), 8, 1))
 		}
 	}
@@ -719,6 +727,27 @@ func (s *Service) purchaseStoryPack(ctx command.Context, id int, initial bool) (
 	if !exists {
 		return nil, fmt.Errorf("%w: unknown purchase pack %d", ErrInvalidRequest, id)
 	}
+	if pack.Type == 5 {
+		if s.skyway == nil || s.collection == nil {
+			return nil, fmt.Errorf("world: SkyWay purchase runtime unavailable")
+		}
+		identity := packPurchaseIdentity(id)
+		if _, owned := s.collection.Grant(identity); owned {
+			return []byte{}, nil
+		}
+		var costs []gamedata.Reward
+		if !initial && pack.BuyPrice > 0 {
+			costs = []gamedata.Reward{{Type: pack.BuyType, Count: pack.BuyPrice}}
+		}
+		bundle, err := s.skyway.economy.Apply(ctx, identity, costs, pack.BuyRewards)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.collection.RecordGrantMarker(ctx, identity); err != nil {
+			return nil, err
+		}
+		return bundle, nil
+	}
 	return s.purchasePack(ctx, id, pack.BuyType, pack.BuyPrice, pack.BuyRewards, initial)
 }
 
@@ -924,6 +953,9 @@ func (s *Service) enterEventFieldPack(ctx command.Context, pack gamedata.EventFi
 }
 
 func (s *Service) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
+	if code, out, handled, err := s.handleSkyWay(ctx, path, request); handled {
+		return code, out, handled, err
+	}
 	if s.todayQuests != nil {
 		if code, body, handled, err := s.todayQuests.Handle(ctx, path, request); handled {
 			if err == nil {
@@ -1089,6 +1121,19 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		if !s.packUnlocked(ctx, pack) {
 			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
+		}
+		if s.skyway != nil && pack == s.skyway.design.Pack {
+			if _, purchased := s.collection.Grant(packPurchaseIdentity(pack)); !purchased {
+				return 0, nil, true, fmt.Errorf("world: SkyWay pack is not purchased")
+			}
+			v, e := s.skyway.load(ctx)
+			if e != nil {
+				return 0, nil, true, e
+			}
+			v.Run = skyWayRun{Generation: v.Run.Generation}
+			if e = s.skyway.save(ctx, v); e != nil {
+				return 0, nil, true, e
+			}
 		}
 		if active := s.firstUnclearedQuestFor(pack); active != 0 {
 			if _, err := s.ensureQuestItems(ctx, pack, active); err != nil {

@@ -25,6 +25,9 @@ func (s *Service) LastPlayedPackID(ctx command.Context) (uint64, error) {
 		return 0, errors.New("world: saved login pack is unavailable")
 	}
 	if pack, field := s.fieldPacks[int(id)]; field {
+		if pack.Type == 5 {
+			return id, nil
+		}
 		saved, _ := s.state.Position()
 		if !pack.MapIDs[saved.Position.MapID] {
 			return 0, errors.New("world: saved arena map does not belong to pack")

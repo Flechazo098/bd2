@@ -23,8 +23,7 @@ type overwhelmedMonster struct {
 	Costs                 []gamedata.Reward
 }
 
-func (s *Service) AttachOverwhelmDesign(source *gamedata.Source, rows []gamedata.SkyWayOverwhelmRule) error {
-	s.overwhelmSky = rows
+func (s *Service) AttachOverwhelmDesign(source *gamedata.Source) error {
 	s.overwhelmQuest = func(pack, quest int) (gamedata.OverwhelmQuestRule, error) {
 		return source.OverwhelmQuest(pack, quest)
 	}
