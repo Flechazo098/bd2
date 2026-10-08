@@ -78,6 +78,12 @@ func (p *playerAssembly) gameplay(ctx command.Context) error {
 		return fmt.Errorf("load event economy: %w", err)
 	}
 	p.eventEconomy.AttachHuntingAP(p.huntingService)
+	if err = p.worldService.AttachSkyWay(ctx, p.design.skyway, p.gameplayStore, p.eventEconomy, p.huntingService, p.design.skywaySchedules, p.design.rewardGraph); err != nil {
+		return fmt.Errorf("attach SkyWay: %w", err)
+	}
+	p.battleService.AttachSkyWay(p.worldService)
+	p.huntingService.AttachDispatchEligibility(p.worldService.SkyWayDispatchEligibility)
+	p.huntingService.AttachSkyWayDispatch(p.worldService.SkyWayDispatchCosts, p.worldService.SkyWayDispatchExchange, p.worldService.SkyWayDispatchBonus)
 	p.talentUseService, err = roster.NewTalentUseService(p.design.talentUseDesign, p.gameplayStore, p.worldService.CharacterService(), p.ownedItems, p.wallet, p.eventEconomy)
 	if err != nil {
 		return fmt.Errorf("load field talent state: %w", err)
@@ -91,7 +97,7 @@ func (p *playerAssembly) gameplay(ctx command.Context) error {
 	p.worldService.AttachTalentPackInfo(p.talentUseService.PackInfo)
 	p.worldService.AttachOverwhelmAuthorization(p.talentUseService.ConsumeOverwhelm)
 	p.worldService.AttachOverwhelmHunting(p.huntingService)
-	if err := p.worldService.AttachOverwhelmDesign(p.design.source, p.design.overwhelmSky); err != nil {
+	if err := p.worldService.AttachOverwhelmDesign(p.design.source); err != nil {
 		return fmt.Errorf("attach overwhelm design: %w", err)
 	}
 	p.talentUseService.AttachEffect(4, p.worldService.ApplyTalentFieldAbsorb)

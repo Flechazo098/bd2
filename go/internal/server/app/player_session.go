@@ -17,6 +17,7 @@ import (
 
 func (p *playerAssembly) session(ctx command.Context) error {
 	p.handlers = []session.Handler{
+		p.worldService,
 		p.progressState,
 		p.cashService,
 		p.cashBonuses,
@@ -35,7 +36,6 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		p.battleService,
 		p.huntingService,
 		p.monsterHuntService,
-		p.worldService,
 		p.worldService.CharacterService(),
 		p.progressState,
 		p.deckStateStore,

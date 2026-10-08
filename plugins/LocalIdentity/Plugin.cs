@@ -64,6 +64,7 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("age-gate persistence", () => LocalAccountPolicy.InstallAgeGatePersistence(harmony));
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
             TryInstall("commission navigation completion", () => CommissionNavigation.Install(harmony, Logger));
+            TryInstall("field reward position ordering", () => FieldRewardPosition.Install(harmony, Logger));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");
         }
         catch (Exception ex)

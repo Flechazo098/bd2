@@ -25,8 +25,11 @@ func (s *Service) validateFieldObjectMap(ctx command.Context, pack, mapID int) e
 		return nil
 	}
 	current, err := s.currentFieldMap(ctx, pack)
-	if err != nil || current != mapID {
-		return fmt.Errorf("%w: field object outside current map", ErrInvalidRequest)
+	if err != nil {
+		return fmt.Errorf("%w: field object map unavailable (pack=%d object_map=%d): %v", ErrInvalidRequest, pack, mapID, err)
+	}
+	if current != mapID {
+		return fmt.Errorf("%w: field object outside current map (pack=%d object_map=%d current_map=%d)", ErrInvalidRequest, pack, mapID, current)
 	}
 	return nil
 }

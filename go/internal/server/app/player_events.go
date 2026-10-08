@@ -180,5 +180,11 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("restore recorded achievement history: %w", err)
 	}
 	p.eventTasksService.AttachInventoryProvider(&eventtasks.InventoryProjection{Items: p.ownedItems, Equipment: p.ownedEquipment, Costumes: p.collection, StateVersion: p.stateRepository.ObservationVersion})
+	p.worldService.AttachSkyWayProgress(p.eventTasksService.RecordSkyWayClear, func(ctx command.Context, group uint64) error {
+		return p.missionService.RecordEvent(ctx, 227, group, 1, p.worldService.MissionsUnlocked)
+	})
+	p.huntingService.AttachDispatchProgress(func(ctx command.Context, count uint64) error {
+		return p.missionService.RecordEvent(ctx, 23, 0, count, p.worldService.MissionsUnlocked)
+	})
 	return nil
 }

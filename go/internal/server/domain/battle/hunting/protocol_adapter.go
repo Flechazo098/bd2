@@ -399,6 +399,14 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 	if err != nil {
 		return code, nil, true, err
 	}
+	sky := d.TypeGroup != 0
+	if sky && (s.dispatchCosts == nil || s.dispatchExchange == nil || s.dispatchBonus == nil) {
+		return code, nil, true, fmt.Errorf("hunting: SkyWay dispatch runtime missing")
+	}
+	freeType, bonusType := uint64(21), uint64(23)
+	if sky && d.APType == 2 {
+		freeType, bonusType = 32, 33
+	}
 	var out []byte
 	if path == "/HuntDispatchRewardPreview" {
 		if !exists {
@@ -411,10 +419,10 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 		bonus := min(remaining, job.Bonus)
 		free := remaining - bonus
 		if free > 0 {
-			preview = append(preview, gamedata.BattleReward{Type: 21, Count: free})
+			preview = append(preview, gamedata.BattleReward{Type: freeType, Count: free})
 		}
 		if bonus > 0 {
-			preview = append(preview, gamedata.BattleReward{Type: 23, Count: bonus})
+			preview = append(preview, gamedata.BattleReward{Type: bonusType, Count: bonus})
 		}
 		bundle := dispatchPreview(preview)
 		for _, r := range preview {
@@ -435,23 +443,40 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 		remaining := d.AP * (job.Count - played)
 		refundBonus := min(remaining, job.Bonus)
 		refundFree := remaining - refundBonus
-		next := s.clone()
-		next.Free += refundFree
-		next.Bonus += refundBonus
-		if e := s.persist(ctx, next); e != nil {
-			return code, nil, true, e
+		if !sky {
+			next := s.clone()
+			next.Free += refundFree
+			next.Bonus += refundBonus
+			if e := s.persist(ctx, next); e != nil {
+				return code, nil, true, e
+			}
 		}
 		if refundFree > 0 {
-			completed = append(completed, gamedata.BattleReward{Type: 21, Count: refundFree})
+			completed = append(completed, gamedata.BattleReward{Type: freeType, Count: refundFree})
 		}
 		if refundBonus > 0 {
-			completed = append(completed, gamedata.BattleReward{Type: 23, Count: refundBonus})
+			completed = append(completed, gamedata.BattleReward{Type: bonusType, Count: refundBonus})
 		}
-		bundle, e := s.dispatchGrant(ctx, "dispatch:"+key, completed)
+		var bundle []byte
+		var e error
+		if sky {
+			var rewards []gamedata.Reward
+			for _, row := range completed {
+				rewards = append(rewards, gamedata.Reward(row))
+			}
+			bundle, e = s.dispatchExchange(ctx, "dispatch:"+key, nil, rewards)
+		} else {
+			bundle, e = s.dispatchGrant(ctx, "dispatch:"+key, completed)
+		}
 		if e != nil {
 			return code, nil, true, e
 		}
 		out = wire.AppendBytes(out, 1, bundle)
+		if played > 0 && s.dispatchProgress != nil {
+			if e = s.dispatchProgress(ctx, played); e != nil {
+				return code, nil, true, e
+			}
+		}
 		delete(ds.Jobs, jobKey)
 	} else {
 		count, _, e := wire.Varint(req, 4)
@@ -470,8 +495,8 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 				return code, nil, true, fmt.Errorf("hunting: dispatch category already running")
 			}
 		}
-		if s.dispatchEligibility != nil {
-			if e = s.dispatchEligibility(d); e != nil {
+		if d.TypeGroup != 0 && s.dispatchEligibility != nil {
+			if e = s.dispatchEligibility(ctx, d); e != nil {
 				return code, nil, true, e
 			}
 		} else {
@@ -487,7 +512,14 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 			return code, nil, true, fmt.Errorf("hunting: dispatch AP overflow")
 		}
 		cost := d.AP * count
-		if s.state.Free < cost && s.state.Bonus < cost-s.state.Free {
+		var skyCosts []gamedata.Reward
+		if sky {
+			skyCosts, e = s.dispatchCosts(ctx, d, count)
+			if e != nil {
+				return code, nil, true, e
+			}
+		}
+		if !sky && s.state.Free < cost && s.state.Bonus < cost-s.state.Free {
 			return code, nil, true, fmt.Errorf("hunting: insufficient hunting AP")
 		}
 		rewards, e := d.Roll(count, func(n uint64) (uint64, error) {
@@ -500,11 +532,29 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 		if e != nil {
 			return code, nil, true, e
 		}
+		if sky {
+			rewards, e = s.dispatchBonus(d, rewards)
+			if e != nil {
+				return code, nil, true, e
+			}
+		}
 		next := s.clone()
 		free := min(cost, next.Free)
 		bonus := cost - free
-		next.Free -= free
-		next.Bonus -= bonus
+		if sky {
+			free, bonus = 0, 0
+			for _, c := range skyCosts {
+				switch c.Type {
+				case freeType:
+					free += c.Count
+				case bonusType:
+					bonus += c.Count
+				}
+			}
+		} else {
+			next.Free -= free
+			next.Bonus -= bonus
+		}
 		if path == "/HuntDispatchStart" {
 			now := uint64(time.Now().UnixMilli())
 			runs := make([][]gamedata.BattleReward, count)
@@ -520,9 +570,30 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 					return code, nil, true, e
 				}
 			}
+			if sky {
+				for i, run := range runs {
+					runs[i], e = s.dispatchBonus(d, run)
+					if e != nil {
+						return code, nil, true, e
+					}
+				}
+				if _, e = s.dispatchExchange(ctx, "dispatch-charge:"+key, skyCosts, nil); e != nil {
+					return code, nil, true, e
+				}
+			}
 			job = dispatchJob{Group: group, ID: id, Count: count, Start: now, End: now + d.ClearTime*count*1000, Free: free, Bonus: bonus, Rewards: rewards, Runs: runs}
 			ds.Jobs[jobKey] = job
 			out = wire.AppendBytes(out, 1, dispatchJobWire(job))
+		} else if sky {
+			var grants []gamedata.Reward
+			for _, row := range rewards {
+				grants = append(grants, gamedata.Reward(row))
+			}
+			bundle, e := s.dispatchExchange(ctx, "dispatch:"+key, skyCosts, grants)
+			if e != nil {
+				return code, nil, true, e
+			}
+			out = wire.AppendBytes(out, 1, bundle)
 		} else {
 			beforeFree, beforeBonus := s.state.Free, s.state.Bonus
 			bundle, e := s.dispatchGrant(ctx, "dispatch:"+key, rewards)
@@ -549,8 +620,15 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 				next.Bonus -= delta
 			}
 		}
-		if e = s.persist(ctx, next); e != nil {
-			return code, nil, true, e
+		if !sky {
+			if e = s.persist(ctx, next); e != nil {
+				return code, nil, true, e
+			}
+		}
+		if path == "/HuntDispatch" && s.dispatchProgress != nil {
+			if e = s.dispatchProgress(ctx, count); e != nil {
+				return code, nil, true, e
+			}
 		}
 	}
 	ds.Receipts[key] = dispatchReceipt{append([]byte(path), req...), out, code}

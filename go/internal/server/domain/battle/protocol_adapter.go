@@ -19,7 +19,7 @@ func checkSeq(request []byte) error {
 }
 
 func (s *Service) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
-	if path != "/BattleEnter" && path != "/BattleStart" && path != "/BattleRetry" && path != "/BattleVerifyState" && path != "/BattleEnd" && path != "/BattleExit" && path != "/BattlePhaseChange" {
+	if path != "/BattleEnter" && path != "/BattleStart" && path != "/BattleRetry" && path != "/BattleVerifyState" && path != "/BattleEnd" && path != "/BattleEndTest" && path != "/BattleExit" && path != "/BattlePhaseChange" {
 		return 0, nil, false, nil
 	}
 	if err := checkSeq(request); err != nil {
@@ -27,6 +27,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 	}
 
 	state := s.stateLocked(ctx)
+	endCode := 15
+	if path == "/BattleEndTest" {
+		path = "/BattleEnd"
+		endCode = 181
+	}
 	switch path {
 	case "/BattlePhaseChange":
 		if !state.entered {
@@ -144,6 +149,15 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		var phases []gamedata.BattlePhase
 		fieldInstance := ""
+		if gamedata.IsSkyWayMode(mode) {
+			if s.skyway == nil {
+				return 0, nil, true, errors.New("battle: SkyWay runtime unavailable")
+			}
+			fieldInstance, err = s.skyway.SkyWayBeginBattle(ctx, packID, mode, monster, deck)
+			if err != nil {
+				return 0, nil, true, err
+			}
+		}
 		if mode == 2 && eventRuntime == nil && s.fieldMonsters != nil && monster != 0 {
 			instance, _, e := s.fieldMonsters.BeginFieldMonsterBattle(ctx, packID, monster, deck)
 			if e != nil {
@@ -190,6 +204,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			}
 		}
 		state.entered, state.index, state.round, state.initialBlue = true, 0, 0, nil
+		state.retryable = false
 		state.monster, state.deck, state.pack = monster, deck, packID
 		state.mode = mode
 		state.enterReceipt = identity
@@ -198,7 +213,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		s.transientVersion++
 		return 52, response, true, nil
 	case "/BattleRetry":
-		if !state.entered {
+		if !state.entered && !state.retryable {
 			return 0, nil, true, errors.New("battle: retry before enter")
 		}
 		index, found, err := wire.Varint(request, 2)
@@ -208,12 +223,29 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if len(state.initialBlue) == 0 {
 			return 0, nil, true, errors.New("battle: retry before initial battle state")
 		}
+		if index != state.index {
+			return 0, nil, true, errors.New("battle: retry index does not match current battle")
+		}
+		if state.retryable {
+			if s.currentPack == nil {
+				return 0, nil, true, errors.New("battle: retry pack resolver unavailable")
+			}
+			pack, err := s.currentPack(ctx)
+			if err != nil || pack != state.pack {
+				return 0, nil, true, errors.New("battle: retry outside failed encounter pack")
+			}
+			firstDeck := state.deck
+			if len(state.phases) > 0 {
+				firstDeck = state.phases[0].DeckID
+			}
+			instance, err := s.skyway.SkyWayBeginBattle(ctx, state.pack, state.mode, state.monster, firstDeck)
+			if err != nil || instance != state.fieldInstance {
+				return 0, nil, true, errors.New("battle: failed SkyWay encounter no longer available")
+			}
+		}
 		if len(state.phases) != 0 {
 			// Retry requests carry the current deck; the response must restore
 			// the first phase's deck, as PhaseBattleManager.ApplyRetryResponse does.
-			if index != state.index {
-				return 0, nil, true, errors.New("battle: retry index does not match current phase")
-			}
 			index = state.phases[0].DeckID
 		}
 		var response []byte
@@ -226,6 +258,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			state.deck = state.phases[0].DeckID
 		}
 		state.phase, state.phaseStarted, state.phaseSeq, state.phaseReply = 0, false, 0, nil
+		state.entered, state.retryable = true, false
 		s.transientVersion++
 		return 58, response, true, nil
 	case "/BattleStart":
@@ -243,6 +276,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			return 0, nil, true, errors.New("battle: start index does not match current phase")
 		}
 		nextRound := state.round + 1
+		if nextRound == 1 && gamedata.IsSkyWayMode(state.mode) {
+			if err := s.skyway.SkyWayBattleStarted(ctx, state.mode, state.enterReceipt); err != nil {
+				return 0, nil, true, err
+			}
+		}
 		var initialBlue [][]byte
 		var response []byte
 		err = wire.Walk(request, func(field wire.Field) error {
@@ -277,7 +315,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			if !bytes.Equal(state.endRequest, request) {
 				return 0, nil, true, errors.New("battle: changed settlement retry")
 			}
-			return 15, append([]byte(nil), state.endReply...), true, nil
+			return endCode, append([]byte(nil), state.endReply...), true, nil
 		}
 		if !state.entered {
 			return 0, nil, true, errors.New("battle: end before enter")
@@ -367,6 +405,21 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			response = wire.AppendBytes(response, 3, character)
 		}
 		rewardBundle := false
+		if result == 1 && gamedata.IsSkyWayMode(state.mode) {
+			seq, _, _ := wire.Varint(request, 1)
+			bundle, bonus, monsters, err := s.skyway.SkyWayCompleteBattle(ctx, state.pack, state.mode, state.monster, state.deck, state.fieldInstance, fmt.Sprintf("%s:%d", ctx.SessionID, seq))
+			if err != nil {
+				return 0, nil, true, err
+			}
+			for _, monster := range monsters {
+				response = wire.AppendBytes(response, 4, monster)
+			}
+			response = wire.AppendBytes(response, 5, bundle)
+			if len(bonus) > 0 {
+				response = wire.AppendBytes(response, 6, bonus)
+			}
+			rewardBundle = true
+		}
 		if result == 1 && state.mode == huntingGroundMode {
 			seq, _, _ := wire.Varint(request, 1)
 			bundle, monsters, err := s.hunting.CompleteBattle(ctx, state.pack, state.mode, state.monster, state.deck,
@@ -380,7 +433,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			response = wire.AppendBytes(response, 5, bundle)
 			rewardBundle = true
 		}
-		if result == 1 && state.mode != huntingGroundMode && state.monster != 0 && s.gameDataRoot != "" {
+		if result == 1 && state.mode != huntingGroundMode && !gamedata.IsSkyWayMode(state.mode) && state.monster != 0 && s.gameDataRoot != "" {
 			if state.pack <= 0 {
 				return 0, nil, true, errors.New("battle: victory has no locked pack")
 			}
@@ -433,13 +486,21 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			if field == 5 && rewardBundle {
 				continue
 			}
+			if field == 6 && gamedata.IsSkyWayMode(state.mode) && result == 1 {
+				continue
+			}
 			response = wire.AppendBytes(response, field, nil)
 		}
 		state.rememberEnd(request, response)
-		state.entered, state.deck, state.pack, state.initialBlue = false, 0, 0, nil
+		state.entered = false
+		state.retryable = (result == 2 || result == 3) && gamedata.IsSkyWayMode(state.mode)
+		if !state.retryable {
+			state.deck, state.pack, state.initialBlue = 0, 0, nil
+		}
 		s.transientVersion++
-		return 15, response, true, nil
+		return endCode, response, true, nil
 	case "/BattleExit":
+		state.retryable = false
 		state.entered, state.index, state.round, state.deck, state.pack, state.initialBlue = false, 0, 0, 0, 0, nil
 		s.transientVersion++
 		return 388, nil, true, nil

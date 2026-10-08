@@ -30,6 +30,9 @@ func (s *Service) currentFieldMap(ctx command.Context, pack int) (int, error) {
 	if !s.packUnlocked(ctx, pack) {
 		return 0, ErrInvalidRequest
 	}
+	if mapID, found, err := s.skyWayMap(ctx, pack); found || err != nil {
+		return mapID, err
+	}
 	if saved, ok := s.state.Position(); ok && saved.PackID == pack && saved.Difficulty == s.questDifficulty(pack) && saved.Position.MapID > 0 {
 		return saved.Position.MapID, nil
 	}

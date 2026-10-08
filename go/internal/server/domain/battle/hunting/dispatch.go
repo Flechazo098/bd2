@@ -2,6 +2,7 @@ package hunting
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/command"
 	"time"
 )
 
@@ -20,9 +21,16 @@ type dispatchState struct {
 	Receipts map[string]dispatchReceipt `json:"receipts"`
 }
 
-func (s *Service) AttachDispatchEligibility(check func(*gamedata.DispatchDesign) error) {
+func (s *Service) AttachDispatchEligibility(check func(command.Context, *gamedata.DispatchDesign) error) {
 
 	s.dispatchEligibility = check
+}
+
+func (s *Service) AttachSkyWayDispatch(costs func(command.Context, *gamedata.DispatchDesign, uint64) ([]gamedata.Reward, error), exchange func(command.Context, string, []gamedata.Reward, []gamedata.Reward) ([]byte, error), bonus func(*gamedata.DispatchDesign, []gamedata.BattleReward) ([]gamedata.BattleReward, error)) {
+	s.dispatchCosts, s.dispatchExchange, s.dispatchBonus = costs, exchange, bonus
+}
+func (s *Service) AttachDispatchProgress(progress func(command.Context, uint64) error) {
+	s.dispatchProgress = progress
 }
 
 func dispatchPlayed(j dispatchJob, seconds uint64) uint64 {

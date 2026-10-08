@@ -167,7 +167,7 @@ type Service struct {
 	fieldBuffs         map[uint64]gamedata.FieldBuffDesign
 	talentPackInfo     func(ctx command.Context, _ int) ([]byte, error)
 	overwhelmAuthorize func(ctx command.Context, _ string, _ uint64) error
-	overwhelmSky       []gamedata.SkyWayOverwhelmRule
+	skyway             *skyWayRuntime
 	overwhelmQuest     func(int, int) (gamedata.OverwhelmQuestRule, error)
 	overwhelmHunting   interface {
 		ValidateBattle(ctx command.Context, _ int, _ uint64, _ uint64, _ uint64) error
@@ -231,12 +231,14 @@ func (s *Service) questsFor(ctx command.Context, packID int) (map[int]gamedata.Q
 	if _, found, err := s.resolveEventFieldPack(ctx, packID); err == nil && found {
 		return map[int]gamedata.QuestDesign{}, true
 	}
-	if _, exists := s.fieldPacks[packID]; exists {
-		return map[int]gamedata.QuestDesign{}, true
-	}
 	if s.storyCatalog != nil {
 		pack, found := s.storyCatalog.Packs[packID]
-		return pack.Quests, found
+		if found {
+			return pack.Quests, true
+		}
+	}
+	if _, exists := s.fieldPacks[packID]; exists {
+		return map[int]gamedata.QuestDesign{}, true
 	}
 	return nil, false
 }
