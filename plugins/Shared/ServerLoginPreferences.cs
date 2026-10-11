@@ -2,6 +2,7 @@ using System.Globalization;
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using System.IO;
 using UnityEngine;
 
 namespace Bd2Login;
@@ -28,6 +29,14 @@ internal static class ServerLoginPreferences
         var hex = new StringBuilder(digest.Length * 2);
         foreach (byte value in digest) hex.Append(value.ToString("x2", CultureInfo.InvariantCulture));
         return prefix + hex;
+    }
+
+    internal static string KeychainService(string origin)
+    {
+        string root = Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ROOT");
+        if (string.IsNullOrEmpty(root)) return "BD2 Login UI OAuth: " + origin;
+        string scope = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Key("BD2 Login UI OAuth instance " + scope + ": ", origin);
     }
 
     internal static bool IsAutoLogin(string origin) => Read("IsAutoLogin", origin);

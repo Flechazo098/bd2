@@ -90,16 +90,16 @@ server {
     server_name cdn.example.com;
 
     location /ServerData/ {
-        proxy_pass https://bd2-cdn.akamaized.net/ServerData/;
-        proxy_set_header Host bd2-cdn.akamaized.net;
+        proxy_pass https://dl.bd2.pmang.cloud/ServerData/;
+        proxy_set_header Host dl.bd2.pmang.cloud;
         proxy_ssl_server_name on;
         proxy_cache bd2;
         proxy_cache_lock on;
     }
 
     location /GameData/ {
-        proxy_pass https://bd2-cdn.akamaized.net/GameData/;
-        proxy_set_header Host bd2-cdn.akamaized.net;
+        proxy_pass https://dl.bd2.pmang.cloud/GameData/;
+        proxy_set_header Host dl.bd2.pmang.cloud;
         proxy_ssl_server_name on;
         proxy_cache bd2;
         proxy_cache_lock on;
@@ -135,8 +135,8 @@ TLS 证书、缓存容量、访问日志和服务条款由服主负责。公网�
 `<bundle_version>` 和 `<game_data_version>` 必须分别等于客户端包内 `versions.json` 的 `bundle_version` 与 `game_data_version`。例如当前发布版本对应：
 
 ```text
-ServerData/StandaloneWindows64/HD/20260921135230/
-GameData/20260923193640/
+ServerData/StandaloneWindows64/HD/20261007175947/
+GameData/20261008155037/
 ```
 
 准备完成后，在 `bd2client` 中选择“本地已下载资源”，并选中最外层的 `<本地资源根目录>`，不要直接选择 `ServerData`、`GameData` 或某个版本号目录。客户端会验证目录结构和版本，然后由 LI 插件在游戏进程内把该目录作为仅监听 loopback 的本机资源源提供给游戏。校验失败时需要玩家自行修正或重新准备资源，客户端不会跨版本拼接或自动从网络补齐缺失文件。

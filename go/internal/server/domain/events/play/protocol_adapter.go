@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -524,29 +525,6 @@ func (s *Service) progress(ctx command.Context, path string, req []byte, rk stri
 	return out, nil
 }
 
-// LockRoomRun installs the stage selected by native room matching before the
-// client's HTTP Start. It does not award rewards or trust HTTP stage changes.
-func (s *Service) LockRoomRun(ctx command.Context, session, family, guid string, uid, group, stage, monster uint64) error {
-
-	if family != "Defense" && family != "Action" {
-		return fmt.Errorf("eventplay: invalid room family")
-	}
-	c, e := s.calendar(uid, family)
-	if e != nil {
-		return e
-	}
-	raw, _ := json.Marshal(s.state)
-	var next snapshot
-	_ = json.Unmarshal(raw, &next)
-	next.Runs[session+":"+family+":native"] = Run{UID: uid, Game: c.ID, Stage: stage, Mode: group, Char: monster, Family: family, Session: guid}
-	raw, _ = json.Marshal(next)
-	if e = s.store.Save(ctx.State, "eventplay", raw); e != nil {
-		return e
-	}
-	s.state = next
-	return nil
-}
-
 func specializedInfo(st *snapshot, uid uint64, f string) []byte {
 	var out []byte
 	if f == "Action" || f == "Survival" || f == "Defense" {
@@ -787,6 +765,12 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		return fail(e)
 	}
 	// Public hub calendars are derived afresh, never stored as account replies.
+	if path == "/MiniGameActionRanking" || path == "/MiniGameActionUserRecordInfo" || path == "/MiniGameRanking" || path == "/MiniGameUserRecordInfo" {
+		if _, ok := s.rooms.(NativeRankingSource); ok {
+			b, e := s.nativeRanking(ctx, path, req)
+			return code, b, true, e
+		}
+	}
 	if path == "/EventHubInfo" || path == "/MiniEventHubInfo" || path == "/MiniGameHubInfo" {
 		if s.hubCalendars != nil && path == "/MiniGameHubInfo" {
 			return s.hubCalendars.Handle(ctx, path, req)
@@ -817,7 +801,16 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	case "/MiniGameUserRecordInfo", "/MiniGameRanking":
 		out = summaryWire(&next, path == "/MiniGameUserRecordInfo")
 	case "/MiniGameRelayServerInfo":
-		return fail(fmt.Errorf("eventplay: native relay channels are not configured"))
+		provider, ok := s.rooms.(RelayEndpointSource)
+		if !ok {
+			return fail(fmt.Errorf("eventplay: native relay channels are not configured"))
+		}
+		for _, endpoint := range provider.RelayEndpoints() {
+			b := wire.AppendString(nil, 1, endpoint.Region)
+			b = wire.AppendString(b, 2, endpoint.Host)
+			b = wire.AppendString(b, 3, endpoint.TCPPort)
+			out = wire.AppendBytes(out, 1, b)
+		}
 
 	case "/PackEventStoryInfo", "/PackEventBattleInfo":
 		uids, err := list(req, 2)
@@ -973,6 +966,21 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	end := strings.HasSuffix(path, "End")
 	runKey := session + ":" + f
 	uid := num(req, 2)
+	var native *NativeRun
+	if start && (f == "Action" || f == "Defense") {
+		if s.rooms == nil {
+			return nil, fmt.Errorf("eventplay: native room unavailable")
+		}
+		admission, err := s.rooms.StartRun(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		if admission.Family != f || admission.UID == 0 || admission.InstanceID == "" || admission.GUID == "" || admission.Started <= 0 {
+			return nil, fmt.Errorf("eventplay: invalid native admission")
+		}
+		native = &admission
+		uid = admission.UID
+	}
 	if end || path == "/MiniGameFieldScore" || path == "/MiniGameSurvivalPlay" || strings.Contains(path, "Skill") {
 		if a, ok := next.Runs[runKey]; ok {
 			uid = a.UID
@@ -986,6 +994,9 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	}
 	uid = c.UID
 	stage, mode := num(req, 3), num(req, 4)
+	if native != nil {
+		stage, mode = native.Stage, native.Group
+	}
 	if f == "Rhythm" {
 		mode = num(req, 5)
 	}
@@ -1016,13 +1027,20 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			return nil, fmt.Errorf("eventplay: season closed")
 		}
 		if _, active := next.Runs[runKey]; active {
-			return nil, fmt.Errorf("eventplay: run already active")
+			previous := next.Runs[runKey]
+			if previous.Native == nil || s.rooms == nil {
+				return nil, fmt.Errorf("eventplay: run already active")
+			}
+			if _, err := s.rooms.Result(ctx, *previous.Native); !errors.Is(err, ErrRoomAbandoned) {
+				return nil, fmt.Errorf("eventplay: run already active")
+			}
+			delete(next.Runs, runKey)
 		}
 		if e = s.validateStage(f, stage, mode); e != nil {
 			return nil, e
 		}
 		a := Run{UID: uid, Game: c.ID, Stage: stage, Mode: mode, Started: uint64(s.now().UnixMilli()), Family: f, Session: session, HP: 100}
-		if f == "Action" {
+		if f == "Action" && native == nil {
 			game, _ := s.design.Row("PackEventMiniGameTable", 8, c.ID)
 			group := num(game, 4)
 			rows := s.design.Rows("ActionGameStageTable", 3, group)
@@ -1034,14 +1052,14 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			a.Char = num(rows[0], 1)
 		}
 		if f == "Action" || f == "Defense" {
-			if locked, ok := next.Runs[runKey+":native"]; ok {
-				a.Stage, a.Mode, a.Char = locked.Stage, locked.Mode, locked.Char
-				a.Session = locked.Session
-				if s.rooms != nil {
-					if e = s.rooms.ValidateRoom(session, a.Session, uid); e != nil {
-						return nil, e
-					}
-				}
+			a.Stage, a.Mode, a.Char = native.Stage, native.Group, native.Monster
+			a.Started, a.Native = uint64(native.Started), native
+			payload, err := json.Marshal(native)
+			if err != nil {
+				return nil, err
+			}
+			if err = ctx.Publish(command.Event{ID: "room-start:" + native.InstanceID + ":" + ctx.AccountID, Topic: "room.run.accepted", Payload: payload}); err != nil {
+				return nil, err
 			}
 		}
 		var startReply []byte
@@ -1112,6 +1130,7 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	}
 	if end {
 		a := next.Runs[runKey]
+		var nativeResult *NativeResult
 		if a.UID != uid {
 			return nil, fmt.Errorf("eventplay: run schedule changed")
 		}
@@ -1123,16 +1142,30 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			if err != nil {
 				return nil, err
 			}
-			if a.Session != session && !bytes.Equal(guid, []byte(a.Session)) {
+			if a.Native == nil || !bytes.Equal(guid, []byte(a.Native.GUID)) {
 				return nil, fmt.Errorf("eventplay: native room guid mismatch")
 			}
-			if s.rooms != nil {
-				if e = s.rooms.ValidateRoom(session, string(guid), uid); e != nil {
-					return nil, e
-				}
+			if s.rooms == nil {
+				return nil, fmt.Errorf("eventplay: native result unavailable")
 			}
+			result, err := s.rooms.Result(ctx, *a.Native)
+			if err != nil {
+				return nil, err
+			}
+			nativeResult = &result
 		}
-		score, e := s.endScore(f, req, a)
+		var score uint64
+		if nativeResult != nil {
+			score = nativeResult.Score
+			if f == "Action" && !nativeResult.Clear {
+				score = 0
+			}
+			if score > math.MaxInt32 {
+				return nil, fmt.Errorf("eventplay: native score exceeds protocol range")
+			}
+		} else {
+			score, e = s.endScore(f, req, a)
+		}
 		if e != nil {
 			return nil, e
 		}
@@ -1154,14 +1187,9 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 					return nil, e
 				}
 			case "Action":
-				if e = s.onProgress(ctx, 323, a.Char, 1); e != nil {
-					return nil, e
-				}
-				for condition, field := range map[uint64]int{326: 9, 327: 10, 329: 12, 330: 13, 333: 14, 334: 15, 335: 16, 336: 17} {
-					if count := num(req, field); count > 0 {
-						if e = s.onProgress(ctx, condition, a.Char, count); e != nil {
-							return nil, e
-						}
+				if nativeResult.Clear {
+					if e = s.onProgress(ctx, 323, a.Char, 1); e != nil {
+						return nil, e
 					}
 				}
 			}
@@ -1171,7 +1199,7 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		if r.Clears == nil {
 			r.Clears = map[string]bool{}
 		}
-		if score > r.Best {
+		if f == "Action" && score > 0 && (r.Best == 0 || score < r.Best) || f != "Action" && score > r.Best {
 			r.Best = score
 		}
 		var out []byte
@@ -1290,12 +1318,16 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			out = wire.AppendBytes(out, 2, v)
 		}
 		next.Records[rk] = r
-		delete(next.Runs, runKey)
-		if s.rooms != nil && (f == "Action" || f == "Defense") {
-			if e = s.rooms.CompleteRoom(session, a.Session, score); e != nil {
-				return nil, e
+		if a.Native != nil {
+			payload, err := json.Marshal(a.Native)
+			if err != nil {
+				return nil, err
+			}
+			if err = ctx.Publish(command.Event{ID: "room-claim:" + a.Native.InstanceID + ":" + ctx.AccountID, Topic: "room.run.claimed", Payload: payload}); err != nil {
+				return nil, err
 			}
 		}
+		delete(next.Runs, runKey)
 		return out, nil
 	}
 	if strings.Contains(path, "Ranking") || strings.Contains(path, "RecordInfo") {

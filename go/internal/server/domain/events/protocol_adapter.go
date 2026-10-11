@@ -17,9 +17,6 @@ import (
 
 func (h SkinHandler) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
 
-	if code, response, handled, err := h.Economy.OwnedItemInfo(ctx, path, request); handled || err != nil {
-		return code, response, handled, err
-	}
 	return h.Economy.Handle(ctx, path, request)
 }
 
@@ -159,25 +156,6 @@ func (r *Registry) Handle(ctx command.Context, path string, req []byte) (int, []
 		out = wire.AppendBytes(out, 1, b)
 	}
 	return 163, out, true, nil
-}
-
-// ID card items are loaded through ItemInfo; there is no IdCardInfo ownership
-// endpoint. AvatarInfo separately includes its owned ItemDBInfo list.
-func (e *Economy) OwnedItemInfo(ctx command.Context, path string, req []byte) (int, []byte, bool, error) {
-	if path != "/AvatarInfo" {
-		return 0, nil, false, nil
-	}
-	seq, _, err := wire.Varint(req, 1)
-	if err != nil || seq == 0 {
-		return 467, nil, true, fmt.Errorf("events: missing sequence")
-	}
-	var out []byte
-	for _, item := range e.items.All(ctx) {
-		if item.Type == 49 || item.Type == 50 || item.Type == 61 {
-			out = wire.AppendBytes(out, 2, assets.ItemWire(item))
-		}
-	}
-	return 467, out, true, nil
 }
 
 func (e *Economy) Apply(ctx command.Context, identity string, costs, rewards []gamedata.Reward) ([]byte, error) {

@@ -70,7 +70,7 @@ func (s *Service) CompleteSingleTargetEvent(ctx command.Context, conditionType u
 	}
 	next := cloneSnapshot(s.state)
 	for key, c := range s.design.Conditions {
-		if key.GroupType > 1 || c.Type != conditionType || c.SubType != 0 || c.TargetValue != 1 || len(c.Params) != 0 {
+		if key.GroupType > 1 || !s.missionActive(key) || c.Type != conditionType || c.SubType != 0 || c.TargetValue != 1 || len(c.Params) != 0 {
 			continue
 		}
 		if (c.UnlockPack != 0 || c.UnlockQuest != 0) && (unlocked == nil || !unlocked(ctx, c.UnlockPack, c.UnlockQuest)) {
@@ -93,7 +93,7 @@ func (s *Service) recordEventLocked(ctx command.Context, conditionType, subType,
 	next := cloneSnapshot(s.state)
 	var keys []gamedata.MissionKey
 	for key, condition := range s.design.Conditions {
-		if key.GroupType > 1 || condition.Type != conditionType || len(condition.Params) != 0 {
+		if key.GroupType > 1 || !s.missionActive(key) || condition.Type != conditionType || len(condition.Params) != 0 {
 			continue
 		}
 		if condition.SubType != 0 && ((condition.SubTypeComparison == 0 && condition.SubType != subType) || (condition.SubTypeComparison == 1 && subType < condition.SubType)) {

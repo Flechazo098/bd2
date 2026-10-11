@@ -71,7 +71,7 @@ type CharacterPictorialMeta struct {
 	UsePackTemporary bool
 }
 
-// PictorialDesign is immutable 2.35.10 design data. Dynamic account state is
+// PictorialDesign is immutable 2.36.7 design data. Dynamic account state is
 // deliberately not copied here: callers match their current ownership against
 // these rows each time they build PictorialBookInfo or AllCharRefresh.
 type PictorialDesign struct {

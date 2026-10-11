@@ -33,11 +33,29 @@ type Command struct {
 	Identity           command.Identity
 	Digest             [32]byte
 	Requests           []Request
+	System             *SystemRequest
 	LoginSessionKey    []byte
 	ExpectedGeneration uint64
 	// Cancellation records the accepting caller's cancellation signal; Execute's
 	// separate context remains live until the accepted transaction is settled.
 	Cancellation context.Context
+}
+
+type SystemKind uint8
+
+const (
+	ReadOutbox SystemKind = iota + 1
+	AcknowledgeOutbox
+	ClosePVPSeason
+	ReconcileSocial
+	ReadRoomProfile
+	CloseExpiredRaid
+	StoryCheckpoint
+)
+
+type SystemRequest struct {
+	Kind SystemKind
+	Body []byte
 }
 
 type Response struct {
@@ -181,8 +199,11 @@ func (r *Runtime) Submit(ctx context.Context, c Command) (*Future, error) {
 	if c.Identity.AccountID != r.accountID {
 		return nil, ErrWrongAccount
 	}
-	if c.Identity.SessionID == "" || c.Identity.RequestID == "" || len(c.Requests) == 0 {
+	if c.Identity.SessionID == "" || c.Identity.RequestID == "" || (len(c.Requests) == 0) == (c.System == nil) {
 		return nil, errors.New("command requires session, request identity and requests")
+	}
+	if c.System != nil && (c.System.Kind < ReadOutbox || c.System.Kind > StoryCheckpoint || len(c.LoginSessionKey) != 0) {
+		return nil, errors.New("invalid player system command")
 	}
 	size := commandBytes(c)
 	r.mu.Lock()
@@ -399,6 +420,9 @@ func commandBytes(c Command) int64 {
 	for _, request := range c.Requests {
 		bytes += int64(len(request.Path)) + int64(len(request.Body)) + 48
 	}
+	if c.System != nil {
+		bytes += int64(len(c.System.Body)) + 32
+	}
 	return bytes
 }
 
@@ -408,6 +432,9 @@ func cloneCommand(c Command) Command {
 		c.Requests[i].Body = slices.Clone(c.Requests[i].Body)
 	}
 	c.LoginSessionKey = slices.Clone(c.LoginSessionKey)
+	if c.System != nil {
+		c.System = &SystemRequest{Kind: c.System.Kind, Body: slices.Clone(c.System.Body)}
+	}
 	return c
 }
 

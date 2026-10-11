@@ -1,0 +1,9 @@
+{
+  "loginui.recovery.story_failed": "劇情恢復失敗，請重新啟動客戶端。",
+  "loginui.recovery.story_sync": "正在同步劇情進度，等待伺服器回應……",
+  "loginui.recovery.player_sync": "正在同步玩家資料……",
+  "loginui.recovery.reconnecting": "正在重新連線至伺服器……",
+  "loginui.recovery.waiting_server": "等待伺服器啟動……",
+  "loginui.recovery.restoring_session": "正在恢復登入工作階段……",
+  "loginui.recovery.safe_scene": "正在返回安全場景……"
+}

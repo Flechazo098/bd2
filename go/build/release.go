@@ -158,7 +158,7 @@ func (t task) build(opts buildOptions) error {
 		return err
 	}
 	var shared []byte
-	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop"} {
+	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {
 		project := filepath.Join(t.root, "plugins", plugin, plugin+".csproj")
 		if err := t.command("dotnet", "build", project, "-c", "Release", "-p:GameDir="+game, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+bep, "--nologo"); err != nil {
 			return err

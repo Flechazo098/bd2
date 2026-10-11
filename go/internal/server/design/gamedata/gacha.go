@@ -1579,6 +1579,9 @@ func LoadInfiniteGachaForSchedules(root, version string, groups []uint64) (*Infi
 	if err != nil {
 		return nil, err
 	}
+	if infiniteGroupID == 0 {
+		return nil, nil
+	}
 	var gacha []byte
 	if err := db.QueryRow("SELECT ProtoBuf FROM GachaTable WHERE id=?", infiniteGachaID).Scan(&gacha); err != nil {
 		return nil, fmt.Errorf("gamedata: infinite gacha: %w", err)

@@ -22,6 +22,9 @@ func validateSaved(key string, g GameState, d *gamedata.EventGame) error {
 		}
 		return nil
 	}
+	if g.Type == 17 && (g.Clear == 0 || g.Clear > rewardCount(d, ^uint64(0))) {
+		return fmt.Errorf("eventgames: invalid saved puzzle stage")
+	}
 	expected := 0
 	for _, r := range d.Cells {
 		if r.Count == rewardCount(d, g.Clear) {

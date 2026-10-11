@@ -19,8 +19,8 @@ const (
 	FileName              = "resources.json"
 	ModeOfficial          = "official"
 	ModeServer            = "server"
-	OfficialServerDataURL = "https://bd2-cdn.akamaized.net/ServerData"
-	OfficialGameDataURL   = "https://bd2-cdn.akamaized.net/GameData"
+	OfficialServerDataURL = "https://dl.bd2.pmang.cloud/ServerData"
+	OfficialGameDataURL   = "https://dl.bd2.pmang.cloud/GameData"
 )
 
 // Config is private server configuration. It contains no credentials, but it

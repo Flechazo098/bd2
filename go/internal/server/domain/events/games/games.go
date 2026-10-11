@@ -21,6 +21,7 @@ type Resolver interface {
 }
 type Rewards interface {
 	ConsumeAndGrant(ctx command.Context, _ string, _ []assets.Item, _ []gamedata.BattleReward) ([]byte, error)
+	AvailableGameItemCount(ctx command.Context, itemType, id uint64) (uint64, error)
 }
 type GameState struct {
 	UID, Type, ID, Position, Clear, Free, Reset, Tries, SinceSpecial uint64
@@ -132,7 +133,7 @@ func (s *Service) initialize(g *GameState, d *gamedata.EventGame) error {
 	for _, r := range cells {
 		g.Board = append(g.Board, r.ID)
 	}
-	if d.Type == 13 {
+	if d.Type == 13 || d.Type == 17 {
 		for i := len(g.Board) - 1; i > 0; i-- {
 			j, e := s.sample(uint64(i + 1))
 			if e != nil {

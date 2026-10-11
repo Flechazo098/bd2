@@ -39,6 +39,11 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err := p.ownedItems.AttachItemStacks(p.design.itemStacks); err != nil {
 		return err
 	}
+	if p.initializeAccount {
+		if err := p.ownedItems.InitializeItems(ctx, p.starter.OwnedItems); err != nil {
+			return fmt.Errorf("initialize owned item seed: %w", err)
+		}
+	}
 	p.recipeService, err = assets.NewRecipeService(p.design.recipeDesign, p.starter.CookingRecipes, p.ownedItems)
 	if err != nil {
 		return fmt.Errorf("load learned recipes: %w", err)

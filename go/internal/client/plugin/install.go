@@ -24,6 +24,7 @@ var (
 	LocalIdentity = Spec{fileName: "BD2LocalIdentity.dll"}
 	LoginUI       = Spec{fileName: "BD2LoginUI.dll"}
 	CashShop      = Spec{fileName: "BD2CashShop.dll"}
+	FChat         = Spec{fileName: "BD2FChat.dll"}
 	GameNames     = Spec{fileName: "BD2.GameNames.dll"}
 )
 
@@ -85,7 +86,7 @@ func Install(spec Spec, gameDir, source string) (Result, error) {
 	// Read both artifacts before touching the installation. The runtime table
 	// library is shipped beside every plugin, including explicit development paths.
 	var runtimeData []byte
-	if spec == LocalIdentity || spec == LoginUI || spec == CashShop {
+	if spec == LocalIdentity || spec == LoginUI || spec == CashShop || spec == FChat {
 		runtimeSource := filepath.Join(filepath.Dir(source), GameNames.fileName)
 		runtimeData, err = os.ReadFile(runtimeSource)
 		if err != nil {

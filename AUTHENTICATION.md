@@ -72,22 +72,31 @@ https://bd2.example.com/auth/google/callback
 
 ## 3. 创建 Google OAuth 应用
 
-Google 当前主要在 **Google Auth Platform → Branding / Audience / Data Access / Clients** 中管理 OAuth。控制台名称以后可能调整，但需要完成的对象不变：配置应用展示与受众，并创建一个 **Web application** 类型的 OAuth client。
+Google 当前主要在 **Google Auth Platform → Branding / Audience / Data Access / Clients** 中管理 OAuth。
 
-1. 登录 <https://console.cloud.google.com/> 并选择或创建项目。
-2. 在 **Branding** 中配置应用名称、支持邮箱等公开信息。
-3. 在 **Audience** 中选择实际目标受众并确认 Publishing status：
-   - **测试阶段**：保持 Testing，并把实际参加登录测试的 Google 账号加入 Test users。未列入的玩家会被 Google 拒绝。
-   - **向玩家开放前**：检查 Audience、Publishing status 和 Google 显示的发布要求，并按实际受众切换到 In production。
-4. 在 **Data Access** 中核对 scope。`bd2server` 当前只申请最小的 `openid`，不申请 `profile` 或邮箱 scope。
-5. 在 **Clients** 中选择 **Create Client**，应用类型选择 **Web application**。不要创建 Desktop application 类型的 client：浏览器回调落在服务端 HTTPS endpoint，需要 Web application client。
-6. 在 **Authorized redirect URIs** 中添加：
+1. 登录 [Google Cloud Console](https://console.cloud.google.com/) 并选择或创建项目。
+
+2. 打开左侧的 **APIs & Services** 一栏，进入 **OAuth consent screen** 页面。
+
+3. 在 **Branding** 中点击 **Get started**（如果是首次配置），填写应用名称、支持邮箱等公开信息。
+
+4. 在 **Audience** 中选择实际目标受众（一般选择 **External**），并确认：
+   - **测试阶段**：保持 **Testing** 状态，并把实际参加登录测试的 Google 账号加入 **Test users**。未列入的玩家会被 Google 拒绝（测试用户可在 **Audience** 页面添加）。
+   - **向所有玩家开放**：在 **Audience** 页面，找到 **Publishing status**，点击 **Publish app**（发布前需要根据指引完成 **Branding** 的配置，并满足 Google 对应用的相关要求）。
+
+5. 在 **Data Access** 中核对 **Scopes**。我们当前只需申请最小的 `openid`，申请多了也没用。
+
+6. 在 **Clients** 中选择 **Create client**，**Application type** 选择 **Web application**。不要创建其他类型的 client。
+
+7. 在 **Authorized redirect URIs** 中添加：
 
    ```text
    https://bd2.example.com/auth/google/callback
    ```
 
-7. 创建后立即安全保存 Client ID 和 Client Secret。如果 Google 后台不再允许查看或下载原 secret，就按后台提供的轮换流程创建新 secret，并同步更新服务端环境变量。
+   注意：这里的 `bd2.example.com` 是示例域名，实际配置时必须替换成 `bd2server` 真实使用的 HTTPS 回调地址，并与服务端配置完全一致。
+
+8. 首次创建后，配置可能需要几分钟到几小时才能完全生效。创建后立即安全保存 **Client ID** 和 **Client Secret**。如果 Google 后台不再允许查看或下载原 secret，就按照后台提供的轮换流程创建新 secret，并同步更新服务端环境变量。
 
 ## 4. 生成并保存 master key
 

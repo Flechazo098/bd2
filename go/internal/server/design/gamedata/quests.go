@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/server/protocol/wire"
 	"database/sql"
 	"fmt"
 
@@ -11,13 +12,16 @@ import (
 // Reward slot zero is normal story difficulty; later slots are separate
 // difficulty tiers and must never be added to the same clear.
 type QuestDesign struct {
-	ID                int
-	Type              int
-	PriorQuestID      int
-	NextQuestID       int
-	GiveQuestItemIDs  []uint64
-	CollectionRewards []Reward
-	Rewards           [5][]Reward
+	ID                 int
+	Type               int
+	PriorQuestID       int
+	NextQuestID        int
+	AcceptCinemaName   string
+	CompleteCinemaName string
+	TimelineStartMapID int
+	GiveQuestItemIDs   []uint64
+	CollectionRewards  []Reward
+	Rewards            [5][]Reward
 }
 
 func LoadQuestDesign(root, version string, packID int) (map[int]QuestDesign, error) {
@@ -68,6 +72,13 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 			continue
 		}
 		entry := QuestDesign{ID: id}
+		for field, dst := range map[int]*string{1: &entry.AcceptCinemaName, 7: &entry.CompleteCinemaName} {
+			value, _, err := wire.Bytes(proto, field)
+			if err != nil {
+				return nil, err
+			}
+			*dst = string(value)
+		}
 		collectionIDs, err := packedInts(proto, 6)
 		if err != nil {
 			return nil, fmt.Errorf("gamedata: quest%d collections: %w", id, err)
@@ -90,7 +101,7 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gamedata: quest%d give items: %w", id, err)
 		}
-		for field, dst := range map[int]*int{63: &entry.Type, 37: &entry.PriorQuestID, 35: &entry.NextQuestID} {
+		for field, dst := range map[int]*int{63: &entry.Type, 37: &entry.PriorQuestID, 35: &entry.NextQuestID, 62: &entry.TimelineStartMapID} {
 			values, err := packedInts(proto, field)
 			if err != nil || len(values) > 1 || (len(values) == 1 && values[0] > uint64(^uint32(0)>>1)) {
 				return nil, fmt.Errorf("gamedata: invalid quest %d field%d", id, field)

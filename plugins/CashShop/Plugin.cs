@@ -8,6 +8,7 @@ using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
 using BD2.GameNames;
+using TextComponent = BD2.GameSdk.Component;
 using BepInEx;
 using HarmonyLib;
 using Newtonsoft.Json;
@@ -46,7 +47,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
     private static readonly Dictionary<CurrencyButton, Dictionary<TMP_Text, PriceLabelState>> unavailablePriceLabels = [];
     private static BepInEx.Logging.ManualLogSource Log;
-    private const string Unavailable = "当前服务器未开通购买功能";
+    private static string Unavailable => TextComponent.Translatable("cash_shop.unavailable").GetString();
     private const string Marker = "<link=bd2-commerce:";
     private static long paySequence = DateTime.UtcNow.Ticks;
     private static readonly BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
@@ -334,7 +335,7 @@ public sealed class Plugin : BaseUnityPlugin
         CommonPacket.UserInfo != null && CommonPacket.GetHaveCurrencyCount((EElementType)quote.ItemType, false) >= quote.Amount;
 
     private static void ShowPurchaseFailure() =>
-        UIManager.OpenSelectiveMessagePopupUI(Unavailable, "购买失败", MessagePopupUI.EMessagePopupButtonStyle.ONLY_OK);
+        UIManager.OpenSelectiveMessagePopupUI(Unavailable, TextComponent.Translatable("cash_shop.purchase_failed").GetString(), MessagePopupUI.EMessagePopupButtonStyle.ONLY_OK);
 
     private static bool SuppressExternalPaymentConfirmation(string __1, string __2)
     {
@@ -354,7 +355,7 @@ public sealed class Plugin : BaseUnityPlugin
     private static bool PriceLabel(string __0, ref string __result)
     {
         CommerceProduct policy = Resolve(__0);
-        string text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? "Free" : policy.Amount.ToString(CultureInfo.InvariantCulture);
+        string text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? TextComponent.Translatable("cash_shop.free").GetString() : policy.Amount.ToString(CultureInfo.InvariantCulture);
         __result = Marker + Uri.EscapeDataString(__0 ?? "") + ">" + text + "</link>";
         return false;
     }
@@ -387,7 +388,7 @@ public sealed class Plugin : BaseUnityPlugin
         button.SetActive(true);
         if (policy == null || !policy.Enabled || policy.ItemType == 0)
         {
-            button.SetCash(policy != null && policy.Enabled ? "Free" : Unavailable);
+            button.SetCash(policy != null && policy.Enabled ? TextComponent.Translatable("cash_shop.free").GetString() : Unavailable);
             return;
         }
         button.Set((EElementType)policy.ItemType, 0, policy.Amount);
@@ -593,7 +594,7 @@ public sealed class Plugin : BaseUnityPlugin
             sprite.gameObject.SetActive(policy != null && policy.Enabled && policy.ItemType != 0);
             if (policy != null && policy.Enabled && policy.ItemType != 0) sprite.SetSprite(CurrencyInfo.GetCurrencyDTO((EElementType)policy.ItemType).IconSpriteNameSmall);
         }
-        if (text != null) text.text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? "Free" : PriceText(policy);
+        if (text != null) text.text = policy == null || !policy.Enabled ? Unavailable : policy.ItemType == 0 ? TextComponent.Translatable("cash_shop.free").GetString() : PriceText(policy);
     }
 
     private static void GachaPrice(GachaProductButtonElement __instance, string __4)

@@ -6,7 +6,7 @@ import (
 )
 
 // LoadPackSummaryTargets follows PackMapRewardInfo.IsSummaryTargetPackType in
-// the 2.35.10 client. Pack identities and types come from the installed tables.
+// the 2.36.7 client. Pack identities and types come from the installed tables.
 func LoadPackSummaryTargets(root, version string) (map[int]bool, error) {
 	db, closeDB, err := openStatDatabase(root, version)
 	if err != nil {

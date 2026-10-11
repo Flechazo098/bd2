@@ -3,6 +3,7 @@ package app
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/battle/monsterhunt"
+	"bd2server/internal/server/domain/battle/pvp"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
 	"bd2server/internal/server/domain/world"
@@ -12,6 +13,11 @@ import (
 )
 
 type designCatalog struct {
+	friends                  gamedata.FriendRules
+	chat                     *gamedata.ChatDesign
+	pvp                      *pvp.Rules
+	guild                    *gamedata.GuildDesign
+	nicknameTicketID         uint64
 	cashCatalog              *commerce.Catalog
 	source                   *gamedata.Source
 	world                    *gamedata.WorldRules
@@ -31,6 +37,8 @@ type designCatalog struct {
 	contentTickets           *gamedata.GachaContentTicketDesign
 	missionDesign            *gamedata.MissionDesign
 	levelDesign              *gamedata.AchievementLevelDesign
+	profileDesign            *gamedata.ProfileDesign
+	avatarProfile            *gamedata.AvatarProfileDesign
 	equipmentSlots           map[uint64]uint64
 	equipmentUpgrade         *gamedata.EquipmentUpgradeDesign
 	equipmentCraft           *gamedata.EquipmentCraftDesign
@@ -89,6 +97,13 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	calendars, gameRules := c.calendars, c.gameRules
 	d := &designCatalog{source: gamedata.NewSource(gameData, gameDataVersion)}
 	var err error
+	if err := d.loadSharedDesign(c); err != nil {
+		return nil, err
+	}
+	d.nicknameTicketID, err = gamedata.LoadNicknameTicketID(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load nickname ticket: %w", err)
+	}
 	gachaSchedule := calendars.GachaSeed
 	var scheduleGroupIDs, stepUpGroupIDs []uint64
 	for _, window := range gachaSchedule.Schedules {
@@ -137,6 +152,14 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	d.levelDesign, err = gamedata.LoadAchievementLevelDesign(gameData, gameDataVersion)
 	if err != nil {
 		return nil, fmt.Errorf("load user level rewards: %w", err)
+	}
+	d.profileDesign, err = gamedata.LoadProfileDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load default ID card layout: %w", err)
+	}
+	d.avatarProfile, err = gamedata.LoadAvatarProfileDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load avatar profile GameData: %w", err)
 	}
 	d.equipmentSlots, err = gamedata.LoadEquipmentSlots(gameData, gameDataVersion)
 	if err != nil {

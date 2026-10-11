@@ -1,0 +1,9 @@
+{
+  "loginui.recovery.story_failed": "Story recovery failed. Please restart the client.",
+  "loginui.recovery.story_sync": "Synchronizing story progress. Waiting for server…",
+  "loginui.recovery.player_sync": "Synchronizing player data…",
+  "loginui.recovery.reconnecting": "Reconnecting to server…",
+  "loginui.recovery.waiting_server": "Waiting for server to start…",
+  "loginui.recovery.restoring_session": "Restoring login session…",
+  "loginui.recovery.safe_scene": "Returning to a safe scene…"
+}

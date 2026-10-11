@@ -46,8 +46,8 @@ func loadInfiniteGachaIdentity(db *sql.DB, selectedGroups []uint64) (groupID, ga
 	if err = rows.Err(); err != nil {
 		return
 	}
-	if groupID == 0 || gachaID == 0 {
-		err = fmt.Errorf("gamedata: infinite gacha group missing")
+	if groupID != 0 && gachaID == 0 {
+		err = fmt.Errorf("gamedata: infinite gacha group %d has no draw", groupID)
 	}
 	return
 }

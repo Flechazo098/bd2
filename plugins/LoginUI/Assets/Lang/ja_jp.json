@@ -1,0 +1,9 @@
+{
+  "loginui.recovery.story_failed": "ストーリーの復旧に失敗しました。クライアントを再起動してください。",
+  "loginui.recovery.story_sync": "ストーリーの進行状況を同期しています。サーバーの応答を待っています…",
+  "loginui.recovery.player_sync": "プレイヤーデータを同期しています…",
+  "loginui.recovery.reconnecting": "サーバーに再接続しています…",
+  "loginui.recovery.waiting_server": "サーバーの起動を待っています…",
+  "loginui.recovery.restoring_session": "ログインセッションを復旧しています…",
+  "loginui.recovery.safe_scene": "安全な場所に戻っています…"
+}

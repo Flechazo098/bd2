@@ -24,6 +24,7 @@ type versionSourceConfig struct {
 		CaptureEnvironment string `json:"capture_environment"`
 		LoginUI            string `json:"login_ui"`
 		CashShop           string `json:"cash_shop"`
+		FChat              string `json:"fchat"`
 	} `json:"plugins"`
 }
 
@@ -84,7 +85,7 @@ namespace Bd2Build
 }
 
 func (c versionSourceConfig) validate(plugin string) (string, error) {
-	plugins := map[string]string{"local_identity": c.Plugins.LocalIdentity, "capture_environment": c.Plugins.CaptureEnvironment, "login_ui": c.Plugins.LoginUI, "cash_shop": c.Plugins.CashShop}
+	plugins := map[string]string{"local_identity": c.Plugins.LocalIdentity, "capture_environment": c.Plugins.CaptureEnvironment, "login_ui": c.Plugins.LoginUI, "cash_shop": c.Plugins.CashShop, "fchat": c.Plugins.FChat}
 	selected, found := plugins[plugin]
 	if !found {
 		return "", fmt.Errorf("unsupported plugin %q", plugin)
@@ -94,7 +95,7 @@ func (c versionSourceConfig) validate(plugin string) (string, error) {
 	if !semver.MatchString(c.GameVersion) {
 		return "", errors.New("game_version must be a numeric three-part version")
 	}
-	for _, key := range []string{"local_identity", "capture_environment", "login_ui", "cash_shop"} {
+	for _, key := range []string{"local_identity", "capture_environment", "login_ui", "cash_shop", "fchat"} {
 		if !semver.MatchString(plugins[key]) {
 			return "", fmt.Errorf("plugins.%s must be a numeric three-part version", key)
 		}

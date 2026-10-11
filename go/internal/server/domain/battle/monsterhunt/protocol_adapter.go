@@ -49,10 +49,14 @@ func (s *Service) ValidatePack(ctx command.Context, pack int, req []byte) error 
 	return nil
 }
 
-func (s *Service) rankWire(u user) []byte {
-	b := wire.AppendVarint(nil, 7, 1)
-	b = wire.AppendDouble(b, 8, s.score(u))
-	return wire.AppendDouble(b, 10, 100)
+func (s *Service) rankWire(u user) ([]byte, error) {
+	rank, err := s.ranking(u)
+	if err != nil {
+		return nil, err
+	}
+	b := wire.AppendVarint(nil, 7, rank.Rank)
+	b = wire.AppendDouble(b, 8, rank.Score)
+	return wire.AppendDouble(b, 10, rank.TopPercent), nil
 }
 
 func (s *Service) grant(ctx command.Context, identity string, rewards []gamedata.BattleReward) ([]byte, error) {
@@ -258,6 +262,21 @@ func Open(ctx command.Context, storage stateio.Store, rules *Rules, inventory *a
 		if e != nil || u.StartHP > hp || u.HighestHP != hp || u.ClearLevel > d.MaxLevel {
 			return nil, fmt.Errorf("monsterhunt: saved progress exceeds design")
 		}
+		if d.RankingVersion == 1 && (u.RankLevel != u.ClearLevel || u.RankRemainingHP != 0) {
+			return nil, fmt.Errorf("monsterhunt: saved ranking is not a cleared difficulty")
+		}
+		if u.RankLevel == 0 && (u.RankDamage != 0 || u.RankRemainingHP != 0 || u.RankMaxHP != 0) {
+			return nil, fmt.Errorf("monsterhunt: saved ranking has no difficulty")
+		}
+		if u.Played && (d.RankingVersion == 0 && u.RankLevel == 0 || u.RankLevel > d.MaxLevel || u.RankLevel != 0 && u.RankMaxHP == 0 || u.RankRemainingHP > u.RankMaxHP || u.RankDamage >= 100000000000000) {
+			return nil, fmt.Errorf("monsterhunt: incompatible saved ranking")
+		}
+		if u.RankLevel != 0 {
+			rankHP, err := d.HP(u.RankLevel)
+			if err != nil || rankHP != u.RankMaxHP {
+				return nil, fmt.Errorf("monsterhunt: saved ranking HP exceeds design")
+			}
+		}
 	}
 	for key, p := range s.state.Presets {
 		slot, _ := scalar(p, 4)
@@ -339,11 +358,11 @@ func (s *Service) scheduleInfo(ctx command.Context, req []byte) (int, []byte, bo
 	return projected.Handle(ctx, "/MonsterHuntScheduleInfo", req)
 }
 
-func (s *Service) encodeUser(u user, c Season) []byte {
+func (s *Service) encodeUser(u user, c Season, level uint64) []byte {
 	var b []byte
 	for n, v := range map[int]uint64{1: u.Season, 2: u.Hunt, 3: u.Level, 4: u.StartHP, 6: u.HighestHP, 7: u.HighestDate, 8: u.CurrentDamage, 9: u.DailyDamage, 11: u.DailyLevel, 12: u.DailyDate} {
 		if n == 3 {
-			v = u.ClearLevel
+			v = level
 			if v == 0 {
 				v = 1
 			}
@@ -443,7 +462,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	var updateEncounter encounter
 	switch path {
 	case "/MonsterHuntUserInfo":
-		out = wire.AppendBytes(nil, 1, s.encodeUser(u, c))
+		out = wire.AppendBytes(nil, 1, s.encodeUser(u, c, u.ClearLevel))
 		if u.Played {
 			out = wire.AppendVarint(out, 2, 1)
 			out = wire.AppendDouble(out, 3, 100)
@@ -528,7 +547,11 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			id = c.ID
 		}
 		if v, ok := s.state.Users[strconv.FormatUint(id, 10)]; ok && v.Played {
-			b := s.rankWire(v)
+			b, rankErr := s.rankWire(v)
+			if rankErr != nil {
+				e = rankErr
+				break
+			}
 			out = wire.AppendBytes(out, 1, b)
 			out = wire.AppendBytes(out, 2, b)
 		}
@@ -652,7 +675,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		u.DailyLevel = u.ClearLevel
 		u.DailyDate = uint64(s.now().UnixMilli())
 		next.Users[strconv.FormatUint(c.ID, 10)] = u
-		out = wire.AppendBytes(out, 1, s.encodeUser(u, c))
+		out = wire.AppendBytes(out, 1, s.encodeUser(u, c, u.ClearLevel))
 		out = wire.AppendVarint(out, 4, 1)
 		out = wire.AppendDouble(out, 5, 100)
 		mutation = true
@@ -677,7 +700,12 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		out = wire.AppendVarint(nil, 3, u.Hunt)
 		out = wire.AppendBytes(out, 4, bundle)
 		out = wire.AppendVarint(out, 1, 1)
-		out = wire.AppendVarint(out, 2, uint64(s.score(u)))
+		score, scoreErr := s.score(u)
+		if scoreErr != nil {
+			e = scoreErr
+			break
+		}
+		out = wire.AppendDouble(out, 2, score)
 		out = wire.AppendDouble(out, 5, 100)
 		mutation = true
 	}
@@ -813,9 +841,6 @@ func (s *Service) EnterBattle(ctx command.Context, req []byte, receipt string) (
 	if level > d.MaxLevel || mode == BattleMode && level > d.ChallengeableLevel && level > u.ClearLevel+1 {
 		return nil, fmt.Errorf("monsterhunt: invalid challenge level")
 	}
-	if mode == BattleMode && u.ClearLevel >= d.MaxLevel {
-		return nil, fmt.Errorf("monsterhunt: maximum level already cleared")
-	}
 	if receipt == "" {
 		return nil, fmt.Errorf("monsterhunt: missing battle receipt")
 	}
@@ -823,16 +848,14 @@ func (s *Service) EnterBattle(ctx command.Context, req []byte, receipt string) (
 	if e != nil {
 		return nil, e
 	}
-	if mode == BattleMode && level == u.Level {
+	maxHP := hp
+	if mode == BattleMode && level == u.Level && level > u.ClearLevel {
 		hp = u.StartHP
 	}
 	s.active[receipt] = encounter{c.ID, id, level, hp, mode, u.Level, u.StartHP, 1}
 	s.transientVersion++
-	if mode == PracticeMode {
-		u.Level = level
-		u.StartHP = hp
-	}
-	return wire.AppendBytes(nil, 5, s.encodeUser(u, c)), nil
+	u.Level, u.StartHP, u.HighestHP = level, hp, maxHP
+	return wire.AppendBytes(nil, 5, s.encodeUser(u, c, level)), nil
 }
 
 func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string) ([]byte, error) {
@@ -865,6 +888,8 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 	if a.Season != c.ID || a.Hunt != u.Hunt || a.BeforeLevel != u.Level || a.BeforeHP != u.StartHP {
 		return nil, fmt.Errorf("monsterhunt: stale battle progress")
 	}
+	previousClear := u.ClearLevel
+	replaying := a.Level <= previousClear
 	u.Level = a.Level
 	d, e := s.load(u.Hunt)
 	if e != nil {
@@ -875,13 +900,22 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		return nil, e
 	}
 	damage := a.HP - remaining
+	var totalDamage uint64
+	if d.RankingVersion == 1 {
+		totalDamage, e = monsterHuntAttackDamage(req)
+		if e != nil {
+			return nil, e
+		}
+	}
+	if e := updateRank(&u, d, a.Level, totalDamage, remaining, u.HighestHP); e != nil {
+		return nil, e
+	}
 	if damage > u.CurrentDamage {
 		u.CurrentDamage = damage
 	}
 	u.StartHP = remaining
 	u.Played = true
 	u.HighestDate = uint64(s.now().UnixMilli())
-	previousClear := u.ClearLevel
 	var clear uint64
 	if remaining == 0 {
 		clear = u.Level
@@ -901,7 +935,14 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 			u.HighestHP = u.StartHP
 		}
 	}
-	out := wire.AppendBytes(nil, 13, s.encodeUser(u, c))
+	if replaying {
+		u.Level, u.StartHP = a.BeforeLevel, a.BeforeHP
+		u.HighestHP, e = d.HP(u.Level)
+		if e != nil {
+			return nil, e
+		}
+	}
+	out := wire.AppendBytes(nil, 13, s.encodeUser(u, c, u.ClearLevel))
 	d, e = s.load(u.Hunt)
 	if e != nil {
 		return nil, e
@@ -921,7 +962,7 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		}
 	}
 	day := uint64(s.now().UnixMilli()) / 86400000
-	if damage > 0 && (u.DailyDate/86400000 != day || a.Level > u.DailyLevel) {
+	if !replaying && damage > 0 && (u.DailyDate/86400000 != day || a.Level > u.DailyLevel) {
 		bundle, e := s.grant(ctx, "monsterhunt:"+key+":daily", dailyDifference(d, u.DailyLevel, a.Level))
 		if e != nil {
 			return nil, e
@@ -931,7 +972,7 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		u.DailyDate = uint64(s.now().UnixMilli())
 		u.DailyDamage = damage
 	}
-	out, _, _ = wire.ReplaceBytes(out, 13, s.encodeUser(u, c))
+	out, _, _ = wire.ReplaceBytes(out, 13, s.encodeUser(u, c, u.ClearLevel))
 	out = wire.AppendVarint(out, 14, 1)
 	out = wire.AppendDouble(out, 26, 100)
 	next := s.clone()

@@ -1184,6 +1184,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err := s.state.ClearQuest(ctx, quest, pack, s.questDifficultyFor(pack, quest)); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
 		}
+		if !wasCleared {
+			if err := s.beginQuestCompletionPresentation(ctx, pack, quest, s.questDifficultyFor(pack, quest)); err != nil {
+				return 0, nil, true, err
+			}
+		}
 		if s.collection != nil && quest == s.seed.BattleUnlockQuestID && pack == s.seed.PackID && s.questDifficulty(pack) == 0 && !wasCleared {
 			if err := s.collection.AttachRewardCostume(ctx, s.seed.RewardCostume); err != nil {
 				return 0, nil, true, fmt.Errorf("world: attach cleared quest costume: %w", err)

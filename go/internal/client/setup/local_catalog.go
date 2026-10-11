@@ -63,14 +63,35 @@ func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error 
 	if len(hash) == 0 || len(hash) > 1024 {
 		return errors.New("local ServerData catalog hash has an invalid size")
 	}
-	cache, err := addressablesCacheDirectory()
+	cache, err := addressablesCacheDirectory(installation)
 	if err != nil {
 		return err
 	}
 	return synchronizePersistentCatalog(cache, raw, hash)
 }
 
-func addressablesCacheDirectory() (string, error) {
+func addressablesCacheDirectory(installation clientlayout.Installation) (string, error) {
+	gameRoot := installation.Root
+	if installation.Kind == clientlayout.MacOS {
+		gameRoot = filepath.Dir(gameRoot)
+	}
+	instanceRoot := filepath.Dir(gameRoot)
+	if filepath.Base(gameRoot) == "game" {
+		marker, err := os.ReadFile(filepath.Join(instanceRoot, "instance.json"))
+		if err == nil {
+			var owner struct {
+				SchemaVersion int    `json:"schema_version"`
+				ID            string `json:"id"`
+			}
+			if err := json.Unmarshal(marker, &owner); err != nil || owner.SchemaVersion != 1 || owner.ID != filepath.Base(instanceRoot) {
+				return "", errors.New("invalid client instance manifest for Addressables cache")
+			}
+			return filepath.Join(instanceRoot, "unity", "persistent", "com.unity.addressables"), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("read client instance manifest: %w", err)
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("locate user home for Addressables cache: %w", err)

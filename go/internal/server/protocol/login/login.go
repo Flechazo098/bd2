@@ -20,11 +20,16 @@ var (
 // deliberately absent. ResponseFields contains the remaining top-level
 // protobuf fields (such as client-notification state), never an HTTP envelope.
 type LoginSeed struct {
+	guildRaidSlots     func(command.Context) (uint64, error)
+	fishing            func() FishingState
 	Version            string
 	PacketCode         int
 	UserInfo           []byte
 	ResponseFields     []byte
 	currencies         CurrencyProvider
+	avatarSelection    AvatarSelectionProvider
+	nickname           NicknameProvider
+	profileTitle       ProfileTitleProvider
 	purchaseCounts     PurchaseCountProvider
 	presetSlots        PresetSlotProvider
 	inventorySlots     InventorySlotProvider
@@ -39,10 +44,38 @@ type LoginSeed struct {
 	levelReward          LevelRewardProvider
 	huntingAP            HuntingAPProvider
 	monsterHuntSlots     PresetSlotProvider
+	colosseumSlots       PresetSlotProvider
 	additionalCurrencies interface {
 		AdditionalCurrencies(command.Context) (map[int]uint64, error)
 	}
 	newbieStep interface{ NewbieStep() uint64 }
+	community  func(command.Context) ([]byte, error)
+}
+
+func (s *LoginSeed) AttachCommunity(read func(command.Context) ([]byte, error)) error {
+	if read == nil {
+		return errors.New("account: missing community provider")
+	}
+	s.community = read
+	return nil
+}
+
+func (s *LoginSeed) AttachGuildRaidSlots(read func(command.Context) (uint64, error)) error {
+	if read == nil {
+		return errors.New("account: missing guild raid slots")
+	}
+	s.guildRaidSlots = read
+	return nil
+}
+
+type FishingState struct{ AP, FishSlots, RodSlots, ItemSlots uint64 }
+
+func (s *LoginSeed) AttachFishing(read func() FishingState) error {
+	if read == nil {
+		return errors.New("account: missing fishing AP provider")
+	}
+	s.fishing = read
+	return nil
 }
 
 func (s *LoginSeed) AttachNewbieStep(provider interface{ NewbieStep() uint64 }) error {
@@ -229,3 +262,11 @@ type diskSeed struct {
 }
 
 // Write stores a seed in the portable JSON form used by the one-shot importer.
+
+func (s *LoginSeed) AttachColosseumSlots(provider PresetSlotProvider) error {
+	if provider == nil {
+		return errors.New("account: missing colosseum preset provider")
+	}
+	s.colosseumSlots = provider
+	return nil
+}

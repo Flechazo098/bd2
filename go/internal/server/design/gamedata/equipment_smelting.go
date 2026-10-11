@@ -6,7 +6,7 @@ import (
 	"math"
 )
 
-// EquipmentSmeltingDesign contains only static 2.35.10 GameData facts. It does
+// EquipmentSmeltingDesign contains only static 2.36.7 GameData facts. It does
 // not decide whether a lower-score result is applied or how mileage is paid:
 // those are server transactions and require an official response capture.
 type EquipmentSmeltingDesign struct {

@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/runtime/player"
 	accountstate "bd2server/internal/server/storage/account"
+	"bd2server/internal/server/storage/outbox"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,72 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 	if request.Identity.AccountID != p.accountID || p.assembly == nil {
 		return reply, player.Failure{Cause: player.ErrUnavailable, RecoveryRequired: true}
 	}
+	if request.System != nil && request.System.Kind == player.ReconcileSocial {
+		return p.reconcileSocial(ctx, request)
+	}
+	friendStarted := time.Now()
+	friendResponses, err := p.prepareFriends(ctx, request)
+	reply.Timing.Execute += time.Since(friendStarted)
+	if err != nil {
+		return reply, err
+	}
+	if len(request.Requests) == 1 && len(friendResponses) == 1 {
+		reply.Responses = []player.Response{friendResponses[0]}
+		return reply, nil
+	}
+	if request.System == nil && hasPlayerText(request.Requests) {
+		var receipt commandReceipt
+		var found bool
+		err := p.readLocal(ctx, request.Identity, func(c command.Context) error {
+			raw, exists, err := c.State.LoadEntry("missions", "command_receipts", request.Identity.SessionID+"/"+request.Identity.RequestID)
+			if err != nil || !exists {
+				return err
+			}
+			found = true
+			return json.Unmarshal(raw, &receipt)
+		})
+		if err != nil {
+			return reply, err
+		}
+		if found {
+			if receipt.Digest != hex.EncodeToString(request.Digest[:]) {
+				return reply, player.ErrIdentityConflict
+			}
+			reply.Responses = receipt.Responses
+			return reply, nil
+		}
+	}
+	approvals, err := p.prepareText(ctx, request)
+	if err != nil {
+		return reply, err
+	}
+	if approvals != nil {
+		ctx = context.WithValue(ctx, textApprovalKey{}, approvals)
+		cancellation := request.Cancellation
+		if cancellation == nil {
+			cancellation = ctx
+		}
+		request.Cancellation = context.WithValue(cancellation, textApprovalKey{}, approvals)
+	}
+	restoreRooms, err := p.prepareRoomResults(ctx, request.Requests)
+	if err != nil {
+		return reply, err
+	}
+	defer restoreRooms()
+	socialService, socialPlans, err := p.prepareSocial(ctx, request)
+	if err != nil {
+		return reply, err
+	}
+	defer func() {
+		if result != nil || socialService == nil {
+			return
+		}
+		for _, plan := range socialPlans {
+			if err := socialService.Confirm(ctx, plan); err != nil {
+				result = errors.Join(result, err)
+			}
+		}
+	}()
 	started := time.Now()
 	tx, err := p.repository.BeginCommand(ctx)
 	reply.Timing.Begin = time.Since(started)
@@ -43,9 +110,22 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 	}()
 
 	identity := command.Context{Identity: request.Identity, Cancellation: request.Cancellation, State: tx}
+	published := false
+	var chatPolicyPayload []byte
+	identity.Emit = func(event command.Event) error {
+		if err := outbox.Publish(tx, p.accountID, event); err != nil {
+			return err
+		}
+		published = true
+		if event.Topic == "chat.policy" {
+			chatPolicyPayload = append([]byte(nil), event.Payload...)
+		}
+		return nil
+	}
 	isLogin := len(request.Requests) == 1 && request.Requests[0].Path == "/LoginUser"
+	isSystem := request.System != nil
 	receiptKey := request.Identity.SessionID + "/" + request.Identity.RequestID
-	if !isLogin {
+	if !isLogin && !isSystem {
 		raw, found, err := tx.LoadEntry("missions", "command_receipts", receiptKey)
 		if err != nil {
 			return reply, err
@@ -74,7 +154,33 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 	}
 	assembly := p.assembly
 	transientBefore := assembly.transientVersion()
-	for _, item := range request.Requests {
+	failCommand := func(cause error) error {
+		changed := tx.Dirty() || assembly.transientVersion() != transientBefore
+		started := time.Now()
+		rollbackErr := tx.Rollback()
+		reply.Timing.Rollback += time.Since(started)
+		finished = true
+		if rollbackErr != nil {
+			p.assembly = nil
+			return player.Failure{Cause: errors.Join(cause, rollbackErr), RecoveryRequired: true}
+		}
+		if !changed {
+			return cause
+		}
+		p.assembly = nil
+		if recoveryErr := p.Recover(context.WithoutCancel(ctx)); recoveryErr != nil {
+			return player.Failure{Cause: errors.Join(cause, recoveryErr), RecoveryRequired: true}
+		}
+		return player.Failure{Cause: cause, RecoveryRequired: true, AlreadyRecovered: true}
+	}
+	if isSystem {
+		body, err := p.executeSystem(identity, tx, request.System)
+		if err != nil {
+			return reply, failCommand(err)
+		}
+		reply.Responses = []player.Response{{Body: body}}
+	}
+	for index, item := range request.Requests {
 		var response player.Response
 		if isLogin {
 			started := time.Now()
@@ -94,7 +200,13 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 			reply.Timing.Observer += time.Since(started)
 			if err == nil {
 				started = time.Now()
-				response.PacketCode, response.Body, err = assembly.dispatch(identity, item.Path, item.Body)
+				if friendResponse, found := friendResponses[index]; found {
+					response = friendResponse
+				} else if plan := socialPlans[index]; plan != nil {
+					response.PacketCode, response.Body, err = socialService.Apply(identity, plan)
+				} else {
+					response.PacketCode, response.Body, err = assembly.dispatch(identity, item.Path, item.Body)
+				}
 				reply.Timing.Execute += time.Since(started)
 			}
 			if err == nil {
@@ -112,28 +224,27 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 			}
 		}
 		if err != nil {
-			changed := tx.Dirty() || assembly.transientVersion() != transientBefore
-			started := time.Now()
-			rollbackErr := tx.Rollback()
-			reply.Timing.Rollback += time.Since(started)
-			finished = true
-			if rollbackErr != nil {
-				p.assembly = nil
-				return reply, player.Failure{Cause: errors.Join(err, rollbackErr), RecoveryRequired: true}
-			}
-			if !changed {
-				return reply, err
-			}
-			p.assembly = nil
-			if recoveryErr := p.Recover(context.WithoutCancel(ctx)); recoveryErr != nil {
-				return reply, player.Failure{Cause: errors.Join(err, recoveryErr), RecoveryRequired: true}
-			}
-			return reply, player.Failure{Cause: err, RecoveryRequired: true, AlreadyRecovered: true}
+			return reply, failCommand(err)
 		}
 
 		reply.Responses = append(reply.Responses, response)
 	}
-	if tx.Dirty() && !isLogin {
+	if !isSystem && (tx.Dirty() || isLogin) {
+		if isLogin || friendProfileChanged(request.Requests) {
+			if err := assembly.publishFriendProfile(identity, isLogin); err != nil {
+				return reply, failCommand(err)
+			}
+		}
+		if isLogin {
+			if err := assembly.chatService.PublishPolicy(identity); err != nil {
+				return reply, err
+			}
+		}
+		if err := assembly.publishDirectory(identity); err != nil {
+			return reply, failCommand(err)
+		}
+	}
+	if tx.Dirty() && !isLogin && !isSystem {
 		raw, err := json.Marshal(commandReceipt{Digest: hex.EncodeToString(request.Digest[:]), Responses: reply.Responses})
 		if err != nil {
 			return reply, err
@@ -149,6 +260,14 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 	if err != nil {
 		p.assembly = nil
 		return reply, player.Failure{Cause: err, RecoveryRequired: true}
+	}
+	if published && p.factory.wakeOutbox != nil {
+		p.factory.wakeOutbox(p.accountID)
+	}
+	if len(chatPolicyPayload) > 0 && p.factory.shared != nil {
+		if err := p.factory.shared.consumeChatPolicy(ctx, p.accountID, chatPolicyPayload); err != nil {
+			slog.Warn("chat policy publication deferred", "account_id", p.accountID, "error", err)
+		}
 	}
 	return reply, nil
 }
@@ -197,12 +316,17 @@ func (p *playerInstance) Recover(ctx context.Context) error {
 		return err
 	}
 	p.assembly = assembly
+	p.sharedSocial = nil
+	if err := p.recoverSharedBattle(ctx); err != nil {
+		return err
+	}
 	slog.Warn("player state recovered from committed snapshot", "account_id", p.accountID)
 	return nil
 }
 
 func (p *playerInstance) Close() error {
 	p.assembly = nil
+	p.sharedSocial = nil
 	return p.repository.Close()
 }
 

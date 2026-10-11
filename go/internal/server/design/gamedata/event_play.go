@@ -25,6 +25,10 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 	}
 	names := []string{"PackEventHubTable", "PackEventListTable", "PackEventStoryGroupTable", "PackEventStoryTable", "PackEventBattleGroupTable", "PackEventBattleTable", "PackEventMiniGameTable", "FieldMiniGameRewardTable", "FieldMiniGameSpeedTable", "RhythmGameMusicTable", "RhythmGameGradeTable", "SichuanStageTable", "SichuanEventTable", "SichuanRewardTable", "HopscotchStageTable", "HopscotchRewardTable", "HopscotchDefaultTable", "FieldMiniGameSurvivalTable", "ActionGameDefaultTable", "ActionGameMissionTable", "ActionGameStageTable", "FieldMiniGameCharTable", "FieldMiniGameMapTable", "FieldMiniGameUpgradeTable", "FieldMiniGameUpgradeGroupTable", "FieldMiniGameSkillGroupTable", "FieldMiniGameSkillTable", "FieldMiniGameCharLevelTable", "FieldMiniGameMonsterTable", "FieldMiniGameSurvivalItemTable", "FieldMiniGameSurvivalBoxTable", "MGDRewardTable", "MGDWaveTable", "MGDDefaultTable"}
 	names = append(names, "EventLostCoinTable")
+	names = append(names, "ActionGameTable", "ActionGameCharTable")
+	names = append(names, "FishingDefaultTable", "FishingMapTable", "FishingMapGroupTable", "FishingBoatTable", "FishingBoatDesignTable", "FishingRodTable", "FishingItemTable", "FishingCharTable", "FishingFishTable", "FishingFishPoolTable", "FishingFishSizePoolTable", "FishingGradePoolTable", "FishingCastingTable", "FishingBuffTable", "FishingBoatBuffTable", "FishingFishSkillTable", "FishingTimeTable")
+	names = append(names, "FishingBuyItemTable", "FishingSellItemTable", "FishingShopTable", "FishingPricePremiumDefaultTable")
+	names = append(names, "GameDefaultTable", "FishingInventoryBuyTable")
 	for _, name := range names {
 		rows, e := db.Query("SELECT ProtoBuf FROM " + name)
 		if e != nil {

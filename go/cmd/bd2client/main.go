@@ -15,6 +15,7 @@ type clientRunOptions struct {
 	localIdentityPlugin string
 	loginUIPlugin       string
 	cashShopPlugin      string
+	fChatPlugin         string
 }
 
 func main() {
@@ -82,6 +83,7 @@ func runClient(args []string, options clientRunOptions) error {
 		LocalIdentityPlugin: options.localIdentityPlugin,
 		LoginUIPlugin:       options.loginUIPlugin,
 		CashShopPlugin:      options.cashShopPlugin,
+		FChatPlugin:         options.fChatPlugin,
 	}); err != nil {
 		logger.Error("bd2client stopped with an error", "error", err)
 		return err

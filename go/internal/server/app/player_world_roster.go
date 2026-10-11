@@ -48,12 +48,14 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 	if err := p.gachaService.AttachSchedule(ctx, p.options.calendars.GachaSeed); err != nil {
 		return fmt.Errorf("attach gacha schedule: %w", err)
 	}
-	previewEventIndex, err := p.seeds.defaults.CashProductEventIndex(p.design.infiniteGacha.ProductGroupID, p.design.infiniteGacha.ProductID)
-	if err != nil {
-		return fmt.Errorf("load infinite preview event: %w", err)
-	}
-	if err := p.gachaService.AttachPreviewEventIndex(ctx, previewEventIndex); err != nil {
-		return fmt.Errorf("attach infinite preview event: %w", err)
+	if p.design.infiniteGacha != nil {
+		previewEventIndex, err := p.seeds.defaults.CashProductEventIndex(p.design.infiniteGacha.ProductGroupID, p.design.infiniteGacha.ProductID)
+		if err != nil {
+			return fmt.Errorf("load infinite preview event: %w", err)
+		}
+		if err := p.gachaService.AttachPreviewEventIndex(ctx, previewEventIndex); err != nil {
+			return fmt.Errorf("attach infinite preview event: %w", err)
+		}
 	}
 	// The mapped client property is IsDoneFirstGachaPick. Its authoritative
 	// local state is the explicit GachaSubType=3 completion marker.

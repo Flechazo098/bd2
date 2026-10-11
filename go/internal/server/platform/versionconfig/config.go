@@ -42,6 +42,7 @@ type PluginVersions struct {
 	CaptureEnvironment string `json:"capture_environment"`
 	LoginUI            string `json:"login_ui"`
 	CashShop           string `json:"cash_shop"`
+	FChat              string `json:"fchat"`
 }
 
 // Load reads one explicit version file. Unknown fields and trailing JSON are
@@ -86,6 +87,7 @@ func (c Config) Validate() error {
 		"plugins.local_identity":      c.Plugins.LocalIdentity,
 		"plugins.capture_environment": c.Plugins.CaptureEnvironment,
 		"plugins.login_ui":            c.Plugins.LoginUI,
+		"plugins.fchat":               c.Plugins.FChat,
 	} {
 		if !semanticVersion.MatchString(value) {
 			return fmt.Errorf("%s must be a numeric three-part version", name)

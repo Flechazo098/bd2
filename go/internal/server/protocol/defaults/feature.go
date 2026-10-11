@@ -33,7 +33,6 @@ var emptyResponses = map[string]int{
 	"/EvilCastleTowerInfo":             200,
 	"/FishingCollectionInfo":           465,
 	"/FishingTrapInfo":                 457,
-	"/FriendInfoList":                  204,
 	"/GuildInitInfo":                   332,
 	"/IdCardPresetInfo":                450,
 	"/LifeUserInfo":                    594,

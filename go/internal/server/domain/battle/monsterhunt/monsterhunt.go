@@ -26,6 +26,7 @@ type user struct {
 	Season, Hunt, Level, StartHP, HighestHP, CurrentDamage, DailyDamage, HighestDate, DailyLevel, DailyDate uint64
 	Played, Claimed                                                                                         bool
 	ClearLevel                                                                                              uint64
+	RankLevel, RankDamage, RankRemainingHP, RankMaxHP                                                       uint64
 }
 type reply struct{ Request, Response []byte }
 type snapshot struct {

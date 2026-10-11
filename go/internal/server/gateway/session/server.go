@@ -113,6 +113,11 @@ func (s *Server) dispatchRaw(ctx context.Context, path string, body []byte, cook
 	}
 	response, _, err := s.execute(ctx, player.Command{Identity: identity, Digest: digest, Requests: requests}, game.generation, timing)
 	if err != nil {
+		if path != "/BatchRequest" {
+			if rejection, handled, encodeErr := s.gameErrorReply(game, err); handled {
+				return rejection, encodeErr
+			}
+		}
 		return transport.RawReply{}, err
 	}
 	if len(response.Responses) != len(requests) {

@@ -10,9 +10,11 @@ import (
 	"bd2server/internal/server/domain/events/games"
 	"bd2server/internal/server/domain/events/play"
 	"bd2server/internal/server/domain/events/tasks"
+	"bd2server/internal/server/domain/fishing"
 	"bd2server/internal/server/domain/progression/achievements"
 	"bd2server/internal/server/domain/progression/missions"
 	"bd2server/internal/server/domain/roster"
+	loginprotocol "bd2server/internal/server/protocol/login"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -39,6 +41,26 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("load event play state: %w", err)
 	}
 	p.eventPlayService.AttachBattleChallenges(p.design.eventBattleChallenges)
+	if p.roomResults != nil {
+		p.eventPlayService.AttachRooms(p.roomResults)
+	}
+	var rooms eventplay.RoomRuntime
+	if p.roomResults != nil {
+		rooms = p.roomResults
+	}
+	p.fishingService, err = fishing.Open(ctx, p.design.eventPlay, p.eventEconomy, rooms)
+	if err != nil {
+		return fmt.Errorf("load fishing state: %w", err)
+	}
+	if err := p.login.AttachFishing(func() loginprotocol.FishingState {
+		state := p.fishingService.Profile()
+		return loginprotocol.FishingState{AP: state.MultiAP, FishSlots: state.FishSlots, RodSlots: state.RodSlots, ItemSlots: state.ItemSlots}
+	}); err != nil {
+		return err
+	}
+	if p.shared != nil {
+		p.fishingService.AttachPublicProfiles(p.shared.directory.fishing)
+	}
 	p.eventPlayService.AttachHubCalendars(p.seeds.defaults)
 	if err := p.eventPlayService.AttachFieldBindingsFile(filepath.Join(filepath.Dir(p.options.worldSeed), "event_field_bindings.json")); err != nil {
 		return fmt.Errorf("attach hidden field bindings: %w", err)
@@ -71,7 +93,15 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		if err != nil {
 			return nil, err
 		}
-		return append(rows, huntingRows...), nil
+		rows = append(rows, huntingRows...)
+		if p.pvpService != nil {
+			pvpRows, err := p.pvpService.ChargeInfo(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, pvpRows...)
+		}
+		return rows, nil
 	})
 	p.eventActionsService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
 		if err := p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked); err != nil {

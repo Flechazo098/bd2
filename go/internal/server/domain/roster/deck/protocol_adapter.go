@@ -137,21 +137,6 @@ func (s *Store) Handle(ctx command.Context, path string, req []byte) (int, []byt
 			return 0, nil, true, e
 		}
 		return 258, wire.AppendVarint(nil, 1, n.HighestTotalBattlePower), true, nil
-	case "/UserPortraitChange":
-		costumeID, ok, e := wire.Varint(req, 2)
-		if e != nil || !ok || costumeID == 0 {
-			return 0, nil, true, errors.New("deck: invalid portrait costume")
-		}
-		if e = checkSeq(req); e != nil {
-			return 0, nil, true, e
-		}
-
-		n := clone(s.state)
-		n.PortraitCostumeID = costumeID
-		if e = s.commit(ctx, n); e != nil {
-			return 0, nil, true, e
-		}
-		return 75, wire.AppendVarint(nil, 1, costumeID), true, nil
 	}
 	return 0, nil, false, nil
 }
@@ -630,7 +615,7 @@ func (s *Store) handlePresetDelete(ctx command.Context, request []byte) (int, []
 	for slot := range seen {
 		delete(s.presets, slot)
 	}
-	// 2.35.10 contains the request/response classes but no PacketCode enum
+	// 2.36.7 contains the request/response classes but no PacketCode enum
 	// member. Code zero is the same compatibility fallback used for other
 	// unnumbered local endpoints; it must not be treated as an official value.
 	s.rememberReplyLocked(ctx, "delete", seq, 0, nil)

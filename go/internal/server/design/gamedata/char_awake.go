@@ -34,7 +34,7 @@ type CharAwakeCharacterStage struct {
 	MaximumLevel uint64
 }
 
-// CharAwakeDesign is immutable 2.35.10 design data. Account progress remains
+// CharAwakeDesign is immutable 2.36.7 design data. Account progress remains
 // in CollectionStore and is indexed by UniqueCharId, as CharAwakeDBInfo is.
 type CharAwakeDesign struct {
 	Characters map[uint64]CharAwakeCharacter

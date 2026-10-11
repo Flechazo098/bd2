@@ -16,6 +16,11 @@ internal static class ClientPresentation
 
     internal static void InstallStartupFullscreen(Harmony harmony, Type appManager)
     {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ID")))
+        {
+            Log?.LogInfo("Client instance startup respects launcher window parameters");
+            return;
+        }
         MethodInfo initializeResolution = appManager?.GetGameMethod(
             "InitPCResolution",
             BindingFlags.Instance | BindingFlags.NonPublic,

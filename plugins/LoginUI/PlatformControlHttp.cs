@@ -9,26 +9,26 @@ using System.Threading.Tasks;
 namespace Bd2LoginUI;
 
 // Own-origin control requests use OS TLS without Mono/Unity's TLS implementation.
-internal static partial class PlatformControlHttp
+public static partial class PlatformControlHttp
 {
     public static bool IsSupported => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ||
         RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
     private static readonly object CurlInitializationLock = new();
     private static bool curlInitialized;
-    internal sealed class Response
+    public sealed class Response
     {
-        public int StatusCode;
-        public string Body;
-        public string Error;
-        public byte[] Data;
-        public IReadOnlyDictionary<string, string> Headers;
-        public bool RefreshInvalid;
-        public long ElapsedMilliseconds;
-        public long RequestId;
-        public long QueueMilliseconds;
-        public long TransportMilliseconds;
-        public string FailureKind;
-        public int NativeErrorCode;
+        public int StatusCode { get; set; }
+        public string Body { get; set; }
+        public string Error { get; set; }
+        public byte[] Data { get; set; }
+        public IReadOnlyDictionary<string, string> Headers { get; set; }
+        public bool RefreshInvalid { get; set; }
+        public long ElapsedMilliseconds { get; set; }
+        public long RequestId { get; set; }
+        public long QueueMilliseconds { get; set; }
+        public long TransportMilliseconds { get; set; }
+        public string FailureKind { get; set; }
+        public int NativeErrorCode { get; set; }
         public bool Success => Error == null && StatusCode >= 200 && StatusCode < 300;
     }
 

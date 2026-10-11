@@ -34,6 +34,7 @@ type ReleaseVersions struct {
 		CaptureEnvironment string `json:"capture_environment"`
 		LoginUI            string `json:"login_ui"`
 		CashShop           string `json:"cash_shop"`
+		FChat              string `json:"fchat"`
 	} `json:"plugins"`
 }
 
@@ -65,7 +66,7 @@ func LoadReleaseVersions(path string) (ReleaseVersions, error) {
 		return ReleaseVersions{}, errors.New("bundle_version and game_data_version must be 14-digit timestamps")
 	}
 	if versions.SeedDirectory == "" ||
-		versions.Plugins.LocalIdentity == "" || versions.Plugins.LoginUI == "" || versions.Plugins.CaptureEnvironment == "" {
+		versions.Plugins.LocalIdentity == "" || versions.Plugins.LoginUI == "" || versions.Plugins.CaptureEnvironment == "" || versions.Plugins.FChat == "" {
 		return ReleaseVersions{}, errors.New("client release versions are incomplete")
 	}
 	return versions, nil

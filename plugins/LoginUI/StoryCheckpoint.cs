@@ -1,0 +1,409 @@
+using System;
+using System.Collections;
+using System.Reflection;
+using System.Runtime.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+using BD2.GameNames;
+using HarmonyLib;
+using UnityEngine;
+
+using static BD2.GameNames.Game;
+using static Bd2LoginUI.LoginRuntime;
+using static Bd2LoginUI.SessionRecovery;
+
+namespace Bd2LoginUI;
+
+internal static class StoryCheckpoint
+{
+    [DataContract]
+    internal sealed class Checkpoint
+    {
+        [DataMember(Name = "checkpoint_id")] public string ID;
+        [DataMember(Name = "pack_id")] public int PackID;
+        [DataMember(Name = "quest_id")] public int QuestID;
+        [DataMember(Name = "difficulty")] public int Difficulty;
+        [DataMember(Name = "phase")] public string Phase;
+        [DataMember(Name = "timeline")] public string Timeline;
+        [DataMember(Name = "object_id")] public int ObjectID;
+        [DataMember(Name = "map_id")] public int MapID;
+        [DataMember(Name = "simple_talk_group_id")] public int TalkGroupID;
+    }
+
+    [DataContract]
+    internal sealed class Request
+    {
+        [DataMember(Name = "operation")] public string Operation;
+        [DataMember(Name = "checkpoint_id")] public string ID;
+        [DataMember(Name = "pack_id")] public int PackID;
+        [DataMember(Name = "quest_id")] public int QuestID;
+        [DataMember(Name = "difficulty")] public int Difficulty;
+        [DataMember(Name = "phase")] public string Phase;
+        [DataMember(Name = "timeline")] public string Timeline;
+        [DataMember(Name = "object_id")] public int ObjectID;
+        [DataMember(Name = "map_id")] public int MapID;
+        [DataMember(Name = "simple_talk_group_id")] public int TalkGroupID;
+    }
+
+    [DataContract]
+    internal sealed class Response
+    {
+        [DataMember(Name = "checkpoint")] public Checkpoint Pending = null;
+        internal bool Conflict;
+        internal int RejectedStatus;
+    }
+
+    private sealed class Interaction
+    {
+        internal Checkpoint Checkpoint;
+        internal FieldQuestObjectController Controller;
+        internal Action Completed;
+        internal bool TalkStarted;
+        internal bool TalkFinished;
+        internal bool CompletionScheduled;
+        internal bool UpdateDeferred;
+        internal int Session;
+    }
+
+    private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+    private static MethodInfo StartCinema;
+    private static MethodInfo CheckEntry;
+    private static MethodInfo Interact;
+    private static int Session;
+    private static MethodInfo InvokingNative;
+    private static bool RestoringComplete;
+    private static Interaction ActiveInteraction;
+    private static CancellationTokenSource SessionCancellation = new();
+    internal static bool WaitingForEntrySync;
+    internal static bool SynchronizedStory;
+
+    internal static void Install(Harmony harmony)
+    {
+        StartCinema = typeof(TimelinePlayManager).GetGameMethod("StartCinemaTimeline", InstanceFlags, null,
+            [typeof(int), typeof(string), typeof(int), typeof(int), typeof(int), typeof(Action), typeof(Action), typeof(ETimelinePlayType), typeof(string)], null);
+        CheckEntry = typeof(GameFieldManager).GetGameMethod("CheckEnterPackQuest", InstanceFlags);
+        Interact = typeof(FieldQuestObjectController).GetGameMethod("InteractionQuest", InstanceFlags);
+        harmony.Patch(StartCinema, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(CinemaPrefix)));
+        harmony.Patch(CheckEntry, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(EntryPrefix)));
+        harmony.Patch(Interact, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(InteractionPrefix)));
+        harmony.Patch(typeof(FieldQuestObjectController).GetGameMethod("QuestUpdate", InstanceFlags, null, Type.EmptyTypes, null),
+            prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(QuestUpdatePrefix)));
+        harmony.Patch(typeof(SimpleBalloonUI).GetGameMethod("SetTalk", InstanceFlags),
+            postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(TalkStartedPostfix)));
+        harmony.Patch(typeof(SimpleBalloonUI).GetGameMethod("NextSpeaker", InstanceFlags),
+            prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(NextSpeakerPrefix)));
+        foreach (Type nested in typeof(SimpleBalloonUI).GetNestedTypes(BindingFlags.NonPublic))
+        {
+            MethodInfo skip = nested.GetGameMethod("OnClickSkipTalk_b__1", InstanceFlags);
+            if (skip != null) harmony.Patch(skip, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(SkipTalkPrefix)));
+        }
+        harmony.Patch(typeof(TimelineSignalManager).GetGameMethod("Initialize", InstanceFlags),
+            postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(InitializeTimelinePostfix)));
+        harmony.Patch(typeof(AppManager).GetGameMethod("AppReStart", InstanceFlags, null, Type.EmptyTypes, null),
+            prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(ResetSession)));
+    }
+
+    internal static void ResetSession()
+    {
+        ClearStoryStatus();
+        Session++;
+        ActiveInteraction = null;
+        RestoringComplete = false;
+        WaitingForEntrySync = false;
+        SynchronizedStory = false;
+        CancellationTokenSource previous = SessionCancellation;
+        SessionCancellation = new CancellationTokenSource();
+        previous.Cancel();
+        previous.Dispose();
+    }
+
+    private static Checkpoint NewCheckpoint(int packID, int questID, string phase, string timeline)
+    {
+        PackManager pack = FindUnitySingleton<PackManager>();
+        GameFieldManager field = FindUnitySingleton<GameFieldManager>();
+        return new Checkpoint
+        {
+            ID = Guid.NewGuid().ToString("N"),
+            PackID = packID,
+            QuestID = questID,
+            Phase = phase,
+            Timeline = timeline ?? "",
+            Difficulty = pack?.GetCurrentPackQuest(questID)?.QuestLevel ?? BDNetwork.CommonPacket.GetPackInfo(packID)?.QuestLevel ?? 0,
+            MapID = field?.CurrentMapInfo?.Id ?? 0
+        };
+    }
+
+    private static IEnumerator Send(string operation, Checkpoint checkpoint, int session, Action<Response> completed)
+    {
+        var request = new Request
+        {
+            Operation = operation,
+            ID = checkpoint?.ID ?? "",
+            PackID = checkpoint?.PackID ?? 0,
+            QuestID = checkpoint?.QuestID ?? 0,
+            Difficulty = checkpoint?.Difficulty ?? 0,
+            Phase = checkpoint?.Phase ?? "",
+            Timeline = checkpoint?.Timeline ?? "",
+            ObjectID = checkpoint?.ObjectID ?? 0,
+            MapID = checkpoint?.MapID ?? 0,
+            TalkGroupID = checkpoint?.TalkGroupID ?? 0
+        };
+        float delay = 0.5f;
+        float deadline = Time.realtimeSinceStartup + 45f;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(SessionCancellation.Token);
+        cancellation.CancelAfter(TimeSpan.FromSeconds(45));
+        while (session == Session && !ApplicationQuitting)
+        {
+            Task<Response> task = null;
+            try { task = RequestStoryCheckpoint(request, cancellation.Token); }
+            catch (Exception ex) { Log?.LogWarning("Story checkpoint transport unavailable: " + ex.Message); }
+            if (task != null)
+            {
+                while (!task.IsCompleted && session == Session && !ApplicationQuitting && Time.realtimeSinceStartup < deadline) yield return null;
+                if (session != Session || ApplicationQuitting) yield break;
+                if (task.Status == TaskStatus.RanToCompletion)
+                {
+                    if (task.Result.Conflict)
+                    {
+                        BeginSessionRecovery("unfinished story checkpoint requires synchronized entry");
+                        yield break;
+                    }
+                    if (task.Result.RejectedStatus != 0)
+                    {
+                        ShowStoryFailure("server rejected " + operation + " checkpoint: HTTP " + task.Result.RejectedStatus);
+                        yield break;
+                    }
+                    ClearStoryStatus();
+                    completed(task.Result);
+                    yield break;
+                }
+                if (task.IsFaulted) Log?.LogWarning("Story checkpoint retry: " + task.Exception.GetBaseException().Message);
+            }
+            if (Time.realtimeSinceStartup >= deadline || cancellation.IsCancellationRequested)
+            {
+                cancellation.Cancel();
+                ShowStoryFailure("server did not acknowledge " + operation + " checkpoint within 45 seconds");
+                yield break;
+            }
+            ShowStoryStatus();
+            yield return new WaitForSecondsRealtime(delay);
+            delay = Math.Min(delay * 2f, 5f);
+        }
+    }
+
+    private static bool CinemaPrefix(TimelinePlayManager __instance, object[] __args)
+    {
+        if (InvokingNative == StartCinema || ServerRoot == null || !EstablishedGameSession || (ETimelinePlayType)__args[7] != ETimelinePlayType.Quest || __instance.IsPlayCinemaTimeline)
+            return true;
+        int questID = (int)__args[2];
+        string timeline = (string)__args[1];
+        if (questID <= 0 || string.IsNullOrEmpty(timeline)) return true;
+        QuestDTO quest = QuestInfo.GetQuest(questID);
+        string phase = timeline == quest?.CompleteCinemaName ? "complete" : timeline == quest?.AcceptCinemaName ? "accept" : null;
+        if (phase == null) return true;
+        Checkpoint checkpoint = NewCheckpoint((int)__args[0], questID, phase, timeline);
+        object[] args = (object[])__args.Clone();
+        __instance.IsPlayCinemaTimeline = true;
+        StartStoryCoroutine(BeginCinema(__instance, args, checkpoint, Session));
+        return false;
+    }
+
+    private static IEnumerator BeginCinema(TimelinePlayManager timeline, object[] args, Checkpoint checkpoint, int session)
+    {
+        Response response = null;
+        yield return Send("begin", checkpoint, session, value => response = value);
+        if (session != Session || timeline == null || response?.Pending == null) yield break;
+        checkpoint = response.Pending;
+        var originalEnd = args[6] as Action;
+        args[6] = new Action(() =>
+        {
+            if (session == Session) StartStoryCoroutine(Complete(checkpoint, session, originalEnd));
+        });
+        timeline.IsPlayCinemaTimeline = false;
+        Invoke(StartCinema, timeline, args);
+        Log?.LogInfo("Story checkpoint started: pack=" + checkpoint.PackID + " quest=" + checkpoint.QuestID + " phase=" + checkpoint.Phase);
+    }
+
+    private static IEnumerator Complete(Checkpoint checkpoint, int session, Action completed)
+    {
+        bool acknowledged = false;
+        yield return Send("complete", checkpoint, session, _ => acknowledged = true);
+        if (session == Session && acknowledged) completed?.Invoke();
+    }
+
+    private static bool EntryPrefix(GameFieldManager __instance)
+    {
+        if (InvokingNative == CheckEntry || ServerRoot == null || !EstablishedGameSession) return true;
+        if (WaitingForEntrySync) return false;
+        WaitingForEntrySync = true;
+        FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = true;
+        StartStoryCoroutine(RestoreEntry(__instance, Session));
+        return false;
+    }
+
+    private static IEnumerator RestoreEntry(GameFieldManager field, int session)
+    {
+        Response response = null;
+        yield return Send("read", null, session, value => response = value);
+        if (session != Session || field == null) yield break;
+        if (response == null) yield break;
+        WaitingForEntrySync = false;
+        FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = false;
+        Checkpoint checkpoint = response?.Pending;
+        if (checkpoint == null)
+        {
+            Invoke(CheckEntry, field, null);
+            yield break;
+        }
+        PackManager pack = FindUnitySingleton<PackManager>();
+        if (pack == null || pack.PlayingPackID != checkpoint.PackID)
+        {
+            ShowStoryFailure("pending story checkpoint does not match the synchronized entry pack");
+            yield break;
+        }
+        SynchronizedStory = true;
+        bool finished = false;
+        if (checkpoint.Phase == "interaction")
+        {
+            if (checkpoint.MapID > 0 && field.CurrentMapInfo.Id != checkpoint.MapID)
+                yield return FindUnitySingleton<TimelinePlayManager>().MoveMapToTimelineDependOnScene(checkpoint.MapID, null, false);
+            FieldQuestObjectController target = null;
+            foreach (FieldQuestObjectController candidate in UnityEngine.Object.FindObjectsOfType<FieldQuestObjectController>())
+                if (candidate.FieldQuestObjectDTO?.Id == checkpoint.ObjectID) { target = candidate; break; }
+            if (target == null)
+            {
+                ShowStoryFailure("pending story interaction object is absent in the synchronized field");
+                yield break;
+            }
+            yield return BeginInteraction(target, checkpoint, session, () => finished = true);
+        }
+        else
+        {
+            TimelinePlayManager timeline = FindUnitySingleton<TimelinePlayManager>();
+            RestoringComplete = checkpoint.Phase == "complete";
+            timeline.SavePosMapDataStartingCinemaTimeline(field.CurrentMapInfo.Id, field.PlayerController.transform.position);
+            timeline.StartCinemaTimelineReplay(ETimelinePlayType.Quest, checkpoint.PackID,
+                checkpoint.MapID > 0 ? checkpoint.MapID : field.CurrentMapInfo.Id, checkpoint.Timeline, checkpoint.QuestID, 0, 0, null,
+                () => StartStoryCoroutine(Complete(checkpoint, session, () =>
+                {
+                    if (checkpoint.Phase == "complete") Proto.Local.ClientLocalInfo.AddFinishQuestTimeline(checkpoint.PackID, checkpoint.QuestID);
+                    if (checkpoint.Phase == "accept") FinishRecoveredAccept(field, checkpoint.QuestID);
+                    finished = true;
+                })), "");
+        }
+        while (!finished && session == Session) yield return null;
+        RestoringComplete = false;
+        SynchronizedStory = false;
+        if (session == Session && field != null) Invoke(CheckEntry, field, null);
+    }
+
+    private static void FinishRecoveredAccept(GameFieldManager field, int questID)
+    {
+        foreach (Type nested in typeof(GameFieldManager).GetNestedTypes(BindingFlags.NonPublic))
+        {
+            MethodInfo end = nested.GetGameMethod("StartFirstQuestCinema_g__EndCinema_2", InstanceFlags);
+            if (end == null) continue;
+            object continuation = Activator.CreateInstance(nested, true);
+            nested.GetGameField("<>4__this", InstanceFlags).SetValue(continuation, field);
+            nested.GetGameField("currentPackQuestId", InstanceFlags).SetValue(continuation, questID);
+            end.Invoke(continuation, null);
+            return;
+        }
+        throw new MissingMethodException("The native accepted-story entry continuation is unavailable");
+    }
+
+    private static void InitializeTimelinePostfix(TimelineSignalManager __instance)
+    {
+        if (RestoringComplete)
+            __instance.GetType().GetGameField("isReplayTimeline", InstanceFlags)?.SetValue(__instance, true);
+    }
+
+    private static bool InteractionPrefix(FieldQuestObjectController __instance)
+    {
+        if (InvokingNative == Interact || ServerRoot == null || !EstablishedGameSession || __instance.PlayQuestId <= 0) return true;
+        if (__instance.QuestObjectState != FieldQuestObjectController.EQuestObjectState.Idle || FindUnitySingleton<GameFieldManager>().IsBattlePlay) return true;
+        object state = typeof(FieldQuestObjectController).GetGameProperty("State", InstanceFlags | BindingFlags.DeclaredOnly)?.GetValue(__instance);
+        FieldInfo idle = state?.GetType().GetGameField("None", BindingFlags.Static | BindingFlags.Public);
+        if (state != null && (idle == null || !state.Equals(idle.GetValue(null)))) return true;
+        FieldQuestObjectDTO design = __instance.FieldQuestObjectDTO;
+        if (design == null || (string.IsNullOrEmpty(design.QuestTimeline) && design.QuestSimpleTalkGroupId <= 0)) return true;
+        if (string.IsNullOrEmpty(design.QuestTimeline) && !string.IsNullOrEmpty(QuestInfo.GetQuest(__instance.PlayQuestId)?.CompleteCinemaName)) return true;
+        if (ActiveInteraction != null) return false;
+        Checkpoint checkpoint = NewCheckpoint(FindUnitySingleton<PackManager>().PlayingPackID, __instance.PlayQuestId, "interaction", design.QuestTimeline);
+        checkpoint.ObjectID = design.Id;
+        checkpoint.TalkGroupID = design.QuestSimpleTalkGroupId;
+        StartStoryCoroutine(BeginInteraction(__instance, checkpoint, Session, null));
+        return false;
+    }
+
+    private static IEnumerator BeginInteraction(FieldQuestObjectController controller, Checkpoint checkpoint, int session, Action completed)
+    {
+        Response response = null;
+        var interaction = new Interaction { Controller = controller, Checkpoint = checkpoint, Session = session, Completed = completed };
+        ActiveInteraction = interaction;
+        yield return Send("begin", checkpoint, session, value => response = value);
+        if (session != Session || controller == null || response?.Pending == null) yield break;
+        interaction.Checkpoint = response.Pending;
+        if (string.IsNullOrEmpty(interaction.Checkpoint.Timeline)) FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = true;
+        Invoke(Interact, controller, null);
+    }
+
+    private static bool QuestUpdatePrefix(FieldQuestObjectController __instance)
+    {
+        Interaction active = ActiveInteraction;
+        if (InvokingNative?.IsGameMethod("QuestUpdate") == true || active == null || active.Controller != __instance || active.Session != Session) return true;
+        active.UpdateDeferred = true;
+        if (active.Checkpoint.TalkGroupID <= 0 || active.TalkFinished) FinishInteraction(active);
+        return false;
+    }
+
+    private static void TalkStartedPostfix(int __0)
+    {
+        Interaction active = ActiveInteraction;
+        if (active != null && active.Checkpoint.TalkGroupID == __0) active.TalkStarted = true;
+    }
+
+    private static void NextSpeakerPrefix(SimpleBalloonUI __instance)
+    {
+        object queue = __instance.GetType().GetGameField("talkDTOQueue", InstanceFlags)?.GetValue(__instance);
+        if (queue is ICollection collection && collection.Count == 0) FinishTalk(__instance);
+    }
+
+    private static void SkipTalkPrefix(object __instance, bool __0)
+    {
+        if (!__0) return;
+        var ui = __instance.GetType().GetGameField("<>4__this", InstanceFlags)?.GetValue(__instance) as SimpleBalloonUI;
+        if (ui != null) FinishTalk(ui);
+    }
+
+    private static void FinishTalk(SimpleBalloonUI ui)
+    {
+        Interaction active = ActiveInteraction;
+        object group = ui.GetType().GetGameField("groupId", InstanceFlags)?.GetValue(ui);
+        if (active == null || !active.TalkStarted || group is not int id || id != active.Checkpoint.TalkGroupID) return;
+        active.TalkFinished = true;
+        if (active.UpdateDeferred) FinishInteraction(active);
+    }
+
+    private static void FinishInteraction(Interaction active)
+    {
+        if (active.CompletionScheduled) return;
+        active.CompletionScheduled = true;
+        StartStoryCoroutine(Complete(active.Checkpoint, active.Session, () =>
+        {
+            if (ActiveInteraction != active || active.Controller == null) return;
+            ActiveInteraction = null;
+            if (string.IsNullOrEmpty(active.Checkpoint.Timeline)) FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = false;
+            Invoke(typeof(FieldQuestObjectController).GetGameMethod("QuestUpdate", InstanceFlags, null, Type.EmptyTypes, null), active.Controller, null);
+            active.Completed?.Invoke();
+        }));
+    }
+
+    private static void Invoke(MethodInfo method, object instance, object[] args)
+    {
+        MethodInfo previous = InvokingNative;
+        InvokingNative = method;
+        try { method.Invoke(instance, args); }
+        finally { InvokingNative = previous; }
+    }
+}

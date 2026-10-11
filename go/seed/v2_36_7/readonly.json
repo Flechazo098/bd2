@@ -1,0 +1,609 @@
+{
+  "version": "2.36.7",
+  "responses": {
+    "/ColosseumUserInfo": {
+      "packet_code": 473,
+      "fields": [
+        {
+          "number": 1,
+          "type": 0,
+          "varint": 42
+        },
+        {
+          "number": 4,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 1000
+            },
+            {
+              "number": 5,
+              "type": 1,
+              "fixed64_le": 4636737291354636288
+            }
+          ]
+        }
+      ]
+    },
+    "/EventExchangeInfo": {
+      "packet_code": 183,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 1676
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 27
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 5,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 6,
+              "type": 0,
+              "varint": 1789835605000
+            }
+          ]
+        }
+      ]
+    },
+    "/FishingInfo": {
+      "packet_code": 456,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 4,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 5,
+              "type": 0,
+              "varint": 2259729
+            },
+            {
+              "number": 6,
+              "type": 0,
+              "varint": 1789862400000
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "type": 2,
+          "bytes": "AQ=="
+        },
+        {
+          "number": 4,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 2,
+              "fields": [
+                {
+                  "number": 1,
+                  "type": 0,
+                  "varint": 2259729
+                },
+                {
+                  "number": 2,
+                  "type": 0,
+                  "varint": 1
+                },
+                {
+                  "number": 3,
+                  "type": 0,
+                  "varint": 57
+                },
+                {
+                  "number": 4,
+                  "type": 0,
+                  "varint": 1
+                },
+                {
+                  "number": 6,
+                  "type": 0,
+                  "varint": 1789835605000
+                }
+              ]
+            },
+            {
+              "number": 1,
+              "type": 2,
+              "fields": [
+                {
+                  "number": 1,
+                  "type": 0,
+                  "varint": 2025894
+                },
+                {
+                  "number": 2,
+                  "type": 0,
+                  "varint": 1
+                },
+                {
+                  "number": 3,
+                  "type": 0,
+                  "varint": 58
+                },
+                {
+                  "number": 4,
+                  "type": 0,
+                  "varint": 1
+                },
+                {
+                  "number": 6,
+                  "type": 0,
+                  "varint": 1789835605000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "/MiniGameDefenseInfo": {
+      "packet_code": 393,
+      "fields": [
+        {
+          "number": 1,
+          "type": 0,
+          "varint": 870
+        }
+      ]
+    },
+    "/PassInfo": {
+      "packet_code": 124,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 138
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 136
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 140
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 139
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 35
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 36
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 37
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 76
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 77
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 78
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 79
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 80
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 81
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 82
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 83
+            }
+          ]
+        }
+      ]
+    },
+    "/PvpBattleUserInfo": {
+      "packet_code": 86,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 1000
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "type": 0,
+          "varint": 30
+        },
+        {
+          "number": 4,
+          "type": 0,
+          "varint": 1
+        }
+      ]
+    },
+    "/RoomChatReportAndBlockInfo": {
+      "packet_code": 521,
+      "fields": [
+        {
+          "number": 2,
+          "type": 2,
+          "fields": [
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 1789862400000
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "type": 2
+        }
+      ]
+    },
+    "/SeasonRewardInfo": {
+      "packet_code": 0,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 3003
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 57
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 3001
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 159
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 3008
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 41
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        }
+      ]
+    },
+    "/SkyWayScheduleInfo": {
+      "packet_code": 162,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 1
+            },
+            {
+              "number": 2,
+              "type": 2,
+              "bytes": "AgQFBgA="
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 100
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 2
+            },
+            {
+              "number": 2,
+              "type": 2,
+              "bytes": "AQMFBgA="
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 100
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 3
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 4
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 5
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 6
+            }
+          ]
+        },
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 7
+            }
+          ]
+        }
+      ]
+    },
+    "/RootSortIdInfo": {
+      "packet_code": 367,
+      "fields": [
+        {
+          "number": 1,
+          "type": 2,
+          "fields": [
+            {
+              "number": 1,
+              "type": 0,
+              "varint": 2
+            },
+            {
+              "number": 2,
+              "type": 0,
+              "varint": 140
+            },
+            {
+              "number": 3,
+              "type": 0,
+              "varint": 1
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

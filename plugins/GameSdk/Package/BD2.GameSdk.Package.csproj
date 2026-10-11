@@ -16,6 +16,7 @@
     <None Include="../LICENSE" Pack="true" PackagePath="" />
     <None Include="../THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
     <None Include="build/*" Pack="true" PackagePath="build/" />
+    <None Include="../Runtime/**/*.cs" Pack="true" PackagePath="runtime/%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="_._" Pack="true" PackagePath="lib/netstandard2.0/" />
     <None Include="$(BD2ToolPublishDir)/**/*" Exclude="$(BD2ToolPublishDir)/**/*.exe;$(BD2ToolPublishDir)/**/*.pdb" Condition="'$(BD2ToolPublishDir)' != ''" Pack="true" PackagePath="tools/net8.0/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

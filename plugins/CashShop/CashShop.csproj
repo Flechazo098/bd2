@@ -6,7 +6,7 @@
     <AssemblyName>BD2CashShop</AssemblyName>
     <RootNamespace>Bd2CashShop</RootNamespace>
     <BD2PluginVersionKey>cash_shop</BD2PluginVersionKey>
-    <BD2GameVersion>2.35.10</BD2GameVersion>
+    <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
 

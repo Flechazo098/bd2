@@ -310,6 +310,24 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		response = wire.AppendVarint(response, 3, seed)
 		return 14, response, true, nil
 	case "/BattleEnd":
+		for _, runtime := range s.eventBattles {
+			if replay, ok := runtime.(interface {
+				BattleEndReplay(command.Context, []byte) ([]byte, bool, error)
+			}); ok {
+				extra, found, e := replay.BattleEndReplay(ctx, request)
+				if e != nil {
+					return 0, nil, true, e
+				}
+				if found {
+					result, _, e := wire.Varint(request, 2)
+					if e != nil {
+						return 0, nil, true, e
+					}
+					response := append(wire.AppendVarint(nil, 1, result), extra...)
+					return endCode, response, true, nil
+				}
+			}
+		}
 		endSeq, _, _ := wire.Varint(request, 1)
 		if state.endSeq == endSeq && state.endRequest != nil {
 			if !bytes.Equal(state.endRequest, request) {
@@ -500,6 +518,13 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		s.transientVersion++
 		return endCode, response, true, nil
 	case "/BattleExit":
+		if runtime := s.eventBattle(state.mode); runtime != nil {
+			if exit, ok := runtime.(interface{ AbandonBattle(command.Context) error }); ok {
+				if e := exit.AbandonBattle(ctx); e != nil {
+					return 0, nil, true, e
+				}
+			}
+		}
 		state.retryable = false
 		state.entered, state.index, state.round, state.deck, state.pack, state.initialBlue = false, 0, 0, 0, 0, nil
 		s.transientVersion++

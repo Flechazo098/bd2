@@ -23,8 +23,9 @@ func usage() {
 	fmt.Println(`Usage:
   bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
   bd2w runClient [client options]
+  bd2w runClient2 [--instance player2] [--game-dir directory]
   bd2w runServer [server options]
-  bd2w check-csharp [GameSdk GameNames LocalIdentity LoginUI CashShop CaptureEnvironment]
+  bd2w check-csharp [GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment]
   bd2w sdk pack [--game-dir directory] [--package-version version] [--output-directory directory]
   bd2w sdk verify [--game-dir directory] [--package-version version] [--package-directory directory]
   bd2w sdk update-names --game-mapping file [--game-dir directory] [--version-config file]
@@ -41,7 +42,7 @@ func run(args []string) error {
 		usage()
 		return nil
 	}
-	if args[0] != "build" && args[0] != "runClient" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" {
+	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" {
 		return fmt.Errorf("unknown task %q; use --help for available commands", args[0])
 	}
 	if len(args) == 2 && isHelp(args[1]) {
@@ -58,6 +59,8 @@ func run(args []string) error {
 	}
 	t := task{root, native}
 	switch args[0] {
+	case "runClient2":
+		return t.runClient2(args[1:])
 	case "runClient":
 		return t.command("go", append([]string{"run", "-tags", "production", "./cmd/bd2client", "--dev", "run"}, args[1:]...)...)
 	case "runServer":

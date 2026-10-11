@@ -73,7 +73,7 @@ internal static class LoginPanel
             ReplaceClick(google, introUI, "google");
             ReplaceClick(discord, introUI, "discord");
             ApplyDiscordBrand(box, logo, title);
-            ConfigureProviderGrid(panel, providerCount);
+            ConfigureProviderLayout(panel, google, discord, providerCount);
 
             Canvas.ForceUpdateCanvases();
             if (panel is RectTransform panelRect)
@@ -88,14 +88,31 @@ internal static class LoginPanel
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0270", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
-    private static void ConfigureProviderGrid(Transform panel, int providerCount)
+    private static void ConfigureProviderLayout(Transform panel, Button google, Button discord, int providerCount)
     {
-        GridLayoutGroup grid = panel.GetComponentInChildren<GridLayoutGroup>(true);
-        if (grid == null)
+        Transform layout = google.transform.parent;
+        if (layout == null || layout != discord.transform.parent || layout.name != "ButtonLayout" || !layout.IsChildOf(panel))
         {
-            throw new MissingMemberException("Login provider grid was not found");
+            throw new MissingMemberException("Login providers do not share SignInWithAccount/ButtonLayout");
         }
         int columns = Math.Max(1, providerCount);
+        GridLayoutGroup grid = layout.GetComponent<GridLayoutGroup>();
+        if (grid == null)
+        {
+            HorizontalOrVerticalLayoutGroup axis = layout.GetComponent<HorizontalOrVerticalLayoutGroup>();
+            if (axis == null || axis.GetType().FullName != "TheraBytes.BetterUi.BetterAxisAlignedLayoutGroup" ||
+                layout is not RectTransform axisRect || google.transform is not RectTransform providerRect)
+            {
+                throw new MissingMemberException("Login provider grid or axis layout was not found on ButtonLayout");
+            }
+            SetBetterAxisHorizontal(axis);
+            float width = axis.padding.horizontal + providerRect.rect.width * columns +
+                axis.spacing * Math.Max(0, columns - 1);
+            UpdateBetterLocatorProfiles(axis, width);
+            axisRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(axisRect);
+            return;
+        }
         grid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
         grid.constraintCount = columns;
         if (grid.transform is RectTransform gridRect)
@@ -107,6 +124,29 @@ internal static class LoginPanel
             gridRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width);
             LayoutRebuilder.ForceRebuildLayoutImmediate(gridRect);
         }
+    }
+
+    private static void SetBetterAxisHorizontal(HorizontalOrVerticalLayoutGroup layout)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        Type type = layout.GetType();
+        PropertyInfo orientation = type.GetGameProperty("Orientation", flags)
+            ?? throw new MissingMemberException("BetterAxisAlignedLayoutGroup.Orientation was not found");
+        orientation.SetValue(layout, Enum.Parse(orientation.PropertyType, "Horizontal"));
+        UpdateBetterAxisSettings(type.GetGameField("settingsFallback", flags)?.GetValue(layout));
+        object collection = type.GetGameField("customSettings", flags)?.GetValue(layout);
+        if (collection?.GetType().GetGameProperty("Items", flags)?.GetValue(collection, null) is IEnumerable items)
+        {
+            foreach (object settings in items) UpdateBetterAxisSettings(settings);
+        }
+    }
+
+    private static void UpdateBetterAxisSettings(object settings)
+    {
+        if (settings == null) return;
+        FieldInfo orientation = settings.GetType().GetGameField("Orientation", BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new MissingMemberException("BetterAxisAlignedLayoutGroup.Settings.Orientation was not found");
+        orientation.SetValue(settings, Enum.Parse(orientation.FieldType, "Horizontal"));
     }
 
     private static void UpdateBetterGridProfiles(GridLayoutGroup grid, int columns)
@@ -142,10 +182,10 @@ internal static class LoginPanel
         count?.SetValue(settings, columns);
     }
 
-    private static void UpdateBetterLocatorProfiles(GridLayoutGroup grid, float width)
+    private static void UpdateBetterLocatorProfiles(LayoutGroup layout, float width)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        foreach (Component component in grid.GetComponents<Component>())
+        foreach (Component component in layout.GetComponents<Component>())
         {
             Type type = component?.GetType();
             if (type?.FullName != "TheraBytes.BetterUi.BetterLocator")

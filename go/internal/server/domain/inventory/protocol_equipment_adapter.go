@@ -1436,7 +1436,7 @@ func (s *EquipmentInventory) smeltSequence(ctx command.Context, request []byte) 
 	if err != nil {
 		return 0, nil, true, err
 	}
-	// The 2.35.10 client splits a requested sequence into packets of at most
+	// The 2.36.7 client splits a requested sequence into packets of at most
 	// 1000 attempts. Exhausting this packet is not the user's global max-try
 	// stop: UPGRADE_SUCCESS tells the client to send the next chunk. Terminal
 	// stop values are reserved for target/max score and insufficient resources.

@@ -29,7 +29,14 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             Log = Logger;
+            // These hooks live until process exit; disposing Harmony would unpatch them.
+#pragma warning disable CA2000
+            var harmony = new Harmony(PluginId);
+#pragma warning restore CA2000
+            ClientInstanceIsolation.Install(harmony, Logger);
+            StartCoroutine(ClientInstanceIsolation.InitializeCache());
             Routing = ClientRouting.Load(Logger);
+            TryInstall("background network policy", () => ClientNetworkPolicy.Install(harmony, Routing.ServerRoot, Logger));
             if (Interlocked.Exchange(ref ShutdownHooksInstalled, 1) == 0)
             {
                 AppDomain.CurrentDomain.ProcessExit += delegate { DisposeRouting(); };
@@ -45,10 +52,6 @@ public sealed class Plugin : BaseUnityPlugin
             MethodInfo prefix = typeof(Plugin).GetGameMethod(
                 nameof(UseSdkPrefix),
                 BindingFlags.Static | BindingFlags.NonPublic);
-            // Harmony.Dispose calls UnpatchSelf; these hooks live until process exit.
-#pragma warning disable CA2000
-            var harmony = new Harmony(PluginId);
-#pragma warning restore CA2000
             LocalLoginState.Install(harmony, Routing.ServerOrigin, Logger);
             harmony.Patch(getter, prefix: new HarmonyMethod(prefix));
             TryInstall("OS time zone device country", () => SystemTimeZoneRegion.Install(harmony, Logger));
@@ -65,6 +68,8 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
             TryInstall("commission navigation completion", () => CommissionNavigation.Install(harmony, Logger));
             TryInstall("field reward position ordering", () => FieldRewardPosition.Install(harmony, Logger));
+            TryInstall("event hub presentation", () => EventHubPresentation.Install(harmony, Logger));
+            TryInstall("event request diagnostics", () => EventRequestDiagnostics.Install(harmony, Logger));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");
         }
         catch (Exception ex)
@@ -76,6 +81,7 @@ public sealed class Plugin : BaseUnityPlugin
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
     private void OnApplicationQuit()
     {
+        ClientInstanceIsolation.SaveOnExit();
         DisposeRouting();
     }
 

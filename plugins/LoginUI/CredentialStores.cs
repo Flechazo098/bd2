@@ -187,7 +187,7 @@ internal sealed class WindowsDpapiRefreshCredentialStore : IRefreshCredentialSto
         return Encoding.UTF8.GetBytes(Purpose + "\0" + origin);
     }
 
-    private static byte[] Protect(byte[] plain, byte[] entropy)
+    internal static byte[] Protect(byte[] plain, byte[] entropy)
     {
         DataBlob input = Allocate(plain);
         DataBlob optionalEntropy = Allocate(entropy);
@@ -208,7 +208,7 @@ internal sealed class WindowsDpapiRefreshCredentialStore : IRefreshCredentialSto
         }
     }
 
-    private static byte[] Unprotect(byte[] cipher, byte[] entropy)
+    internal static byte[] Unprotect(byte[] cipher, byte[] entropy)
     {
         DataBlob input = Allocate(cipher);
         DataBlob optionalEntropy = Allocate(entropy);
@@ -473,7 +473,7 @@ internal sealed class MacOSKeychainRefreshCredentialStore : IRefreshCredentialSt
 
     private static byte[] Service(string origin)
     {
-        return Encoding.UTF8.GetBytes("BD2 Login UI OAuth: " + origin);
+        return Encoding.UTF8.GetBytes(ServerLoginPreferences.KeychainService(origin));
     }
 
     private static void ReleaseFound(IntPtr data, IntPtr item)

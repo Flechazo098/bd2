@@ -20,8 +20,15 @@ type MonsterHunt struct {
 	TeamOpenLevels                                                                          []uint64
 	Rewards                                                                                 map[uint64]MonsterHuntRewards
 	Ranks                                                                                   map[uint64][]MonsterHuntRankReward
+	RankingVersion                                                                          uint64
+	BattleLevels                                                                            map[uint64]MonsterHuntBattleLevel
 	baseHP, healthRate, healthSlope, stage2Ratio, stage3Ratio                               float64
 	stage2Level, stage3Level                                                                uint64
+}
+
+type MonsterHuntBattleLevel struct {
+	DamageAdd uint64
+	HealthAdd float64
 }
 
 func LoadMonsterHunt(root, version string, id uint64) (*MonsterHunt, error) {
@@ -40,15 +47,15 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 	if err := db.QueryRow("SELECT ProtoBuf FROM MonsterHuntTable WHERE id=?", id).Scan(&raw); err != nil {
 		return nil, err
 	}
-	d := &MonsterHunt{Rewards: map[uint64]MonsterHuntRewards{}, Ranks: map[uint64][]MonsterHuntRankReward{}}
-	for n, p := range map[int]*uint64{8: &d.ID, 18: &d.PackID, 16: &d.MonsterID, 1: &d.DeckID, 22: &d.RewardGroupID, 23: &d.RewardLevel, 14: &d.ChallengeableLevel, 26: &d.stage2Level, 28: &d.stage3Level} {
+	d := &MonsterHunt{Rewards: map[uint64]MonsterHuntRewards{}, Ranks: map[uint64][]MonsterHuntRankReward{}, BattleLevels: map[uint64]MonsterHuntBattleLevel{}}
+	for n, p := range map[int]*uint64{8: &d.ID, 19: &d.PackID, 17: &d.MonsterID, 1: &d.DeckID, 23: &d.RewardGroupID, 24: &d.RewardLevel, 14: &d.ChallengeableLevel, 27: &d.stage2Level, 29: &d.stage3Level, 16: &d.RankingVersion} {
 		v, e := optionalScalar(raw, n)
 		if e != nil {
 			return nil, e
 		}
 		*p = v
 	}
-	for n, p := range map[int]*float64{11: &d.healthRate, 12: &d.healthSlope, 27: &d.stage2Ratio, 29: &d.stage3Ratio} {
+	for n, p := range map[int]*float64{11: &d.healthRate, 12: &d.healthSlope, 28: &d.stage2Ratio, 30: &d.stage3Ratio} {
 		v, _, e := fixed64Double(raw, n)
 		if e != nil {
 			return nil, e
@@ -56,11 +63,11 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		*p = v
 	}
 	var err error
-	d.TeamOpenLevels, err = packedInts(raw, 32)
+	d.TeamOpenLevels, err = packedInts(raw, 33)
 	if err != nil {
 		return nil, err
 	}
-	group, err := optionalScalar(raw, 19)
+	group, err := optionalScalar(raw, 20)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +134,37 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 		return nil, err
 	}
 	d.baseHP = math.Trunc(base.Health*deckRate*100) / 100
+	rows, err = db.Query("SELECT id,ProtoBuf FROM MonsterHuntBattleTable WHERE groupId=? ORDER BY id", id)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var level uint64
+		var raw []byte
+		if err = rows.Scan(&level, &raw); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		var design MonsterHuntBattleLevel
+		design.DamageAdd, err = optionalScalar(raw, 4)
+		if err == nil {
+			design.HealthAdd, _, err = fixed64Double(raw, 5)
+		}
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if level == 0 || design.DamageAdd > math.MaxInt32 || math.IsNaN(design.HealthAdd) || math.IsInf(design.HealthAdd, 0) || design.HealthAdd < 0 || design.HealthAdd >= float64(math.MaxInt64) {
+			_ = rows.Close()
+			return nil, fmt.Errorf("gamedata: invalid hunt battle level %d", level)
+		}
+		d.BattleLevels[level] = design
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
 	rows, err = db.Query("SELECT level, ProtoBuf FROM MonsterHuntRewardTable WHERE groupId=? ORDER BY level", d.RewardGroupID)
 	if err != nil {
 		return nil, err
@@ -192,7 +230,7 @@ func loadMonsterHunt(db *sql.DB, id uint64) (*MonsterHunt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if d.ID != id || d.PackID == 0 || d.DeckID == 0 || d.MaxLevel == 0 || d.baseHP <= 0 {
+	if d.ID != id || d.PackID == 0 || d.MonsterID == 0 || d.DeckID == 0 || d.MaxLevel == 0 || d.baseHP <= 0 || d.RankingVersion > 1 {
 		return nil, fmt.Errorf("gamedata: invalid hunt %d design", id)
 	}
 	return d, nil
@@ -221,8 +259,14 @@ func (d *MonsterHunt) HP(level uint64) (uint64, error) {
 	for value/scale >= 1000 {
 		scale *= 10
 	}
-	return value / scale * scale, nil
+	value = value / scale * scale
+	addition := uint64(d.BattleLevels[level].HealthAdd)
+	if addition > math.MaxInt64-value {
+		return 0, fmt.Errorf("gamedata: hunt HP addition overflow")
+	}
+	return value + addition, nil
 }
+
 func monsterHuntRewardArrays(raw []byte, typeField, idField, countField int) ([]BattleReward, error) {
 	types, e := packedInts(raw, typeField)
 	if e != nil {

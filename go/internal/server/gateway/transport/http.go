@@ -112,6 +112,8 @@ type HTTP struct {
 	Availability          Availability
 	InstanceID            string
 	CommerceManifest      func() any
+	RealtimeTickets       http.Handler
+	StoryCheckpoints      http.Handler
 }
 
 func (h HTTP) Handler() http.Handler {
@@ -122,6 +124,12 @@ func (h HTTP) Handler() http.Handler {
 	mux.HandleFunc("/client/resources", h.clientResources)
 	mux.HandleFunc("/client/runtime", h.clientRuntime)
 	mux.HandleFunc("/client/commerce", h.clientCommerce)
+	if h.StoryCheckpoints != nil {
+		mux.Handle("/client/story-checkpoint", h.withAvailability(h.StoryCheckpoints))
+	}
+	if h.RealtimeTickets != nil {
+		mux.Handle("/client/realtime-ticket", h.withAvailability(h.RealtimeTickets))
+	}
 	if h.AuthenticationHandler != nil {
 		mux.Handle("/auth/", h.withAvailability(h.AuthenticationHandler))
 	}

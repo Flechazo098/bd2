@@ -89,6 +89,7 @@ func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
 		localIdentityPlugin: filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll"),
 		loginUIPlugin:       filepath.Join(root, "plugins", "LoginUI", "bin", "Release", "netstandard2.1", "BD2LoginUI.dll"),
 		cashShopPlugin:      filepath.Join(root, "plugins", "CashShop", "bin", "Release", "netstandard2.1", "BD2CashShop.dll"),
+		fChatPlugin:         filepath.Join(root, "plugins", "FChat", "bin", "Release", "netstandard2.1", "BD2FChat.dll"),
 	}, nil
 }
 
@@ -177,6 +178,7 @@ func buildDevelopmentPlugins(root, gameDir string) error {
 		filepath.Join(root, "plugins", "LocalIdentity", "LocalIdentity.csproj"),
 		filepath.Join(root, "plugins", "LoginUI", "LoginUI.csproj"),
 		filepath.Join(root, "plugins", "CashShop", "CashShop.csproj"),
+		filepath.Join(root, "plugins", "FChat", "FChat.csproj"),
 	}
 	for _, project := range projects {
 		fmt.Fprintf(os.Stderr, "bd2client: preparing development plugin %s; first-time game source generation may take several minutes\n", filepath.Base(project))

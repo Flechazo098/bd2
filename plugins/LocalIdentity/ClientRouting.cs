@@ -27,7 +27,7 @@ internal sealed class ClientRouting : IDisposable
         MethodInfo makeCDNInfo = Game.Method(() => BDNetwork.CommonPacket.MakeCDNInfo(null));
         if (load == null || sendMaintenance == null || makeCDNInfo == null)
         {
-            throw new MissingMethodException("2.35.10 server/resource routing methods were not found");
+            throw new MissingMethodException("2.36.7 server/resource routing methods were not found");
         }
         harmony.Patch(load, postfix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));
         harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));
@@ -66,6 +66,7 @@ internal sealed class ClientRouting : IDisposable
     private readonly ManualLogSource log;
     private readonly ClientConfig config;
     internal string ServerOrigin => config.server_origin;
+    internal Uri ServerRoot => new(config.server_origin + "/");
     private readonly ResourcePolicy resources;
     private readonly LocalResourceServer localResourceServer;
 
@@ -83,6 +84,7 @@ internal sealed class ClientRouting : IDisposable
 
     internal static ClientRouting Load(ManualLogSource log)
     {
+        Environment.SetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN", null);
         string path = Path.Combine(Paths.ConfigPath, ConfigFileName);
         ClientConfig config = ParseConfig(ReadBoundedFile(path, MaximumResponseBytes));
         // Set only our process-local choice. Login UI also uses this value when
@@ -130,6 +132,7 @@ internal sealed class ClientRouting : IDisposable
                 resources = RequestResourcePolicy(log, config);
             }
             ValidatePolicy(config.cdn_mode, resources);
+            Environment.SetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN", config.server_origin);
             return new ClientRouting(log, config, resources, localResourceServer);
         }
         catch

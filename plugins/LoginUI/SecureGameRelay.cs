@@ -26,6 +26,75 @@ internal sealed class SecureGameRelay : IDisposable
     private readonly SemaphoreSlim slots = new(16, 16);
     private readonly ManualLogSource log;
     private int disposed;
+    private string gameCookie;
+    private string invalidGameCookie;
+
+    internal async Task<StoryCheckpoint.Response> RequestStoryCheckpoint(StoryCheckpoint.Request request, CancellationToken cancellation)
+    {
+        string cookie = Volatile.Read(ref gameCookie);
+        if (string.IsNullOrEmpty(cookie)) throw new InvalidOperationException("Native game session is unavailable");
+        byte[] body = RealtimeBridge.Serialize(request);
+        PlatformControlHttp.Response response = null;
+        try
+        {
+            response = await PlatformControlHttp.Send(new Uri(server, "/client/story-checkpoint"), "POST", body,
+                null, 10, cancellation, lifetime.Token, 16 * 1024,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Cookie"] = cookie, ["Content-Type"] = "application/json" }).ConfigureAwait(false);
+            if (response.StatusCode == 409) return new StoryCheckpoint.Response { Conflict = true };
+            if (response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != 401)
+                return new StoryCheckpoint.Response { RejectedStatus = response.StatusCode };
+            if (!response.Success || response.Data == null) throw new IOException("Story checkpoint request failed: " + response.StatusCode);
+            return RealtimeBridge.Deserialize<StoryCheckpoint.Response>(response.Data);
+        }
+        finally
+        {
+            Array.Clear(body, 0, body.Length);
+            if (response?.Data != null) Array.Clear(response.Data, 0, response.Data.Length);
+            if (response != null) response.Body = null;
+        }
+    }
+
+    internal async Task<RealtimeBridge.Ticket> RequestRealtimeTicket(string channel, CancellationToken cancellation)
+    {
+        string cookie = Volatile.Read(ref gameCookie);
+        if (string.IsNullOrEmpty(cookie)) throw new InvalidOperationException("Native game session is unavailable");
+        byte[] body = RealtimeBridge.Serialize(new RealtimeBridge.TicketRequest { Channel = channel });
+        PlatformControlHttp.Response response = null;
+        try
+        {
+            response = await PlatformControlHttp.Send(new Uri(server, "/client/realtime-ticket"), "POST", body,
+                null, 10, cancellation, lifetime.Token, 16 * 1024,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Cookie"] = cookie, ["Content-Type"] = "application/json" }).ConfigureAwait(false);
+            if (response.StatusCode == 401)
+            {
+                Volatile.Write(ref invalidGameCookie, cookie);
+                Interlocked.CompareExchange(ref gameCookie, null, cookie);
+            }
+            if (!response.Success || response.Data == null) throw new IOException("Realtime ticket request failed: " + response.StatusCode);
+            return RealtimeBridge.Deserialize<RealtimeBridge.Ticket>(response.Data);
+        }
+        finally
+        {
+            Array.Clear(body, 0, body.Length);
+            if (response?.Data != null) Array.Clear(response.Data, 0, response.Data.Length);
+            if (response != null) response.Body = null;
+        }
+    }
+
+    private void CaptureCookie(string raw)
+    {
+        if (string.IsNullOrEmpty(raw) || raw.IndexOfAny(HeaderNewlines) >= 0) return;
+        foreach (string part in raw.Split(';'))
+        {
+            string value = part.Trim();
+            if (value.StartsWith("s=", StringComparison.Ordinal) && value.Length > 2 && value.Length < 4096)
+            {
+                if (!string.Equals(value, Volatile.Read(ref invalidGameCookie), StringComparison.Ordinal))
+                    Volatile.Write(ref gameCookie, value);
+                return;
+            }
+        }
+    }
 
     private SecureGameRelay(Uri server, ManualLogSource log)
     {
@@ -131,6 +200,7 @@ internal sealed class SecureGameRelay : IDisposable
                 name.Equals("b2_app_version", StringComparison.OrdinalIgnoreCase) || name.Equals("b2_bundle_version", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("market_type", StringComparison.OrdinalIgnoreCase)) headers[name] = value;
         }
+        if (headers.TryGetValue("Cookie", out string cookie)) CaptureCookie(cookie);
         byte[] body = length == 0 ? null : new byte[length];
         PlatformControlHttp.Response response = null;
         try
@@ -162,6 +232,7 @@ internal sealed class SecureGameRelay : IDisposable
             StringBuilder output = new StringBuilder("HTTP/1.1 ").Append(response.StatusCode.ToString(CultureInfo.InvariantCulture)).Append(" Response\r\nConnection: close\r\nCache-Control: no-store\r\n");
             foreach (KeyValuePair<string, string> item in response.Headers)
             {
+                if (item.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase)) CaptureCookie(item.Value);
                 if ((item.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || item.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) ||
                     (item.Key.StartsWith("X-BD2-", StringComparison.OrdinalIgnoreCase) &&
                         !item.Key.Equals("X-BD2-Transport-Failure", StringComparison.OrdinalIgnoreCase))) && item.Value.IndexOfAny(HeaderNewlines) < 0)
@@ -184,6 +255,8 @@ internal sealed class SecureGameRelay : IDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         lifetime.Cancel();
+        Volatile.Write(ref gameCookie, null);
+        Volatile.Write(ref invalidGameCookie, null);
         listener.Stop();
     }
 }

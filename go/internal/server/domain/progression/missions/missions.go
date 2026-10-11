@@ -71,6 +71,8 @@ func (s *Service) AttachWallet(ctx command.Context, wallet *assets.Wallet) error
 	return nil
 }
 
+func (s *Service) SetClock(now func() time.Time) { s.now = now }
+
 type snapshot struct {
 	Version      string            `json:"version"`
 	DailyPeriod  string            `json:"daily_period"`
@@ -136,7 +138,7 @@ func (s *Service) CompleteMission(ctx command.Context, key gamedata.MissionKey) 
 	if err := s.rolloverLocked(ctx); err != nil {
 		return err
 	}
-	if _, ok := s.design.Missions[key]; !ok {
+	if _, ok := s.design.Missions[key]; !ok || !s.missionActive(key) {
 		return fmt.Errorf("missions: unknown mission %+v", key)
 	}
 	condition := s.design.Conditions[key]
@@ -156,7 +158,7 @@ func (s *Service) SetProgress(ctx command.Context, key gamedata.MissionKey, valu
 }
 
 func (s *Service) setProgressLocked(ctx command.Context, key gamedata.MissionKey, value uint64) error {
-	if _, ok := s.design.Missions[key]; !ok {
+	if _, ok := s.design.Missions[key]; !ok || !s.missionActive(key) {
 		return fmt.Errorf("missions: unknown mission %+v", key)
 	}
 	name := missionName(key)
@@ -188,11 +190,11 @@ func (s *Service) applyCompletionDependencies(next *snapshot, completed gamedata
 		}
 		seen[currentName] = true
 		for key, condition := range s.design.Conditions {
-			if key.GroupType == 2 {
+			if key.GroupType == 2 || !s.missionActive(key) {
 				continue
 			}
-			matched := condition.Type == 30 && key.GroupType == current.GroupType
-			matched = matched || (condition.Type == 31 && condition.SubType == current.GroupType)
+			matched := condition.Type == 30 && key.GroupID == current.GroupID && key.GroupType == current.GroupType
+			matched = matched || (condition.Type == 31 && key.GroupID != current.GroupID && condition.SubType == current.GroupID)
 			if !matched {
 				continue
 			}
@@ -298,7 +300,7 @@ func (s *Service) compensatePeriodLocked(ctx command.Context, groupType uint64, 
 func (s *Service) completedUnclaimedForType(groupType uint64) []gamedata.MissionKey {
 	var result []gamedata.MissionKey
 	for key, condition := range s.design.Conditions {
-		if key.GroupType != groupType {
+		if key.GroupType != groupType || !s.missionActive(key) {
 			continue
 		}
 		target := condition.TargetValue
@@ -319,32 +321,14 @@ func (s *Service) completedUnclaimedForType(groupType uint64) []gamedata.Mission
 }
 
 func (s *Service) eligibleUnclaimedSectionsForType(groupType uint64) []gamedata.SectionRewardKey {
-	completed := uint64(len(s.completedForType(groupType)))
 	var result []gamedata.SectionRewardKey
-	for key, section := range s.design.Sections {
+	for key := range s.design.Sections {
 		identity := fmt.Sprintf("section:%d/%d", key.GroupType, key.ID)
-		if key.GroupType == groupType && section.SectionValue != 0 && completed >= section.SectionValue && !contains(s.state.Claimed, identity) {
+		if key.GroupType == groupType && s.sectionEligible(key) && !contains(s.state.Claimed, identity) {
 			result = append(result, key)
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result
-}
-
-func (s *Service) completedForType(groupType uint64) []gamedata.MissionKey {
-	var result []gamedata.MissionKey
-	for key, condition := range s.design.Conditions {
-		if key.GroupType != groupType {
-			continue
-		}
-		target := condition.TargetValue
-		if target == 0 {
-			target = 1
-		}
-		if s.state.Progress[missionName(key)] >= target {
-			result = append(result, key)
-		}
-	}
 	return result
 }
 
@@ -409,35 +393,10 @@ func (s *Service) progressMissionKeys() []gamedata.MissionKey {
 			continue
 		}
 		for key := range s.design.Missions {
-			if missionName(key) == name {
+			if missionName(key) == name && s.missionActive(key) {
 				result = append(result, key)
 				break
 			}
-		}
-	}
-	sort.Slice(result, func(i, j int) bool {
-		a, b := result[i], result[j]
-		if a.GroupType != b.GroupType {
-			return a.GroupType < b.GroupType
-		}
-		if a.GroupID != b.GroupID {
-			return a.GroupID < b.GroupID
-		}
-		return a.ID < b.ID
-	})
-	return result
-}
-
-func (s *Service) completedMissionKeys() []gamedata.MissionKey {
-	var result []gamedata.MissionKey
-	for key, condition := range s.design.Conditions {
-		target := condition.TargetValue
-		if target == 0 {
-			target = 1
-		}
-		name := missionName(key)
-		if s.state.Progress[name] >= target && !contains(s.state.Claimed, "mission:"+name) {
-			result = append(result, key)
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -470,7 +429,7 @@ func (s *Service) claimMissions(ctx command.Context, keys []gamedata.MissionKey)
 			return nil, fmt.Errorf("%w: unknown mission %+v", ErrInvalidRequest, key)
 		}
 		identity := "mission:" + missionName(key)
-		items, err := s.grantRewards(ctx, identity, rewards)
+		items, err := s.grantRewards(ctx, s.periodGrantID(identity, key.GroupType), rewards)
 		if err != nil {
 			return nil, err
 		}
@@ -488,9 +447,8 @@ func (s *Service) claimMissions(ctx command.Context, keys []gamedata.MissionKey)
 func (s *Service) eligibleSections(groupType uint64) []gamedata.SectionRewardKey {
 	var result []gamedata.SectionRewardKey
 	for key := range s.design.Sections {
-		// Proto3 omits group_type for the official bulk request.  Zero means
-		// all mission groups there, not an invalid group.
-		if (groupType == 0 || key.GroupType == groupType) && s.sectionEligible(key) {
+		identity := fmt.Sprintf("section:%d/%d", key.GroupType, key.ID)
+		if key.GroupType == groupType && s.sectionEligible(key) && !contains(s.state.Claimed, identity) {
 			result = append(result, key)
 		}
 	}
@@ -498,8 +456,7 @@ func (s *Service) eligibleSections(groupType uint64) []gamedata.SectionRewardKey
 	return result
 }
 
-// Section reward thresholds are authoritative static values. The completed
-// set, rather than the claimed set, is deliberately counted as the client does.
+// Section thresholds count received mission rewards, as the client does.
 func (s *Service) sectionEligible(key gamedata.SectionRewardKey) bool {
 	section, ok := s.design.Sections[key]
 	if !ok {
@@ -511,7 +468,7 @@ func (s *Service) sectionEligible(key gamedata.SectionRewardKey) bool {
 	var count uint64
 	for _, identity := range s.state.Claimed {
 		var group, missionGroup, missionID uint64
-		if _, err := fmt.Sscanf(identity, "mission:%d/%d/%d", &group, &missionGroup, &missionID); err == nil && group == key.GroupType {
+		if _, err := fmt.Sscanf(identity, "mission:%d/%d/%d", &group, &missionGroup, &missionID); err == nil && group == key.GroupType && s.missionActive(gamedata.MissionKey{GroupType: group, GroupID: missionGroup, ID: missionID}) {
 			count++
 		}
 	}
@@ -527,7 +484,7 @@ func (s *Service) claimSections(ctx command.Context, keys []gamedata.SectionRewa
 			return nil, fmt.Errorf("%w: section is not complete", ErrInvalidRequest)
 		}
 		identity := fmt.Sprintf("section:%d/%d", key.GroupType, key.ID)
-		items, err := s.grantRewards(ctx, identity, section.Rewards)
+		items, err := s.grantRewards(ctx, s.periodGrantID(identity, key.GroupType), section.Rewards)
 		if err != nil {
 			return nil, err
 		}
@@ -574,6 +531,23 @@ func (s *Service) grantRewards(ctx command.Context, identity string, rewards []g
 		items = s.inventory.GrantedItems(identity + ":items")
 	}
 	return items, nil
+}
+
+func (s *Service) periodGrantID(identity string, groupType uint64) string {
+	period := s.state.DailyPeriod
+	if groupType == 1 {
+		period = s.state.WeeklyPeriod
+	}
+	return identity + ":period:" + period
+}
+
+func isWalletReward(typ uint64) bool {
+	return typ == 2 || typ == 3 || typ == 4 || typ == 12 || typ == 20
+}
+
+func (s *Service) missionActive(key gamedata.MissionKey) bool {
+	window, limited := s.design.Windows[[2]uint64{key.GroupID, key.ID}]
+	return !limited || !s.now().Before(window.Start) && s.now().Before(window.End)
 }
 
 func (s *Service) commit(ctx command.Context, next snapshot) error {

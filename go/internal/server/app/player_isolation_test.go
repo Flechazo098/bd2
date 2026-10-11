@@ -9,6 +9,7 @@ import (
 	"bd2server/internal/server/domain/events/calendar"
 	"bd2server/internal/server/domain/identity"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/platform/textmoderation"
 	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/runtime/player"
 	identitystore "bd2server/internal/server/storage/identity"
@@ -49,6 +50,15 @@ func newIntegrationFactory(t *testing.T) (*PlayerFactory, []string) {
 	seed := versions.Resolve(versions.SeedDirectory)
 	root := t.TempDir()
 	config := &configuration{versions: versions, calendars: calendars, gameRules: gameconfig.Default(), gameData: resources, gameDataVersion: versions.GameDataVersion, stateDirectory: filepath.Join(root, "state"), devToolsConfig: filepath.Join(root, "development.json"), accountSeed: filepath.Join(seed, "login_user.json"), playerSeed: filepath.Join(seed, "starter_player.json"), readonlySeed: filepath.Join(seed, "readonly.json"), mailSeed: filepath.Join(seed, "mail.json"), deckSeed: filepath.Join(seed, "decks.json"), worldSeed: filepath.Join(seed, "world.json")}
+	config.textModerator, err = textmoderation.New(config.gameRules.TextModeration, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := config.textModerator.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err = lockServerState(config.stateDirectory, config.gameRules.Story.StartPackID); err != nil {
 		t.Fatal(err)
 	}

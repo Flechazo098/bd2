@@ -6,9 +6,13 @@
     <AssemblyName>BD2LocalIdentity</AssemblyName>
     <RootNamespace>Bd2LocalIdentity</RootNamespace>
     <BD2PluginVersionKey>local_identity</BD2PluginVersionKey>
-    <BD2GameVersion>2.35.10</BD2GameVersion>
+    <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Google.Protobuf">
+      <HintPath>$(BD2ManagedDir)/Google.Protobuf.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Compile Include="../Shared/ServerLoginPreferences.cs" Link="ServerLoginPreferences.cs" />
     <Reference Include="BepInEx">
       <HintPath>$(BD2BepInExDir)\core\BepInEx.dll</HintPath>
@@ -20,6 +24,14 @@
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(BD2ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UnityAnalyticsModule">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.UnityAnalyticsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.AssetBundleModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">

@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace Bd2LoginUI;
 
-internal static partial class PlatformControlHttp
+public static partial class PlatformControlHttp
 {
     private static readonly string[] HeaderSeparators = ["\r\n"];
     private static readonly object PoolLock = new();

@@ -1,4 +1,8 @@
 <Project>
+  <PropertyGroup>
+    <BD2GameSdkRuntimeDir>$(MSBuildThisFileDirectory)GameSdk/Runtime/</BD2GameSdkRuntimeDir>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)GameSdk/Package/build/BD2.GameSdk.Localization.targets" />
   <ItemGroup>
     <Compile Include="$(BD2SdkDir)\GameSdkIdentity.g.cs" />
     <ProjectReference Include="$(BD2GameNamesProject)" />
@@ -9,7 +13,7 @@
   </ItemGroup>
   <Import Project="$(BD2SdkDir)/GameSourceNavigation.props" Condition="Exists('$(BD2SdkDir)/GameSourceNavigation.props')" />
   <Target Name="PrepareBD2GameSdk" BeforeTargets="ResolveProjectReferences;ResolveAssemblyReferences">
-    <Error Condition="'$(BD2GameVersion)' == ''" Text="Declare BD2GameVersion explicitly in this plugin's csproj, for example &lt;BD2GameVersion&gt;2.35.10&lt;/BD2GameVersion&gt;." />
+    <Error Condition="'$(BD2GameVersion)' == ''" Text="Declare BD2GameVersion explicitly in this plugin's csproj, for example &lt;BD2GameVersion&gt;2.36.7&lt;/BD2GameVersion&gt;." />
     <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == ''" Text="Set BD2LocalGameDir in plugins/Directory.Build.local.props, or pass -p:GameDir=&lt;game-directory&gt;." />
     <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
     <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)')" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />

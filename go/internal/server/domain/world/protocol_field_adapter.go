@@ -1259,6 +1259,22 @@ func (s *Service) handleFieldObjectPosition(ctx command.Context, request []byte)
 	if err != nil || mapID == 0 || mapID > 0x7fffffff {
 		return 95, nil, true, ErrInvalidRequest
 	}
+	design, err := s.fieldObjectDesign(ctx, pack)
+	if err != nil {
+		return 95, nil, true, err
+	}
+	obj, exists := design.Actions[int(id)]
+	cleared := obj.QuestID > 0 && s.state.QuestCleared(obj.QuestID, pack, s.questDifficultyFor(pack, obj.QuestID))
+	currentMap, mapErr := s.currentFieldMap(ctx, pack)
+	reject := func(reason string, currentMap int) (int, []byte, bool, error) {
+		return 95, nil, true, fmt.Errorf("%w: %s (pack=%d group=%d object=%d map=%d current_map=%d quest=%d quest_cleared=%t enable_type=%d)", ErrInvalidRequest, reason, pack, group, id, mapID, currentMap, obj.QuestID, cleared, obj.QuestEnableType)
+	}
+	if !exists || obj.GroupID != int(group) || obj.Type != 1 || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
+		return reject("unavailable field action object", currentMap)
+	}
+	if mapErr != nil || currentMap != int(mapID) {
+		return reject("field action outside current map", currentMap)
+	}
 	if err = wire.Walk(position, func(f wire.Field) error {
 		if f.Number >= 2 && f.Number <= 4 {
 			if f.Type != 5 {
@@ -1271,28 +1287,23 @@ func (s *Service) handleFieldObjectPosition(ctx command.Context, request []byte)
 		}
 		return nil
 	}); err != nil {
-		return 95, nil, true, err
+		return reject("invalid field action coordinates", currentMap)
 	}
-	design, err := s.fieldObjectDesign(ctx, pack)
-	if err != nil {
-		return 95, nil, true, err
-	}
-	obj, exists := design.Actions[int(id)]
-	if !exists || obj.GroupID != int(group) || obj.Type != 1 || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
-		return 95, nil, true, fmt.Errorf("%w: unavailable field action object", ErrInvalidRequest)
-	}
-	currentMap, err := s.currentFieldMap(ctx, pack)
-	if err != nil || currentMap != int(mapID) {
-		return 95, nil, true, fmt.Errorf("%w: field action outside current map", ErrInvalidRequest)
-	}
-	cleared := obj.QuestID > 0 && s.state.QuestCleared(obj.QuestID, pack, s.questDifficultyFor(pack, obj.QuestID))
-	if obj.QuestID > 0 && (obj.QuestEnableType == 1 && !cleared || obj.QuestEnableType == 2 && cleared) {
-		return 95, nil, true, fmt.Errorf("%w: field action unavailable for quest", ErrInvalidRequest)
+	if !fieldActionQuestEnabled(obj, cleared) {
+		if obj.QuestEnableType == 2 && cleared {
+			// QuestClear's callback finishes the carried object's drop asynchronously.
+			return 95, []byte{}, true, nil
+		}
+		return reject("field action unavailable for quest", currentMap)
 	}
 	if err = s.state.SaveFieldActionPosition(ctx, pack, int(id), progress.FieldActionPosition{Position: position, QuestCleared: cleared}); err != nil {
 		return 95, nil, true, err
 	}
 	return 95, []byte{}, true, nil
+}
+
+func fieldActionQuestEnabled(obj gamedata.FieldActionObject, cleared bool) bool {
+	return obj.QuestID == 0 || (obj.QuestEnableType != 1 || cleared) && (obj.QuestEnableType != 2 || !cleared)
 }
 
 func (s *Service) fieldActionInfo(ctx command.Context, pack int) ([]byte, error) {
@@ -1316,9 +1327,8 @@ func (s *Service) fieldActionInfo(ctx command.Context, pack int) ([]byte, error)
 			return nil, fmt.Errorf("world: saved field action absent from design")
 		}
 		stored := positions[id]
-		// Client resets authored action positions when the related quest ends.
-		// Omit that stale position on reconnect so the prefab uses its origin.
-		if obj.QuestID > 0 && stored.QuestCleared != s.state.QuestCleared(obj.QuestID, pack, s.questDifficultyFor(pack, obj.QuestID)) {
+		cleared := obj.QuestID > 0 && s.state.QuestCleared(obj.QuestID, pack, s.questDifficultyFor(pack, obj.QuestID))
+		if !fieldActionQuestEnabled(obj, cleared) || obj.QuestID > 0 && stored.QuestCleared != cleared {
 			continue
 		}
 		info := wire.AppendBytes(wire.AppendVarint(nil, 1, uint64(id)), 2, stored.Position)

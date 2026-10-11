@@ -84,6 +84,11 @@ type EntryMutation struct {
 	Delete  bool
 }
 
+type Entry struct {
+	Key     string
+	Payload []byte
+}
+
 // AtomicEntryStore applies a domain core and its entry changes together.
 // A nil core leaves the existing core unchanged.
 type AtomicEntryStore interface {

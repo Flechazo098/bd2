@@ -4,6 +4,7 @@ set "BD2W_ROOT=%~dp0"
 if /I "%~1"=="check-csharp" goto check_csharp
 set "BD2W_TOOL_DIR=%BD2W_ROOT%.build\tools"
 set "BD2W_TOOL=%BD2W_TOOL_DIR%\bd2w.exe"
+set "BD2W_RUN_TOOL=%BD2W_TOOL%"
 if not exist "%BD2W_TOOL_DIR%" (
     mkdir "%BD2W_TOOL_DIR%"
     if errorlevel 1 exit /b 1
@@ -23,13 +24,18 @@ del /q "%BD2W_TEMP%"
 if errorlevel 1 goto failed
 goto unlock
 :replace_tool
-move /y "%BD2W_TEMP%" "%BD2W_TOOL%" >nul
-if errorlevel 1 goto failed
+move /y "%BD2W_TEMP%" "%BD2W_TOOL%" >nul 2>nul
+if errorlevel 1 set "BD2W_RUN_TOOL=%BD2W_TEMP%"
 :unlock
 rmdir "%BD2W_LOCK%"
 if errorlevel 1 exit /b 1
-"%BD2W_TOOL%" %*
-exit /b %errorlevel%
+"%BD2W_RUN_TOOL%" %*
+set "BD2W_EXIT_CODE=%errorlevel%"
+if exist "%BD2W_TEMP%" (
+    del /q "%BD2W_TEMP%"
+    if errorlevel 1 exit /b 1
+)
+exit /b %BD2W_EXIT_CODE%
 
 :wait
 set /a BD2W_ATTEMPTS+=1 >nul
@@ -72,7 +78,7 @@ set "BD2W_PROJECTS="
 :check_arguments
 if "%~1"=="" goto check_start
 set "BD2W_PROJECT="
-for %%P in (GameSdk GameNames LocalIdentity LoginUI CashShop CaptureEnvironment) do if "%~1"=="%%P" set "BD2W_PROJECT=%%P"
+for %%P in (GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment) do if "%~1"=="%%P" set "BD2W_PROJECT=%%P"
 if not defined BD2W_PROJECT (
     echo bd2w: Unknown C# project: "%~1" 1>&2
     exit /b 1
@@ -81,7 +87,7 @@ set "BD2W_PROJECTS=%BD2W_PROJECTS% %BD2W_PROJECT%"
 shift
 goto check_arguments
 :check_start
-if not defined BD2W_PROJECTS set "BD2W_PROJECTS=GameSdk GameNames LocalIdentity LoginUI CashShop CaptureEnvironment"
+if not defined BD2W_PROJECTS set "BD2W_PROJECTS=GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment"
 pushd "%BD2W_ROOT%"
 if errorlevel 1 exit /b 1
 set "Configuration=Release"

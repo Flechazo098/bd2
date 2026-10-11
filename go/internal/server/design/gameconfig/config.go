@@ -17,10 +17,85 @@ import (
 const FileName = "game.json"
 
 type Config struct {
-	SchemaVersion int             `json:"schema_version"`
-	Gacha         GachaConfig     `json:"gacha"`
-	Story         StoryConfig     `json:"story"`
-	Purchases     PurchasesConfig `json:"purchases"`
+	Realtime       RealtimeConfig       `json:"realtime"`
+	SchemaVersion  int                  `json:"schema_version"`
+	Gacha          GachaConfig          `json:"gacha"`
+	Story          StoryConfig          `json:"story"`
+	Purchases      PurchasesConfig      `json:"purchases"`
+	TextModeration TextModerationConfig `json:"text_moderation"`
+}
+
+type TextModerationConfig struct {
+	RuleFiles []string                     `json:"rule_files"`
+	Provider  TextModerationProviderConfig `json:"provider"`
+}
+
+type TextModerationProviderConfig struct {
+	Type              string   `json:"type"`
+	Endpoint          string   `json:"endpoint"`
+	APIKeyEnv         string   `json:"api_key_env"`
+	APIKeyHeader      string   `json:"api_key_header"`
+	Scopes            []string `json:"scopes"`
+	TimeoutMS         int      `json:"timeout_ms"`
+	FailurePolicy     string   `json:"failure_policy"`
+	SeverityThreshold int      `json:"severity_threshold"`
+}
+
+func DefaultTextModeration() TextModerationConfig {
+	return TextModerationConfig{RuleFiles: []string{}, Provider: TextModerationProviderConfig{
+		Type: "off", APIKeyHeader: "Authorization", Scopes: []string{
+			"nickname", "greeting", "master_title", "preset_name", "equipment_preset_name", "equipment_mark",
+			"monster_hunt_preset_name", "guild_raid_preset_name", "colosseum_preset_name",
+			"guild_name", "guild_message", "guild_notice", "chat",
+		},
+		TimeoutMS: 1500, FailurePolicy: "deny", SeverityThreshold: 4,
+	}}
+}
+
+func (c TextModerationConfig) Validate() error {
+	if slices.Contains(c.RuleFiles, "") {
+		return fmt.Errorf("text_moderation.rule_files must contain nonempty paths")
+	}
+	p := c.Provider
+	if p.Type != "off" && p.Type != "http_json" && p.Type != "azure_content_safety" {
+		return fmt.Errorf("text_moderation.provider.type must be off, http_json, or azure_content_safety")
+	}
+	if p.TimeoutMS < 10 || p.TimeoutMS > 30000 {
+		return fmt.Errorf("text_moderation.provider.timeout_ms must be between 10 and 30000")
+	}
+	if p.FailurePolicy != "allow" && p.FailurePolicy != "deny" {
+		return fmt.Errorf("text_moderation.provider.failure_policy must be allow or deny")
+	}
+	if p.SeverityThreshold < 0 || p.SeverityThreshold > 7 {
+		return fmt.Errorf("text_moderation.provider.severity_threshold must be between 0 and 7")
+	}
+	if p.Type != "off" && (p.Endpoint == "" || len(p.Scopes) == 0) {
+		return fmt.Errorf("text_moderation active provider requires endpoint and scopes")
+	}
+	if p.Type == "azure_content_safety" && p.APIKeyEnv == "" {
+		return fmt.Errorf("text_moderation Azure provider requires api_key_env")
+	}
+	seen := map[string]bool{}
+	for _, scope := range p.Scopes {
+		if !ValidTextScope(scope) || seen[scope] {
+			return fmt.Errorf("text_moderation.provider.scopes must contain unique lowercase identifiers")
+		}
+		seen[scope] = true
+	}
+	return nil
+}
+
+func ValidTextScope(scope string) bool {
+	if len(scope) == 0 || len(scope) > 64 || scope[0] < 'a' || scope[0] > 'z' {
+		return false
+	}
+	for _, r := range scope {
+		allowed := r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_'
+		if !allowed {
+			return false
+		}
+	}
+	return true
 }
 
 type PurchasesConfig struct {
@@ -48,7 +123,7 @@ type GachaConfig struct {
 }
 
 func Default() Config {
-	return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}, Purchases: PurchasesConfig{DiamondRecharge: DiamondRechargeConfig{Currency: "free", GoldPerPaidDiamond: 1000, DiamondsPerPaidDiamond: 1}}}
+	return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}, Purchases: PurchasesConfig{DiamondRecharge: DiamondRechargeConfig{Currency: "free", GoldPerPaidDiamond: 1000, DiamondsPerPaidDiamond: 1}}, TextModeration: DefaultTextModeration()}
 }
 
 // Load generates defaults when missing and strictly validates existing files.
@@ -104,6 +179,9 @@ func containsNull(value any) bool {
 }
 
 func (c Config) Validate() error {
+	if err := c.Realtime.Validate(); err != nil {
+		return err
+	}
 	if c.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported schema_version %d (expected 1)", c.SchemaVersion)
 	}
@@ -119,7 +197,7 @@ func (c Config) Validate() error {
 	if r.GoldPerPaidDiamond < 1 || r.GoldPerPaidDiamond > 1_000_000_000 || r.DiamondsPerPaidDiamond < 1 || r.DiamondsPerPaidDiamond > 1_000_000_000 {
 		return fmt.Errorf("purchases.diamond_recharge conversion rates must be integers between 1 and 1000000000")
 	}
-	return nil
+	return c.TextModeration.Validate()
 }
 
 func BesideExecutable() (string, error) {

@@ -96,8 +96,10 @@ public sealed class Plugin : BaseUnityPlugin
             var harmony = new Harmony(PluginId);
 #pragma warning restore CA2000
             SessionDiagnostics.Install(harmony);
-            EventRequestDiagnostics.Install(harmony);
-            EventHubPresentation.Install(harmony);
+            RealtimeBridge.Install(harmony);
+            StoryCheckpoint.Install(harmony);
+            harmony.Patch(Game.Getter(() => UserSettingInfo.IsFirstUIHomeMenu),
+                postfix: new HarmonyMethod(typeof(SessionRecovery), nameof(FirstUIHomeMenuPostfix)));
             harmony.Patch(awake, postfix: new HarmonyMethod(typeof(SessionRecovery), nameof(IntroAwakePostfix)));
             var maintenancePrefix = new HarmonyMethod(typeof(LoginController), nameof(SendMaintenancePrefix))
             {

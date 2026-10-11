@@ -51,6 +51,7 @@ type InstallResult struct {
 	LocalIdentity plugin.Result `json:"local_identity"`
 	LoginUI       plugin.Result `json:"login_ui"`
 	CashShop      plugin.Result `json:"cash_shop"`
+	FChat         plugin.Result `json:"fchat"`
 }
 
 func Inspect(gameDir string, versions clientconfig.ReleaseVersions) (GameStatus, error) {
@@ -119,6 +120,7 @@ func InstallPlugins(
 	localIdentitySource string,
 	loginUISource string,
 	cashShopSource string,
+	fChatSource string,
 ) (InstallResult, error) {
 	status, err := Inspect(gameDir, versions)
 	if err != nil {
@@ -142,6 +144,10 @@ func InstallPlugins(
 	if err != nil {
 		return InstallResult{}, err
 	}
+	fchatSource, err := plugin.ResolvePackaged(plugin.FChat, fChatSource)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	local, err := plugin.Install(plugin.LocalIdentity, gameDir, localSource)
 	if err != nil {
 		return InstallResult{}, err
@@ -154,7 +160,11 @@ func InstallPlugins(
 	if err != nil {
 		return InstallResult{}, err
 	}
-	return InstallResult{LocalIdentity: local, LoginUI: login, CashShop: cash}, nil
+	fchat, err := plugin.Install(plugin.FChat, gameDir, fchatSource)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	return InstallResult{LocalIdentity: local, LoginUI: login, CashShop: cash, FChat: fchat}, nil
 }
 
 func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (ResourcePolicy, error) {

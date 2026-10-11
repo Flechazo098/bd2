@@ -1,0 +1,10 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(BD2GameSdkRuntimeDir)Component.cs" Link="GameSdk/Component.cs" />
+    <EmbeddedResource Include="Assets/Lang/*.json" LogicalName="BD2.GameSdk.Lang.%(Filename)%(Extension)" />
+  </ItemGroup>
+  <Target Name="ValidateBD2LanguageAssets" BeforeTargets="PrepareResources;CoreCompile" DependsOnTargets="PrepareBD2GameSdk"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true' and Exists('$(MSBuildProjectDirectory)/Assets/Lang')">
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; validate-lang &quot;$(MSBuildProjectDirectory)/Assets/Lang&quot;" />
+  </Target>
+</Project>

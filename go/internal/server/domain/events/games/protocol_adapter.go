@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-func (s *Service) play(path string, req []byte, g *GameState, d *gamedata.EventGame) ([]byte, uint64, map[int][]gamedata.BattleReward, error) {
+func (s *Service) play(ctx command.Context, path string, req []byte, g *GameState, d *gamedata.EventGame) ([]byte, uint64, map[int][]gamedata.BattleReward, error) {
 	var body []byte
 	cost := uint64(1)
 	rewards := map[int][]gamedata.BattleReward{}
@@ -139,10 +139,33 @@ func (s *Service) play(path string, req []byte, g *GameState, d *gamedata.EventG
 		}
 		var opens []uint64
 		if path == "/MiniPuzzleAllOpen" {
+			available, e := s.rewards.AvailableGameItemCount(ctx, d.CostType, d.CostID)
+			if e != nil {
+				return fail(e)
+			}
+			count := min(available/d.Cost, uint64(len(g.Board)-len(g.Opened)))
+			if count == 0 {
+				return fail(fmt.Errorf("eventgames: puzzle has no affordable unopened tiles: balance=%d unit_cost=%d remaining=%d", available, d.Cost, len(g.Board)-len(g.Opened)))
+			}
+			if _, e = consume(req, 3, d, count); e != nil {
+				return fail(e)
+			}
+			var unopened []uint64
 			for _, id := range g.Board {
 				if !contains(g.Opened, id) {
-					opens = append(opens, id)
+					unopened = append(unopened, id)
 				}
+			}
+			for range count {
+				pick, e := s.sample(uint64(len(unopened)))
+				if e != nil {
+					return fail(e)
+				}
+				if pick >= uint64(len(unopened)) {
+					return fail(fmt.Errorf("eventgames: sampler out of range"))
+				}
+				opens = append(opens, unopened[pick])
+				unopened = append(unopened[:pick], unopened[pick+1:]...)
 			}
 		} else {
 			id := scalar(req, 3)
@@ -179,6 +202,12 @@ func (s *Service) play(path string, req []byte, g *GameState, d *gamedata.EventG
 			if all {
 				g.Lines = append(g.Lines, r.ID)
 				rewards[5] = append(rewards[5], r.Rewards...)
+			}
+		}
+		if len(g.Opened) == len(g.Board) && g.Clear < rewardCount(d, math.MaxUint64) {
+			g.Clear++
+			if e := s.initialize(g, d); e != nil {
+				return fail(e)
 			}
 		}
 	case 19:
@@ -377,9 +406,9 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			return fail(fmt.Errorf("eventgames: event is closed"))
 		}
 		before := stateWire(g, d)
-		body, cost, rewards, e := s.play(path, req, &g, d)
+		body, cost, rewards, e := s.play(ctx, path, req, &g, d)
 		if e != nil {
-			return fail(e)
+			return fail(fmt.Errorf("eventgames: path=%s uid=%d game=%d stage=%d: %w", path, uid, d.ID, g.Clear, e))
 		}
 		consumeField := 3
 		if path == "/MiniPuzzleOpen" {
@@ -390,7 +419,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		}
 		items, e := consume(req, consumeField, d, cost)
 		if e != nil {
-			return fail(e)
+			return fail(fmt.Errorf("eventgames: path=%s uid=%d game=%d stage=%d: %w", path, uid, d.ID, g.Clear, e))
 		}
 		bundles := map[int][]byte{}
 		fields := []int{3, 4, 5, 6, 7}
@@ -470,8 +499,12 @@ func consume(req []byte, n int, d *gamedata.EventGame, count uint64) ([]assets.I
 	if e != nil {
 		return nil, e
 	}
-	if d.Cost > 0 && count > math.MaxUint64/d.Cost || total != count*d.Cost {
-		return nil, fmt.Errorf("eventgames: cost does not match design")
+	if d.Cost > 0 && count > math.MaxUint64/d.Cost {
+		return nil, fmt.Errorf("eventgames: design cost overflow: submitted=%d count=%d unit_cost=%d item_type=%d item_id=%d", total, count, d.Cost, d.CostType, d.CostID)
+	}
+	expected := count * d.Cost
+	if total != expected {
+		return nil, fmt.Errorf("eventgames: cost does not match design: submitted=%d expected=%d count=%d unit_cost=%d item_type=%d item_id=%d", total, expected, count, d.Cost, d.CostType, d.CostID)
 	}
 	return out, nil
 }

@@ -4,6 +4,8 @@ import (
 	"bd2server/internal/server/domain/battle"
 	"bd2server/internal/server/domain/battle/hunting"
 	"bd2server/internal/server/domain/battle/monsterhunt"
+	"bd2server/internal/server/domain/battle/pvp"
+	"bd2server/internal/server/domain/chat"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
 	"bd2server/internal/server/domain/commerce/gacha"
@@ -15,13 +17,16 @@ import (
 	"bd2server/internal/server/domain/events/games"
 	"bd2server/internal/server/domain/events/play"
 	"bd2server/internal/server/domain/events/tasks"
+	"bd2server/internal/server/domain/fishing"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/mail"
+	"bd2server/internal/server/domain/profile"
 	"bd2server/internal/server/domain/progression/achievements"
 	"bd2server/internal/server/domain/progression/missions"
 	"bd2server/internal/server/domain/progression/pictorial"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/roster/deck"
+	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/domain/world"
 	"bd2server/internal/server/domain/world/progress"
 	"bd2server/internal/server/domain/world/todayquest"
@@ -40,18 +45,24 @@ import (
 )
 
 type PlayerFactory struct {
-	options  *configuration
-	design   *designCatalog
-	seeds    *seedCatalog
-	profiles interface {
+	roomResults *roomResults
+	shared      *sharedRuntime
+	pvpSource   pvp.Source
+	wakeOutbox  func(string)
+	options     *configuration
+	design      *designCatalog
+	seeds       *seedCatalog
+	profiles    interface {
 		GameIdentity(context.Context, string) (identitystore.GameProfile, error)
 	}
 }
 
 type playerAssembly struct {
-	worldSeed world.Seed
-	mailbox   *mail.Starter
-	deckSeed  deck.Seed
+	fishingService *fishing.Service
+	pvpService     *pvp.Service
+	worldSeed      world.Seed
+	mailbox        *mail.Starter
+	deckSeed       deck.Seed
 	*PlayerFactory
 	progressState           *progress.Store
 	deckStateStore          *deck.Store
@@ -60,6 +71,9 @@ type playerAssembly struct {
 	wallet                  *assets.Wallet
 	inventorySlots          *assets.InventorySlots
 	mailService             *mail.Service
+	nicknameService         *profile.NicknameService
+	profileService          *profile.Service
+	chatService             *chat.Service
 	missionService          *missions.Service
 	ownedEquipment          *assets.EquipmentInventory
 	worldService            *world.Service
@@ -102,6 +116,7 @@ type playerAssembly struct {
 	achievementCounters     *achievements.AchievementService
 	achievementObserver     *achievements.GameplayAchievementObserver
 	handlers                []session.Handler
+	avatarService           *profile.AvatarService
 	observers               []session.ResponseObserver
 	stateRepository         *accountstate.Repository
 	scope                   stateio.RootStore
@@ -112,10 +127,11 @@ type playerAssembly struct {
 }
 
 type playerInstance struct {
-	accountID  string
-	factory    *PlayerFactory
-	repository *accountstate.Repository
-	assembly   *playerAssembly
+	sharedSocial *social.Service
+	accountID    string
+	factory      *PlayerFactory
+	repository   *accountstate.Repository
+	assembly     *playerAssembly
 }
 
 func (f *PlayerFactory) open(accountID string) (instance *playerInstance, openErr error) {
@@ -140,7 +156,11 @@ func (f *PlayerFactory) open(accountID string) (instance *playerInstance, openEr
 	if err != nil {
 		return nil, err
 	}
-	return &playerInstance{accountID: accountID, factory: f, repository: repository, assembly: assembly}, nil
+	instance = &playerInstance{accountID: accountID, factory: f, repository: repository, assembly: assembly}
+	if err := instance.recoverSharedBattle(context.Background()); err != nil {
+		return nil, err
+	}
+	return instance, nil
 }
 
 func (f *PlayerFactory) assemble(ctx context.Context, accountID string, repository *accountstate.Repository) (_ *playerAssembly, openErr error) {

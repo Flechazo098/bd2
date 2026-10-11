@@ -6,6 +6,7 @@ package battle
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"fmt"
 )
 
 type Service struct {
@@ -56,6 +57,21 @@ func (s *Service) AttachEventBattle(runtime EventBattleRuntime) {
 		s.eventBattles = append(s.eventBattles, runtime)
 	}
 }
+
+func (s *Service) BeginExternal(ctx command.Context, mode, deck uint64, receipt string) error {
+	if (mode != 23 && mode != 26) || deck == 0 || receipt == "" {
+		return fmt.Errorf("battle: invalid external encounter")
+	}
+	state := s.stateLocked(ctx)
+	if state.entered && state.enterReceipt != receipt {
+		return fmt.Errorf("battle: another encounter is active")
+	}
+	*state = battleState{entered: true, index: deck, deck: deck, mode: mode, enterReceipt: receipt}
+	s.transientVersion++
+	return nil
+}
+
+func (s *Service) RoundCount(ctx command.Context) uint64 { return s.stateLocked(ctx).round }
 
 func (s *Service) eventBattle(mode uint64) EventBattleRuntime {
 	for _, runtime := range s.eventBattles {
@@ -194,6 +210,13 @@ func (s *Service) AttachCurrentDifficulty(resolve func(command.Context) (uint64,
 
 func (s *Service) AttachPictorialBuffs(buffs func(command.Context) ([]gamedata.PictorialBuffStat, error)) {
 	s.buffs = buffs
+}
+
+func (s *Service) PictorialBuffs(ctx command.Context) ([]gamedata.PictorialBuffStat, error) {
+	if s.buffs == nil {
+		return nil, nil
+	}
+	return s.buffs(ctx)
 }
 
 // The local engine does not simulate combat. With verification disabled

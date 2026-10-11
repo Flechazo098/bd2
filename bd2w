@@ -7,11 +7,11 @@ if [ "${1-}" = check-csharp ]; then
     (
         cd "$root"
         if [ "$#" -eq 0 ]; then
-            set -- GameSdk GameNames LocalIdentity LoginUI CashShop CaptureEnvironment
+            set -- GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment
         fi
         for project do
             case "$project" in
-                GameSdk|GameNames|LocalIdentity|LoginUI|CashShop|CaptureEnvironment) ;;
+                GameSdk|GameNames|LocalIdentity|LoginUI|CashShop|FChat|CaptureEnvironment) ;;
                 *) printf 'bd2w: unknown C# project: %s\n' "$project" >&2; exit 1 ;;
             esac
         done

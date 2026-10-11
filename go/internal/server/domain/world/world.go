@@ -94,6 +94,7 @@ func New(ctx command.Context, seed Seed, rules *gamedata.WorldRules, source *gam
 		quests: quests, transition: rules.Transitions[seed.PackID], packs: rules.Packs, transitions: rules.Transitions, activePack: activePack, fieldPacks: rules.FieldPacks,
 		questDifficulties: rules.Difficulties, packJamDesign: rules.Jam, packSummaryTargets: rules.SummaryTargets, storyCatalog: rules.Story, questCostumes: rules.QuestCostumes, storyRoster: rules.Characters}
 	service.attachPackDetailDesign(source)
+	service.presentationSource = source
 	service.attachFieldMonsterDesign(source)
 	service.trapLoader = source.FieldTraps
 	return service, nil
@@ -137,6 +138,7 @@ func (s *Service) TransientVersion() uint64 {
 }
 
 type Service struct {
+	presentationSource *gamedata.Source
 	autoRecoveryPolicy *gamedata.PackRecoveryPolicy
 	todayQuests        *todayquest.Service
 	huntingGround      interface {

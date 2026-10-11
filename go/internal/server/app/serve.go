@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/gateway/session"
 	"bd2server/internal/server/gateway/transport"
 	"bd2server/internal/server/platform/lifecycle"
+	"bd2server/internal/server/platform/textmoderation"
 	identitystore "bd2server/internal/server/storage/identity"
 	"context"
 	"crypto/rand"
@@ -27,6 +28,11 @@ func Serve(args []string) (serveErr error) {
 		return err
 	}
 	defer clear(c.authRuntime.MasterKey)
+	c.textModerator, err = textmoderation.New(c.gameRules.TextModeration, filepath.Dir(c.gameConfigPath))
+	if err != nil {
+		return fmt.Errorf("initialize text moderation: %w", err)
+	}
+	defer func() { serveErr = errors.Join(serveErr, c.textModerator.Close()) }()
 	seeds, err := loadSeeds(c)
 	if err != nil {
 		return err
@@ -52,12 +58,21 @@ func Serve(args []string) (serveErr error) {
 	if err := lockServerState(c.stateDirectory, c.gameRules.Story.StartPackID); err != nil {
 		return err
 	}
-	factory := &PlayerFactory{options: c, design: design, seeds: seeds}
+	shared, err := openSharedRuntime(context.Background(), c, design)
+	if err != nil {
+		return err
+	}
+	defer func() { serveErr = errors.Join(serveErr, shared.store.Close()) }()
+	factory := &PlayerFactory{options: c, design: design, seeds: seeds, pvpSource: shared.pvp, shared: shared, wakeOutbox: shared.wake}
 	if authStore != nil {
 		factory.profiles = authStore
 	}
 	registry := newPlayerRegistry(factory, 15*time.Minute)
 	defer func() { serveErr = errors.Join(serveErr, registry.Close(context.Background())) }()
+	discovery := outboxDiscovery{factory: factory}
+	if authStore != nil {
+		discovery.accounts = authStore
+	}
 	var authenticator session.LoginAuthenticator
 	if authService != nil {
 		authenticator = authService
@@ -67,7 +82,6 @@ func Serve(args []string) (serveErr error) {
 		return err
 	}
 
-	dispatcher := transport.Bootstrap{Config: c.bootstrap}
 	var authHandler http.Handler
 	if authService != nil {
 		authHandler = authService.Handler()
@@ -78,10 +92,28 @@ func Serve(args []string) (serveErr error) {
 		return fmt.Errorf("create server instance identity: %w", err)
 	}
 	instanceID := hex.EncodeToString(instanceBytes)
+	realtime, err := openRealtime(c, registry, game, shared, instanceID)
+	if err != nil {
+		return err
+	}
+	defer func() { serveErr = errors.Join(serveErr, realtime.close()) }()
+	if err := shared.start(registry, discovery); err != nil {
+		return err
+	}
+	defer func() { serveErr = errors.Join(serveErr, shared.stop()) }()
+	var realtimeDone <-chan error
+	var realtimeTickets http.Handler
+	if realtime != nil {
+		realtime.start()
+		realtimeDone = realtime.done
+		realtimeTickets = realtime.tickets
+	}
+	dispatcher := transport.Bootstrap{Config: c.bootstrap}
 	handler := transport.HTTP{
 		Dispatcher: dispatcher, Raw: game, Authentication: c.authentication,
 		AuthenticationHandler: authHandler, ResourcePolicy: c.publicResources,
-		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID,
+		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID, RealtimeTickets: realtimeTickets,
+		StoryCheckpoints: storyCheckpoints{game: game, players: registry},
 	}.Handler()
 	server := &http.Server{
 		Addr:              c.listen,
@@ -91,6 +123,7 @@ func Serve(args []string) (serveErr error) {
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	defer func() { _ = server.Close() }()
 	slog.Info("BD2 server listening", "address", c.listen, "instance_id", instanceID, "server_version", c.versions.ServerVersion, "game_version", c.bootstrap.Version, "bundle", c.bootstrap.BundleVer, "resourceMode", c.publicResources.Mode, "gameData", c.verifiedGameData.ArchivePath, "gameDataEntries", c.verifiedGameData.EntryCount, "accountSeed", c.accountSeed)
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.ListenAndServe() }()
@@ -98,6 +131,8 @@ func Serve(args []string) (serveErr error) {
 	signal.Notify(signals, lifecycle.ShutdownSignals()...)
 	defer signal.Stop(signals)
 	select {
+	case err := <-realtimeDone:
+		return fmt.Errorf("realtime listener stopped: %w", err)
 	case err := <-serveResult:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil

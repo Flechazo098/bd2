@@ -7,6 +7,10 @@
     <BD2SdkDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(IntermediateOutputPath)bd2-game-sdk'))</BD2SdkDir>
     <BD2SdkTool>$(BD2GameSdkPackageRoot)tools/net8.0/GameSdk.dll</BD2SdkTool>
   </PropertyGroup>
+  <PropertyGroup>
+    <BD2GameSdkRuntimeDir>$(BD2GameSdkPackageRoot)runtime/</BD2GameSdkRuntimeDir>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)BD2.GameSdk.Localization.targets" Condition="'$(BD2GameSdkEnabled)' == 'true'" />
   <ItemGroup Condition="'$(BD2GameSdkEnabled)' == 'true'">
     <Compile Include="$(BD2SdkDir)/GameSdkIdentity.g.cs" />
     <Reference Include="Assembly-CSharp.Readable">
@@ -21,7 +25,7 @@
   <Import Project="$(BD2SdkDir)/GameSourceNavigation.props" Condition="Exists('$(BD2SdkDir)/GameSourceNavigation.props') and '$(BD2GameSdkEnabled)' == 'true'" />
   <Target Name="PrepareBD2GameSdk" BeforeTargets="ResolveAssemblyReferences;CoreCompile"
           Condition="'$(BD2GameSdkEnabled)' == 'true' and '$(IsCrossTargetingBuild)' != 'true'">
-    <Error Condition="'$(BD2GameVersion)' == ''" Text="BD2.GameSdk: declare BD2GameVersion explicitly in your plugin csproj, for example &lt;BD2GameVersion&gt;2.35.10&lt;/BD2GameVersion&gt;." />
+    <Error Condition="'$(BD2GameVersion)' == ''" Text="BD2.GameSdk: declare BD2GameVersion explicitly in your plugin csproj, for example &lt;BD2GameVersion&gt;2.36.7&lt;/BD2GameVersion&gt;." />
     <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == '/BrownDust II_Data/Managed'" Text="BD2.GameSdk: set GameDir in Directory.Build.props or pass -p:GameDir=&lt;game-directory&gt;." />
     <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="BD2.GameSdk: Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
     <Error Condition="'$(BD2AddBepInExReferences)' != 'false' and !Exists('$(BD2BepInExDir)/core/BepInEx.dll')" Text="BD2.GameSdk: install BepInEx or set BD2BepInExDir. Custom hosts can disable BD2AddBepInExReferences." />

@@ -89,7 +89,7 @@ func (s *Service) FirstGachaCompleted() bool {
 }
 
 func NewService(design *gamedata.InfiniteGachaDesign, regular *gamedata.RegularGachaCatalog, collection *roster.CollectionStore, wallet *assets.Wallet) (*Service, error) {
-	if design == nil || regular == nil || collection == nil || wallet == nil {
+	if regular == nil || collection == nil || wallet == nil {
 		return nil, errors.New("gacha: invalid service configuration")
 	}
 	return &Service{design: design, regular: regular, collection: collection, wallet: wallet, now: time.Now}, nil

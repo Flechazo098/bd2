@@ -14,7 +14,6 @@ var standaloneDefaults = map[string]int{
 	"/PvpBattleDeckInfo":       87,
 	"/PvpBattleHistory":        97,
 	"/PvpBattleOnceRewardInfo": 277,
-	"/FriendRecommend":         211,
 	"/SupporterStatus":         438,
 	"/SupporterBattleInfo":     439,
 }

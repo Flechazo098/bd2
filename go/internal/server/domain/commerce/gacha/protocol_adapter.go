@@ -62,11 +62,13 @@ func (s *Service) PurchaseCountDBInfos(ctx command.Context) [][]byte {
 		group, id uint64
 		bought    bool
 	}{}
-	_, infiniteBought := s.collection.Grant(s.infiniteGrant())
-	products = append(products, struct {
-		group, id uint64
-		bought    bool
-	}{s.design.ProductGroupID, s.design.ProductID, infiniteBought})
+	if s.design != nil {
+		_, infiniteBought := s.collection.Grant(s.infiniteGrant())
+		products = append(products, struct {
+			group, id uint64
+			bought    bool
+		}{s.design.ProductGroupID, s.design.ProductID, infiniteBought})
+	}
 	for _, group := range s.regular.Groups() {
 		if group.CashProductGroupID == 0 || group.CashProductID == 0 {
 			continue
@@ -129,7 +131,10 @@ func (s *Service) saveSelection(ctx command.Context, request []byte) (int, []byt
 	if expected == 0 || len(selections) != expected {
 		return 198, nil, true, fmt.Errorf("gacha: group %d requires %d selections, got %d", groupID, expected, len(selections))
 	}
-	eligible := s.design.FiveStarIDs
+	var eligible []uint64
+	if s.design != nil {
+		eligible = s.design.FiveStarIDs
+	}
 	if group, ok := s.regular.Group(groupID); ok && group.GachaSubType == 1 && group.TenTimeGachaID != 0 {
 		if special := s.regular.SpecialSelectionIDs(group.TenTimeGachaID); len(special) != 0 {
 			eligible = special
@@ -157,6 +162,9 @@ func (s *Service) saveSelection(ctx command.Context, request []byte) (int, []byt
 }
 
 func (s *Service) lockPreview(ctx command.Context, request []byte) (int, []byte, bool, error) {
+	if s.design == nil {
+		return 175, nil, true, errors.New("gacha: infinite gacha is not scheduled")
+	}
 	eventIndex, found, err := wire.Varint(request, 2)
 	if err != nil || !found || eventIndex == 0 {
 		return 175, nil, true, errors.New("gacha: missing preview event index")
@@ -868,6 +876,9 @@ func (s *Service) preview(ctx command.Context, request []byte) (int, []byte, boo
 	if s.first != nil && id == s.first.GachaID {
 		return s.previewFirstGacha(ctx, request)
 	}
+	if s.design == nil {
+		return 175, nil, true, errors.New("gacha: infinite gacha is not scheduled")
+	}
 	if _, bought := s.collection.Grant(s.infiniteGrant()); bought {
 		return 175, nil, true, errors.New("gacha: infinite product already purchased")
 	}
@@ -970,7 +981,7 @@ func (s *Service) confirm(ctx command.Context, request []byte) (int, []byte, boo
 		}
 		return 61, wire.AppendBytes(nil, 1, bundle), true, nil
 	}
-	if group != s.design.ProductGroupID || productID != s.design.ProductID || saleGroup != s.design.SaleGroup {
+	if s.design == nil || group != s.design.ProductGroupID || productID != s.design.ProductID || saleGroup != s.design.SaleGroup {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported cash product group=%d product=%d", group, productID)
 	}
 	grant, err := s.collection.ConfirmInfinite(ctx, s.infiniteGrant(), s.design)
@@ -1057,7 +1068,10 @@ func (s *Service) rewardBundle(grant roster.CollectionGrant) []byte {
 
 func (s *Service) gachaInfo() []byte {
 	var out []byte
-	_, infinitePurchased := s.collection.Grant(s.infiniteGrant())
+	infinitePurchased := false
+	if s.design != nil {
+		_, infinitePurchased = s.collection.Grant(s.infiniteGrant())
+	}
 	if s.schedule != nil {
 		for _, entry := range s.schedule.Schedules {
 			// The versioned seed is the public schedule, while availability of
@@ -1109,7 +1123,7 @@ func (s *Service) gachaInfo() []byte {
 		info = wire.AppendVarint(info, 2, change.Count)
 		out = wire.AppendBytes(out, 6, info)
 	}
-	if !infinitePurchased {
+	if s.design != nil && !infinitePurchased {
 		preview := s.collection.LatestPreview()
 		eventIndex, locked := s.collection.PreviewLock()
 		if len(preview) == s.design.Count && eventIndex != 0 {

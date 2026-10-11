@@ -24,6 +24,7 @@ type AchievementKey struct{ ContentsGroup, GroupID, ID uint64 }
 type MissionDesign struct {
 	Missions     map[MissionKey][]Reward
 	Conditions   map[MissionKey]MissionCondition
+	Windows      map[[2]uint64]MissionWindow
 	Sections     map[SectionRewardKey]SectionRewardDesign
 	Achievements map[AchievementKey]AchievementDesign
 }
@@ -71,6 +72,9 @@ func loadMissionDesignDB(db *sql.DB) (*MissionDesign, error) {
 		Achievements: map[AchievementKey]AchievementDesign{},
 	}
 	if err := loadMissionRows(db, design); err != nil {
+		return nil, err
+	}
+	if err := loadMissionWindows(db, design); err != nil {
 		return nil, err
 	}
 	if err := loadSectionRows(db, design); err != nil {

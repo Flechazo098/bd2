@@ -30,6 +30,7 @@ internal static class Program
                 case "verify-navigation" when args.Length == 2: SourceNavigationVerifier.Verify(args[1]); break;
                 case "reobf" when args.Length is 4 or 5 or 6: Reobfuscate(args[1], args[2], args[3], args.Length >= 5 ? args[4] : null, args.Length == 6 ? args[5] : null); break;
                 case "verify" when args.Length is 3 or 4: Verify(args[1], args[2], args.Length == 4 ? args[3] : null); break;
+                case "validate-lang" when args.Length == 2: LanguageAssets.Validate(args[1]); break;
 
                 default: throw new ArgumentException("Usage: prepare-embedded <Assembly-CSharp.dll> <output-dir> [--game-version version] | export-names <names.json> | names <Assembly-CSharp.dll> <mapping.obfuscate> <versions.json> <names.json> | shell <names.json> <Assembly-CSharp.dll> <output.dll> | source-navigation <readable-implementation.dll> <dependency-directory> | verify-navigation <sdk-directory> | reobf <names.json> <input.dll> <output.dll> [Assembly-CSharp.dll] [dependency-directory] | verify <names.json> <plugin.dll> [Assembly-CSharp.dll]");
             }

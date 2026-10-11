@@ -11,6 +11,7 @@ type Context struct {
 	Identity
 	Cancellation context.Context
 	State        stateio.AtomicEntryStore
+	Emit         func(Event) error
 }
 
 func (c Context) Cancelled() bool { return c.Cancellation != nil && c.Cancellation.Err() != nil }

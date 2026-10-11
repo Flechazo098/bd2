@@ -12,12 +12,13 @@ import (
 )
 
 type Config struct {
-	BaseURL     string // Must include the trailing slash, e.g. http://127.0.0.1:8080/game/
-	CDNURL      string // Base for /StandaloneWindows64/HD/<version>/...
-	GameDataURL string // Leave empty until a healthy GameData archive is available.
-	GameDataVer string
-	Version     string
-	BundleVer   string
+	MatchingAddress string
+	BaseURL         string // Must include the trailing slash, e.g. http://127.0.0.1:8080/game/
+	CDNURL          string // Base for /StandaloneWindows64/HD/<version>/...
+	GameDataURL     string // Leave empty until a healthy GameData archive is available.
+	GameDataVer     string
+	Version         string
+	BundleVer       string
 }
 
 func (c Config) Validate() error {
@@ -63,7 +64,9 @@ func ServerInfo(c Config) []byte {
 	info := wire.AppendString(nil, 2, c.BaseURL)
 	info = wire.AppendString(info, 3, c.CDNURL)
 	info = wire.AppendString(info, 5, strings.TrimSuffix(c.BaseURL, "game/")+"logs")
-	// Blank chat-server address avoids connecting to an unrelated official host.
+	if c.MatchingAddress != "" {
+		info = wire.AppendString(info, 6, c.MatchingAddress)
+	}
 	if c.GameDataURL != "" {
 		info = wire.AppendString(info, 8, c.GameDataURL)
 		info = wire.AppendString(info, 9, c.GameDataVer)

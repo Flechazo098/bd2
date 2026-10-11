@@ -28,6 +28,7 @@ type Run struct {
 	Offers                                     []uint64
 	LevelExp                                   uint64
 	Killed, Picked, Available                  map[uint64]uint64
+	Native                                     *NativeRun `json:"native,omitempty"`
 }
 type record struct {
 	UID, Game, Stage, Mode, Best, Paid, Date uint64

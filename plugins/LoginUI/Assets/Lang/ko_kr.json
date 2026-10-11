@@ -1,0 +1,9 @@
+{
+  "loginui.recovery.story_failed": "스토리 진행 복구에 실패했습니다. 클라이언트를 다시 시작해 주세요.",
+  "loginui.recovery.story_sync": "스토리 진행을 동기화하고 있습니다. 서버 응답을 기다리는 중…",
+  "loginui.recovery.player_sync": "플레이어 데이터를 동기화하는 중…",
+  "loginui.recovery.reconnecting": "서버에 다시 연결하는 중…",
+  "loginui.recovery.waiting_server": "서버가 시작되기를 기다리는 중…",
+  "loginui.recovery.restoring_session": "로그인 세션을 복구하는 중…",
+  "loginui.recovery.safe_scene": "안전한 장소로 돌아가는 중…"
+}

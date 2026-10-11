@@ -50,6 +50,7 @@ type Starter struct {
 	Version                  string        `json:"version"`
 	CookingRecipes           []uint64      `json:"cooking_recipes,omitempty"`
 	Items                    []assets.Item `json:"items"`
+	OwnedItems               []assets.Item `json:"owned_items"`
 	Costumes                 []Costume     `json:"costumes"`
 	Characters               []Character   `json:"characters"`
 	Pictorialbook            []Pictorial   `json:"pictorialbook,omitempty"`
@@ -82,7 +83,7 @@ func (s *Starter) Validate() error {
 		}
 		seenRecipes[id] = true
 	}
-	for _, item := range s.Items {
+	for _, item := range append(append([]assets.Item(nil), s.Items...), s.OwnedItems...) {
 		if item.ID == 0 || item.Count == 0 {
 			return errors.New("player: invalid item")
 		}

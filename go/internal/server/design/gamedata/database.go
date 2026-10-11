@@ -13,7 +13,7 @@ import (
 )
 
 // DatabaseName maps a logical client DB name to its GameData archive entry.
-// Version 1 is the current 2.35.10 DB schema generation.
+// Version 1 is the current 2.36.7 DB schema generation.
 func DatabaseName(logical string) (string, error) {
 	if logical == "" || strings.ContainsAny(logical, `/\\.`) {
 		return "", fmt.Errorf("gamedata: invalid logical database name %q", logical)

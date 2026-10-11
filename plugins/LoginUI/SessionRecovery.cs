@@ -1,10 +1,10 @@
-using System.Globalization;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using BD2.GameNames;
+using TextComponent = BD2.GameSdk.Component;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.UI;
@@ -28,6 +28,7 @@ internal static class SessionRecovery
     internal static bool EstablishedGameSession;
     private static GameObject RecoveryOverlay;
     private static Text RecoveryText;
+    private static bool StoryStatusOverlay;
     internal static string ServerInstanceID;
     private static int RecoveryRestartScheduled;
     private static int RecoveryEnterScheduled;
@@ -41,9 +42,60 @@ internal static class SessionRecovery
 
     internal static void DisposeGameRelay()
     {
+        RealtimeBridge.DisposeAll();
         SecureGameRelay relay = GameRelay;
         GameRelay = null;
         relay?.Dispose();
+    }
+
+    internal static System.Threading.Tasks.Task<RealtimeBridge.Ticket> RequestRealtimeTicket(string channel, CancellationToken cancellation)
+    {
+        SecureGameRelay relay = GameRelay ?? throw new InvalidOperationException("Secure game transport is unavailable");
+        return relay.RequestRealtimeTicket(channel, cancellation);
+    }
+
+    internal static System.Threading.Tasks.Task<StoryCheckpoint.Response> RequestStoryCheckpoint(StoryCheckpoint.Request request, CancellationToken cancellation)
+    {
+        SecureGameRelay relay = GameRelay ?? throw new InvalidOperationException("Secure game transport is unavailable");
+        return relay.RequestStoryCheckpoint(request, cancellation);
+    }
+
+    internal static void StartStoryCoroutine(IEnumerator routine)
+    {
+        EnsureRecoveryHost();
+        Owner.StartCoroutine(routine);
+    }
+
+    internal static void ShowStoryFailure(string error)
+    {
+        StoryStatusOverlay = false;
+        Log?.LogError("Story recovery stopped: " + error);
+        ShowRecoveryOverlay(TextComponent.Translatable("loginui.recovery.story_failed").GetString());
+    }
+
+    internal static void ShowStoryStatus()
+    {
+        string message = TextComponent.Translatable("loginui.recovery.story_sync").GetString();
+        if (Volatile.Read(ref SessionRecoveryInProgress) != 0)
+        {
+            SetRecoveryMessage(message);
+            return;
+        }
+        if (RecoveryOverlay != null && !StoryStatusOverlay) return;
+        ShowRecoveryOverlay(message);
+        StoryStatusOverlay = true;
+    }
+
+    internal static void ClearStoryStatus()
+    {
+        if (!StoryStatusOverlay) return;
+        StoryStatusOverlay = false;
+        if (Volatile.Read(ref SessionRecoveryInProgress) == 0) HideRecoveryOverlay();
+    }
+
+    internal static void FirstUIHomeMenuPostfix(ref bool __result)
+    {
+        if (ServerRoot != null && UIManager.EntryFlow?.IsFirstEnter == true) __result = false;
     }
 
     internal static void EnsureGameRelay()
@@ -184,7 +236,7 @@ internal static class SessionRecovery
             {
                 EnsureRecoveryHost();
                 EstablishedGameSession = true;
-                SetRecoveryMessage("正在同步玩家数据……\nSynchronizing player data…");
+                SetRecoveryMessage(TextComponent.Translatable("loginui.recovery.player_sync").GetString());
                 return;
             }
             bool accessExpired = requestUri.AbsolutePath.Equals("/game/LoginUser", StringComparison.Ordinal) &&
@@ -234,7 +286,7 @@ internal static class SessionRecovery
             if (Interlocked.CompareExchange(ref SessionRecoveryInProgress, 1, 0) == 0)
             {
                 Log?.LogWarning("Starting automatic game-session recovery: reason=" + reason + SessionDiagnostics.Context());
-                ShowRecoveryOverlay("正在重新连接服务器……\nReconnecting to server…");
+                ShowRecoveryOverlay(TextComponent.Translatable("loginui.recovery.reconnecting").GetString());
             }
             else
             {
@@ -389,6 +441,7 @@ internal static class SessionRecovery
 
     private static void ScheduleRecoveryRestart()
     {
+        StoryCheckpoint.ResetSession();
         CancelControlProbes();
         Interlocked.Increment(ref RecoveryGeneration);
         AuthenticationLoadingOrigin = null;
@@ -427,7 +480,7 @@ internal static class SessionRecovery
         CancellationToken lifetime = Owner.Lifetime.Token;
         while (Volatile.Read(ref SessionRecoveryInProgress) != 0 && generation == Volatile.Read(ref RecoveryGeneration))
         {
-            SetRecoveryMessage("等待服务器启动……\nWaiting for server…");
+            SetRecoveryMessage(TextComponent.Translatable("loginui.recovery.waiting_server").GetString());
             ControlProbeResult result = null;
             yield return RequestControlEndpoint(new Uri(ServerRoot, "readyz"), UnityWebRequest.kHttpVerbGET, null, null, 6,
                 response => result = response, lifetime, ControlProbeCancellation.Token);
@@ -446,7 +499,7 @@ internal static class SessionRecovery
             yield break;
         }
         Log?.LogInfo("Server became ready; restarting client to restore session");
-        SetRecoveryMessage("正在恢复登录会话……\nRestoring session…");
+        SetRecoveryMessage(TextComponent.Translatable("loginui.recovery.restoring_session").GetString());
         if (!RestartClientForRecovery())
         {
             FinishRecovery(false, "client restart methods are unavailable", generation);
@@ -566,7 +619,12 @@ internal static class SessionRecovery
 
     internal static void SetIntroStatePostfix(object __instance, object __0)
     {
-        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || __0 == null || Convert.ToInt32(__0, CultureInfo.InvariantCulture) != 9 || Owner == null)
+        if (Volatile.Read(ref SessionRecoveryInProgress) == 0 || __0 == null || Owner == null)
+        {
+            return;
+        }
+        FieldInfo finished = __0.GetType().GetGameField("IntroWorkFinished", BindingFlags.Static | BindingFlags.Public);
+        if (finished == null || !__0.Equals(finished.GetValue(null)))
         {
             return;
         }
@@ -579,7 +637,7 @@ internal static class SessionRecovery
 
     private static IEnumerator EnterAfterAuthoritativeLoad(object introUI, int generation)
     {
-        SetRecoveryMessage("正在返回安全场景……\nReturning to a safe scene…");
+        SetRecoveryMessage(TextComponent.Translatable("loginui.recovery.safe_scene").GetString());
         yield return null;
         if (generation != Volatile.Read(ref RecoveryGeneration))
         {
@@ -597,6 +655,7 @@ internal static class SessionRecovery
         float deadline = Time.realtimeSinceStartup + 30f;
         bool safeSceneLoaded = false;
         string safeScene = null;
+        bool reportedLoadingState = false;
         while (Time.realtimeSinceStartup < deadline && generation == Volatile.Read(ref RecoveryGeneration))
         {
             bool ready;
@@ -604,9 +663,19 @@ internal static class SessionRecovery
             {
                 ready = TryGetRecoveredSafeScene(out safeScene);
             }
+            catch (TargetInvocationException ex) when (ex.InnerException is NullReferenceException)
+            {
+                ready = false;
+                if (!reportedLoadingState)
+                {
+                    reportedLoadingState = true;
+                    Log?.LogDebug("Recovered scene is still initializing: " + ex.InnerException.GetType().Name);
+                }
+            }
             catch (Exception ex)
             {
-                FinishRecovery(false, "could not inspect recovered scene: " + ex.Message, generation);
+                Exception cause = ex is TargetInvocationException invocation && invocation.InnerException != null ? invocation.InnerException : ex;
+                FinishRecovery(false, "could not inspect recovered scene: " + cause.GetType().Name + ": " + cause.Message, generation);
                 yield break;
             }
             if (ready)
@@ -633,14 +702,21 @@ internal static class SessionRecovery
     private static bool TryGetRecoveredSafeScene(out string scene)
     {
         scene = null;
-        if (!EstablishedGameSession || IsRecoveryUIActive("LoadingUI") || IsRecoveryUIActive("IntroUI")) return false;
+        if (!EstablishedGameSession || StoryCheckpoint.WaitingForEntrySync || IsRecoveryUIActive("IntroUI")) return false;
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
         PackManager pack = FindUnitySingleton<PackManager>();
-        PropertyInfo packLoading = pack?.GetType().GetGameProperty(nameof(PackManager.IsPackLoading), flags);
-        if (packLoading?.GetValue(pack) is not bool loading || loading) return false;
         GameFieldManager field = FindUnitySingleton<GameFieldManager>();
         PropertyInfo battle = field?.GetType().GetGameProperty(nameof(GameFieldManager.IsBattlePlay), flags);
         if (battle?.GetValue(field) is not bool inBattle || inBattle) return false;
+        PropertyInfo loaded = field.GetType().GetGameProperty(nameof(GameFieldManager.IsLoadedField), flags);
+        bool fieldLoaded = loaded?.GetValue(field) is bool ready && ready;
+
+        // Pack entry waits for the opening story before clearing IsPackLoading.
+        // A loaded cinematic is already the client's synchronized entry scene.
+        if ((fieldLoaded || StoryCheckpoint.SynchronizedStory) && pack != null && pack.PlayingPackID > 0 && TryGetRecoveredStoryScene(out scene)) return true;
+        if (IsRecoveryUIActive("LoadingUI")) return false;
+        PropertyInfo packLoading = pack?.GetType().GetGameProperty(nameof(PackManager.IsPackLoading), flags);
+        if (packLoading?.GetValue(pack) is not bool loading || loading) return false;
 
         // OpenMenuUICoroutine deliberately clears IsLoadedField and loads an
         // empty scene. EntryFlow plus the completed, active MenuUI is its ready
@@ -652,8 +728,7 @@ internal static class SessionRecovery
             scene = "home menu";
             return true;
         }
-        PropertyInfo loaded = field.GetType().GetGameProperty(nameof(GameFieldManager.IsLoadedField), flags);
-        if (loaded?.GetValue(field) is bool ready && ready)
+        if (fieldLoaded)
         {
             scene = "field";
             return true;
@@ -661,6 +736,25 @@ internal static class SessionRecovery
         if (IsRecoveryUIReady("PackCollectionUI"))
         {
             scene = "pack collection";
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryGetRecoveredStoryScene(out string scene)
+    {
+        scene = null;
+        TimelinePlayManager timeline = FindUnitySingleton<TimelinePlayManager>();
+        TimelineSignalManager signal = FindUnitySingleton<TimelineSignalManager>();
+        if (timeline != null && timeline.IsPlayCinemaTimeline && signal != null && signal.IsLoaded && !signal.IsEndTimeline &&
+            ((signal.MainCamera != null && signal.MainCamera.gameObject.activeInHierarchy) || signal.IsVideoPlaying()))
+        {
+            scene = "story cinematic";
+            return true;
+        }
+        if (IsRecoveryUIReady("PrologUI"))
+        {
+            scene = "story prologue";
             return true;
         }
         return false;
@@ -743,18 +837,22 @@ internal static class SessionRecovery
         {
             Log?.LogError("Automatic session recovery failed: " + error);
         }
-        if (RecoveryOverlay != null)
-        {
-            UnityEngine.Object.Destroy(RecoveryOverlay);
-            RecoveryOverlay = null;
-            RecoveryText = null;
-        }
+        StoryStatusOverlay = false;
+        HideRecoveryOverlay();
         CancelControlProbes();
         Interlocked.Increment(ref RecoveryGeneration);
         Interlocked.Exchange(ref SessionRecoveryInProgress, 0);
         Interlocked.Exchange(ref RecoveryRestartScheduled, 0);
         Interlocked.Exchange(ref RecoveryEnterScheduled, 0);
         Log?.LogInfo(success ? "Automatic session recovery completed" : "Automatic session recovery stopped");
+    }
+
+    private static void HideRecoveryOverlay()
+    {
+        if (RecoveryOverlay == null) return;
+        UnityEngine.Object.Destroy(RecoveryOverlay);
+        RecoveryOverlay = null;
+        RecoveryText = null;
     }
 
     [Serializable]

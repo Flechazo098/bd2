@@ -25,7 +25,7 @@
 
 ```powershell
 dotnet nuget add source 'D:\NuGet\BD2' --name BD2
-dotnet add MyPlugin.csproj package BD2.GameSdk --version 0.2.3-game.2.35.10
+dotnet add MyPlugin.csproj package BD2.GameSdk --version 0.2.3-game.2.36.7
 ```
 
 Visual Studio / Rider 也可在 NuGet 包管理界面添加该源。
@@ -38,10 +38,10 @@ Visual Studio / Rider 也可在 NuGet 包管理界面添加该源。
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AssemblyName>MyPlugin</AssemblyName>
-    <BD2GameVersion>2.35.10</BD2GameVersion>
+    <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="BD2.GameSdk" Version="0.2.3-game.2.35.10" PrivateAssets="all" />
+    <PackageReference Include="BD2.GameSdk" Version="0.2.3-game.2.36.7" PrivateAssets="all" />
   </ItemGroup>
 </Project>
 ```
@@ -72,12 +72,12 @@ IDE 项目加载时构建会准备可读引用，CLI 首次构建同样会自动
 
 在支持外部源码导航的 IDE 中，对 `NetworkManager.Send` 等可读 API 使用“转到定义”（例如 Visual Studio 的 F12），即可打开完整方法体。重载、泛型、参数、属性、字段、事件和嵌套类型使用真实元数据及 PDB 定位。
 
-首次全量生成会花费数分钟，且体积稍微有些许庞大。本机 2.35.10 的一次验证生成了 **24,856 个源码文件、654,265 个声明、319,350 个带方法体的符号**。生成结果按名字表、生成器及其依赖、全部游戏 Managed DLL 的指纹缓存，同一台机器上的插件项目共用。
+首次全量生成会花费数分钟，且体积稍微有些许庞大。本机 2.36.7 的一次验证生成了 **25,437 个源码文件、669,408 个声明、326,832 个带方法体的符号**。生成结果按名字表、生成器及其依赖、全部游戏 Managed DLL 的指纹缓存，同一台机器上的插件项目共用。
 
 所有依赖 SDK 的插件必须在自己的 `.csproj` 明确声明目标**游戏版本**：
 
 ```xml
-<BD2GameVersion>2.35.10</BD2GameVersion>
+<BD2GameVersion>2.36.7</BD2GameVersion>
 ```
 
 构建核对声明值、SDK 内嵌表、真实游戏 DLL 指纹。缺少声明或版本不匹配会报错；不会自动选用其他版本。NuGet 项目仍需安装带对应游戏版本的包。
@@ -117,7 +117,7 @@ owner.StartCoroutine(Game.MemberName(owner.GetType(), "ReadableCoroutineName"));
 
 | MSBuild 属性 | 用途 |
 | --- | --- |
-| `BD2GameVersion` | 每个插件 csproj 必填的目标游戏版本，例如 `2.35.10`；不从 SDK 包版本或仓库版本自动推断 |
+| `BD2GameVersion` | 每个插件 csproj 必填的目标游戏版本，例如 `2.36.7`；不从 SDK 包版本或仓库版本自动推断 |
 | `GameDir` | 游戏根目录，本机安装路径（另须在插件 csproj 声明 BD2GameVersion） |
 | `BD2ManagedDir` | 自定义 Managed 路径，默认 `GameDir/BrownDust II_Data/Managed` |
 | `BD2BepInExDir` | 自定义 BepInEx 路径，默认 `GameDir/BepInEx` |

@@ -48,7 +48,10 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 		return fmt.Errorf("load cash bonus claims: %w", err)
 	}
 	p.cashService.AttachLegacyCounts(p.gachaService)
-	cashSpecialProducts := []gamedata.CashProductKey{{GroupID: p.design.infiniteGacha.ProductGroupID, ProductID: p.design.infiniteGacha.ProductID, SaleGroup: p.design.infiniteGacha.SaleGroup}}
+	var cashSpecialProducts []gamedata.CashProductKey
+	if infinite := p.design.infiniteGacha; infinite != nil {
+		cashSpecialProducts = append(cashSpecialProducts, gamedata.CashProductKey{GroupID: infinite.ProductGroupID, ProductID: infinite.ProductID, SaleGroup: infinite.SaleGroup})
+	}
 	for _, group := range p.design.regularGacha.Groups() {
 		if group.CashProductGroupID != 0 && group.CashProductID != 0 {
 			cashSpecialProducts = append(cashSpecialProducts, gamedata.CashProductKey{GroupID: group.CashProductGroupID, ProductID: group.CashProductID, SaleGroup: group.CashSalesGroup})
@@ -58,7 +61,10 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 		return fmt.Errorf("attach special cash products: %w", err)
 	}
 	p.cashService.AttachDelegate(func(ctx command.Context, key gamedata.CashProductKey, request []byte) ([]byte, bool, error) {
-		known := key.GroupID == p.design.infiniteGacha.ProductGroupID && key.ProductID == p.design.infiniteGacha.ProductID && key.SaleGroup == p.design.infiniteGacha.SaleGroup
+		known := false
+		if infinite := p.design.infiniteGacha; infinite != nil {
+			known = key.GroupID == infinite.ProductGroupID && key.ProductID == infinite.ProductID && key.SaleGroup == infinite.SaleGroup
+		}
 		for _, group := range p.design.regularGacha.Groups() {
 			if key.GroupID == group.CashProductGroupID && key.ProductID == group.CashProductID && key.SaleGroup == group.CashSalesGroup {
 				known = true

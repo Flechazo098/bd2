@@ -218,6 +218,27 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.avatarSelection != nil {
+		chosen, err := s.avatarSelection.FirstChosen(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var value uint64
+		if chosen {
+			value = 1
+		}
+		user, _, err = wire.ReplaceVarint(user, 56, value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.nickname != nil {
+		var err error
+		user, _, err = wire.ReplaceBytes(user, 2, []byte(s.nickname.CurrentNickname()))
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.newbieStep != nil {
 		step := s.newbieStep.NewbieStep()
 		if step > math.MaxInt32 {
@@ -244,6 +265,16 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 			}
 		}
 	}
+	if s.colosseumSlots != nil {
+		count := s.colosseumSlots.PresetSlotCount()
+		if count > math.MaxInt32 {
+			return nil, errors.New("account: colosseum slots exceed protocol range")
+		}
+		var err error
+		if user, _, err = wire.ReplaceVarint(user, 57, count); err != nil {
+			return nil, err
+		}
+	}
 	if s.monsterHuntSlots != nil {
 		count := s.monsterHuntSlots.PresetSlotCount()
 		if count > math.MaxInt32 {
@@ -252,6 +283,32 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 		var err error
 		if user, _, err = wire.ReplaceVarint(user, 52, count); err != nil {
 			return nil, err
+		}
+	}
+	if s.guildRaidSlots != nil {
+		value, err := s.guildRaidSlots(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if value > math.MaxInt32 {
+			return nil, errors.New("account: guild raid slots exceed protocol range")
+		}
+		user, _, err = wire.ReplaceVarint(user, 53, value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if s.fishing != nil {
+		state := s.fishing()
+		for i, value := range []uint64{state.AP, state.FishSlots, state.RodSlots, state.ItemSlots} {
+			if value > math.MaxInt32 {
+				return nil, errors.New("account: fishing state exceeds protocol range")
+			}
+			var err error
+			user, _, err = wire.ReplaceVarint(user, 62+i, value)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if s.huntingAP != nil {
@@ -396,11 +453,40 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 			return nil, err
 		}
 	}
+	if s.profileTitle != nil {
+		title, err := s.profileTitle.SelectedTitle(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if title > math.MaxInt32 {
+			return nil, fmt.Errorf("account: profile title overflow")
+		}
+		if user, _, err = wire.ReplaceVarint(user, 66, title); err != nil {
+			return nil, err
+		}
+	}
 	projected, projectionErr := s.projectAutoRevive(ctx, user)
 	if projectionErr != nil {
 		return nil, projectionErr
 	}
-	return append(wire.AppendBytes(nil, 1, projected), s.ResponseFields...), nil
+	responseFields := s.ResponseFields
+	if s.community != nil {
+		responseFields = nil
+		if err := wire.Walk(s.ResponseFields, func(field wire.Field) error {
+			if field.Number != 6 && field.Number != 7 && field.Number != 10 && field.Number != 11 && field.Number != 12 {
+				responseFields = append(responseFields, s.ResponseFields[field.Start:field.End]...)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		community, err := s.community(ctx)
+		if err != nil {
+			return nil, err
+		}
+		responseFields = append(responseFields, community...)
+	}
+	return append(wire.AppendBytes(nil, 1, projected), responseFields...), nil
 }
 
 func replaceRepeatedBytes(data []byte, number int, values [][]byte) ([]byte, error) {

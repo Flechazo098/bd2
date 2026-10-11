@@ -6,9 +6,17 @@
     <AssemblyName>BD2LoginUI</AssemblyName>
     <RootNamespace>Bd2LoginUI</RootNamespace>
     <BD2PluginVersionKey>login_ui</BD2PluginVersionKey>
-    <BD2GameVersion>2.35.10</BD2GameVersion>
+    <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(BD2ManagedDir)/Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UniTask">
+      <HintPath>$(BD2ManagedDir)/UniTask.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Google.Protobuf">
       <HintPath>$(BD2ManagedDir)/Google.Protobuf.dll</HintPath>
       <Private>false</Private>

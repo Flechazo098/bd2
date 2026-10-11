@@ -341,17 +341,40 @@ func (s *Service) clearMission(ctx command.Context, request []byte) ([]byte, err
 	if groupType == 2 {
 		return nil, errors.New("missions: scheduled event missions require an event service")
 	}
+	eventID, err := scalar(request, 6)
+	if err != nil || groupType > 1 || eventID != 0 {
+		return nil, ErrInvalidRequest
+	}
 	var keys []gamedata.MissionKey
 	if all {
-		if groupType != 0 || groupID != 0 || id != 0 {
+		if id != 0 {
 			return nil, fmt.Errorf("%w: bulk MissionClear has identifiers", ErrInvalidRequest)
 		}
-		keys = s.completedMissionKeys()
+		if groupID != 0 {
+			known := false
+			for key := range s.design.Missions {
+				known = known || key.GroupType == groupType && key.GroupID == groupID
+			}
+			if !known {
+				return nil, ErrInvalidRequest
+			}
+		}
+		for _, key := range s.completedUnclaimedForType(groupType) {
+			if groupID == 0 || key.GroupID == groupID {
+				keys = append(keys, key)
+			}
+		}
 	} else {
 		if groupID == 0 || id == 0 {
 			return nil, fmt.Errorf("%w: MissionClear identity", ErrInvalidRequest)
 		}
-		keys = []gamedata.MissionKey{{GroupType: groupType, GroupID: groupID, ID: id}}
+		key := gamedata.MissionKey{GroupType: groupType, GroupID: groupID, ID: id}
+		if _, ok := s.design.Missions[key]; !ok || !s.missionActive(key) {
+			return nil, ErrInvalidRequest
+		}
+		if !contains(s.state.Claimed, "mission:"+missionName(key)) {
+			keys = []gamedata.MissionKey{key}
+		}
 	}
 	items, err := s.claimMissions(ctx, keys)
 	if err != nil {
@@ -360,14 +383,15 @@ func (s *Service) clearMission(ctx command.Context, request []byte) ([]byte, err
 	bundle := rewardBundle(items)
 	for _, key := range keys {
 		for _, reward := range s.design.Missions[key] {
-			if reward.Type == 3 || reward.Type == 4 {
+			if isWalletReward(reward.Type) {
 				entry := wire.AppendVarint(nil, 3, reward.Type)
 				entry = wire.AppendVarint(entry, 4, reward.Count)
 				bundle = wire.AppendBytes(bundle, 1, entry)
+				bundle = wire.AppendBytes(bundle, 6, entry)
 			}
 		}
 	}
-	return bundle, nil
+	return wire.AppendBytes(nil, 1, bundle), nil
 }
 
 func (s *Service) clearSection(ctx command.Context, request []byte) ([]byte, error) {
@@ -375,7 +399,7 @@ func (s *Service) clearSection(ctx command.Context, request []byte) ([]byte, err
 		return nil, err
 	}
 	groupType, err := scalar(request, 2)
-	if err != nil {
+	if err != nil || groupType > 1 {
 		return nil, fmt.Errorf("%w: section group type", ErrInvalidRequest)
 	}
 	all, err := boolean(request, 3)
@@ -400,7 +424,9 @@ func (s *Service) clearSection(ctx command.Context, request []byte) ([]byte, err
 		if !s.sectionEligible(key) {
 			return nil, fmt.Errorf("%w: section is not complete", ErrInvalidRequest)
 		}
-		keys = []gamedata.SectionRewardKey{key}
+		if !contains(s.state.Claimed, fmt.Sprintf("section:%d/%d", key.GroupType, key.ID)) {
+			keys = []gamedata.SectionRewardKey{key}
+		}
 	}
 	items, err := s.claimSections(ctx, keys)
 	if err != nil {
@@ -412,7 +438,7 @@ func (s *Service) clearSection(ctx command.Context, request []byte) ([]byte, err
 	}
 	for _, key := range keys {
 		for _, reward := range s.design.Sections[key].Rewards {
-			if reward.Type == 3 || reward.Type == 4 {
+			if isWalletReward(reward.Type) {
 				entry := wire.AppendVarint(nil, 3, reward.Type)
 				entry = wire.AppendVarint(entry, 4, reward.Count)
 				response = wire.AppendBytes(response, 1, entry)

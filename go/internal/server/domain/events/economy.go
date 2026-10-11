@@ -74,7 +74,7 @@ func NewEconomy(ctx command.Context, store stateio.Store, items *assets.Inventor
 
 // AdditionalCurrencyFields maps EElementType to its UserDBInfo field. These
 // balances use a gameplay entry, leaving the frozen wallet schema unchanged.
-var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 38: 42, 39: 44, 40: 45, 43: 48, 44: 54, 54: 61, 60: 60, 70: 71}
+var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 38: 42, 39: 44, 40: 45, 43: 48, 44: 54, 52: 58, 53: 59, 54: 61, 60: 60, 70: 71}
 
 func (e *Economy) AttachAvatarRewards(d *gamedata.AvatarRewardDesign) { e.avatarRewards = d }
 
