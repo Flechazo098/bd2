@@ -111,7 +111,8 @@ func (s *Store) Handle(ctx command.Context, path string, request []byte) (int, [
 			return 0, nil, true, fmt.Errorf("%s: %w", path, err)
 		}
 		if saved, found := s.Position(); found {
-			slog.Info("field position saved", "pack", saved.PackID, "map", saved.Position.MapID)
+			slog.Info("field position saved", "account", ctx.AccountID, "pack", saved.PackID, "map", saved.Position.MapID,
+				"position", saved.Position.PlayerPosition, "colleagues", saved.Position.ColleaguePositions)
 		}
 		return 7, nil, true, nil
 	case "/TutorialClear":

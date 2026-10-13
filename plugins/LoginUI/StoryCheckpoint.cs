@@ -73,6 +73,7 @@ internal static class StoryCheckpoint
     private static MethodInfo InvokingNative;
     private static bool RestoringComplete;
     private static Interaction ActiveInteraction;
+    private static int PendingCinemaCompletions;
     private static CancellationTokenSource SessionCancellation = new();
     internal static bool WaitingForEntrySync;
     internal static bool SynchronizedStory;
@@ -108,6 +109,7 @@ internal static class StoryCheckpoint
         ClearStoryStatus();
         Session++;
         ActiveInteraction = null;
+        PendingCinemaCompletions = 0;
         RestoringComplete = false;
         WaitingForEntrySync = false;
         SynchronizedStory = false;
@@ -135,6 +137,11 @@ internal static class StoryCheckpoint
 
     private static IEnumerator Send(string operation, Checkpoint checkpoint, int session, Action<Response> completed)
     {
+        if (operation is "begin" or "read")
+        {
+            while (session == Session && !ApplicationQuitting && PendingCinemaCompletions > 0) yield return null;
+            if (session != Session || ApplicationQuitting) yield break;
+        }
         var request = new Request
         {
             Operation = operation,
@@ -217,7 +224,12 @@ internal static class StoryCheckpoint
         var originalEnd = args[6] as Action;
         args[6] = new Action(() =>
         {
-            if (session == Session) StartStoryCoroutine(Complete(checkpoint, session, originalEnd));
+            if (session != Session) return;
+            PendingCinemaCompletions++;
+            // Native gate continuations read the live TimelineSignalManager before its destruction.
+            originalEnd?.Invoke();
+            if (session == Session)
+                StartStoryCoroutine(Complete(checkpoint, session, () => PendingCinemaCompletions--));
         });
         timeline.IsPlayCinemaTimeline = false;
         Invoke(StartCinema, timeline, args);

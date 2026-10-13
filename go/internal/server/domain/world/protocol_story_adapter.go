@@ -1229,6 +1229,12 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 				return 0, nil, true, err
 			}
 		}
+		saved, positionFound := s.state.Position()
+		slog.Info("quest transition prepared", "account", ctx.AccountID, "pack", pack, "quest", quest,
+			"difficulty", s.questDifficultyFor(pack, quest), "already_cleared", wasCleared,
+			"next_quest", s.nextQuestFor(ctx, pack, quest), "timeline", design.CompleteCinemaName,
+			"timeline_map", design.TimelineStartMapID, "position_found", positionFound,
+			"saved_position", saved.Position, "party_changes", len(nextChars), "items", len(items))
 		return 18, s.clearResponse(ctx, pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment, nextItems, nextChars), true, nil
 	default:
 		return 0, nil, false, nil

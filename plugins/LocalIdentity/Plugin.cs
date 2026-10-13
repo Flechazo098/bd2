@@ -69,6 +69,7 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
             TryInstall("commission navigation completion", () => CommissionNavigation.Install(harmony, Logger));
             TryInstall("field reward position ordering", () => FieldRewardPosition.Install(harmony, Logger));
+            TryInstall("field transition diagnostics", () => FieldTransitionDiagnostics.Install(harmony, Logger));
             TryInstall("event hub presentation", () => EventHubPresentation.Install(harmony, Logger));
             TryInstall("event request diagnostics", () => EventRequestDiagnostics.Install(harmony, Logger));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");

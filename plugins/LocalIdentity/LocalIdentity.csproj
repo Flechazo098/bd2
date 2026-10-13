@@ -26,6 +26,10 @@
       <HintPath>$(BD2ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.AIModule">
+      <HintPath>$(BD2ManagedDir)\UnityEngine.AIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.UnityAnalyticsModule">
       <HintPath>$(BD2ManagedDir)\UnityEngine.UnityAnalyticsModule.dll</HintPath>
       <Private>false</Private>
