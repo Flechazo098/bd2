@@ -233,36 +233,59 @@ type Description struct {
 	Defaults json.RawMessage `json:"defaults"`
 }
 
-// Entry is a managed document independent of its Go type.
+// Entry is a managed document independent of its Go type. Every operation
+// takes the caller's section access; AllAccess sees and edits everything.
 type Entry interface {
 	Name() string
-	Describe() (Description, error)
-	View() (View, error)
+	// Schema is the complete description, from which access is granted.
+	Schema() Schema
+	Describe(access Access) (Description, error)
+	View(access Access) (View, error)
 	// CheckJSON returns blocking problems and, for a valid candidate, advice.
-	CheckJSON(raw []byte) (problems, advice Problems)
-	ReplaceJSON(raw []byte, expected Revision) (View, error)
+	CheckJSON(raw []byte, access Access) (problems, advice Problems)
+	ReplaceJSON(raw []byte, expected Revision, access Access) (View, error)
 }
 
-func (f *File[T]) Describe() (Description, error) {
-	defaults, err := json.Marshal(f.document.Defaults())
-	return Description{Name: f.document.Name, FileName: f.document.FileName, Schema: f.document.Schema, Defaults: defaults}, err
+func (f *File[T]) Schema() Schema { return f.document.Schema }
+
+func (f *File[T]) Describe(access Access) (Description, error) {
+	defaults, err := f.restrictValue(f.document.Defaults(), access)
+	return Description{Name: f.document.Name, FileName: f.document.FileName, Schema: f.document.Schema.Restrict(access), Defaults: defaults}, err
 }
 
-func (f *File[T]) View() (View, error) {
+func (f *File[T]) View(access Access) (View, error) {
 	snapshot, err := f.Read()
 	if err != nil {
 		return View{}, err
 	}
-	return f.view(snapshot)
+	return f.view(snapshot, access)
 }
 
-func (f *File[T]) view(snapshot Snapshot[T]) (View, error) {
-	value, err := json.Marshal(snapshot.Value)
+func (f *File[T]) view(snapshot Snapshot[T], access Access) (View, error) {
+	value, err := f.restrictValue(snapshot.Value, access)
 	if err != nil {
 		return View{}, err
 	}
+	schema := f.document.Schema
 	view := View{Name: f.document.Name, Path: f.path, Value: value, Revision: snapshot.Revision, Loaded: snapshot.Loaded,
-		Pending: snapshot.Pending(), Writable: snapshot.Writable, Problems: snapshot.Problems, Advice: snapshot.Advice, Locks: f.Locks()}
+		Pending: snapshot.Pending(), Writable: snapshot.Writable, Problems: restrictProblems(schema, access, snapshot.Problems)}
+	for _, advice := range snapshot.Advice {
+		if section, ok := schema.SectionOf(advice.Path); access.All || ok && access.Reads(section) {
+			view.Advice = append(view.Advice, advice)
+		}
+	}
+	for _, lock := range f.Locks() {
+		if section, ok := schema.SectionOf(lock.Path); access.All || ok && access.Reads(section) {
+			view.Locks = append(view.Locks, lock)
+		}
+	}
+	if !access.All {
+		writes := false
+		for _, section := range schema.Sections {
+			writes = writes || access.Writes(section.ID)
+		}
+		view.Writable = view.Writable && writes
+	}
 	if !snapshot.Modified.IsZero() {
 		modified := snapshot.Modified.UTC()
 		view.Modified = &modified
@@ -270,27 +293,72 @@ func (f *File[T]) view(snapshot Snapshot[T]) (View, error) {
 	return view, nil
 }
 
-func (f *File[T]) CheckJSON(raw []byte) (Problems, Problems) {
-	value, err := f.document.Parse(raw)
+func (f *File[T]) restrictValue(value T, access Access) (json.RawMessage, error) {
+	if access.All {
+		return json.Marshal(value)
+	}
+	document, err := normalize(value)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(project(document, f.document.Schema.paths(access.Reads)))
+}
+
+// candidate turns a restricted editor's document into a complete one.
+func (f *File[T]) candidate(raw []byte, access Access) ([]byte, Problems) {
+	if access.All {
+		return raw, nil
+	}
+	snapshot, err := f.Read()
+	if err != nil {
+		return nil, Problems{{Rule: RuleCustom, Message: err.Error()}}
+	}
+	current, err := normalize(snapshot.Value)
+	if err != nil {
+		return nil, Problems{{Rule: RuleDecode, Message: err.Error()}}
+	}
+	return merge(f.document.Schema, access, current, raw)
+}
+
+func (f *File[T]) CheckJSON(raw []byte, access Access) (Problems, Problems) {
+	complete, problems := f.candidate(raw, access)
+	if problems != nil {
+		return problems, nil
+	}
+	value, err := f.document.Parse(complete)
 	if err == nil {
 		err = f.Check(value)
 	}
 	if err != nil {
-		return AsProblems(err), nil
+		return restrictProblems(f.document.Schema, access, AsProblems(err)), nil
 	}
-	return nil, f.document.advise(value, f.path)
+	var advice Problems
+	for _, item := range f.document.advise(value, f.path) {
+		if section, ok := f.document.Schema.SectionOf(item.Path); access.All || ok && access.Reads(section) {
+			advice = append(advice, item)
+		}
+	}
+	return nil, advice
 }
 
-func (f *File[T]) ReplaceJSON(raw []byte, expected Revision) (View, error) {
-	value, err := f.document.Parse(raw)
+func (f *File[T]) ReplaceJSON(raw []byte, expected Revision, access Access) (View, error) {
+	complete, problems := f.candidate(raw, access)
+	if problems != nil {
+		return View{}, problems
+	}
+	value, err := f.document.Parse(complete)
 	if err != nil {
-		return View{}, err
+		return View{}, restrictProblems(f.document.Schema, access, AsProblems(err))
 	}
 	snapshot, err := f.Replace(value, expected)
+	var located Problems
+	if errors.As(err, &located) {
+		return View{}, restrictProblems(f.document.Schema, access, located)
+	}
 	if err != nil {
 		return View{}, err
 	}
-	return f.view(snapshot)
+	return f.view(snapshot, access)
 }
 
 // Registry lists managed documents in presentation order.

@@ -24,6 +24,8 @@ const (
 	RuleConflict = "conflict"
 	RuleDecode   = "decode"
 	RuleCustom   = "custom"
+	// RuleForbidden marks a change outside the editor's granted sections.
+	RuleForbidden = "forbidden"
 	// RuleEnvironment marks advice about the running process rather than the
 	// document, such as a referenced environment variable that is unset.
 	RuleEnvironment = "environment"

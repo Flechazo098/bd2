@@ -35,6 +35,8 @@ type Section struct {
 	Title  string  `json:"title"`
 	Help   string  `json:"help,omitempty"`
 	Fields []Field `json:"fields"`
+	// ReadOnly is set by Restrict for sections the editor may only view.
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 // Field describes one value. Path uses dot-separated JSON names; "*" selects

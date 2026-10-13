@@ -97,11 +97,11 @@
   <section class="view" id="view-players" hidden>
     <section class="card roster">
       <div class="roster-head">
-        <div><h2>玩家</h2><p class="muted">授权成员后，对方用自己的游戏账号登录管理台，只能给自己寄件、调整自己的背包。</p></div>
+        <div><h2>玩家</h2><p class="muted">按游戏账号任命管理员，对方用自己的游戏账号登录管理台。管理员默认可以寄件和查看玩家，其余权限由服主逐项授予。</p></div>
         <div class="search small"><input id="player-q" type="search" placeholder="UID 或名称" autocomplete="off" aria-label="筛选玩家"></div>
       </div>
       <table class="roster-table">
-        <thead><tr><th>UID</th><th>名称</th><th>身份</th><th class="c">管理台成员</th><th class="c">无限背包</th><th></th></tr></thead>
+        <thead><tr id="roster-head-row"></tr></thead>
         <tbody id="roster"></tbody>
       </table>
       <p id="roster-status" class="status" aria-live="polite"></p>

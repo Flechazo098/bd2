@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,24 +20,32 @@ import (
 type Role string
 
 const (
-	// RoleOwner manages the whole server. It belongs to the game's
-	// administrator account and to sign-in links printed by the server.
+	// RoleOwner manages the whole server, including administrators. It
+	// belongs to the game's administrator account and to sign-in links
+	// printed by the server.
 	RoleOwner Role = "owner"
-	// RoleMember may use the player tools for its own game account only.
-	RoleMember Role = "member"
+	// RoleAdministrator holds only the permissions the owner granted.
+	RoleAdministrator Role = "administrator"
 )
 
-// Store persists console sessions and member grants in state/admin.db.
+// Store persists console sessions and administrators in state/admin.db.
 type Store struct {
 	db  *sql.DB
 	now func() time.Time
 }
 
 type session struct {
-	AccountID string
-	Role      Role
-	CSRF      string
-	Expires   time.Time
+	AccountID   string
+	Role        Role
+	CSRF        string
+	Expires     time.Time
+	Permissions []string
+}
+
+// Administrator is an account the owner appointed, with its permissions.
+type Administrator struct {
+	AccountID   string
+	Permissions []string
 }
 
 const sessionTTL = 24 * time.Hour
@@ -52,8 +61,8 @@ func OpenStore(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	for _, statement := range []string{
 		`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000`,
-		`CREATE TABLE IF NOT EXISTS sessions (token_hash BLOB PRIMARY KEY NOT NULL, account_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner','member')), csrf TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) WITHOUT ROWID`,
-		`CREATE TABLE IF NOT EXISTS members (account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id)>0), granted_at INTEGER NOT NULL) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS sessions (token_hash BLOB PRIMARY KEY NOT NULL, account_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('owner','administrator')), csrf TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS administrators (account_id TEXT PRIMARY KEY NOT NULL CHECK(length(account_id)>0), permissions TEXT NOT NULL, appointed_at INTEGER NOT NULL, updated_at INTEGER NOT NULL) WITHOUT ROWID`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()
@@ -85,8 +94,8 @@ func (s *Store) CreateSession(ctx context.Context, accountID string, role Role) 
 	return token, csrf, err
 }
 
-// Session resolves a live session token. Member sessions end as soon as the
-// grant is revoked, without waiting for expiry.
+// Session resolves a live session token with the administrator's current
+// permissions, so revocation and permission changes apply immediately.
 func (s *Store) Session(ctx context.Context, token string) (session, bool, error) {
 	if token == "" {
 		return session{}, false, nil
@@ -94,9 +103,11 @@ func (s *Store) Session(ctx context.Context, token string) (session, bool, error
 	var result session
 	var role string
 	var expires int64
-	err := s.db.QueryRowContext(ctx, `SELECT s.account_id,s.role,s.csrf,s.expires_at FROM sessions s
-		WHERE s.token_hash=? AND s.expires_at>? AND (s.role='owner' OR EXISTS(SELECT 1 FROM members m WHERE m.account_id=s.account_id))`,
-		digest(token), s.now().Unix()).Scan(&result.AccountID, &role, &result.CSRF, &expires)
+	var permissions sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT s.account_id,s.role,s.csrf,s.expires_at,a.permissions FROM sessions s
+		LEFT JOIN administrators a ON a.account_id=s.account_id
+		WHERE s.token_hash=? AND s.expires_at>? AND (s.role='owner' OR a.account_id IS NOT NULL)`,
+		digest(token), s.now().Unix()).Scan(&result.AccountID, &role, &result.CSRF, &expires, &permissions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return session{}, false, nil
 	}
@@ -104,6 +115,11 @@ func (s *Store) Session(ctx context.Context, token string) (session, bool, error
 		return session{}, false, err
 	}
 	result.Role, result.Expires = Role(role), time.Unix(expires, 0)
+	if result.Role == RoleAdministrator {
+		if err := json.Unmarshal([]byte(permissions.String), &result.Permissions); err != nil {
+			return session{}, false, fmt.Errorf("admin: decode permissions: %w", err)
+		}
+	}
 	return result, true, nil
 }
 
@@ -112,47 +128,60 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	return err
 }
 
-func (s *Store) Members(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT account_id FROM members`)
+func (s *Store) Administrators(ctx context.Context) (map[string]Administrator, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT account_id,permissions FROM administrators`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	members := map[string]bool{}
+	out := map[string]Administrator{}
 	for rows.Next() {
-		var account string
-		if err := rows.Scan(&account); err != nil {
+		var administrator Administrator
+		var permissions string
+		if err := rows.Scan(&administrator.AccountID, &permissions); err != nil {
 			return nil, err
 		}
-		members[account] = true
+		if err := json.Unmarshal([]byte(permissions), &administrator.Permissions); err != nil {
+			return nil, fmt.Errorf("admin: decode permissions: %w", err)
+		}
+		out[administrator.AccountID] = administrator
 	}
-	return members, rows.Err()
+	return out, rows.Err()
 }
 
-func (s *Store) IsMember(ctx context.Context, accountID string) (bool, error) {
+func (s *Store) IsAdministrator(ctx context.Context, accountID string) (bool, error) {
 	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM members WHERE account_id=?)`, accountID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM administrators WHERE account_id=?)`, accountID).Scan(&exists)
 	return exists, err
 }
 
-// SetMember grants or revokes member access. Revocation also ends sessions.
-func (s *Store) SetMember(ctx context.Context, accountID string, member bool) error {
+// SetAdministrator appoints or updates an administrator with the given,
+// already normalized, permissions.
+func (s *Store) SetAdministrator(ctx context.Context, accountID string, permissions []string) error {
 	if accountID == "" {
-		return errors.New("admin: member requires an account")
+		return errors.New("admin: administrator requires an account")
 	}
-	if member {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO members VALUES(?,?) ON CONFLICT(account_id) DO NOTHING`, accountID, s.now().Unix())
+	encoded, err := json.Marshal(append([]string{}, permissions...))
+	if err != nil {
 		return err
 	}
+	now := s.now().Unix()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO administrators VALUES(?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET permissions=excluded.permissions,updated_at=excluded.updated_at`,
+		accountID, string(encoded), now, now)
+	return err
+}
+
+// RemoveAdministrator revokes an appointment and ends its sessions.
+func (s *Store) RemoveAdministrator(ctx context.Context, accountID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM members WHERE account_id=?`, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM administrators WHERE account_id=?`, accountID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id=? AND role='member'`, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id=? AND role='administrator'`, accountID); err != nil {
 		return err
 	}
 	return tx.Commit()

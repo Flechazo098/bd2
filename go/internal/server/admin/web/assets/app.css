@@ -342,3 +342,21 @@ dialog.ask p{margin:0;color:var(--ink-2);font-size:13.5px}
 }
 .chip-add{width:180px!important;padding:3px 10px!important;border-radius:999px!important;font-size:12.5px}
 .chips .muted{font-size:12px;margin-left:4px}
+.config-form fieldset.section{border:1px solid var(--line);padding:20px 24px 18px}
+.section>h3 .pill{margin-left:10px;vertical-align:2px;font-weight:400}
+.perm-summary{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+.perm-editor{margin-top:14px;max-height:60vh;overflow:auto;padding-right:4px}
+.perm-editor h4{font-size:13px;margin:14px 0 8px;letter-spacing:.06em}
+.perm-editor h4:first-child{margin-top:0}
+.perm-editor>p{font-size:12px;margin:0 0 8px}
+.perm-list{display:flex;flex-direction:column;gap:6px}
+.perm{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13.5px}
+.perm:hover{border-color:var(--line-2)}
+.perm input{margin-top:4px}
+.perm small{display:block;color:var(--muted);font-size:12px}
+.perm-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px}
+.perm-table th{text-align:left;font-weight:600;padding:6px 8px;border-bottom:1.5px dashed var(--line-2)}
+.perm-table th.c,.perm-table td.c{text-align:center;width:64px}
+.perm-table td{padding:5px 8px;border-bottom:1px solid var(--line)}
+.perm-table .linkish{font-weight:400}
+dialog.ask:has(.perm-editor){width:min(560px,calc(100vw - 32px))}

@@ -1,5 +1,6 @@
-// Package admin serves the server's built-in web console: configuration for
-// the owner, and mail and inventory tools for the owner and granted members.
+// Package admin serves the server's built-in web console. The owner manages
+// everything, appointed administrators use only the permissions the owner
+// granted them, and other players cannot sign in.
 package admin
 
 import (
@@ -105,9 +106,16 @@ func New(options Options) (*Console, error) {
 		options.Now = time.Now
 	}
 	c := &Console{options: options, pending: map[string]*pendingLogin{}, links: map[string]time.Time{}}
-	c.config = configapi.Handler(options.Configuration, configapi.Options{Changed: func(r *http.Request, view commonconfig.View) {
-		slog.Info("configuration saved from console", "document", view.Name, "path", view.Path, "revision", view.Revision, "pending_restart", view.Pending)
-	}})
+	c.config = configapi.Handler(options.Configuration, configapi.Options{
+		Access: func(r *http.Request, entry commonconfig.Entry) commonconfig.Access {
+			current, _ := r.Context().Value(sessionKey{}).(session)
+			return current.configurationAccess(entry.Name())
+		},
+		Changed: func(r *http.Request, view commonconfig.View) {
+			current, _ := r.Context().Value(sessionKey{}).(session)
+			slog.Info("configuration saved from console", "document", view.Name, "path", view.Path, "revision", view.Revision, "pending_restart", view.Pending, "by", current.AccountID, "role", current.Role)
+		},
+	})
 	return c, nil
 }
 
@@ -139,17 +147,22 @@ func (c *Console) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/api/login/start", c.loginStart)
 	mux.HandleFunc("POST /admin/api/login/poll", c.loginPoll)
 	mux.HandleFunc("POST /admin/api/logout", c.logout)
-	mux.HandleFunc("GET /admin/api/catalog", c.require(RoleMember, c.catalog))
-	mux.HandleFunc("GET /admin/api/players", c.require(RoleMember, c.players))
-	mux.HandleFunc("PUT /admin/api/players/{account}/member", c.require(RoleOwner, c.setMember))
-	mux.HandleFunc("GET /admin/api/players/{account}/inventory", c.require(RoleMember, c.inventory))
-	mux.HandleFunc("PUT /admin/api/players/{account}/inventory", c.require(RoleMember, c.setInventory))
-	mux.HandleFunc("POST /admin/api/players/{account}/mail", c.require(RoleMember, c.sendMail))
-	mux.HandleFunc("GET /admin/api/server", c.require(RoleOwner, func(w http.ResponseWriter, r *http.Request, _ session) {
+	owner := func(s session) bool { return s.Role == RoleOwner }
+	can := func(permission string) func(session) bool { return func(s session) bool { return s.can(permission) } }
+	mux.HandleFunc("GET /admin/api/catalog", c.require(can(PermissionMail), c.catalog))
+	mux.HandleFunc("GET /admin/api/players", c.require(can(PermissionPlayers), c.players))
+	mux.HandleFunc("GET /admin/api/permissions", c.require(owner, func(w http.ResponseWriter, _ *http.Request, _ session) {
+		writeJSON(w, http.StatusOK, permissionCatalog(c.options.Configuration))
+	}))
+	mux.HandleFunc("PUT /admin/api/players/{account}/administrator", c.require(owner, c.setAdministrator))
+	mux.HandleFunc("GET /admin/api/players/{account}/inventory", c.require(can(PermissionPlayers), c.inventory))
+	mux.HandleFunc("PUT /admin/api/players/{account}/inventory", c.require(can(PermissionInventory), c.setInventory))
+	mux.HandleFunc("POST /admin/api/players/{account}/mail", c.require(can(PermissionMail), c.sendMail))
+	mux.HandleFunc("GET /admin/api/server", c.require(owner, func(w http.ResponseWriter, r *http.Request, _ session) {
 		writeJSON(w, http.StatusOK, c.options.Server())
 	}))
-	mux.Handle("/admin/api/config/", c.require(RoleOwner, func(w http.ResponseWriter, r *http.Request, _ session) {
-		http.StripPrefix("/admin/api/config", c.config).ServeHTTP(w, r)
+	mux.Handle("/admin/api/config/", c.require(func(s session) bool { return s.canReadConfiguration(c.options.Configuration) }, func(w http.ResponseWriter, r *http.Request, current session) {
+		http.StripPrefix("/admin/api/config", c.config).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, current)))
 	}))
 	return securityHeaders(mux)
 }
@@ -168,16 +181,18 @@ func securityHeaders(next http.Handler) http.Handler {
 
 type handler func(http.ResponseWriter, *http.Request, session)
 
-// require authenticates the session, enforces the minimum role and, for
+type sessionKey struct{}
+
+// require authenticates the session, checks its permission and, for
 // state-changing methods, the session's CSRF token.
-func (c *Console) require(minimum Role, next handler) http.HandlerFunc {
+func (c *Console) require(allowed func(session) bool, next handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		current, ok := c.session(w, r)
 		if !ok {
 			return
 		}
-		if minimum == RoleOwner && current.Role != RoleOwner {
-			fail(w, http.StatusForbidden, "forbidden", "owner permission required")
+		if !allowed(current) {
+			fail(w, http.StatusForbidden, "forbidden", "permission required")
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -259,7 +274,12 @@ func (c *Console) sessionInfo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if ok {
-			info["signed_in"], info["role"], info["csrf"] = true, current.Role, current.CSRF
+			permissions := current.Permissions
+			if current.Role == RoleOwner {
+				permissions = []string{PermissionPlayers, PermissionMail, PermissionInventory}
+			}
+			info["signed_in"], info["role"], info["csrf"], info["permissions"] = true, current.Role, current.CSRF, append([]string{}, permissions...)
+			info["configuration"] = current.canReadConfiguration(c.options.Configuration)
 			if current.AccountID != "" {
 				if player, found, err := c.player(r.Context(), current.AccountID); err == nil && found {
 					info["player"] = player
@@ -378,11 +398,11 @@ func (c *Console) roleOf(ctx context.Context, accountID string) (Role, error) {
 	if administrator != "" && administrator == accountID {
 		return RoleOwner, nil
 	}
-	member, err := c.options.Store.IsMember(ctx, accountID)
-	if err != nil || !member {
+	appointed, err := c.options.Store.IsAdministrator(ctx, accountID)
+	if err != nil || !appointed {
 		return "", err
 	}
-	return RoleMember, nil
+	return RoleAdministrator, nil
 }
 
 func (c *Console) logout(w http.ResponseWriter, r *http.Request) {
@@ -412,9 +432,10 @@ func (c *Console) catalog(w http.ResponseWriter, _ *http.Request, _ session) {
 
 type playerView struct {
 	Player
-	Owner     bool `json:"owner"`
-	Member    bool `json:"member"`
-	Unlimited bool `json:"unlimited_inventory"`
+	Owner         bool     `json:"owner"`
+	Administrator bool     `json:"administrator"`
+	Permissions   []string `json:"permissions,omitempty"`
+	Unlimited     bool     `json:"unlimited_inventory"`
 }
 
 func (c *Console) players(w http.ResponseWriter, r *http.Request, current session) {
@@ -423,7 +444,7 @@ func (c *Console) players(w http.ResponseWriter, r *http.Request, current sessio
 		fail(w, http.StatusInternalServerError, "unavailable", "player directory unavailable")
 		return
 	}
-	members, err := c.options.Store.Members(r.Context())
+	administrators, err := c.options.Store.Administrators(r.Context())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "unavailable", "player directory unavailable")
 		return
@@ -442,11 +463,13 @@ func (c *Console) players(w http.ResponseWriter, r *http.Request, current sessio
 	}
 	views := []playerView{}
 	for _, player := range players {
-		if current.Role != RoleOwner && player.AccountID != current.AccountID {
-			continue
+		appointed, isAdministrator := administrators[player.AccountID]
+		view := playerView{Player: player, Owner: player.AccountID == administrator, Administrator: isAdministrator,
+			Unlimited: settings.Value.Accounts[player.AccountID].Inventory.Unlimited}
+		if current.Role == RoleOwner {
+			view.Permissions = appointed.Permissions
 		}
-		views = append(views, playerView{Player: player, Owner: player.AccountID == administrator, Member: members[player.AccountID],
-			Unlimited: settings.Value.Accounts[player.AccountID].Inventory.Unlimited})
+		views = append(views, view)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"players": views})
 }
@@ -464,15 +487,9 @@ func (c *Console) player(ctx context.Context, accountID string) (Player, bool, e
 	return Player{}, false, nil
 }
 
-// target resolves the {account} path value: owners may address any listed
-// player, members only their own account.
-func (c *Console) target(w http.ResponseWriter, r *http.Request, current session) (Player, bool) {
-	account := r.PathValue("account")
-	if current.Role != RoleOwner && account != current.AccountID {
-		fail(w, http.StatusForbidden, "forbidden", "members may only manage their own account")
-		return Player{}, false
-	}
-	player, found, err := c.player(r.Context(), account)
+// target resolves the {account} path value to an active listed player.
+func (c *Console) target(w http.ResponseWriter, r *http.Request) (Player, bool) {
+	player, found, err := c.player(r.Context(), r.PathValue("account"))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "unavailable", "player directory unavailable")
 		return Player{}, false
@@ -484,30 +501,58 @@ func (c *Console) target(w http.ResponseWriter, r *http.Request, current session
 	return player, true
 }
 
-func (c *Console) setMember(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r, current)
+func (c *Console) setAdministrator(w http.ResponseWriter, r *http.Request, current session) {
+	player, ok := c.target(w, r)
 	if !ok {
 		return
 	}
 	var request struct {
-		Member *bool `json:"member"`
+		Administrator *bool    `json:"administrator"`
+		Permissions   []string `json:"permissions"`
 	}
-	if !decode(w, r, &request) || request.Member == nil {
-		if request.Member == nil {
-			fail(w, http.StatusBadRequest, "invalid", "member flag required")
+	if !decode(w, r, &request) {
+		return
+	}
+	if request.Administrator == nil {
+		fail(w, http.StatusBadRequest, "invalid", "administrator flag required")
+		return
+	}
+	if c.options.Identity == nil {
+		fail(w, http.StatusBadRequest, "unsupported", "administrators require OAuth authentication")
+		return
+	}
+	if owner, err := c.options.Identity.AdministratorAccountID(); err != nil || owner == player.AccountID {
+		fail(w, http.StatusBadRequest, "invalid", "the owner cannot be appointed as an administrator")
+		return
+	}
+	if !*request.Administrator {
+		if err := c.options.Store.RemoveAdministrator(r.Context(), player.AccountID); err != nil {
+			fail(w, http.StatusInternalServerError, "unavailable", "administrator update failed")
+			return
 		}
+		slog.Info("console administrator removed", "account", player.AccountID, "uid", player.UID, "by", current.AccountID)
+		writeJSON(w, http.StatusOK, map[string]any{"administrator": false})
 		return
 	}
-	if err := c.options.Store.SetMember(r.Context(), player.AccountID, *request.Member); err != nil {
-		fail(w, http.StatusInternalServerError, "unavailable", "member update failed")
+	requested := request.Permissions
+	if requested == nil {
+		requested = DefaultAdministratorPermissions
+	}
+	permissions, err := normalizePermissions(c.options.Configuration, requested)
+	if err != nil {
+		fail(w, http.StatusBadRequest, "invalid_permission", err.Error())
 		return
 	}
-	slog.Info("console member access changed", "account", player.AccountID, "uid", player.UID, "member", *request.Member)
-	writeJSON(w, http.StatusOK, map[string]bool{"member": *request.Member})
+	if err := c.options.Store.SetAdministrator(r.Context(), player.AccountID, permissions); err != nil {
+		fail(w, http.StatusInternalServerError, "unavailable", "administrator update failed")
+		return
+	}
+	slog.Info("console administrator permissions set", "account", player.AccountID, "uid", player.UID, "permissions", permissions, "by", current.AccountID)
+	writeJSON(w, http.StatusOK, map[string]any{"administrator": true, "permissions": permissions})
 }
 
 func (c *Console) inventory(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r, current)
+	player, ok := c.target(w, r)
 	if !ok {
 		return
 	}
@@ -520,7 +565,7 @@ func (c *Console) inventory(w http.ResponseWriter, r *http.Request, current sess
 }
 
 func (c *Console) setInventory(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r, current)
+	player, ok := c.target(w, r)
 	if !ok {
 		return
 	}
@@ -559,7 +604,7 @@ func (c *Console) setInventory(w http.ResponseWriter, r *http.Request, current s
 }
 
 func (c *Console) sendMail(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r, current)
+	player, ok := c.target(w, r)
 	if !ok {
 		return
 	}

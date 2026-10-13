@@ -6,7 +6,7 @@ const state = {session: null, players: [], view: ''};
 const errorText = {
   unauthorized: '登录已过期，请重新登录。', forbidden: '没有权限执行这个操作。', csrf: '页面已过期，请刷新后重试。',
   rate_limited: '尝试太频繁，请稍后再试。', expired: '登录已过期，请重新开始。', rejected: '登录被拒绝或已取消。',
-  not_granted: '这个游戏账号还没有管理台权限，请联系服主在“玩家”页授权。', not_found: '玩家不存在或已停用。',
+  not_granted: '这个游戏账号不是管理员，不能进入管理台。如需权限请联系服主。', not_found: '玩家不存在或已停用。', invalid_permission: '包含无效的权限。',
   invalid_item: '这件物品不在可寄送目录中。', invalid_count: '数量需在 1 到 2,147,483,647 之间。', invalid_text: '邮件标题和正文都不能为空。',
   read_only: '该文件对服务端只读。', unavailable: '服务暂不可用，请稍后再试。', invalid: '请求无效。',
   unsupported: '这台服务器使用本地认证，请用服务端启动时打印的一次性链接登录。',
@@ -76,12 +76,21 @@ async function boot() {
   }
   if (!state.session.signed_in) return showSignIn();
   $('tabs').hidden = false; $('account').hidden = false;
-  const owner = state.session.role === 'owner';
-  document.querySelectorAll('[data-owner]').forEach(a => { a.hidden = !owner; });
+  const views = allowedViews();
+  document.querySelectorAll('#tabs a').forEach(a => { a.hidden = !views.includes(a.dataset.view); });
   const player = state.session.player;
-  $('account-name').textContent = player ? playerLabel(player) + (owner ? '（服主）' : '') : '服主';
-  await loadPlayers();
+  $('account-name').textContent = player ? playerLabel(player) + (isOwner() ? '（服主）' : '（管理员）') : '服主';
+  if (can('players.view')) await loadPlayers();
   route();
+}
+const isOwner = () => state.session && state.session.role === 'owner';
+const can = permission => isOwner() || (state.session && (state.session.permissions || []).includes(permission));
+function allowedViews() {
+  const views = [];
+  if (can('mail.send')) views.push('mail');
+  if (can('players.view')) views.push('players');
+  if (state.session.configuration) views.push('config');
+  return views;
 }
 function showOnly(view) {
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.id !== 'view-' + view; });
@@ -94,7 +103,7 @@ function showSignIn() {
     $('sign-in-lead').textContent = '这台服务器使用本地认证。请打开服务端启动时在控制台打印的一次性登录链接。';
     $('providers').replaceChildren(); return;
   }
-  $('sign-in-lead').textContent = '使用你的游戏账号登录。服主账号拥有全部权限，其他玩家需要服主授权。';
+  $('sign-in-lead').textContent = '使用你的游戏账号登录。只有服主和服主任命的管理员可以进入。';
   const names = {discord: 'Discord', google: 'Google'};
   $('providers').replaceChildren(...providers.map(p => el('button', {type: 'button', class: 'btn' + (p === providers[0] ? ' seal' : ''), onclick: () => startLogin(p)}, '使用 ' + (names[p] || p) + ' 登录')));
 }
@@ -124,8 +133,10 @@ $('logout').onclick = async () => {
 let currentView = '';
 async function route() {
   if (!state.session || !state.session.signed_in) return;
-  let view = (location.hash || '#mail').slice(1);
-  if (!['mail', 'players', 'config'].includes(view) || (view !== 'mail' && state.session.role !== 'owner')) view = 'mail';
+  const views = allowedViews();
+  if (!views.length) { showOnly('sign-in'); $('providers').replaceChildren(); $('sign-in-lead').textContent = '服主还没有给你分配任何权限。'; return; }
+  let view = (location.hash || '#' + views[0]).slice(1);
+  if (!views.includes(view)) view = views[0];
   if (currentView === 'config' && view !== 'config' && config.dirty()) {
     if (!await ask({title: '离开前保存配置？', body: '有尚未保存的配置改动。离开后改动会保留在本页，直到刷新或退出。', ok: '仍然离开'})) { history.replaceState(null, '', '#config'); return; }
   }
@@ -262,12 +273,14 @@ const mailTool = (() => {
     const display = $('uid-display');
     display.textContent = player ? player.uid || '——' : '——'; display.classList.toggle('none', !player);
     $('slip-uid').textContent = player ? player.uid : '—';
-    $('recipient-note').textContent = player ? (player.name || '') + (state.session.role === 'owner' ? '' : '（只能给自己寄件）') : '还没有可以寄件的玩家。玩家首次登录游戏后会出现在这里。';
+    $('recipient-note').textContent = player ? (player.name || '') : '还没有可以寄件的玩家。玩家首次登录游戏后会出现在这里。';
   }
   $('uid-display').onclick = () => { if (target && target.uid) copy(target.uid, 'UID '); };
   function showInventory(value) {
     const on = value.unlimited, l = value.limits;
     $('unlimited-inventory').checked = on;
+    $('unlimited-inventory').disabled = !can('players.inventory');
+    $('unlimited-inventory').closest('label').title = can('players.inventory') ? '' : '没有调整背包容量的权限';
     $('inventory-limits').innerHTML = `<span></span><span class="h">道具</span><span class="h">装备</span><span class="lab${on ? '' : ' on'}">普通容量</span><b>${l.items.default}</b><b>${l.equipment.default}</b><span class="lab${on ? ' on' : ''}">无限模式</span><b>${l.items.maximum}</b><b>${l.equipment.maximum}</b>`;
   }
   async function select(accountID) {
@@ -305,7 +318,7 @@ const mailTool = (() => {
       showInventory(value); target.unlimited_inventory = value.unlimited;
       say($('inventory-status'), `已保存 UID ${target.uid} 的设置。玩家重新登录游戏后生效。`, 'ok');
     } catch (error) { box.checked = old; say($('inventory-status'), error.message, 'err'); }
-    finally { box.disabled = false; $('player').disabled = false; }
+    finally { box.disabled = !can('players.inventory'); $('player').disabled = false; }
   };
   async function loadCatalog() {
     try {
@@ -318,9 +331,8 @@ const mailTool = (() => {
   return {
     open(accountID) {
       paintParcel();
-      const owner = state.session.role === 'owner';
       const usable = state.players.filter(p => p.active);
-      $('player-selector').hidden = !owner || usable.length < 2;
+      $('player-selector').hidden = usable.length < 2;
       $('player').replaceChildren(...usable.map(p => new Option(playerLabel(p) + (p.owner ? '（服主）' : ''), p.account_id)));
       const self = state.session.player && state.session.player.account_id;
       const initial = accountID || (target && usable.some(p => p.account_id === target.account_id) ? target.account_id : null) || (usable.some(p => p.account_id === self) ? self : usable[0] && usable[0].account_id);
@@ -333,31 +345,85 @@ const mailTool = (() => {
 
 /* ---------- 玩家 ---------- */
 const roster = (() => {
+  let catalog = null;
+  const toggle = (checked, disabled, onchange, label) => el('label', {class: 'switch', title: label}, el('input', {type: 'checkbox', role: 'switch', checked, disabled, 'aria-label': label, onchange}), el('span', {class: 'track', 'aria-hidden': 'true'}));
+  function summary(p) {
+    if (!p.administrator) return '';
+    const keys = p.permissions || [];
+    const names = {'mail.send': '寄件', 'players.view': '查看玩家', 'players.inventory': '背包'};
+    const basic = keys.filter(k => names[k]).map(k => names[k]);
+    const sections = keys.filter(k => k.startsWith('config.') && k.endsWith('.read')).length;
+    const writes = keys.filter(k => k.startsWith('config.') && k.endsWith('.write')).length;
+    return [...basic, sections ? `配置 ${sections} 组${writes ? '（可改 ' + writes + '）' : '（只读）'}` : ''].filter(Boolean).join(' · ') || '无权限';
+  }
   function render() {
+    const owner = isOwner();
+    $('roster-head-row').replaceChildren(...['UID', '名称', '身份', owner ? '管理员' : null, '无限背包', ''].filter(h => h !== null).map((h, i) => el('th', {class: i >= 3 && h ? 'c' : ''}, h)));
     const q = $('player-q').value.trim().toLowerCase();
     const rows = state.players.filter(p => !q || (p.uid + ' ' + p.name).toLowerCase().includes(q));
     $('roster').replaceChildren(...rows.map(p => {
-      const toggle = (checked, disabled, onchange, label) => el('label', {class: 'switch', title: label}, el('input', {type: 'checkbox', role: 'switch', checked, disabled, 'aria-label': label, onchange}), el('span', {class: 'track', 'aria-hidden': 'true'}));
-      const memberSwitch = p.owner ? el('span', {class: 'muted'}, '—') : toggle(p.member, !p.active || state.session.mode !== 'oauth', event => setMember(p, event.target), '管理台成员');
+      const adminCell = owner ? el('td', {class: 'c'}, p.owner ? el('span', {class: 'muted'}, '—') : toggle(p.administrator, !p.active || state.session.mode !== 'oauth', event => setAdministrator(p, event.target), '管理员')) : null;
       return el('tr', {class: p.active ? '' : 'inactive'},
         el('td', {class: 'uid-cell'}, p.uid || '—'),
         el('td', {}, p.name || ''),
-        el('td', {}, p.owner ? el('span', {class: 'pill owner'}, '服主') : null, p.member ? el('span', {class: 'pill member'}, '成员') : null, p.active ? null : el('span', {class: 'pill'}, '已停用')),
-        el('td', {class: 'c'}, memberSwitch),
-        el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active, event => setInventory(p, event.target), '无限背包容量')),
-        el('td', {class: 'act'}, p.active ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(() => mailTool.open(p.account_id)); }}, '给 TA 寄件 →') : null));
+        el('td', {}, p.owner ? el('span', {class: 'pill owner'}, '服主') : null,
+          p.administrator ? el('span', {class: 'pill member', title: owner ? summary(p) : ''}, '管理员') : null,
+          p.active ? null : el('span', {class: 'pill'}, '已停用'),
+          owner && p.administrator ? el('small', {class: 'perm-summary'}, summary(p)) : null),
+        adminCell,
+        el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active || !can('players.inventory'), event => setInventory(p, event.target), '无限背包容量')),
+        el('td', {class: 'act'},
+          owner && p.administrator ? el('button', {type: 'button', class: 'linkish', onclick: () => editPermissions(p)}, '权限…') : null,
+          p.active && can('mail.send') ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(() => mailTool.open(p.account_id)); }}, '寄件 →') : null));
     }));
     if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 6, class: 'muted'}, state.players.length ? '没有匹配的玩家' : '还没有玩家。玩家首次登录游戏后会出现在这里。')));
   }
-  async function setMember(player, box) {
-    if (!box.checked && !await ask({title: '撤销管理台权限？', body: `UID ${player.uid} 将立即退出管理台，之后需要重新授权才能登录。`, ok: '撤销', danger: true})) { box.checked = true; return; }
+  async function setAdministrator(player, box) {
+    if (!box.checked) {
+      if (!await ask({title: '撤销管理员？', body: `UID ${player.uid} 将立即退出管理台，之后需要重新任命。`, ok: '撤销', danger: true})) { box.checked = true; return; }
+    }
     box.disabled = true;
     try {
-      await api('players/' + encodeURIComponent(player.account_id) + '/member', {method: 'PUT', body: {member: box.checked}});
-      player.member = box.checked; render();
-      toast(box.checked ? `已授权 UID ${player.uid}，对方可用游戏账号登录管理台` : `已撤销 UID ${player.uid} 的权限`);
+      const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/administrator', {method: 'PUT', body: {administrator: box.checked}});
+      player.administrator = value.administrator; player.permissions = value.permissions || [];
+      render();
+      toast(box.checked ? `已任命 UID ${player.uid} 为管理员（默认可寄件、查看玩家）` : `已撤销 UID ${player.uid} 的管理员身份`);
+      if (box.checked) editPermissions(player);
     } catch (error) { box.checked = !box.checked; say($('roster-status'), error.message, 'err'); }
     finally { box.disabled = false; }
+  }
+  async function editPermissions(player) {
+    try { catalog = catalog || (await api('permissions')).value; } catch (error) { toast(error.message); return; }
+    const granted = new Set(player.permissions || []);
+    const editor = el('div', {class: 'perm-editor'});
+    const draw = () => {
+      const check = (key, label, help, onchange) => el('label', {class: 'perm'}, el('input', {type: 'checkbox', checked: granted.has(key), onchange}), el('span', {}, label, help ? el('small', {}, help) : null));
+      const abilities = catalog.abilities.map(a => check(a.key, a.label, a.help, e => {
+        if (e.target.checked) { granted.add(a.key); (a.requires || []).forEach(r => granted.add(r)); }
+        else { granted.delete(a.key); catalog.abilities.filter(b => (b.requires || []).includes(a.key)).forEach(b => granted.delete(b.key)); }
+        draw();
+      }));
+      const documents = catalog.configuration.map(doc => {
+        const key = (section, mode) => `config.${doc.document}.${section}.${mode}`;
+        const all = mode => doc.sections.every(s => granted.has(key(s.id, mode)));
+        const setAll = mode => { const on = !all(mode); doc.sections.forEach(s => { if (on) { granted.add(key(s.id, mode)); if (mode === 'write') granted.add(key(s.id, 'read')); } else { granted.delete(key(s.id, mode)); if (mode === 'read') granted.delete(key(s.id, 'write')); } }); draw(); };
+        return el('table', {class: 'perm-table'},
+          el('thead', {}, el('tr', {}, el('th', {}, doc.title),
+            el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: '全部切换', onclick: () => setAll('read')}, '查看')),
+            el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: '全部切换', onclick: () => setAll('write')}, '修改')))),
+          el('tbody', {}, doc.sections.map(s => el('tr', {}, el('td', {}, s.title),
+            el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': doc.title + ' ' + s.title + ' 查看', checked: granted.has(key(s.id, 'read')), onchange: e => { if (e.target.checked) granted.add(key(s.id, 'read')); else { granted.delete(key(s.id, 'read')); granted.delete(key(s.id, 'write')); } draw(); }})),
+            el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': doc.title + ' ' + s.title + ' 修改', checked: granted.has(key(s.id, 'write')), onchange: e => { if (e.target.checked) { granted.add(key(s.id, 'write')); granted.add(key(s.id, 'read')); } else granted.delete(key(s.id, 'write')); draw(); }}))))));
+      });
+      editor.replaceChildren(el('h4', {}, '基础能力'), el('div', {class: 'perm-list'}, abilities), el('h4', {}, '服务器配置'), el('p', {class: 'muted'}, '按分组授权。修改包含查看；没有查看权限的分组对该管理员不可见。'), ...documents,
+        el('p', {class: 'muted'}, '任命和撤销管理员、服务器概览仅服主可用，不能授予。'));
+    };
+    draw();
+    if (!await ask({title: `UID ${player.uid} 的权限`, body: player.name || '', extra: editor, ok: '保存权限'})) return;
+    try {
+      const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/administrator', {method: 'PUT', body: {administrator: true, permissions: [...granted]}});
+      player.permissions = value.permissions; render(); toast(`已更新 UID ${player.uid} 的权限，立即生效`);
+    } catch (error) { say($('roster-status'), error.message, 'err'); }
   }
   async function setInventory(player, box) {
     box.disabled = true;
@@ -419,6 +485,8 @@ const config = (() => {
     'must not have a trailing slash': '末尾不能带斜杠',
     'must use HTTPS outside loopback development': '除回环地址外必须使用 HTTPS',
     'is required': '必填', 'must be present': '文件中必须写明这一项',
+    'no permission to change this section': '你没有修改这个分组的权限',
+    'a section outside your access is invalid': '你无权查看的分组中存在问题，请联系服主处理',
   };
   function describe(problem, field, d) {
     const m = problem.message || '';
@@ -447,7 +515,7 @@ const config = (() => {
     for (const section of d.schema.sections) {
       const own = section.fields.filter(f => !f.path.includes('*'));
       if (own.every(f => f.advanced && f.path === 'schema_version')) continue;
-      const card = el('section', {class: 'card section', id: 'sec-' + section.id}, el('h3', {}, section.title), section.help ? el('p', {class: 'help'}, section.help) : null);
+      const card = el('fieldset', {class: 'card section', id: 'sec-' + section.id, disabled: section.read_only}, el('h3', {}, section.title, section.read_only ? el('span', {class: 'pill'}, '只读') : null), section.help ? el('p', {class: 'help'}, section.help) : null);
       const basic = own.filter(f => !f.advanced), advanced = own.filter(f => f.advanced);
       basic.forEach(f => card.append(renderField(d, f, draft)));
       if (advanced.length) {
@@ -644,7 +712,7 @@ const config = (() => {
           el('li', {}, el('a', {href: '#config', class: bad.has(s.id) ? 'bad' : '', onclick: e => { e.preventDefault(); document.getElementById('sec-' + s.id).scrollIntoView({behavior: 'smooth', block: 'start'}); }}, s.title)))));
       }
     });
-    items.push(el('div', {class: 'sep'}), el('button', {type: 'button', class: 'doc', onclick: () => $('overview').scrollIntoView({behavior: 'smooth'})}, '服务器概览'));
+    if (isOwner()) items.push(el('div', {class: 'sep'}), el('button', {type: 'button', class: 'doc', onclick: () => $('overview').scrollIntoView({behavior: 'smooth'})}, '服务器概览'));
     nav.replaceChildren(...items);
   }
   function changes(d) {
@@ -709,7 +777,9 @@ const config = (() => {
     if (currentView === 'config' && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); }
   });
   async function renderOverview() {
-    try { server = (await api('server')).value; } catch { server = null; }
+    server = null;
+    if (isOwner()) { try { server = (await api('server')).value; } catch { server = null; } }
+    $('overview').hidden = !server;
     if (!server) { $('overview').replaceChildren(); return; }
     const rows = [['服务端版本', server.server_version], ['游戏版本', server.game_version], ['GameData', server.game_data_version], ['资源包', server.bundle_version],
       ['认证模式', server.auth_mode === 'oauth' ? 'OAuth 联机' : '本地单人'], ['监听地址', server.listen], ['启动时间', server.started_at && new Date(server.started_at).toLocaleString('zh-CN')],

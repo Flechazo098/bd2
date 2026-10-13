@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	commonconfig "bd2server/internal/common/config"
+	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/gateway/auth"
@@ -49,10 +51,14 @@ func newConsole(t *testing.T) (*Console, *fakeIdentity, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	game, _, err := gameconfig.Document.Open(filepath.Join(root, "config", "game.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	identity := &fakeIdentity{}
 	spool := filepath.Join(root, "mail-grants-spool.json")
 	console, err := New(Options{
-		Store: store, Identity: identity, MailSpool: spool, Inventory: settings, Configuration: commonconfig.NewRegistry(),
+		Store: store, Identity: identity, MailSpool: spool, Inventory: settings, Configuration: commonconfig.NewRegistry(game),
 		Players: func(context.Context) ([]Player, error) {
 			return []Player{{AccountID: "owner", UID: "1", Active: true}, {AccountID: "friend", UID: "2", Active: true}, {AccountID: "other", UID: "3", Active: true}}, nil
 		},
@@ -123,14 +129,14 @@ func (b *browser) login(identity *fakeIdentity, account string) int {
 	return status
 }
 
-func TestConsoleRolesFollowAdministratorAndOwnerGrants(t *testing.T) {
+func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 	console, identity, spool := newConsole(t)
 	server := httptest.NewServer(console.Handler())
 	defer server.Close()
 
 	owner := newBrowser(t, server)
 	if status := owner.login(identity, "owner"); status != http.StatusOK {
-		t.Fatalf("administrator login: %d", status)
+		t.Fatalf("game administrator login: %d", status)
 	}
 	if status, _ := owner.do(http.MethodGet, "/admin/api/config/", nil, nil); status != http.StatusOK {
 		t.Fatalf("owner configuration access: %d", status)
@@ -138,37 +144,69 @@ func TestConsoleRolesFollowAdministratorAndOwnerGrants(t *testing.T) {
 
 	friend := newBrowser(t, server)
 	if status := friend.login(identity, "friend"); status != http.StatusForbidden {
-		t.Fatalf("ungranted account signed in: %d", status)
+		t.Fatalf("ordinary player signed in: %d", status)
 	}
-	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/member", map[string]bool{"member": true}, nil); status != http.StatusOK {
-		t.Fatalf("grant member: %d", status)
+	if status, value := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", map[string]bool{"administrator": true}, nil); status != http.StatusOK ||
+		len(value["permissions"].([]any)) != len(DefaultAdministratorPermissions) {
+		t.Fatalf("appoint administrator with defaults: %d %v", status, value)
 	}
 	if status := friend.login(identity, "friend"); status != http.StatusOK {
-		t.Fatalf("granted member login: %d", status)
-	}
-	if status, _ := friend.do(http.MethodGet, "/admin/api/config/", nil, nil); status != http.StatusForbidden {
-		t.Fatalf("member reached configuration: %d", status)
-	}
-	if _, value := friend.do(http.MethodGet, "/admin/api/players", nil, nil); len(value["players"].([]any)) != 1 {
-		t.Fatalf("member saw other players: %v", value)
-	}
-	gift := map[string]any{"element_type": 4, "id": 0, "count": 5, "title": "t", "body": "b"}
-	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusForbidden {
-		t.Fatalf("member mailed another account: %d", status)
-	}
-	if status, _ := friend.do(http.MethodPost, "/admin/api/players/friend/mail", gift, nil); status != http.StatusCreated {
-		t.Fatalf("member mail to self: %d", status)
-	}
-	raw, err := os.ReadFile(spool)
-	if err != nil || !strings.Contains(string(raw), `"account_id": "friend"`) || strings.Contains(string(raw), `"account_id": "other"`) {
-		t.Fatalf("spool recipients: %s, %v", raw, err)
+		t.Fatalf("administrator login: %d", status)
 	}
 
-	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/member", map[string]bool{"member": false}, nil); status != http.StatusOK {
-		t.Fatalf("revoke member: %d", status)
+	gift := map[string]any{"element_type": 4, "id": 0, "count": 5, "title": "t", "body": "b"}
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusCreated {
+		t.Fatalf("default administrator mail: %d", status)
+	}
+	if raw, err := os.ReadFile(spool); err != nil || !strings.Contains(string(raw), `"account_id": "other"`) {
+		t.Fatalf("spool recipient: %s, %v", raw, err)
+	}
+	if _, value := friend.do(http.MethodGet, "/admin/api/players", nil, nil); len(value["players"].([]any)) != 3 {
+		t.Fatalf("default administrator player list: %v", value)
+	}
+	for _, denied := range []struct{ method, path string }{
+		{http.MethodGet, "/admin/api/config/"},
+		{http.MethodGet, "/admin/api/server"},
+		{http.MethodGet, "/admin/api/permissions"},
+		{http.MethodPut, "/admin/api/players/other/inventory"},
+		{http.MethodPut, "/admin/api/players/other/administrator"},
+	} {
+		if status, _ := friend.do(denied.method, denied.path, map[string]any{"unlimited": true, "administrator": true}, nil); status != http.StatusForbidden {
+			t.Fatalf("default administrator reached %s %s: %d", denied.method, denied.path, status)
+		}
+	}
+
+	grant := map[string]any{"administrator": true, "permissions": []string{"config.game.purchases.write", PermissionInventory}}
+	if status, value := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", grant, nil); status != http.StatusOK ||
+		!strings.Contains(fmt.Sprint(value["permissions"]), "config.game.purchases.read") {
+		t.Fatalf("grant configuration section: %d %v", status, value)
+	}
+	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", map[string]any{"administrator": true, "permissions": []string{"administrators.manage"}}, nil); status != http.StatusBadRequest {
+		t.Fatalf("unknown permission accepted: %d", status)
+	}
+	if status, _ := owner.do(http.MethodPut, "/admin/api/players/owner/administrator", map[string]bool{"administrator": true}, nil); status != http.StatusBadRequest {
+		t.Fatalf("owner appointed as administrator: %d", status)
+	}
+	if status, _ := friend.do(http.MethodPut, "/admin/api/players/other/inventory", map[string]bool{"unlimited": true}, nil); status != http.StatusOK {
+		t.Fatalf("granted inventory permission: %d", status)
+	}
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusForbidden {
+		t.Fatalf("replaced permissions kept mail: %d", status)
+	}
+	status, document := friend.do(http.MethodGet, "/admin/api/config/game", nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("granted configuration section: %d", status)
+	}
+	sections := document["schema"].(map[string]any)["sections"].([]any)
+	if len(sections) != 1 || sections[0].(map[string]any)["id"] != "purchases" {
+		t.Fatalf("administrator saw ungranted sections: %v", sections)
+	}
+
+	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", map[string]bool{"administrator": false}, nil); status != http.StatusOK {
+		t.Fatalf("remove administrator: %d", status)
 	}
 	if status, _ := friend.do(http.MethodGet, "/admin/api/players", nil, nil); status != http.StatusUnauthorized {
-		t.Fatalf("revoked member session survived: %d", status)
+		t.Fatalf("removed administrator session survived: %d", status)
 	}
 }
 

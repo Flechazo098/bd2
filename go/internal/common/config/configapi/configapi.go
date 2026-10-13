@@ -15,6 +15,9 @@ import (
 const maxDocumentBytes = 1 << 20
 
 type Options struct {
+	// Access returns the caller's section access to a document. Nil grants
+	// full access; documents with no readable section are hidden.
+	Access func(r *http.Request, entry config.Entry) config.Access
 	// Changed is called after a document was written successfully.
 	Changed func(r *http.Request, view config.View)
 }
@@ -31,12 +34,34 @@ type document struct {
 //	POST /{name}/check  validate a candidate without writing it
 //	PUT  /{name}        replace the document; If-Match carries the revision read
 func Handler(registry *config.Registry, options Options) http.Handler {
+	access := func(r *http.Request, entry config.Entry) config.Access {
+		if options.Access == nil {
+			return config.AllAccess
+		}
+		return options.Access(r, entry)
+	}
+	lookup := func(w http.ResponseWriter, r *http.Request) (config.Entry, config.Access, bool) {
+		entry, ok := registry.Lookup(r.PathValue("name"))
+		var granted config.Access
+		if ok {
+			granted = access(r, entry)
+		}
+		if !ok || !granted.Any(entry.Schema()) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown configuration"})
+			return nil, granted, false
+		}
+		return entry, granted, true
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		entries := registry.Entries()
 		documents := make([]document, 0, len(entries))
 		for _, entry := range entries {
-			item, err := describe(entry)
+			granted := access(r, entry)
+			if !granted.Any(entry.Schema()) {
+				continue
+			}
+			item, err := describe(entry, granted)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err)
 				return
@@ -46,11 +71,11 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"documents": documents})
 	})
 	mux.HandleFunc("GET /{name}", func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := lookup(w, registry, r)
+		entry, granted, ok := lookup(w, r)
 		if !ok {
 			return
 		}
-		item, err := describe(entry)
+		item, err := describe(entry, granted)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -58,7 +83,7 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 		writeJSON(w, http.StatusOK, item)
 	})
 	mux.HandleFunc("POST /{name}/check", func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := lookup(w, registry, r)
+		entry, granted, ok := lookup(w, r)
 		if !ok {
 			return
 		}
@@ -66,11 +91,11 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 		if !ok {
 			return
 		}
-		problems, advice := entry.CheckJSON(raw)
+		problems, advice := entry.CheckJSON(raw, granted)
 		writeJSON(w, http.StatusOK, map[string]any{"problems": nonNil(problems), "advice": nonNil(advice)})
 	})
 	mux.HandleFunc("PUT /{name}", func(w http.ResponseWriter, r *http.Request) {
-		entry, ok := lookup(w, registry, r)
+		entry, granted, ok := lookup(w, r)
 		if !ok {
 			return
 		}
@@ -83,7 +108,7 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 		if !ok {
 			return
 		}
-		view, err := entry.ReplaceJSON(raw, expected)
+		view, err := entry.ReplaceJSON(raw, expected, granted)
 		var problems config.Problems
 		switch {
 		case err == nil:
@@ -92,7 +117,7 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, view)
 		case errors.Is(err, config.ErrConflict):
-			current, viewErr := entry.View()
+			current, viewErr := entry.View(granted)
 			if viewErr != nil {
 				writeError(w, http.StatusInternalServerError, viewErr)
 				return
@@ -109,21 +134,13 @@ func Handler(registry *config.Registry, options Options) http.Handler {
 	return mux
 }
 
-func describe(entry config.Entry) (document, error) {
-	description, err := entry.Describe()
+func describe(entry config.Entry, access config.Access) (document, error) {
+	description, err := entry.Describe(access)
 	if err != nil {
 		return document{}, err
 	}
-	view, err := entry.View()
+	view, err := entry.View(access)
 	return document{Description: description, View: view}, err
-}
-
-func lookup(w http.ResponseWriter, registry *config.Registry, r *http.Request) (config.Entry, bool) {
-	entry, ok := registry.Lookup(r.PathValue("name"))
-	if !ok {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown configuration"})
-	}
-	return entry, ok
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {

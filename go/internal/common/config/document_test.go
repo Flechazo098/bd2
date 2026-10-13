@@ -121,3 +121,44 @@ func TestFileReplaceRequiresCurrentRevisionAndHonoursLocks(t *testing.T) {
 		t.Fatalf("external edit was overwritten: %v", err)
 	}
 }
+
+func TestRestrictedAccessSeesAndChangesOnlyGrantedSections(t *testing.T) {
+	split := sampleDocument
+	split.Schema = config.Schema{Sections: []config.Section{
+		{ID: "mode", Fields: []config.Field{{Path: "mode", Kind: config.KindString, Options: []config.Option{{Value: "a"}, {Value: "b"}}}}},
+		{ID: "limits", Fields: []config.Field{{Path: "limit", Kind: config.KindInteger}}},
+		{ID: "tags", Fields: []config.Field{{Path: "tags", Kind: config.KindList}}},
+	}}
+	file, _, err := split.Open(filepath.Join(t.TempDir(), "sample.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := config.Access{Read: map[string]bool{"mode": true}, Write: map[string]bool{"limits": true}}
+
+	view, err := file.View(access)
+	if err != nil || string(view.Value) != `{"limit":1,"mode":"a"}` {
+		t.Fatalf("restricted view: %s, %v", view.Value, err)
+	}
+	description, err := file.Describe(access)
+	if err != nil || len(description.Schema.Sections) != 2 || !description.Schema.Sections[0].ReadOnly || description.Schema.Sections[1].ReadOnly {
+		t.Fatalf("restricted schema: %+v, %v", description.Schema, err)
+	}
+
+	if _, err := file.ReplaceJSON([]byte(`{"mode":"b","limit":1}`), view.Revision, access); problemPaths(t, err)["mode"] != config.RuleForbidden {
+		t.Fatalf("read-only section changed: %v", err)
+	}
+	if err := os.WriteFile(file.Path(), []byte(`{"mode":"a","limit":1,"tags":["kept"],"targets":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current, err := file.View(config.AllAccess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.ReplaceJSON([]byte(`{"mode":"a","limit":7}`), current.Revision, access); err != nil {
+		t.Fatalf("writable section rejected: %v", err)
+	}
+	saved, err := file.Read()
+	if err != nil || saved.Value.Limit != 7 || len(saved.Value.Tags) != 1 || saved.Value.Tags[0] != "kept" {
+		t.Fatalf("hidden section not preserved: %+v, %v", saved.Value, err)
+	}
+}
