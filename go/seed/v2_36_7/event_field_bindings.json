@@ -1,6 +1,24 @@
 {
   "version": "2.36.7",
   "bindings": [
-    {"pack_id": 20000, "event_type": 20, "content_open_type": 20}
+    {
+      "pack_id": 20000,
+      "event_type": 20,
+      "content_open_type": 20
+    }
+  ],
+  "action_mission_characters": [
+    {
+      "condition_type": 6,
+      "character_id": 1
+    },
+    {
+      "condition_type": 7,
+      "character_id": 2
+    },
+    {
+      "condition_type": 8,
+      "character_id": 3
+    }
   ]
 }

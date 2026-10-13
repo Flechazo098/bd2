@@ -41,6 +41,10 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("load event play state: %w", err)
 	}
 	p.eventPlayService.AttachBattleChallenges(p.design.eventBattleChallenges)
+	if p.shared != nil {
+		p.eventPlayService.AttachArcadeRankings(p.shared.arcadeRanks, p.arcadeRankingProfile)
+		p.eventPlayService.AttachRankingGuilds(p.arcadeRankingGuilds)
+	}
 	if p.roomResults != nil {
 		p.eventPlayService.AttachRooms(p.roomResults)
 	}
@@ -110,7 +114,10 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return p.eventTasksService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
 	})
 	p.eventPlayService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
-		return p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
+		if err := p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked); err != nil {
+			return err
+		}
+		return p.eventTasksService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
 	})
 	p.eventTasksService.AttachAssociatedMissionGroup(func(schedule events.Schedule) uint64 {
 		if group := p.eventActionsService.AssociatedMissionGroup(schedule); group != 0 {

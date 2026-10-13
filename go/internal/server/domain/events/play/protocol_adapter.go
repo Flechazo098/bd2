@@ -23,7 +23,7 @@ func (s *Service) upgrade(ctx command.Context, path string, req []byte, uid uint
 	if path == "/MiniGameSurvivalCharUpgrade" {
 		id, target := num(req, 2), num(req, 3)
 		k := prefix + strconv.FormatUint(id, 10)
-		if target == 0 || target != next.Upgrades[k]+1 {
+		if target == 0 || target != max(uint64(1), next.Upgrades[k])+1 {
 			return nil, fmt.Errorf("eventplay: upgrade level is not next")
 		}
 		var row []byte
@@ -61,167 +61,6 @@ func (s *Service) upgrade(ctx command.Context, path string, req []byte, uid uint
 	return bundle, nil
 }
 
-func (s *Service) survivalProgress(req []byte, a *Run) (uint64, uint64, error) {
-	char, e := s.design.Row("FieldMiniGameCharTable", 13, a.Char)
-	if e != nil {
-		return 0, 0, e
-	}
-	var mapRow []byte
-	for _, r := range s.design.Rows("FieldMiniGameMapTable", 2, a.MapGroup) {
-		if num(r, 3) == a.Stage {
-			mapRow = r
-		}
-	}
-	if mapRow == nil {
-		return 0, 0, fmt.Errorf("eventplay: survival map missing")
-	}
-	monsters := s.design.Rows("FieldMiniGameMonsterTable", 2, num(mapRow, 4))
-	if a.Killed == nil {
-		a.Killed = map[uint64]uint64{}
-	}
-	if a.Picked == nil {
-		a.Picked = map[uint64]uint64{}
-	}
-	if a.Available == nil {
-		a.Available = map[uint64]uint64{}
-	}
-	elapsed := uint64(0)
-	if uint64(s.now().UnixMilli()) > a.Started {
-		elapsed = (uint64(s.now().UnixMilli()) - a.Started) / 1000
-	}
-	e = wire.Walk(req, func(f wire.Field) error {
-		if f.Number != 6 {
-			return nil
-		}
-		if f.Type != 2 {
-			return wire.ErrMalformed
-		}
-		id, count := num(f.Value, 1), num(f.Value, 2)
-		if count == 0 {
-			return fmt.Errorf("eventplay: empty kill count")
-		}
-		var row []byte
-		for _, r := range monsters {
-			if num(r, 5) == id {
-				row = r
-				break
-			}
-		}
-		if row == nil {
-			return fmt.Errorf("eventplay: monster outside survival map")
-		}
-		max := num(row, 12)
-		repeats := num(row, 11)
-		start := num(row, 16)
-		interval := num(row, 13)
-		if elapsed < start {
-			return fmt.Errorf("eventplay: monster not spawned yet")
-		}
-		waves := uint64(1)
-		if interval > 0 {
-			waves += (elapsed - start) / interval
-		}
-		if repeats > 0 && waves > repeats {
-			waves = repeats
-		}
-		if max == 0 || a.Killed[id] > max*waves || count > max*waves-a.Killed[id] {
-			return fmt.Errorf("eventplay: kill count exceeds designed spawns")
-		}
-		a.Killed[id] += count
-		box := num(row, 6)
-		if box != 0 {
-			items, err := s.boxItems(box)
-			if err != nil {
-				return err
-			}
-			for _, item := range items {
-				a.Available[item] += count
-			}
-		}
-		return nil
-	})
-	if e != nil {
-		return 0, 0, e
-	}
-	exp, coin := uint64(0), uint64(0)
-	healing := uint64(0)
-	e = wire.Walk(req, func(f wire.Field) error {
-		if f.Number != 5 {
-			return nil
-		}
-		if f.Type != 2 {
-			return wire.ErrMalformed
-		}
-		id, count := num(f.Value, 1), num(f.Value, 2)
-		if count == 0 || count > a.Available[id] {
-			return fmt.Errorf("eventplay: item count exceeds committed drops")
-		}
-		row, e := s.design.Row("FieldMiniGameSurvivalItemTable", 1, id)
-		if e != nil {
-			return e
-		}
-		v := num(row, 4)
-		if count > math.MaxInt32 || v > math.MaxInt32/count {
-			return fmt.Errorf("eventplay: item value overflow")
-		}
-		a.Available[id] -= count
-		a.Picked[id] += count
-		switch num(row, 3) {
-		case 0:
-			healing += v * count
-		case 3:
-			exp += uint64(math.Floor(float64(v*count) * doubleField(char, 8, 1)))
-		case 4:
-			coin += uint64(math.Floor(float64(v*count) * doubleField(char, 10, 1)))
-		case 5:
-			a.SkillCredits += count
-		}
-		return nil
-	})
-	if e != nil {
-		return 0, 0, e
-	}
-	boxes, e := list(req, 7)
-	if e != nil {
-		return 0, 0, e
-	}
-	for _, id := range boxes {
-		if _, e := s.design.Row("FieldMiniGameSurvivalBoxTable", 2, id); e != nil {
-			return 0, 0, e
-		}
-	}
-	hp := num(req, 2)
-	if hp > a.MaxHP || hp > a.HP+healing {
-		return 0, 0, fmt.Errorf("eventplay: invalid survival HP")
-	}
-	a.HP = hp
-	a.Exp += exp
-	a.Coin += coin
-	a.LevelExp += exp
-	if a.Exp > math.MaxInt32 || a.Coin > math.MaxInt32 {
-		return 0, 0, fmt.Errorf("eventplay: survival progress exceeds protocol range")
-	}
-	growth := num(char, 2)
-	for {
-		var current, next []byte
-		for _, r := range s.design.Rows("FieldMiniGameCharLevelTable", 1, growth) {
-			if num(r, 2) == a.Level {
-				current = r
-			}
-			if num(r, 2) == a.Level+1 {
-				next = r
-			}
-		}
-		if current == nil || next == nil || num(current, 3) == 0 || a.LevelExp < num(current, 3) {
-			break
-		}
-		a.LevelExp -= num(current, 3)
-		a.Level++
-		a.SkillCredits++
-	}
-	return exp, coin, nil
-}
-
 func doubleField(b []byte, n int, def float64) float64 {
 	v := def
 	_ = wire.Walk(b, func(f wire.Field) error {
@@ -233,112 +72,9 @@ func doubleField(b []byte, n int, def float64) float64 {
 	return v
 }
 
-func (s *Service) boxItems(id uint64) ([]uint64, error) {
-	r, e := s.design.Row("FieldMiniGameSurvivalBoxTable", 2, id)
-	if e != nil {
-		return nil, e
-	}
-	values, e := list(r, 3)
-	if e != nil {
-		return nil, e
-	}
-	return values, nil
-}
-
-func (s *Service) survivalOffers(a *Run) ([]byte, error) {
-	if a.SkillCredits == 0 {
-		return nil, fmt.Errorf("eventplay: no earned skill selection")
-	}
-	if len(a.Offers) > 0 {
-		if a.Rerolls == 0 {
-			return nil, fmt.Errorf("eventplay: no remaining rerolls")
-		}
-		a.Rerolls--
-	}
-	a.Offers = nil
-	rows := append([][]byte(nil), s.design.Tables["FieldMiniGameSkillGroupTable"]...)
-	sort.Slice(rows, func(i, j int) bool { return num(rows[i], 1) < num(rows[j], 1) })
-	for _, r := range rows {
-		id := num(r, 1)
-		if a.SkillLevels[id] < num(r, 2) {
-			a.Offers = append(a.Offers, id)
-			if len(a.Offers) == 3 {
-				break
-			}
-		}
-	}
-	out := wire.AppendVarint(nil, 1, a.Rerolls)
-	for _, id := range a.Offers {
-		out = wire.AppendVarint(out, 2, id)
-	}
-	return out, nil
-}
-
-func summaryWire(st *snapshot, record bool) []byte {
-	keys := []string{}
-	for k, v := range st.Records {
-		if v.Best > 0 {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	var out []byte
-	for _, k := range keys {
-		v := st.Records[k]
-		field := map[string]int{"Survival": 1, "Sichuan": 2, "Action": 3, "Rhythm": 5, "Hopscotch": 6}[v.Family]
-		if field == 0 {
-			continue
-		}
-		var b []byte
-		switch v.Family {
-		case "Survival":
-			b = wire.AppendVarint(nil, 2, v.Best)
-		case "Sichuan":
-			b = wire.AppendDouble(nil, 2, float64(v.Best))
-		case "Action":
-			b = wire.AppendVarint(nil, 2, v.Best)
-			b = wire.AppendVarint(b, 3, v.Stage)
-		case "Rhythm":
-			b = wire.AppendVarint(nil, 2, v.Best)
-			b = wire.AppendVarint(b, 3, v.Stage)
-		case "Hopscotch":
-			b = wire.AppendVarint(nil, 1, v.Stage)
-			b = wire.AppendVarint(b, 3, v.Best)
-		}
-		if record {
-			switch v.Family {
-			case "Survival":
-				b = wire.AppendVarint(nil, 1, v.Best)
-				b = wire.AppendDouble(b, 2, 100)
-			case "Sichuan":
-				b = wire.AppendDouble(nil, 1, float64(v.Best))
-				b = wire.AppendDouble(b, 2, 100)
-			case "Action":
-				b = wire.AppendVarint(nil, 1, v.Stage)
-				b = wire.AppendVarint(b, 2, v.Best)
-				b = wire.AppendDouble(b, 3, 100)
-			case "Rhythm":
-				b = wire.AppendVarint(nil, 1, v.Best)
-				b = wire.AppendVarint(b, 2, v.Stage)
-				b = wire.AppendDouble(b, 3, 100)
-			case "Hopscotch":
-				b = wire.AppendVarint(nil, 1, v.Stage)
-				b = wire.AppendVarint(b, 2, v.Best)
-				b = wire.AppendDouble(b, 4, 100)
-			}
-		}
-		out = wire.AppendBytes(out, field, b)
-	}
-	return out
-}
-
 func (s *Service) endScore(f string, req []byte, a Run) (uint64, error) {
 	var score uint64
 	switch f {
-	case "Run":
-		score = num(req, 3)
-	case "Field":
-		score = a.Score
 	case "Action":
 		score = num(req, 7)
 	case "Rhythm":
@@ -389,8 +125,11 @@ func (s *Service) endScore(f string, req []byte, a Run) (uint64, error) {
 		}
 	case "Survival":
 		score = num(req, 3)
-		d := s.design.Tables["FieldMiniGameSurvivalTable"][0]
-		if score > num(d, 24) {
+		d, err := s.survivalRule(a.Game)
+		if err != nil {
+			return 0, err
+		}
+		if score > num(d, 24) || uint64(s.now().UnixMilli()) < a.Started || score > (uint64(s.now().UnixMilli())-a.Started)/1000+1 {
 			return 0, fmt.Errorf("eventplay: survival time exceeds design")
 		}
 	case "Defense":
@@ -407,7 +146,7 @@ func (s *Service) scoreRewards(game, score uint64) (uint64, []gamedata.BattleRew
 	if e != nil {
 		return 0, nil, e
 	}
-	return s.design.ScoreRewards(num(d, 10), score)
+	return s.design.ScoreRewards(num(d, 10), score, num(d, 3))
 }
 
 func (s *Service) progress(ctx command.Context, path string, req []byte, rk string, next *snapshot, key string) ([]byte, error) {
@@ -417,42 +156,21 @@ func (s *Service) progress(ctx command.Context, path string, req []byte, rk stri
 	}
 	var out []byte
 	switch path {
-	case "/MiniGameFieldScore":
-		d, e := s.fieldRules(a.Game)
-		if e != nil {
-			return nil, e
-		}
-		ids, e := list(req, 3)
-		if e != nil || len(ids) == 0 {
-			return nil, fmt.Errorf("eventplay: missing field objects")
-		}
-		for _, id := range ids {
-			v, ok := d.Objects[id]
-			if !ok || has(a.Objects, id) {
-				return nil, fmt.Errorf("eventplay: object invalid or already scored")
-			}
-			a.Objects = append(a.Objects, id)
-			if v.Type == 1 { //nolint:staticcheck // QF1003
-				a.Score += v.Point
-			} else if v.Type == 2 {
-				a.HP += v.Point
-			}
-		}
-		out = wire.AppendVarint(nil, 1, a.Score)
-		out = wire.AppendVarint(out, 2, a.HP)
 	case "/MiniGameSurvivalPlay":
+		previousKills := uint64(0)
+		for _, count := range a.Killed {
+			previousKills += count
+		}
 		exp, coin, e := s.survivalProgress(req, &a)
 		if e != nil {
 			return nil, e
 		}
 		if s.onProgress != nil {
 			total := uint64(0)
-			for id, count := range a.Killed {
-				previous := next.Runs[rk].Killed[id]
-				if count > previous {
-					total += count - previous
-				}
+			for _, count := range a.Killed {
+				total += count
 			}
+			total -= previousKills
 			if total > 0 {
 				if e = s.onProgress(ctx, 319, a.Game, total); e != nil {
 					return nil, e
@@ -463,57 +181,16 @@ func (s *Service) progress(ctx command.Context, path string, req []byte, rk stri
 		out = wire.AppendVarint(out, 2, exp)
 	case "/MiniGameSurvivalSkillSelectList":
 		var e error
-		out, e = s.survivalOffers(&a)
+		out, e = s.survivalSelect(&a)
 		if e != nil {
 			return nil, e
 		}
 	case "/MiniGameSurvivalSkillUp":
-		id := num(req, 2)
-		if a.SkillCredits == 0 || !has(a.Offers, id) {
-			return nil, fmt.Errorf("eventplay: skill not earned or offered")
+		var e error
+		out, e = s.survivalSkillUp(ctx, req, &a, next)
+		if e != nil {
+			return nil, e
 		}
-		group, err := s.design.Row("FieldMiniGameSkillGroupTable", 1, id)
-		if err != nil {
-			return nil, fmt.Errorf("eventplay: invalid skill")
-		}
-		if item := num(req, 3); item != 0 {
-			if _, e := s.design.Row("FieldMiniGameSurvivalItemTable", 1, item); e != nil {
-				return nil, e
-			}
-		}
-		if a.SkillLevels == nil {
-			a.SkillLevels = map[uint64]uint64{}
-		}
-		level := a.SkillLevels[id] + 1
-		if level > num(group, 2) {
-			return nil, fmt.Errorf("eventplay: survival skill at maximum")
-		}
-		capacity := uint64(0)
-		for _, r := range s.design.Tables["FieldMiniGameSurvivalTable"] {
-			if num(r, 21) > capacity {
-				capacity = num(r, 21)
-			}
-		}
-		if !has(a.Skills, id) && uint64(len(a.SkillLevels)) >= capacity {
-			return nil, fmt.Errorf("eventplay: survival skill capacity reached")
-		}
-		a.SkillLevels[id] = level
-		a.SkillCredits--
-		a.Offers = nil
-		if level == num(group, 2) && s.onProgress != nil {
-			if e := s.onProgress(ctx, 318, a.Game, 1); e != nil {
-				return nil, e
-			}
-			if e := s.onProgress(ctx, 321, id, 1); e != nil {
-				return nil, e
-			}
-		}
-		if !has(a.Skills, id) {
-			a.Skills = append(a.Skills, id)
-		}
-		v := wire.AppendVarint(nil, 1, id)
-		v = wire.AppendVarint(v, 2, level)
-		out = wire.AppendBytes(nil, 1, v)
 	default:
 		if strings.Contains(path, "QuickReward") || strings.Contains(path, "Reward") {
 			return nil, fmt.Errorf("eventplay: reward requires a completed unpaid score record")
@@ -525,160 +202,83 @@ func (s *Service) progress(ctx command.Context, path string, req []byte, rk stri
 	return out, nil
 }
 
-func specializedInfo(st *snapshot, uid uint64, f string) []byte {
-	var out []byte
-	if f == "Action" || f == "Survival" || f == "Defense" {
-		out = wire.AppendVarint(out, 1, uid)
-	}
-	for _, r := range st.Records {
-		if r.UID != uid || r.Family != f {
-			continue
-		}
-		switch f {
-		case "Sichuan":
-			v := wire.AppendVarint(nil, 1, uid)
-			v = wire.AppendVarint(v, 6, r.Best)
-			out = wire.AppendBytes(out, 1, v)
-		case "Rhythm":
-			v := wire.AppendVarint(nil, 1, r.Stage)
-			v = wire.AppendVarint(v, 2, r.Mode)
-			v = wire.AppendVarint(v, 3, r.Best)
-			out = wire.AppendBytes(out, 1, v)
-		case "Action":
-			v := wire.AppendVarint(nil, 1, r.Stage)
-			v = wire.AppendVarint(v, 2, r.Best)
-			out = wire.AppendBytes(out, 2, v)
-		case "Hopscotch":
-			v := wire.AppendVarint(nil, 1, r.Stage)
-			if r.Best > 0 {
-				v = wire.AppendVarint(v, 2, 1)
-			}
-			out = wire.AppendBytes(out, 2, v)
-		case "Survival":
-			out = wire.AppendVarint(out, 4, r.Best)
-			for stage, clear := range r.Clears {
-				if !clear {
-					continue
-				}
-				var group, id uint64
-				if _, e := fmt.Sscanf(stage, "map:%d:%d", &group, &id); e == nil {
-					v := wire.AppendVarint(nil, 1, group)
-					v = wire.AppendVarint(v, 2, id)
-					out = wire.AppendBytes(out, 8, v)
-				}
-			}
-		}
-	}
+func (s *Service) specializedInfo(st *snapshot, uid uint64, f string) []byte {
+	out := wire.AppendVarint(nil, 1, uid)
 	if f == "Survival" {
-		prefix := fmt.Sprintf("%d:", uid)
-		for key, level := range st.Upgrades {
-			if !strings.HasPrefix(key, prefix) {
+		best := uint64(0)
+		cleared := map[uint64]uint64{}
+		for _, r := range st.Records {
+			if r.UID != uid || r.Family != f {
 				continue
 			}
-			var id uint64
-			_, _ = fmt.Sscanf(key[len(prefix):], "%d", &id)
+			if row, e := s.survivalMap(r.Mode, r.Stage); e == nil && num(row, 11) == 1 {
+				best = max(best, r.Best)
+			}
+			for key, value := range r.Clears {
+				if !value {
+					continue
+				}
+				var group, stage uint64
+				if _, e := fmt.Sscanf(key, "map:%d:%d", &group, &stage); e == nil {
+					cleared[group] = max(cleared[group], stage)
+				}
+			}
+		}
+		out = wire.AppendVarint(out, 4, best)
+		groups := make([]uint64, 0, len(cleared))
+		for group := range cleared {
+			groups = append(groups, group)
+		}
+		slices.Sort(groups)
+		for _, group := range groups {
+			v := wire.AppendVarint(nil, 1, group)
+			v = wire.AppendVarint(v, 2, cleared[group])
+			out = wire.AppendBytes(out, 8, v)
+		}
+		out = append(out, s.survivalUnlockInfo(st, uid)...)
+		for _, row := range s.design.Tables["FieldMiniGameUpgradeGroupTable"] {
+			id := num(row, 1)
+			level := max(uint64(1), st.Upgrades[fmt.Sprintf("%d:%d", uid, id)])
 			v := wire.AppendVarint(nil, 1, id)
 			v = wire.AppendVarint(v, 2, level)
 			out = wire.AppendBytes(out, 10, v)
 		}
+		return out
 	}
-	return out
-}
-
-func rankingWire(st *snapshot, uid uint64, f string, record bool) []byte {
-	keys := []string{}
-	for k, r := range st.Records {
-		if r.UID == uid && r.Family == f && r.Best > 0 {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	var out []byte
-	for _, k := range keys {
-		r := st.Records[k]
-		var b []byte
-		switch f {
-		case "Survival":
-			b = wire.AppendVarint(nil, 1, 1)
-			b = wire.AppendVarint(b, 4, r.Best)
-			if record {
-				b = wire.AppendVarint(nil, 1, r.Best)
-				b = wire.AppendDouble(b, 2, 100)
-			}
-		case "Hopscotch":
-			b = wire.AppendVarint(nil, 1, 1)
-			b = wire.AppendVarint(b, 4, r.Best)
-			if record {
-				b = wire.AppendVarint(nil, 1, r.Stage)
-				b = wire.AppendVarint(b, 2, r.Best)
-				b = wire.AppendDouble(b, 4, 100)
-			}
-		case "Action":
-			b = wire.AppendVarint(nil, 3, 1)
-			b = wire.AppendVarint(b, 4, r.Best)
-			if record {
-				b = wire.AppendVarint(nil, 1, r.Stage)
-				b = wire.AppendVarint(b, 2, r.Best)
-				b = wire.AppendDouble(b, 3, 100)
-			}
-		case "Sichuan":
-			b = wire.AppendVarint(nil, 7, 1)
-			b = wire.AppendVarint(b, 8, r.Best)
-			if record {
-				b = wire.AppendVarint(nil, 1, r.Best)
-				b = wire.AppendDouble(b, 2, 100)
-			}
-		case "Rhythm":
-			b = wire.AppendVarint(nil, 1, 1)
-			b = wire.AppendVarint(b, 4, r.Best)
-			if record {
-				b = wire.AppendVarint(nil, 1, r.Best)
-				b = wire.AppendVarint(b, 2, r.Stage)
-				b = wire.AppendDouble(b, 3, 100)
-			}
-		default:
-			b = wire.AppendVarint(nil, 1, 1)
-			b = wire.AppendVarint(b, 4, r.Best)
-		}
-		out = wire.AppendBytes(out, 1, b)
-	}
-	return out
-}
-
-func (s *Service) claimScore(ctx command.Context, path string, uid uint64, f string, next *snapshot, key string) ([]byte, error) {
-	for k, r := range next.Records {
-		if r.UID != uid || r.Family != f || r.Best == 0 {
+	for _, key := range sortedRecordKeys(st) {
+		r := st.Records[key]
+		if r.UID != uid || r.Family != f {
 			continue
 		}
-		point, rewards, e := s.scoreRewards(r.Game, r.Best)
-		if e != nil {
-			return nil, e
+		if f == "Action" {
+			if r.Stage > 0 {
+				var monster uint64
+				for _, stage := range s.design.Rows("ActionGameStageTable", 3, r.Mode) {
+					if num(stage, 4) == r.Stage {
+						monster = num(stage, 1)
+					}
+				}
+				v := wire.AppendVarint(nil, 1, monster)
+				v = wire.AppendVarint(v, 2, r.Best)
+				out = wire.AppendBytes(out, 2, v)
+			}
+			for _, row := range s.design.Tables["ActionGameMissionTable"] {
+				id := num(row, 4)
+				if r.Clears[fmt.Sprintf("mission:%d", id)] {
+					out = wire.AppendVarint(out, 3, id)
+				}
+			}
 		}
-		day := uint64(s.now().UnixMilli()) / 86400000
-		if r.Date != day {
-			r.Paid = 0
+		if f == "Defense" {
+			for _, row := range s.design.Tables["MGDRewardTable"] {
+				id := num(row, 1)
+				if r.Clears[fmt.Sprintf("wave:%d", id)] {
+					out = wire.AppendVarint(out, 2, id)
+				}
+			}
 		}
-		if point <= r.Paid {
-			return nil, fmt.Errorf("eventplay: daily best reward already paid")
-		}
-		_, old, e := s.scoreRewards(r.Game, r.Paid)
-		if e != nil {
-			return nil, e
-		}
-		bundle, e := s.grant(ctx, "eventplay:"+key, rewardDifference(old, rewards))
-		if e != nil {
-			return nil, e
-		}
-		r.Paid = point
-		r.Date = day
-		next.Records[k] = r
-		if strings.HasSuffix(path, "QuickReward") {
-			return wire.AppendBytes(nil, 1, bundle), nil
-		}
-		out := wire.AppendVarint(nil, 1, point)
-		return wire.AppendBytes(out, 2, bundle), nil
 	}
-	return nil, fmt.Errorf("eventplay: no completed score to reward")
+	return out
 }
 
 func (s *Service) AssociatedMissionGroup(c events.Schedule) (uint64, error) {
@@ -703,6 +303,14 @@ func (s *Service) AssociatedMissionGroup(c events.Schedule) (uint64, error) {
 	case 8:
 		if len(s.design.Tables["ActionGameDefaultTable"]) > 0 {
 			return num(s.design.Tables["ActionGameDefaultTable"][0], 8), nil
+		}
+	case 9:
+		if len(s.design.Tables["RhythmGameDefaultTable"]) > 0 {
+			return num(s.design.Tables["RhythmGameDefaultTable"][0], 2), nil
+		}
+	case 13:
+		if len(s.design.Tables["PackManDefaultTable"]) > 0 {
+			return num(s.design.Tables["PackManDefaultTable"][0], 14), nil
 		}
 	case 12:
 		if len(s.design.Tables["HopscotchDefaultTable"]) > 0 {
@@ -785,6 +393,10 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		}
 		return code, nil, true, nil
 	}
+	if strings.Contains(path, "Ranking") || strings.Contains(path, "UserRecord") {
+		b, e := s.arcadeRanking(ctx, path, req)
+		return code, b, true, e
+	}
 	key := fmt.Sprintf("%s:%s:%d", commandSession, path, seq)
 	if r, ok := s.state.Replies[key]; ok {
 		if !bytes.Equal(r.Request, req) {
@@ -798,8 +410,6 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	var out []byte
 	var e error
 	switch path {
-	case "/MiniGameUserRecordInfo", "/MiniGameRanking":
-		out = summaryWire(&next, path == "/MiniGameUserRecordInfo")
 	case "/MiniGameRelayServerInfo":
 		provider, ok := s.rooms.(RelayEndpointSource)
 		if !ok {
@@ -904,11 +514,14 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	return code, out, true, nil
 }
 
-func recordWire(r record) []byte {
+func (s *Service) recordWire(r record) []byte {
+	if r.Date != uint64(s.now().UnixMilli())/86400000 {
+		r.Paid = 0
+	}
 	b := wire.AppendVarint(nil, 1, r.UID)
 	b = wire.AppendVarint(b, 2, r.Paid)
 	b = wire.AppendVarint(b, 3, r.Best)
-	if r.Best > 0 && r.Paid < r.Best {
+	if s.fieldQuickAvailable(r) {
 		b = wire.AppendVarint(b, 4, 1)
 	}
 	return b
@@ -916,15 +529,28 @@ func recordWire(r record) []byte {
 
 func (s *Service) calendar(uid uint64, f string) (events.Schedule, error) {
 	if uid == 0 {
-		for _, c := range s.registry.List() {
-			if c.Type == 11 {
+		rows := append([]events.Schedule(nil), s.registry.List()...)
+		sort.Slice(rows, func(i, j int) bool {
+			now := s.now().UnixMilli()
+			ai := rows[i].Start <= now && now < rows[i].End
+			aj := rows[j].Start <= now && now < rows[j].End
+			if ai != aj {
+				return ai
+			}
+			if rows[i].Start != rows[j].Start {
+				return rows[i].Start > rows[j].Start
+			}
+			return rows[i].UID < rows[j].UID
+		})
+		for _, c := range rows {
+			if c.Type == 11 && c.Start <= s.now().UnixMilli() {
 				d, e := s.design.Row("PackEventMiniGameTable", 8, c.ID)
 				if e != nil {
 					continue
 				}
 				kind := num(d, 3)
-				expected := map[string]uint64{"Field": 1, "Run": 3, "Survival": 5, "Sichuan": 6, "Defense": 7, "Action": 8, "Rhythm": 9, "Hopscotch": 12}[f]
-				if f == "Run" && (kind == 2 || kind == 4) {
+				expected := map[string]uint64{"Field": 1, "Run": 3, "Survival": 5, "Sichuan": 6, "Defense": 7, "Action": 8, "Rhythm": 9, "Hopscotch": 12, "PackMan": 13}[f]
+				if f == "Run" && kind == 4 || f == "Field" && kind == 2 {
 					expected = kind
 				}
 				if kind != expected {
@@ -947,8 +573,8 @@ func (s *Service) calendar(uid uint64, f string) (events.Schedule, error) {
 	}
 	d, _ := s.design.Row("PackEventMiniGameTable", 8, c.ID)
 	kind := num(d, 3)
-	expected := map[string]uint64{"Field": 1, "Run": 3, "Survival": 5, "Sichuan": 6, "Defense": 7, "Action": 8, "Rhythm": 9, "Hopscotch": 12}[f]
-	if f == "Run" && (kind == 2 || kind == 4) {
+	expected := map[string]uint64{"Field": 1, "Run": 3, "Survival": 5, "Sichuan": 6, "Defense": 7, "Action": 8, "Rhythm": 9, "Hopscotch": 12, "PackMan": 13}[f]
+	if f == "Run" && kind == 4 || f == "Field" && kind == 2 {
 		expected = kind
 	}
 	if kind != expected {
@@ -962,10 +588,19 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	if f == "" {
 		return nil, fmt.Errorf("eventplay: unknown family")
 	}
+	if f == "Sichuan" || f == "Hopscotch" || f == "PackMan" || f == "Rhythm" {
+		return s.singlePlayerGame(ctx, path, req, next, key)
+	}
+	if f == "Run" || f == "Field" {
+		return s.fieldRunGame(ctx, path, req, next, key)
+	}
 	start := strings.HasSuffix(path, "Start")
 	end := strings.HasSuffix(path, "End")
-	runKey := session + ":" + f
+	runKey := f
 	uid := num(req, 2)
+	if path == "/MiniGameSurvivalCharUpgrade" || path == "/MiniGameSurvivalCharUpgradeReset" {
+		uid = 0
+	}
 	var native *NativeRun
 	if start && (f == "Action" || f == "Defense") {
 		if s.rooms == nil {
@@ -993,6 +628,11 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		return nil, e
 	}
 	uid = c.UID
+	if !strings.HasSuffix(path, "Info") {
+		if now := s.now().UnixMilli(); now < c.Start || now >= c.End {
+			return nil, fmt.Errorf("eventplay: season closed")
+		}
+	}
 	stage, mode := num(req, 3), num(req, 4)
 	if native != nil {
 		stage, mode = native.Stage, native.Group
@@ -1002,6 +642,7 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	}
 	if f == "Survival" {
 		stage = num(req, 5)
+		mode = num(req, 4)
 	}
 	if f == "Sichuan" {
 		stage = num(req, 4)
@@ -1016,11 +657,14 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 	}
 	if path == "/MiniGameDefenseMatching" {
 		matching := num(req, 3)
-		if matching > 2 {
+		if matching < 1 || matching > 3 {
 			return nil, fmt.Errorf("eventplay: unknown matching mode")
 		}
-		next.Runs[runKey+":matching"] = Run{UID: uid, Game: c.ID, Family: f, Session: session}
-		return nil, nil
+		if s.rooms == nil {
+			return nil, fmt.Errorf("eventplay: native room unavailable")
+		}
+		_, err := s.rooms.StartRun(ctx, f)
+		return nil, err
 	}
 	if start {
 		if s.now().UnixMilli() < c.Start || s.now().UnixMilli() >= c.End {
@@ -1028,11 +672,13 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		}
 		if _, active := next.Runs[runKey]; active {
 			previous := next.Runs[runKey]
-			if previous.Native == nil || s.rooms == nil {
-				return nil, fmt.Errorf("eventplay: run already active")
+			if previous.Native != nil && s.rooms == nil {
+				return nil, fmt.Errorf("eventplay: native room unavailable")
 			}
-			if _, err := s.rooms.Result(ctx, *previous.Native); !errors.Is(err, ErrRoomAbandoned) {
-				return nil, fmt.Errorf("eventplay: run already active")
+			if previous.Native != nil {
+				if _, err := s.rooms.Result(ctx, *previous.Native); !errors.Is(err, ErrRoomAbandoned) {
+					return nil, fmt.Errorf("eventplay: run already active")
+				}
 			}
 			delete(next.Runs, runKey)
 		}
@@ -1040,17 +686,6 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			return nil, e
 		}
 		a := Run{UID: uid, Game: c.ID, Stage: stage, Mode: mode, Started: uint64(s.now().UnixMilli()), Family: f, Session: session, HP: 100}
-		if f == "Action" && native == nil {
-			game, _ := s.design.Row("PackEventMiniGameTable", 8, c.ID)
-			group := num(game, 4)
-			rows := s.design.Rows("ActionGameStageTable", 3, group)
-			if len(rows) == 0 {
-				return nil, fmt.Errorf("eventplay: action stage group missing")
-			}
-			a.Stage = num(rows[0], 4)
-			a.Mode = group
-			a.Char = num(rows[0], 1)
-		}
 		if f == "Action" || f == "Defense" {
 			a.Stage, a.Mode, a.Char = native.Stage, native.Group, native.Monster
 			a.Started, a.Native = uint64(native.Started), native
@@ -1062,52 +697,9 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 				return nil, err
 			}
 		}
-		var startReply []byte
-		if f == "Field" {
-			d, e := s.fieldRules(c.ID)
-			if e != nil {
-				return nil, e
-			}
-			a.HP = d.HP
-			ids := make([]uint64, 0, len(d.Objects))
-			for id := range d.Objects {
-				ids = append(ids, id)
-			}
-			slices.Sort(ids)
-			for _, id := range ids {
-				startReply = wire.AppendVarint(startReply, 1, id)
-			}
-		}
 		if f == "Survival" {
-			a.Char = num(req, 3)
-			a.MapGroup = num(req, 4)
-			char, e := s.design.Row("FieldMiniGameCharTable", 13, a.Char)
-			if e != nil {
+			if e := s.startSurvival(req, &a, next); e != nil {
 				return nil, e
-			}
-			a.HP = num(char, 20)
-			a.MaxHP = a.HP
-			a.Rerolls = num(char, 19)
-			a.Level = 1
-			a.SkillCredits = 0
-			a.Killed = map[uint64]uint64{}
-			a.Picked = map[uint64]uint64{}
-			a.Available = map[uint64]uint64{}
-			skillGroup := num(char, 3)
-			skills := s.design.Rows("FieldMiniGameSkillTable", 7, skillGroup)
-			if len(skills) == 0 {
-				return nil, fmt.Errorf("eventplay: character starting skill missing")
-			}
-			a.Skills = []uint64{num(skills[0], 8)}
-			a.SkillLevels = map[uint64]uint64{skillGroup: 1}
-			found := false
-			for _, m := range s.design.Rows("FieldMiniGameMapTable", 2, a.MapGroup) {
-				if num(m, 3) == a.Stage {
-					found = true
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("eventplay: survival map missing")
 			}
 		}
 		next.Runs[runKey] = a
@@ -1119,6 +711,8 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 				return nil, e
 			}
 		}
+		rk = recKey(uid, a.Stage, a.Mode, f)
+		r = playRecord(next, uid, c.ID, a.Stage, a.Mode, f)
 		next.Records[rk] = r
 		if f == "Survival" {
 			v := wire.AppendVarint(nil, 1, a.Skills[0])
@@ -1126,7 +720,7 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			out := wire.AppendBytes(nil, 1, v)
 			return wire.AppendVarint(out, 2, seqSeed(a.Started)), nil
 		}
-		return startReply, nil
+		return nil, nil
 	}
 	if end {
 		a := next.Runs[runKey]
@@ -1173,11 +767,18 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			switch f {
 			case "Survival":
 				for condition, count := range map[uint64]uint64{316: a.Level, 317: score} {
+					if count == 0 {
+						continue
+					}
 					if e = s.onProgress(ctx, condition, c.ID, count); e != nil {
 						return nil, e
 					}
 				}
-				if num(req, 2) == 0 {
+				mapRow, err := s.survivalMap(a.MapGroup, a.Stage)
+				if err != nil {
+					return nil, err
+				}
+				if num(req, 2) == 0 && score >= num(mapRow, 9) {
 					if e = s.onProgress(ctx, 320, a.Stage, 1); e != nil {
 						return nil, e
 					}
@@ -1201,12 +802,9 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		}
 		if f == "Action" && score > 0 && (r.Best == 0 || score < r.Best) || f != "Action" && score > r.Best {
 			r.Best = score
+			r.AchievedAt = uint64(s.now().UnixMilli())
 		}
 		var out []byte
-		point, rewards, e := s.scoreRewards(c.ID, score)
-		if e != nil {
-			return nil, e
-		}
 		if f == "Defense" {
 			for _, row := range s.design.Tables["MGDRewardTable"] {
 				id, wave := num(row, 1), num(row, 6)
@@ -1227,95 +825,18 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 			}
 		}
 		if f == "Survival" {
-			if num(req, 5) > a.Coin || num(req, 6) > a.Exp {
-				return nil, fmt.Errorf("eventplay: end coin/exp exceeds committed play progress")
-			}
-			out = wire.AppendVarint(out, 2, a.Coin)
-			out = wire.AppendVarint(out, 3, a.Exp)
-			if num(req, 2) == 0 {
-				r.Clears[fmt.Sprintf("map:%d:%d", a.MapGroup, a.Stage)] = true
-				for _, m := range s.design.Rows("FieldMiniGameMapTable", 2, a.MapGroup) {
-					if num(m, 3) != a.Stage {
-						continue
-					}
-					rr, err := gamedata.EventPlayRewards(m, 8, 7, 6)
-					if err != nil {
-						return nil, err
-					}
-					if len(rr) > 0 {
-						b, err := s.grant(ctx, fmt.Sprintf("eventplay:map:%d:%d:%d", uid, a.MapGroup, a.Stage), rr)
-						if err != nil {
-							return nil, err
-						}
-						out = wire.AppendBytes(out, 1, b)
-					}
-				}
-			}
-			if a.Coin > 0 {
-				b, err := s.grant(ctx, "eventplay:"+key+":coin", []gamedata.BattleReward{{Type: 43, Count: a.Coin}})
-				if err != nil {
-					return nil, err
-				}
-				out = wire.AppendBytes(out, 1, b)
-			}
-		}
-		day := uint64(s.now().UnixMilli()) / 86400000
-		if r.Date != day {
-			r.Paid = 0
-		}
-		if point > r.Paid {
-			_, previous, e := s.scoreRewards(c.ID, r.Paid)
+			out, e = s.endSurvivalRewards(ctx, req, a, next, key, &r)
 			if e != nil {
 				return nil, e
 			}
-			bundle, e := s.grant(ctx, "eventplay:"+key, rewardDifference(previous, rewards))
-			if e != nil {
-				return nil, e
-			}
-			field := 1
-			if f == "Run" { //nolint:staticcheck // QF1003
-				field = 3
-			} else if f == "Field" {
-				field = 5
-			} else if f == "Action" {
-				field = 3
-			} else if f == "Hopscotch" {
-				field = 4
-			}
-			if f == "Rhythm" {
-				r.PendingBundle = append(r.PendingBundle, bundle...)
-			} else {
-				out = wire.AppendBytes(out, field, bundle)
-			}
-			r.Paid = point
-			r.Date = day
 		}
-		switch f {
-		case "Run":
-			out = wire.AppendVarint(out, 1, r.Best)
-			out = wire.AppendVarint(out, 2, r.Paid)
-		case "Field":
-			out = wire.AppendVarint(out, 1, uid)
-			out = wire.AppendVarint(out, 2, score)
-			out = wire.AppendVarint(out, 3, r.Best)
-			out = wire.AppendVarint(out, 4, r.Paid)
-		case "Sichuan":
-			out = wire.AppendDouble(out, 4, float64(r.Best))
-		case "Rhythm":
-			v := wire.AppendVarint(nil, 1, a.Stage)
-			v = wire.AppendVarint(v, 2, a.Mode)
-			v = wire.AppendVarint(v, 3, r.Best)
-			v = wire.AppendVarint(v, 4, num(req, 2))
-			v = wire.AppendVarint(v, 5, num(req, 6))
-			out = wire.AppendBytes(out, 1, v)
-		case "Action":
-			out = wire.AppendVarint(out, 1, r.Best)
-		case "Hopscotch":
-			v := wire.AppendVarint(nil, 1, a.Stage)
-			if score > 0 {
-				v = wire.AppendVarint(v, 2, 1)
+		if f == "Action" {
+			missionReply, err := s.actionMissions(ctx, req, a, *nativeResult, next, key)
+			if err != nil {
+				return nil, err
 			}
-			out = wire.AppendBytes(out, 2, v)
+			out = append(out, missionReply...)
+			out = wire.AppendVarint(out, 1, r.Best)
 		}
 		next.Records[rk] = r
 		if a.Native != nil {
@@ -1330,39 +851,11 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		delete(next.Runs, runKey)
 		return out, nil
 	}
-	if strings.Contains(path, "Ranking") || strings.Contains(path, "RecordInfo") {
-		return rankingWire(next, uid, f, strings.Contains(path, "RecordInfo")), nil
-	}
 	if strings.HasSuffix(path, "Info") {
-		var out []byte
-		if f == "Rhythm" {
-			for k, v := range next.Records {
-				if v.UID == uid && v.Family == f && len(v.PendingBundle) > 0 {
-					out = wire.AppendBytes(out, 2, v.PendingBundle)
-					v.PendingBundle = nil
-					next.Records[k] = v
-				}
-			}
-		}
-		if f != "Run" && f != "Field" {
-			if _, exists := next.Records[rk]; !exists {
-				next.Records[rk] = r
-			}
-			return append(out, specializedInfo(next, uid, f)...), nil
-		}
-		for _, v := range next.Records {
-			if v.UID == uid && v.Family == f {
-				out = wire.AppendBytes(out, 1, recordWire(v))
-			}
-		}
-		if len(out) == 0 {
+		if _, exists := next.Records[rk]; !exists {
 			next.Records[rk] = r
-			out = wire.AppendBytes(out, 1, recordWire(r))
 		}
-		return out, nil
-	}
-	if strings.Contains(path, "QuickReward") || path == "/MiniGameFieldReward" {
-		return s.claimScore(ctx, path, uid, f, next, key)
+		return s.specializedInfo(next, uid, f), nil
 	}
 	return s.progress(ctx, path, req, runKey, next, key)
 }

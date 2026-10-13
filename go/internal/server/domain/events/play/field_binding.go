@@ -16,6 +16,10 @@ type FieldBinding struct {
 	EventType       uint64 `json:"event_type"`
 	ContentOpenType uint64 `json:"content_open_type"`
 }
+type ActionMissionCharacterBinding struct {
+	ConditionType uint64 `json:"condition_type"`
+	CharacterID   uint64 `json:"character_id"`
+}
 
 func (s *Service) AttachFieldBindingsFile(path string) error {
 	raw, err := os.ReadFile(path)
@@ -23,8 +27,9 @@ func (s *Service) AttachFieldBindingsFile(path string) error {
 		return err
 	}
 	var seed struct {
-		Version  string         `json:"version"`
-		Bindings []FieldBinding `json:"bindings"`
+		Version                 string                          `json:"version"`
+		Bindings                []FieldBinding                  `json:"bindings"`
+		ActionMissionCharacters []ActionMissionCharacterBinding `json:"action_mission_characters"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -47,5 +52,22 @@ func (s *Service) AttachFieldBindingsFile(path string) error {
 		seen[b.PackID] = true
 	}
 	s.fieldBindings = append([]FieldBinding(nil), seed.Bindings...)
+	s.actionMissionCharacters = map[uint64]uint64{}
+	for _, binding := range seed.ActionMissionCharacters {
+		if binding.ConditionType < 6 || binding.ConditionType > 8 || binding.CharacterID == 0 || s.actionMissionCharacters[binding.ConditionType] != 0 {
+			return fmt.Errorf("eventplay: invalid action mission character binding")
+		}
+		row, err := s.design.Row("ActionGameCharTable", 14, binding.CharacterID)
+		if err != nil {
+			return err
+		}
+		if num(row, 16) != 0 {
+			return fmt.Errorf("eventplay: mission character is a monster")
+		}
+		s.actionMissionCharacters[binding.ConditionType] = binding.CharacterID
+	}
+	if len(s.actionMissionCharacters) != 3 {
+		return fmt.Errorf("eventplay: action mission character bindings incomplete")
+	}
 	return nil
 }

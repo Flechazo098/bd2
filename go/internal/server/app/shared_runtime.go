@@ -20,16 +20,17 @@ import (
 )
 
 type sharedRuntime struct {
-	directory *publicDirectory
-	rooms     *roomResults
-	store     *shared.Store
-	pvp       *ranking.PVP
-	huntRanks *ranking.MonsterHunt
-	guild     *social.Owner
-	friends   *social.Friends
-	delivery  atomic.Pointer[delivery.Dispatcher]
-	cancel    context.CancelFunc
-	done      chan struct{}
+	directory   *publicDirectory
+	rooms       *roomResults
+	store       *shared.Store
+	pvp         *ranking.PVP
+	huntRanks   *ranking.MonsterHunt
+	arcadeRanks *ranking.Arcade
+	guild       *social.Owner
+	friends     *social.Friends
+	delivery    atomic.Pointer[delivery.Dispatcher]
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
 func openSharedRuntime(ctx context.Context, c *configuration, design *designCatalog) (*sharedRuntime, error) {
@@ -42,6 +43,10 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 		return nil, errors.Join(err, store.Close())
 	}
 	huntRanks, err := ranking.NewMonsterHunt(ctx, rankingStore{store})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	arcadeRanks, err := ranking.NewArcade(ctx, rankingStore{store})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
@@ -61,7 +66,7 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	return &sharedRuntime{store: store, pvp: pvp, huntRanks: huntRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
+	return &sharedRuntime{store: store, pvp: pvp, huntRanks: huntRanks, arcadeRanks: arcadeRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
 }
 
 func (s *sharedRuntime) wake(account string) {
@@ -76,6 +81,9 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 	}
 	if event.Envelope.Event.Topic == "monster_hunt.ranking" {
 		return s.consumeHuntRanking(ctx, event)
+	}
+	if event.Envelope.Event.Topic == "arcade.ranking" {
+		return s.consumeArcadeRanking(ctx, event)
 	}
 	if event.Envelope.Event.Topic == "fishing.projection" {
 		return s.rooms.updateFishing(ctx, event)

@@ -29,10 +29,24 @@ func (s *Service) nativeRanking(ctx command.Context, path string, req []byte) ([
 		return nil, fmt.Errorf("eventplay: native ranking unavailable")
 	}
 	uid, monster, stage := num(req, 2), num(req, 3), num(req, 4)
-	if path == "/MiniGameRanking" || path == "/MiniGameUserRecordInfo" {
+	summary := path == "/MiniGameRanking" || path == "/MiniGameUserRecordInfo"
+	current, err := s.currentRankingCalendars(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if summary {
 		uid = 0
 		monster = 0
 		stage = 0
+	} else {
+		calendar, err := s.calendar(uid, "Action")
+		if err != nil {
+			return nil, err
+		}
+		uid = calendar.UID
+		if !s.validNativeRankScope(uid, monster, stage) {
+			return nil, fmt.Errorf("eventplay: native ranking selection outside event group")
+		}
 	}
 	if stage > 2 {
 		return nil, fmt.Errorf("eventplay: invalid native stage type")
@@ -41,19 +55,37 @@ func (s *Service) nativeRanking(ctx command.Context, path string, req []byte) ([
 	if err != nil {
 		return nil, err
 	}
+	type selection struct{ monster, stage uint64 }
+	latest := map[selection]uint64{}
+	if summary {
+		for _, row := range ranks {
+			calendar, active := current[row.EventUID]
+			if !active || !s.validNativeRankScope(row.EventUID, row.Monster, row.StageType) {
+				continue
+			}
+			key := selection{row.Monster, row.StageType}
+			old, exists := latest[key]
+			previous := current[old]
+			if !exists || calendar.Start > previous.Start || calendar.Start == previous.Start && calendar.UID > previous.UID {
+				latest[key] = row.EventUID
+			}
+		}
+	}
 	var out []byte
 	if path == "/MiniGameRanking" || path == "/MiniGameUserRecordInfo" {
-		b := summaryWire(&s.state, path == "/MiniGameUserRecordInfo")
-		if err = wire.Walk(b, func(f wire.Field) error {
-			if f.Number != 3 && f.Number != 4 {
-				out = append(out, b[f.Start:f.End]...)
-			}
-			return nil
-		}); err != nil {
+		out, err = s.arcadeRanking(ctx, path, req)
+		if err != nil {
 			return nil, err
 		}
 	}
 	for _, r := range ranks {
+		if summary {
+			if latest[selection{r.Monster, r.StageType}] != r.EventUID {
+				continue
+			}
+		} else if !s.validNativeRankScope(r.EventUID, r.Monster, r.StageType) {
+			continue
+		}
 		if len(r.Members) == 0 || r.Rank == 0 || r.Score <= 0 {
 			continue
 		}
@@ -119,6 +151,27 @@ func (s *Service) nativeRanking(ctx command.Context, path string, req []byte) ([
 		}
 	}
 	return out, nil
+}
+
+func (s *Service) validNativeRankScope(uid, monster, stage uint64) bool {
+	calendar, err := s.calendar(uid, "Action")
+	if err != nil {
+		return false
+	}
+	game, err := s.design.Row("PackEventMiniGameTable", 8, calendar.ID)
+	if err != nil {
+		return false
+	}
+	action, err := s.design.Row("ActionGameTable", 3, num(game, 4))
+	if err != nil {
+		return false
+	}
+	for _, row := range s.design.Rows("ActionGameStageTable", 3, num(action, 4)) {
+		if (monster == 0 || num(row, 1) == monster) && (stage == 0 || num(row, 11) == stage) {
+			return true
+		}
+	}
+	return false
 }
 func nativeRankMember(u NativeRankMember) []byte {
 	b := wire.AppendVarint(nil, 1, u.OwnerIndex)

@@ -25,6 +25,8 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 	}
 	names := []string{"PackEventHubTable", "PackEventListTable", "PackEventStoryGroupTable", "PackEventStoryTable", "PackEventBattleGroupTable", "PackEventBattleTable", "PackEventMiniGameTable", "FieldMiniGameRewardTable", "FieldMiniGameSpeedTable", "RhythmGameMusicTable", "RhythmGameGradeTable", "SichuanStageTable", "SichuanEventTable", "SichuanRewardTable", "HopscotchStageTable", "HopscotchRewardTable", "HopscotchDefaultTable", "FieldMiniGameSurvivalTable", "ActionGameDefaultTable", "ActionGameMissionTable", "ActionGameStageTable", "FieldMiniGameCharTable", "FieldMiniGameMapTable", "FieldMiniGameUpgradeTable", "FieldMiniGameUpgradeGroupTable", "FieldMiniGameSkillGroupTable", "FieldMiniGameSkillTable", "FieldMiniGameCharLevelTable", "FieldMiniGameMonsterTable", "FieldMiniGameSurvivalItemTable", "FieldMiniGameSurvivalBoxTable", "MGDRewardTable", "MGDWaveTable", "MGDDefaultTable"}
 	names = append(names, "EventLostCoinTable")
+	names = append(names, "FieldMiniGameCollectionTable", "FieldMiniGameMapGroupTable", "FieldMiniGameStarterTable", "SichuanDefaultTable", "SichuanBlockDesignTable", "RhythmGameDefaultTable", "RhythmGameCharTable", "HopscotchGalleryTable", "HopscotchRankingTable", "HopscotchAbuseTable")
+	names = append(names, "PackManDefaultTable", "PackManModeTable", "PackManModeRuleTable", "PackManScoreTable", "PackManMapTable", "PackManObjectTable", "PackManItemTable", "PackManChaserTable", "PackManChaserSpawnTable", "PackManChainTable", "PackManGalleryTable", "PackManGuideTable")
 	names = append(names, "ActionGameTable", "ActionGameCharTable")
 	names = append(names, "FishingDefaultTable", "FishingMapTable", "FishingMapGroupTable", "FishingBoatTable", "FishingBoatDesignTable", "FishingRodTable", "FishingItemTable", "FishingCharTable", "FishingFishTable", "FishingFishPoolTable", "FishingFishSizePoolTable", "FishingGradePoolTable", "FishingCastingTable", "FishingBuffTable", "FishingBoatBuffTable", "FishingFishSkillTable", "FishingTimeTable")
 	names = append(names, "FishingBuyItemTable", "FishingSellItemTable", "FishingShopTable", "FishingPricePremiumDefaultTable")
@@ -84,8 +86,11 @@ func (c *EventPlayCatalog) Story(group, id uint64) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("gamedata: missing event story")
 }
-func (c *EventPlayCatalog) ScoreRewards(group, score uint64) (uint64, []BattleReward, error) {
-	var picked []byte
+func (c *EventPlayCatalog) ScoreRewards(group, score, kind uint64) (uint64, []BattleReward, error) {
+	if score == 0 {
+		return 0, nil, nil
+	}
+	var rewards []BattleReward
 	point := uint64(0)
 	rows := c.Rows("FieldMiniGameRewardTable", 1, group)
 	sort.Slice(rows, func(i, j int) bool {
@@ -98,14 +103,20 @@ func (c *EventPlayCatalog) ScoreRewards(group, score uint64) (uint64, []BattleRe
 		if e != nil {
 			return 0, nil, e
 		}
-		if p <= score && p >= point {
-			picked = r
+		if kind == 3 || kind == 4 {
+			p *= 1000
+		}
+		if kind == 3 && score > p || kind != 3 && score < p {
+			continue
+		}
+		if point == 0 || kind == 3 && p < point || kind != 3 && p > point {
 			point = p
 		}
+		earned, e := eventGameRewards(r, 6, 5, 4)
+		if e != nil {
+			return 0, nil, e
+		}
+		rewards = append(rewards, earned...)
 	}
-	if picked == nil {
-		return 0, nil, nil
-	}
-	rewards, e := eventGameRewards(picked, 6, 5, 4)
-	return point, rewards, e
+	return point, rewards, nil
 }

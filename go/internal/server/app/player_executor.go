@@ -243,6 +243,11 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		reply.Responses = append(reply.Responses, response)
 	}
 	if !isSystem && (tx.Dirty() || isLogin) {
+		if isLogin || arcadeRankingChanged(request.Requests) {
+			if err := assembly.publishArcadeRanking(identity); err != nil {
+				return reply, failCommand(err)
+			}
+		}
 		if isLogin || huntRankingChanged(request.Requests) {
 			if err := assembly.publishHuntRanking(identity); err != nil {
 				return reply, failCommand(err)
