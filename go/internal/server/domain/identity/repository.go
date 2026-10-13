@@ -1,6 +1,14 @@
 package identity
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+type GameProfile struct {
+	AccountID string `json:"account_id"`
+	UID       string `json:"uid"`
+}
 
 type ProviderIdentity struct{ Issuer, Subject string }
 type Config struct {
@@ -73,6 +81,7 @@ type Repository interface {
 	FailAuthorization(id string) error
 	DecodeDeviceResult(id string, cipher []byte) (TokenSet, error)
 	AccessToken(token string) (AccessRecord, error)
+	PublicGameProfile(ctx context.Context, accountID string) (GameProfile, error)
 	AdministratorAccountID() (string, error)
 }
 

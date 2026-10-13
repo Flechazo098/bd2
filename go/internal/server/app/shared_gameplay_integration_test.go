@@ -660,4 +660,28 @@ func TestNativePVPGameplayUsesOwnedSnapshotsAndTickets(t *testing.T) {
 	if got := appValue(login[0], 58); got != want {
 		t.Fatalf("arena battle ticket debit=%d want %d", got, want)
 	}
+	profile := attacker.pvpCall("/UserContentsInfo", appScalar(2, appValue(login[0], 1)))
+	if appValue(profile, 8) == 0 || appValue(profile, 33) == 0 || appValue(profile, 7) == 0 || appValue(profile, 32) == 0 {
+		t.Fatal("settled PvP achievements disappeared from own social profile")
+	}
+	board := attacker.pvpCall("/TotalRanking", nil)
+	for _, section := range []struct{ field, season, boardSeason, score, rank int }{{1, 6, 6, 7, 8}, {5, 31, 9, 32, 33}} {
+		if appValue(profile, section.season) != appValue(board, section.boardSeason) {
+			t.Fatal("profile season disagrees with displayed leaderboard")
+		}
+		found := false
+		for _, row := range appRows(board, section.field) {
+			if appValue(row, 1) != appValue(profile, 1) {
+				continue
+			}
+			found = true
+			base := appRows(row, 7)
+			if len(base) != 1 || appValue(base[0], 1) != appValue(profile, section.score) || appValue(base[0], 2) != appValue(profile, section.rank) {
+				t.Fatal("profile PvP score/rank disagrees with actual shared leaderboard")
+			}
+		}
+		if !found {
+			t.Fatal("settled player absent from social leaderboard")
+		}
+	}
 }

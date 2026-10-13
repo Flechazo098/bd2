@@ -62,6 +62,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/device/{id}/poll", s.poll)
 	mux.HandleFunc("POST /auth/session/refresh", s.refresh)
 	mux.HandleFunc("POST /auth/session/revoke", s.revoke)
+	mux.HandleFunc("GET /auth/session/profile", s.profile)
 	return securityHeaders(mux)
 }
 func securityHeaders(next http.Handler) http.Handler {
@@ -286,6 +287,20 @@ func (s *Service) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) profile(w http.ResponseWriter, r *http.Request) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") == "" {
+		http.Error(w, "access token required", http.StatusUnauthorized)
+		return
+	}
+	profile, err := s.identity.SessionProfile(r.Context(), strings.TrimPrefix(auth, "Bearer "))
+	if err != nil {
+		writeFailure(w, err, "profile unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
 }
 func (s *Service) ValidateAccess(token string) (string, error) {
 	return s.identity.ValidateAccess(token)

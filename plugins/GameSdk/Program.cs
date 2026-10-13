@@ -28,7 +28,7 @@ internal static class Program
                 case "shell" when args.Length == 4: ShellGenerator.Generate(args[1], args[2], args[3]); break;
                 case "source-navigation" when args.Length == 3: SourceNavigation.Generate(args[1], args[2]); break;
                 case "verify-navigation" when args.Length == 2: SourceNavigationVerifier.Verify(args[1]); break;
-                case "reobf" when args.Length is 4 or 5 or 6: Reobfuscate(args[1], args[2], args[3], args.Length >= 5 ? args[4] : null, args.Length == 6 ? args[5] : null); break;
+                case "reobf" when args.Length is 4 or 5 or 6: ReobfuscationCache.Run(args[1], args[2], args[3], args.Length >= 5 ? args[4] : null, args.Length == 6 ? args[5] : null); break;
                 case "verify" when args.Length is 3 or 4: Verify(args[1], args[2], args.Length == 4 ? args[3] : null); break;
                 case "validate-lang" when args.Length == 2: LanguageAssets.Validate(args[1]); break;
 

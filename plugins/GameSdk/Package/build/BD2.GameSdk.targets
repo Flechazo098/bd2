@@ -6,6 +6,7 @@
     <BD2BepInExDir Condition="'$(BD2BepInExDir)' == ''">$(GameDir)/BepInEx</BD2BepInExDir>
     <BD2SdkDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(IntermediateOutputPath)bd2-game-sdk'))</BD2SdkDir>
     <BD2SdkTool>$(BD2GameSdkPackageRoot)tools/net8.0/GameSdk.dll</BD2SdkTool>
+    <BD2ReobfuscatedPlugin>$(IntermediateOutputPath)reobf/$(TargetFileName)</BD2ReobfuscatedPlugin>
   </PropertyGroup>
   <PropertyGroup>
     <BD2GameSdkRuntimeDir>$(BD2GameSdkPackageRoot)runtime/</BD2GameSdkRuntimeDir>
@@ -41,7 +42,8 @@
   </Target>
   <Target Name="ReobfuscateBD2Plugin" AfterTargets="Build"
           Condition="'$(BD2GameSdkEnabled)' == 'true' and '$(DesignTimeBuild)' != 'true' and '$(IsCrossTargetingBuild)' != 'true'">
-    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SharedSdkDir)/names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(TargetPath)&quot; &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)/core&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SharedSdkDir)/names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(BD2ReobfuscatedPlugin)&quot; &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)/core&quot;" />
+    <Copy SourceFiles="$(BD2ReobfuscatedPlugin)" DestinationFiles="$(TargetPath)" SkipUnchangedFiles="true" />
     <Delete Files="$(TargetDir)$(TargetName).pdb" />
   </Target>
 </Project>

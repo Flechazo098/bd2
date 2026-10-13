@@ -143,7 +143,7 @@ func (s *AchievementService) Handle(ctx command.Context, path string, request []
 }
 
 // SyncRecordedHistory must run within the startup account transaction. Retained
-// real grants establish a lower bound; inventory never substitutes for history.
+// grants and retained gameplay state establish proven lower bounds.
 func (s *GameplayAchievementObserver) SyncRecordedHistory(ctx command.Context) error {
 	snapshot, err := s.provider.Snapshot(ctx)
 	if err != nil {
@@ -160,23 +160,14 @@ func (s *GameplayAchievementObserver) SyncRecordedHistory(ctx command.Context) e
 		if count == 0 {
 			continue
 		}
-		events = append(events, GameplayAchievementRecordedEvent{Identity: "gacha-grant:" + identity, Type: 54, Count: count})
+		events = append(events, GameplayAchievementRecordedEvent{Identity: "gacha-grant:" + identity, Type: 54, Count: count, RecordedHistory: true})
 	}
-	if batch, ok := s.counter.(gameplayAchievementProgressBatch); ok {
-		_, _, err := batch.ApplyGameplayProgress(ctx, snapshot.Conditions, events)
-		return err
+	_, values, err := s.counter.ApplyGameplayProgress(ctx, snapshot.Conditions, events)
+	if err == nil {
+		s.before, s.counters, s.conditionValues = snapshot, values, values
+		s.version, s.ready = s.observationVersion(), true
 	}
-	for _, condition := range snapshot.Conditions {
-		if _, err := s.counter.SetCondition(ctx, condition.Type, condition.SubType, condition.Value); err != nil {
-			return err
-		}
-	}
-	for _, event := range events {
-		if _, err := s.counter.RecordEvent(ctx, event.Identity, event.Type, event.SubType, event.Count); err != nil {
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
 func (s *GameplayAchievementObserver) BeforeDispatch(ctx command.Context, _ string, _ []byte) error {
@@ -190,30 +181,12 @@ func (s *GameplayAchievementObserver) BeforeDispatch(ctx command.Context, _ stri
 	if err != nil {
 		return err
 	}
-	if batch, ok := s.counter.(gameplayAchievementProgressBatch); ok {
-		s.counters, s.conditionValues, err = batch.ApplyGameplayProgress(ctx, s.before.Conditions, nil)
-		if err == nil {
-			s.version = s.observationVersion()
-			s.ready = true
-		}
-		return err
+	s.counters, s.conditionValues, err = s.counter.ApplyGameplayProgress(ctx, s.before.Conditions, nil)
+	if err == nil {
+		s.version = s.observationVersion()
+		s.ready = true
 	}
-	s.counters, err = s.counter.CounterValues(ctx)
-	if err != nil {
-		return err
-	}
-	for _, condition := range s.before.Conditions {
-		if _, err := s.counter.SetCondition(ctx, condition.Type, condition.SubType, condition.Value); err != nil {
-			return err
-		}
-	}
-	s.conditionValues, err = s.counter.CounterValues(ctx)
-	if err != nil {
-		return err
-	}
-	s.version = s.observationVersion()
-	s.ready = true
-	return nil
+	return err
 }
 
 func (s *GameplayAchievementObserver) AfterDispatch(ctx command.Context, path string, request, response []byte) ([]byte, error) {
@@ -227,14 +200,6 @@ func (s *GameplayAchievementObserver) AfterDispatch(ctx command.Context, path st
 	after, err := s.provider.Snapshot(ctx)
 	if err != nil {
 		return nil, err
-	}
-	batch, batches := s.counter.(gameplayAchievementProgressBatch)
-	if !batches {
-		for _, condition := range after.Conditions {
-			if _, err := s.counter.SetCondition(ctx, condition.Type, condition.SubType, condition.Value); err != nil {
-				return nil, err
-			}
-		}
 	}
 	events, err := s.provider.Events(path, request, response, s.before, after)
 	if err != nil {
@@ -254,17 +219,7 @@ func (s *GameplayAchievementObserver) AfterDispatch(ctx command.Context, path st
 			recorded = append(recorded, GameplayAchievementRecordedEvent{Identity: identity, Type: event.Type, SubType: event.SubType, Count: event.Count})
 		}
 	}
-	var values map[int]uint64
-	if batches {
-		_, values, err = batch.ApplyGameplayProgress(ctx, after.Conditions, recorded)
-	} else {
-		for _, event := range recorded {
-			if _, err = s.counter.RecordEvent(ctx, event.Identity, event.Type, event.SubType, event.Count); err != nil {
-				return nil, err
-			}
-		}
-		values, err = s.counter.CounterValues(ctx)
-	}
+	_, values, err := s.counter.ApplyGameplayProgress(ctx, after.Conditions, recorded)
 	if err != nil {
 		return nil, err
 	}
@@ -335,44 +290,6 @@ func (s *AchievementService) RecordEvent(ctx command.Context, identity string, c
 		update = wire.AppendVarint(update, 2, uint64(value))
 		update = wire.AppendVarint(update, 3, 1)
 		updates = append(updates, update)
-	}
-	if err := s.store.SaveWithEntries(ctx.State, "missions", nil, changes); err != nil {
-		return nil, err
-	}
-	return updates, nil
-}
-
-func (s *AchievementService) SetCondition(ctx command.Context, conditionType, subType, value uint64) ([][]byte, error) {
-	if value > math.MaxInt64 {
-		return nil, fmt.Errorf("achievement: invalid absolute value")
-	}
-
-	state, err := s.load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var groups []int
-	for group, c := range s.design.Conditions {
-		if c.Type == conditionType && c.SubType == subType {
-			groups = append(groups, group)
-		}
-	}
-	sort.Ints(groups)
-	var changes []stateio.EntryMutation
-	var updates [][]byte
-	for _, group := range groups {
-		key := strconv.Itoa(group)
-		if state.Counts[key] == int64(value) {
-			continue
-		}
-		raw, _ := json.Marshal(value)
-		changes = append(changes, stateio.EntryMutation{Bucket: "achievement_counts", Key: key, Payload: raw})
-		update := wire.AppendVarint(nil, 1, uint64(group))
-		update = wire.AppendVarint(update, 2, value)
-		updates = append(updates, wire.AppendVarint(update, 3, 1))
-	}
-	if len(changes) == 0 {
-		return nil, nil
 	}
 	if err := s.store.SaveWithEntries(ctx.State, "missions", nil, changes); err != nil {
 		return nil, err

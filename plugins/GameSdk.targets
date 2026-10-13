@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <BD2GameSdkRuntimeDir>$(MSBuildThisFileDirectory)GameSdk/Runtime/</BD2GameSdkRuntimeDir>
+    <BD2ReobfuscatedPlugin>$(IntermediateOutputPath)reobf/$(TargetFileName)</BD2ReobfuscatedPlugin>
   </PropertyGroup>
   <Import Project="$(MSBuildThisFileDirectory)GameSdk/Package/build/BD2.GameSdk.Localization.targets" />
   <ItemGroup>
@@ -16,9 +17,11 @@
     <Error Condition="'$(BD2GameVersion)' == ''" Text="Declare BD2GameVersion explicitly in this plugin's csproj, for example &lt;BD2GameVersion&gt;2.36.7&lt;/BD2GameVersion&gt;." />
     <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == ''" Text="Set BD2LocalGameDir in plugins/Directory.Build.local.props, or pass -p:GameDir=&lt;game-directory&gt;." />
     <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
-    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)')" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />
-    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; --game-version &quot;$(BD2GameVersion)&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(BD2SdkPrepared)' != 'true' and ('$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)'))" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(BD2SdkPrepared)' != 'true'" EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; --game-version &quot;$(BD2GameVersion)&quot;" />
+    <Error Condition="!Exists('$(BD2SdkDir)/shared-sdk.txt') or !Exists('$(BD2SdkDir)/GameSdkIdentity.g.cs')" Text="Prepared game SDK is incomplete: $(BD2SdkDir)." />
     <ReadLinesFromFile File="$(BD2SdkDir)/shared-sdk.txt"><Output TaskParameter="Lines" PropertyName="BD2SharedSdkDir" /></ReadLinesFromFile>
+    <Error Condition="!Exists('$(BD2SharedSdkDir)/names.json') or !Exists('$(BD2SharedSdkDir)/ref/Assembly-CSharp.Readable.dll')" Text="Prepared shared SDK is incomplete: $(BD2SharedSdkDir)." />
     <ItemGroup>
       <Reference Remove="Assembly-CSharp.Readable" />
       <Reference Include="Assembly-CSharp.Readable">
@@ -27,8 +30,15 @@
       </Reference>
     </ItemGroup>
   </Target>
+  <Target Name="TimeBD2CompileStart" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup><BD2CompileStartedTicks>$([System.DateTime]::UtcNow.Ticks)</BD2CompileStartedTicks></PropertyGroup>
+  </Target>
+  <Target Name="TimeBD2CompileEnd" AfterTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true' and '$(BD2CompileStartedTicks)' != ''">
+    <Message Importance="high" Text="[BD2 build] compile plugin=$(MSBuildProjectName) elapsed_ms=$([MSBuild]::Divide($([MSBuild]::Subtract($([System.DateTime]::UtcNow.Ticks), $(BD2CompileStartedTicks))), 10000))" />
+  </Target>
   <Target Name="ReobfuscateBD2Plugin" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipCompilerExecution)' != 'true'">
-    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SharedSdkDir)/names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(TargetPath)&quot; &quot;$(BD2ManagedDir)\Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)\core&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Command="dotnet &quot;$(BD2SdkTool)&quot; reobf &quot;$(BD2SharedSdkDir)/names.json&quot; &quot;$(IntermediateOutputPath)$(TargetFileName)&quot; &quot;$(BD2ReobfuscatedPlugin)&quot; &quot;$(BD2ManagedDir)\Assembly-CSharp.dll&quot; &quot;$(BD2BepInExDir)\core&quot;" />
+    <Copy SourceFiles="$(BD2ReobfuscatedPlugin)" DestinationFiles="$(TargetPath)" SkipUnchangedFiles="true" />
     <Delete Files="$(TargetDir)$(TargetName).pdb" />
   </Target>
 </Project>

@@ -82,7 +82,8 @@ func TestNewPlayerGuildBootstrapDoesNotRequireGuildUnlock(t *testing.T) {
 	}
 	g.member(0)
 	_, err = g.execute(registryCommand(g.account, "still-locked-raid-deck", "/GuildRaidDeckSave", appScalar(1, 5)))
-	if !errors.Is(err, social.ErrIneligible) {
+	var rejection *command.GameError
+	if !errors.As(err, &rejection) || rejection.PacketCode != 313 || rejection.ErrorType != 9003 {
 		t.Fatalf("locked guild mutation accepted after bootstrap: %v", err)
 	}
 	g.seq = 5

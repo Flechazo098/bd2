@@ -281,25 +281,126 @@ func TestNativeFriendRequestsAreBilateralDurableAndRetrySafe(t *testing.T) {
 	// actual SQLite store before retrying the identical operation identity.
 	durableSend := command.Identity{AccountID: accounts[0], SessionID: "durable-friend", RequestID: "send"}
 	durableAccept := command.Identity{AccountID: accounts[1], SessionID: "durable-friend", RequestID: "accept"}
-	if _, _, err := shared.friends.Execute(context.Background(), durableSend, a.owner, "/FriendSend", append(appScalar(1, 1), appScalar(2, b.owner)...)); err != nil {
+	if _, _, err := shared.friends.Execute(context.Background(), durableSend, a.owner, "/FriendSend", append(appScalar(1, 1), appScalar(2, b.owner)...), 0); err != nil {
 		t.Fatal(err)
 	}
 	acceptWire := append(appScalar(1, 1), appScalar(2, a.owner)...)
-	_, acceptedBeforeRestart, err := shared.friends.Execute(context.Background(), durableAccept, b.owner, "/FriendAccept", acceptWire)
+	_, acceptedBeforeRestart, err := shared.friends.Execute(context.Background(), durableAccept, b.owner, "/FriendAccept", acceptWire, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// UserInfoUI allows one global Like per reset, and BattlePacket consumes
+	// one lender's daily quota across their registered supporter slots.
+	a.send("/LikeUser", appScalar(2, a.owner), 203, 9003)
+	a.send("/LikeUser", appScalar(2, 9223372036854775807), 203, 9003)
+	durableLike := command.Identity{AccountID: accounts[0], SessionID: "durable-social", RequestID: "like"}
+	likeWire := append(appScalar(1, 1), appScalar(2, b.owner)...)
+	if _, _, err := shared.friends.Execute(context.Background(), durableLike, a.owner, "/LikeUser", likeWire, 0); err != nil {
+		t.Fatal(err)
+	}
+	a.send("/LikeUser", appScalar(2, b.owner), 203, 9003)
+	if got := appValue(a.send("/MyLikeInfo", nil, 218, 0), 1); got != b.owner {
+		t.Fatalf("daily like target=%d want%d", got, b.owner)
+	}
+	profile = a.send("/UserContentsInfo", appScalar(2, b.owner), 215, 0)
+	if appValue(profile, 10) != 1 || appValue(profile, 13) != 1 {
+		t.Fatal("liked friend profile omitted received total or relation")
+	}
+	picker := command.Identity{AccountID: accounts[0], SessionID: "durable-social", RequestID: "picker"}
+	if _, _, err := shared.friends.Execute(context.Background(), picker, a.owner, "/SupporterBattleInfo", append(appScalar(1, 1), appScalar(2, 1)...), 1000); err != nil {
+		t.Fatal(err)
+	}
+	durableBorrow := command.Identity{AccountID: accounts[0], SessionID: "durable-social", RequestID: "borrow"}
+	borrowWire := append(append(appScalar(1, 1), appScalar(2, b.owner)...), appScalar(3, 1)...)
+	_, borrowBeforeRestart, err := shared.friends.Execute(context.Background(), durableBorrow, a.owner, "/SupporterBorrow", borrowWire, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	borrowedCharacters := appRows(appRows(borrowBeforeRestart, 3)[0], 1)
+	if len(borrowedCharacters) != 1 || appValue(borrowedCharacters[0], 1) != supporters[1].character {
+		t.Fatal("borrow returned another account's supporter bundle")
+	}
 	close()
 	open()
-	code, acceptedAfterRestart, err := shared.friends.Execute(context.Background(), durableAccept, b.owner, "/FriendAccept", acceptWire)
+	code, acceptedAfterRestart, err := shared.friends.Execute(context.Background(), durableAccept, b.owner, "/FriendAccept", acceptWire, 0)
 	if err != nil || code != 206 || !slices.Equal(acceptedBeforeRestart, acceptedAfterRestart) {
 		t.Fatalf("durable accept retry code=%d error=%v changed=%v", code, err, !slices.Equal(acceptedBeforeRestart, acceptedAfterRestart))
+	}
+
+	_, borrowAfterRestart, err := shared.friends.Execute(context.Background(), durableBorrow, a.owner, "/SupporterBorrow", borrowWire, 1000)
+	if err != nil || !slices.Equal(borrowBeforeRestart, borrowAfterRestart) {
+		t.Fatalf("durable borrow retry changed result: %v", err)
+	}
+	if _, _, err := shared.friends.Execute(context.Background(), durableLike, a.owner, "/LikeUser", likeWire, 0); err != nil {
+		t.Fatal(err)
 	}
 	a, b = friendHTTPLogin(t, registry, accounts[0]), friendHTTPLogin(t, registry, accounts[1])
 	drainFriendPublications(t, registry, shared, accounts[0])
 	drainFriendPublications(t, registry, shared, accounts[1])
 	assertRows(a, "/FriendInfoList", 204, 1, b.owner)
 	assertRows(b, "/FriendInfoList", 204, 1, a.owner)
+
+	if appValue(b.loginBody, 8) != 1 {
+		t.Fatal("relogin omitted outstanding supporter reward badge")
+	}
+	if appValue(a.send("/MyLikeInfo", nil, 218, 0), 1) != b.owner {
+		t.Fatal("daily like quota was lost across database reopen")
+	}
+	if appValue(a.send("/UserContentsInfo", appScalar(2, b.owner), 215, 0), 10) != 1 {
+		t.Fatal("durable like retry incremented received count")
+	}
+	battleRows := appRows(a.send("/SupporterBattleInfo", appScalar(2, 1), 439, 0), 1)
+	if len(battleRows) != 1 || appValue(battleRows[0], 1) != b.owner || appValue(battleRows[0], 10) != 1 || len(appRows(battleRows[0], 9)) != 1 {
+		t.Fatal("battle supporter picker omitted lender, slot or durable usage count")
+	}
+	status := b.send("/SupporterStatus", appScalar(2, 50), 438, 0)
+	history := appRows(status, 1)
+	if len(history) != 1 || appValue(history[0], 2) != a.owner || appValue(history[0], 7) != b.owner || appValue(history[0], 8) != 1 || appValue(history[0], 11) != 1 || appValue(history[0], 12) != 0 {
+		t.Fatal("rental history did not preserve borrower/lender, slot, friend type and claim status")
+	}
+	historyID := appValue(history[0], 1)
+	a.send("/SupporterReward", appScalar(2, historyID), 442, 9003)
+	b.send("/SupporterReward", append(appScalar(2, historyID), appScalar(2, historyID)...), 442, 9003)
+	claim := b.send("/SupporterReward", appScalar(2, historyID), 442, 0)
+	b.seq--
+	if replay := b.send("/SupporterReward", appScalar(2, historyID), 442, 0); !slices.Equal(claim, replay) {
+		t.Fatal("same claim identity changed its reward result")
+	}
+	b.send("/SupporterReward", appScalar(2, historyID), 442, 9003)
+	if appValue(claim, 1) != historyID || len(appRows(claim, 2)) != 1 {
+		t.Fatal("claim omitted rental ID or reward bundle")
+	}
+	status = b.send("/SupporterStatus", appScalar(2, 50), 438, 0)
+	if appValue(status, 4) != 1 || appValue(appRows(status, 1)[0], 12) != 1 {
+		t.Fatal("committed claim did not update daily claim count and history")
+	}
+	// Read-only GameData query: SupportCharacterDefaultTable 0 fields3/2/1/7/8
+	// =3 friend uses,3 recommended uses,10 claims,type44,count2 (version20261008155037).
+	for range 2 {
+		a.send("/SupporterBorrow", append(appScalar(2, b.owner), appScalar(3, 1)...), 437, 0)
+	}
+	a.send("/SupporterBorrow", append(appScalar(2, b.owner), appScalar(3, 1)...), 437, 9003)
+	status = b.send("/SupporterStatus", appScalar(2, 50), 438, 0)
+	history = appRows(status, 1)
+	if len(history) != 3 {
+		t.Fatalf("friend rental quota produced%d histories want3", len(history))
+	}
+	nextPage := b.send("/SupporterStatus", append(appScalar(2, 1), appScalar(3, appValue(history[0], 1))...), 438, 0)
+	nextRows := appRows(nextPage, 1)
+	if len(nextRows) != 1 || appValue(nextRows[0], 1) != appValue(history[1], 1) {
+		t.Fatal("rental history cursor skipped or repeated a row")
+	}
+	baselineCurrency := appValue(appRows(b.loginBody, 1)[0], 54)
+	close()
+	open()
+	a, b = friendHTTPLogin(t, registry, accounts[0]), friendHTTPLogin(t, registry, accounts[1])
+	if got := appValue(appRows(b.loginBody, 1)[0], 54); got != baselineCurrency+2 {
+		t.Fatalf("durable supporter reward currency=%d want%d", got, baselineCurrency+2)
+	}
+	if appValue(b.send("/SupporterStatus", appScalar(2, 50), 438, 0), 4) != 1 {
+		t.Fatal("daily reward claim count was lost across reopen")
+	}
 	b.send("/FriendAccept", appScalar(2, a.owner), 206, 1)
 	a.send("/FriendRemove", appScalar(2, b.owner), 208, 0)
 	assertRows(a, "/FriendInfoList", 204, 1)

@@ -74,6 +74,7 @@ const (
 	SupporterRemove Kind = "supporter_remove"
 	Attendance      Kind = "attendance"
 	RaidClaim       Kind = "raid_claim"
+	SupporterClaim  Kind = "supporter_claim"
 )
 
 type Status string
@@ -150,6 +151,7 @@ type Operation struct {
 	UseSupporter                     bool
 	RequestDigest                    string
 	Text                             string
+	UsageIDs                         []uint64
 	ActionTypes                      []uint64
 	Supporter                        SupporterSlot
 }
@@ -164,6 +166,7 @@ type Reservation struct {
 	Charges                      []gamedata.Reward
 	Grants                       []gamedata.Reward
 	RequestDigest                string
+	UsageIDs                     []uint64
 	EntitlementIDs               []string
 	Application                  bool
 	PreparedMS                   int64

@@ -10,6 +10,7 @@ import (
 
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/world"
 	"bd2server/internal/server/protocol/wire"
 )
 
@@ -96,6 +97,9 @@ func newSkyWayPlayerScenario(t *testing.T) *skyWayPlayerScenario {
 		s.call(t, "/QuestUpdate", update)
 		clear := s.request(step.quest, 3004)
 		response := s.call(t, "/QuestClear", clear)
+		if pending := storyCheckpointCall(t, s.owner, "read", world.StoryCheckpoint{}).Checkpoint; pending != nil {
+			storyCheckpointCall(t, s.owner, "complete", world.StoryCheckpoint{ID: pending.ID})
+		}
 		if step.quest == 3 {
 			complete := false
 			for _, row := range appRows(response, 11) {

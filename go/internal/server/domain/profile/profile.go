@@ -14,16 +14,21 @@ import (
 var ErrNotFound = errors.New("profile: target public profile not found")
 
 type Snapshot struct {
-	OwnerIndex, TitleID, PortraitCostumeID, PortraitDesignID uint64
-	AchievementLevel, TotalBattlePower, MonsterHuntRank      uint64
-	UserID                                                   string
-	MonsterHuntTopPercent                                    float64
-	Greeting                                                 string
-	IsAllPrivate                                             bool
-	Options, SortIDs                                         []uint64
-	Card                                                     Card
-	Supporters                                               []CostumeBase
-	AvatarUse                                                *AvatarUse
+	OwnerIndex, TitleID, PortraitCostumeID, PortraitDesignID               uint64
+	AchievementLevel, TotalBattlePower, MonsterHuntRank, LikeCount         uint64
+	UserID                                                                 string
+	MonsterHuntTopPercent                                                  float64
+	Greeting                                                               string
+	IsAllPrivate, IsFriend                                                 bool
+	Options, SortIDs                                                       []uint64
+	Card                                                                   Card
+	Supporters                                                             []CostumeBase
+	GuildBase, RoomInfo                                                    []byte
+	RoomLikeCount                                                          uint64
+	PvpSeason, PvpVP, PvpRank, ColosseumSeason, ColosseumVP, ColosseumRank uint64
+	GuildRaidRank, GuildRaidScore                                          uint64
+	ColosseumTopPercent                                                    float64
+	AvatarUse                                                              *AvatarUse
 }
 
 type Source interface {
@@ -79,7 +84,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 	if p.OwnerIndex != target || p.UserID == "" {
 		return fail(ErrNotFound)
 	}
-	for _, v := range []uint64{p.TitleID, p.PortraitCostumeID, p.PortraitDesignID, p.AchievementLevel, p.TotalBattlePower, p.MonsterHuntRank} {
+	for _, v := range []uint64{p.TitleID, p.PortraitCostumeID, p.PortraitDesignID, p.AchievementLevel, p.TotalBattlePower, p.MonsterHuntRank, p.LikeCount} {
 		if v > math.MaxInt32 {
 			return fail(fmt.Errorf("profile: integer exceeds protocol range"))
 		}
@@ -99,19 +104,29 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 	for _, field := range []struct {
 		Number int
 		Value  uint64
-	}{{3, p.TitleID}, {4, p.PortraitCostumeID}, {9, p.MonsterHuntRank}, {16, p.TotalBattlePower}, {19, p.PortraitDesignID}, {26, p.AchievementLevel}} {
+	}{{3, p.TitleID}, {4, p.PortraitCostumeID}, {6, p.PvpSeason}, {7, p.PvpVP}, {8, p.PvpRank}, {9, p.MonsterHuntRank}, {10, p.LikeCount}, {16, p.TotalBattlePower}, {19, p.PortraitDesignID}, {20, p.GuildRaidRank}, {21, p.GuildRaidScore}, {26, p.AchievementLevel}, {31, p.ColosseumSeason}, {32, p.ColosseumVP}, {33, p.ColosseumRank}} {
 		if field.Value != 0 {
 			out = wire.AppendVarint(out, field.Number, field.Value)
 		}
+	}
+	if p.IsFriend {
+		out = wire.AppendVarint(out, 13, 1)
 	}
 	room := wire.AppendVarint(nil, 1, p.OwnerIndex)
 	room = wire.AppendString(room, 2, p.UserID)
 	room = wire.AppendVarint(room, 3, p.PortraitCostumeID)
 	room = wire.AppendVarint(room, 11, p.PortraitDesignID)
+	if len(p.RoomInfo) > 0 {
+		room = p.RoomInfo
+	}
 	out = wire.AppendBytes(out, 14, room)
+	out = wire.AppendVarint(out, 18, p.RoomLikeCount)
 	// UserInfoPacket dereferences GuildBaseInfo.Id even for a guildless user.
-	out = wire.AppendBytes(out, 17, nil)
+	out = wire.AppendBytes(out, 17, p.GuildBase)
 	out = wire.AppendBytes(out, 28, cardWire(p.Card))
+	if p.ColosseumTopPercent > 0 {
+		out = wire.AppendDouble(out, 35, p.ColosseumTopPercent)
+	}
 	for _, c := range p.Supporters {
 		out = wire.AppendBytes(out, 30, costumeBaseWire(c))
 	}

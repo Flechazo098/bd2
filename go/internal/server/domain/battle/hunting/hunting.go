@@ -39,6 +39,7 @@ type Rules interface {
 }
 
 type Service struct {
+	achievementProgress *achievementProgressSnapshot
 	storage             stateio.Store
 	inventory           *assets.Inventory
 	wallet              *assets.Wallet

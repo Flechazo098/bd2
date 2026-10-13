@@ -59,6 +59,13 @@ func (s *Service) packInfoFor(ctx command.Context, packID int) ([]byte, error) {
 		return nil, err
 	}
 	out = append(out, buffs...)
+	research, err := s.state.ResearchObjects(ctx, packID)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range research {
+		out = wire.AppendVarint(out, 11, uint64(id))
+	}
 	if s.huntingGround == nil {
 		return out, nil
 	}

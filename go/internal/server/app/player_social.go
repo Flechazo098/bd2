@@ -102,7 +102,7 @@ func (p *playerInstance) readLocal(ctx context.Context, identity command.Identit
 }
 
 func (p *playerInstance) guildQualification(ctx context.Context, identity command.Identity, path string) error {
-	if !social.Mutates(path) || path == "/GuildInfo" {
+	if !social.Mutates(path) || path == "/GuildInfo" || path == "/SupporterReward" {
 		return nil
 	}
 	return p.readLocal(ctx, identity, func(c command.Context) error {

@@ -36,8 +36,6 @@ var emptyResponses = map[string]int{
 	"/GuildInitInfo":                   332,
 	"/IdCardPresetInfo":                450,
 	"/LifeUserInfo":                    594,
-	"/MyLikeInfo":                      218,
-	"/MyRoomItemInfo":                  232,
 	"/PersonalInfo":                    199,
 	"/QuestMaxClearInfo":               137,
 	"/SpineInteractionAchievementInfo": 532,

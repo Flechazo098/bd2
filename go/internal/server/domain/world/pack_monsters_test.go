@@ -127,6 +127,46 @@ func TestForestMonsterVictorySurvivesDifficultyChangeUntilWeeklyReset(t *testing
 		if err != nil || count != want {
 			t.Fatalf("forest defeat count=%d want=%d err=%v", count, want, err)
 		}
+		// FieldObjectSceneData1 places101-105 in forest map2 and111-115 in
+		// cave map3. Native PackMapRewardInfo derives each map's remaining
+		// monsters from ActiveFlag and RespawnTime, excluding story encounters.
+		rows, err := service.packMonsterRows(ctx, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var forestRows, caveRows, forestDefeated, caveDefeated uint64
+		for _, row := range rows {
+			id, _, err := wire.Varint(row, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, _, err := wire.Varint(row, 6)
+			if err != nil {
+				t.Fatal(err)
+			}
+			respawn, _, err := wire.Varint(row, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defeated := active == 0 || respawn > uint64(now.UnixMilli())
+			switch {
+			case id >= 101 && id <= 105:
+				forestRows++
+				if defeated {
+					forestDefeated++
+				}
+			case id >= 111 && id <= 115:
+				caveRows++
+				if defeated {
+					caveDefeated++
+				}
+			default:
+				t.Fatalf("story or unplaced monster polluted map detail:%d", id)
+			}
+		}
+		if forestRows != 5 || caveRows != 5 || forestDefeated != want || caveDefeated != 0 {
+			t.Fatalf("forest completed%d/5 cave completed%d/5, rows%d,%d wantforest%d cave0", forestDefeated, caveDefeated, forestRows, caveRows, want)
+		}
 	}
 	assertCount(0)
 	start(1)

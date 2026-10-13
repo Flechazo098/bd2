@@ -34,6 +34,7 @@ public sealed class Plugin : BaseUnityPlugin
             var harmony = new Harmony(PluginId);
 #pragma warning restore CA2000
             ClientInstanceIsolation.Install(harmony, Logger);
+            TryInstall("Unity log archival", () => UnityLogArchive.ArchivePrevious(Logger));
             StartCoroutine(ClientInstanceIsolation.InitializeCache());
             Routing = ClientRouting.Load(Logger);
             TryInstall("background network policy", () => ClientNetworkPolicy.Install(harmony, Routing.ServerRoot, Logger));

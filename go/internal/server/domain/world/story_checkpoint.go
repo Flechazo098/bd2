@@ -109,8 +109,18 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 
 func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryCheckpoint) error {
 	pack, exists := s.storyCatalog.Packs[checkpoint.PackID]
-	if !exists || !s.packUnlocked(ctx, checkpoint.PackID) || checkpoint.Difficulty != s.questDifficultyFor(checkpoint.PackID, checkpoint.QuestID) || !slices.Contains(pack.MapIDs, checkpoint.MapID) {
-		return ErrInvalidRequest
+	if !exists || !s.packUnlocked(ctx, checkpoint.PackID) || checkpoint.Difficulty != s.questDifficultyFor(checkpoint.PackID, checkpoint.QuestID) {
+		return fmt.Errorf("%w: checkpoint pack or difficulty unavailable", ErrInvalidRequest)
+	}
+	if s.packDetailDesign == nil {
+		return fmt.Errorf("world: checkpoint map design unavailable")
+	}
+	maps, err := s.packDetailDesign(checkpoint.PackID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(maps.MapIDs, checkpoint.MapID) {
+		return fmt.Errorf("%w: checkpoint map outside pack", ErrInvalidRequest)
 	}
 	quest, exists := pack.Quests[checkpoint.QuestID]
 	if !exists {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	clientplugin "bd2server/internal/client/plugin"
 )
 
 func main() {
@@ -24,6 +26,7 @@ func usage() {
   bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
   bd2w runClient [client options]
   bd2w runClient2 [--instance player2] [--game-dir directory]
+  bd2w plugins [--game-dir directory]
   bd2w runServer [server options]
   bd2w check-csharp [GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment]
   bd2w sdk pack [--game-dir directory] [--package-version version] [--output-directory directory]
@@ -42,7 +45,7 @@ func run(args []string) error {
 		usage()
 		return nil
 	}
-	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" {
+	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" && args[0] != "plugins" {
 		return fmt.Errorf("unknown task %q; use --help for available commands", args[0])
 	}
 	if len(args) == 2 && isHelp(args[1]) {
@@ -59,6 +62,19 @@ func run(args []string) error {
 	}
 	t := task{root, native}
 	switch args[0] {
+	case "plugins":
+		opts, err := parseOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		if opts.skipTests || opts.schedulesOnly {
+			return errors.New("plugins accepts only --game-dir")
+		}
+		game, _, _, err := t.gameDirectory(opts.gameDir)
+		if err != nil {
+			return err
+		}
+		return clientplugin.BuildDevelopment(t.root, game, os.Stdout)
 	case "runClient2":
 		return t.runClient2(args[1:])
 	case "runClient":

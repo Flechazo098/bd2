@@ -294,6 +294,27 @@ func (s *Store) QuestCleared(questID, packID int, level ...int) bool {
 	return found
 }
 
+func (s *Store) AllClearedQuests() []QuestProgress {
+	out := make([]QuestProgress, 0, len(s.cleared))
+	for key := range s.cleared {
+		pack, difficulty, quest, ok := parseQuestKey(key)
+		if ok {
+			out = append(out, QuestProgress{PackID: pack, Difficulty: difficulty, QuestID: quest})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.PackID != b.PackID {
+			return a.PackID < b.PackID
+		}
+		if a.Difficulty != b.Difficulty {
+			return a.Difficulty < b.Difficulty
+		}
+		return a.QuestID < b.QuestID
+	})
+	return out
+}
+
 // ClearedQuests returns sorted quest IDs for one pack. The detached slice is
 // safe for response construction without holding the store lock.
 func (s *Store) ClearedQuests(packID int, level ...int) []int {

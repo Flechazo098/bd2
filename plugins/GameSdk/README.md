@@ -113,6 +113,10 @@ owner.StartCoroutine(Game.MemberName(owner.GetType(), "ReadableCoroutineName"));
 
 ## 构建与部署
 
+插件可在 `Assets/Lang` 中提供 `en_us.json`、`ko_kr.json`、`ja_jp.json`、`zh_tw.json` 和 `zh_cn.json`，内容是翻译键到字符串的平面 JSON 对象。SDK 将文案嵌入当前插件，`BD2.GameSdk.Component.Translatable(key, params object[] arguments)` 按当前游戏界面语言读取，缺失时回退到英文，再回退到键名；调用 `GetString()` 得到最终文本。
+
+翻译模板使用 C# `string.Format` 的复合格式：参数索引从零开始，可重排或重复参数，支持对齐和数值、日期、自定义格式，例如 `"{1}: {0,8:N2}"`。文本中的花括号用 `{{`、`}}` 转义。参数按 `CultureInfo.CurrentCulture` 格式化，`null` 输出空字符串，布尔值遵循 C# 的 `True`/`False`，嵌套的 `Component` 输出其最终文本。无效模板或缺少参数时保留原文案。需要固定文字时使用 `Component.Literal(text).GetString()`，其中的花括号保持原样。
+
 构建成功后，将你的插件产物和相邻的 **`BD2.GameNames.dll`** 安装到游戏 `BepInEx/plugins`。当然，客户端只需要安装一个`BD2.GameNames.dll`，`GameSdk.dll`只是编写时需要。
 
 | MSBuild 属性 | 用途 |

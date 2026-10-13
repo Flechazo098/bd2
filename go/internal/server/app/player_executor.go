@@ -2,6 +2,7 @@ package app
 
 import (
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/runtime/player"
 	accountstate "bd2server/internal/server/storage/account"
 	"bd2server/internal/server/storage/outbox"
@@ -33,7 +34,8 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 	if err != nil {
 		return reply, err
 	}
-	if len(request.Requests) == 1 && len(friendResponses) == 1 {
+	friendProgress := len(request.Requests) == 1 && len(friendResponses) == 1 && social.FriendMutates(request.Requests[0].Path)
+	if len(request.Requests) == 1 && len(friendResponses) == 1 && !friendProgress {
 		reply.Responses = []player.Response{friendResponses[0]}
 		return reply, nil
 	}
@@ -153,6 +155,9 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		}
 	}
 	assembly := p.assembly
+	if friendProgress {
+		assembly.achievementObserver.BeginLogin(identity)
+	}
 	transientBefore := assembly.transientVersion()
 	failCommand := func(cause error) error {
 		changed := tx.Dirty() || assembly.transientVersion() != transientBefore
@@ -192,6 +197,9 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 			reply.Timing.Execute += time.Since(started)
 		} else {
 			started := time.Now()
+			if item.Path == "/AchievementInfo" || item.Path == "/AchievementClear" {
+				assembly.achievementObserver.BeginLogin(identity)
+			}
 			for _, observer := range assembly.observers {
 				if err = observer.BeforeDispatch(identity, item.Path, item.Body); err != nil {
 					break
@@ -204,6 +212,11 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 					response = friendResponse
 				} else if plan := socialPlans[index]; plan != nil {
 					response.PacketCode, response.Body, err = socialService.Apply(identity, plan)
+					if err == nil && plan.Reservation != nil && plan.Reservation.Kind == social.SupporterClaim {
+						_, err = assembly.achievementCounters.RecordEvent(identity, "supporter-claim:"+plan.ID, 101, 0, uint64(len(plan.Reservation.UsageIDs)))
+					}
+				} else if item.Path == "/TotalRanking" {
+					response.PacketCode, response.Body, err = p.totalRanking(identity, item.Body)
 				} else {
 					response.PacketCode, response.Body, err = assembly.dispatch(identity, item.Path, item.Body)
 				}
@@ -230,6 +243,11 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		reply.Responses = append(reply.Responses, response)
 	}
 	if !isSystem && (tx.Dirty() || isLogin) {
+		if isLogin || huntRankingChanged(request.Requests) {
+			if err := assembly.publishHuntRanking(identity); err != nil {
+				return reply, failCommand(err)
+			}
+		}
 		if isLogin || friendProfileChanged(request.Requests) {
 			if err := assembly.publishFriendProfile(identity, isLogin); err != nil {
 				return reply, failCommand(err)

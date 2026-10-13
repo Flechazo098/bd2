@@ -7,6 +7,7 @@ import (
 	"bd2server/internal/server/domain/commerce/gacha"
 	"bd2server/internal/server/domain/events"
 	"bd2server/internal/server/domain/profile"
+	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/gateway/session"
 	"bd2server/internal/server/protocol/defaults"
 	scheduleadapter "bd2server/internal/server/protocol/schedule"
@@ -18,6 +19,13 @@ import (
 )
 
 func (p *playerAssembly) session(ctx command.Context) error {
+	if p.shared != nil && p.shared.huntRanks != nil {
+		owner, err := p.ProfileOwner(ctx)
+		if err != nil {
+			return err
+		}
+		p.monsterHuntService.AttachRanking(owner, p.shared.huntRanks)
+	}
 	if err := p.nickname(ctx); err != nil {
 		return err
 	}
@@ -33,6 +41,9 @@ func (p *playerAssembly) session(ctx command.Context) error {
 	if err := p.multiplayerPVP(ctx); err != nil {
 		return err
 	}
+	if err := p.achievementObserver.SyncRecordedHistory(ctx); err != nil {
+		return fmt.Errorf("restore recorded achievement history: %w", err)
+	}
 	p.handlers = []session.Handler{
 		p.chatService,
 		p.nicknameService,
@@ -45,6 +56,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 			return published.SupporterDetails, err
 		}},
 		p.profileService,
+		social.RoomCommerce{Design: p.design.roomCommerce, Rooms: p.design.rooms, Economy: p.eventEconomy},
 		commerce.PackInfoHandler{World: p.worldService, Claims: p.clearPackages},
 		p.worldService,
 		p.progressState,

@@ -261,7 +261,12 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 		}
 		r := Reservation{ID: op.ID, Kind: op.Kind, ActorAccount: op.Actor.AccountID, SubjectAccount: subject, Digest: digest, RequestDigest: op.RequestDigest, Status: Prepared, GuildID: op.GuildID, MembershipEpoch: a.Epoch, PreparedMS: op.AtMS, Raid: op.Raid}
 		var g Guild
-		if op.Kind == Acknowledge || op.Kind == RaidClaim {
+		if op.Kind == SupporterClaim {
+			r.GuildID = 0
+			if e := o.prepareSupporterClaim(tx, op, &r); e != nil {
+				return e
+			}
+		} else if op.Kind == Acknowledge || op.Kind == RaidClaim {
 			if op.Kind == RaidClaim {
 				r.GuildID = 0
 				for after := ""; ; {
@@ -611,6 +616,10 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 			}
 		}
 		switch r.Kind {
+		case SupporterClaim:
+			if err := o.confirmSupporterClaim(tx, op); err != nil {
+				return err
+			}
 		case RaidClaim:
 			for _, key := range r.EntitlementIDs {
 				var ent Entitlement

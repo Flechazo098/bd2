@@ -1,0 +1,11 @@
+<Project DefaultTargets="Build">
+  <ItemGroup>
+    <ClientPlugin Include="LocalIdentity/LocalIdentity.csproj;LoginUI/LoginUI.csproj;CashShop/CashShop.csproj;FChat/FChat.csproj" />
+  </ItemGroup>
+  <Target Name="Restore">
+    <MSBuild Projects="@(ClientPlugin)" Targets="Restore" BuildInParallel="true" />
+  </Target>
+  <Target Name="Build">
+    <MSBuild Projects="@(ClientPlugin)" Targets="Build" BuildInParallel="true" />
+  </Target>
+</Project>

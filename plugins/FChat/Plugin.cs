@@ -37,5 +37,5 @@ public sealed class Plugin : BaseUnityPlugin
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822", Justification = "Unity invokes this instance lifecycle callback.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
-    private void OnApplicationQuit() => NativeChatTranslation.Reset();
+    private void OnApplicationQuit() => NativeChatTranslation.Reset(true);
 }

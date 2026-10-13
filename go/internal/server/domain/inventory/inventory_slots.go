@@ -14,7 +14,7 @@ import (
 	"os"
 )
 
-const developmentSettingsVersion = 1
+const developmentSettingsVersion = 2
 
 type InventorySlotCounts struct {
 	Items            uint64 `json:"items"`
@@ -29,9 +29,13 @@ type inventorySlotSnapshot struct {
 }
 
 type developmentSettings struct {
-	Version   int `json:"version"`
+	Version  int                                    `json:"version"`
+	Accounts map[string]*developmentAccountSettings `json:"accounts"`
+}
+
+type developmentAccountSettings struct {
 	Inventory *struct {
-		Unlimited bool `json:"unlimited"`
+		Unlimited *bool `json:"unlimited"`
 	} `json:"inventory"`
 }
 
@@ -117,7 +121,7 @@ func (s *InventorySlots) EnsurePersisted(ctx command.Context) error {
 func (s *InventorySlots) InventorySlotCounts(ctx command.Context) (InventorySlotCounts, error) {
 
 	counts := s.state.InventorySlotCounts
-	unlimited, err := loadUnlimitedInventory(s.settingsPath)
+	unlimited, err := loadUnlimitedInventory(s.settingsPath, ctx.AccountID)
 	if err != nil {
 		return InventorySlotCounts{}, err
 	}
@@ -136,7 +140,7 @@ func (s *InventorySlots) UserInventorySlots(ctx command.Context) (items, storage
 	return counts.Items, counts.Storage, counts.Equipment, counts.EquipmentStorage, nil
 }
 
-func loadUnlimitedInventory(path string) (bool, error) {
+func loadUnlimitedInventory(path, accountID string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
@@ -156,10 +160,19 @@ func loadUnlimitedInventory(path string) (bool, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return false, errors.New("player: malformed development settings")
 	}
-	if settings.Version != developmentSettingsVersion || settings.Inventory == nil {
+	if settings.Version != developmentSettingsVersion {
 		return false, errors.New("player: unsupported development settings version")
 	}
-	return settings.Inventory.Unlimited, nil
+	if settings.Accounts == nil {
+		return false, errors.New("player: malformed development settings")
+	}
+	for id, account := range settings.Accounts {
+		if id == "" || account == nil || account.Inventory == nil || account.Inventory.Unlimited == nil {
+			return false, errors.New("player: malformed development settings")
+		}
+	}
+	account := settings.Accounts[accountID]
+	return account != nil && *account.Inventory.Unlimited, nil
 }
 
 func inventorySlotPrice(rule gamedata.InventorySlotRule, current, count uint64) (uint64, error) {

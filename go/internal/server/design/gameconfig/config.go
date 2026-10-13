@@ -46,7 +46,7 @@ func DefaultTextModeration() TextModerationConfig {
 		Type: "off", APIKeyHeader: "Authorization", Scopes: []string{
 			"nickname", "greeting", "master_title", "preset_name", "equipment_preset_name", "equipment_mark",
 			"monster_hunt_preset_name", "guild_raid_preset_name", "colosseum_preset_name",
-			"guild_name", "guild_message", "guild_notice", "chat",
+			"guild_name", "guild_message", "guild_notice", "room_name", "chat",
 		},
 		TimeoutMS: 1500, FailurePolicy: "deny", SeverityThreshold: 4,
 	}}

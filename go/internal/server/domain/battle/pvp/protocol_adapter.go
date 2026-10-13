@@ -342,6 +342,22 @@ func rankWire(mode Mode, r RankEntry) []byte {
 	out = wire.AppendBytes(out, 7, baseInfo(mode, r.VP, r.Rank, r.Wins, r.Losses, r.TopPercent))
 	return wire.AppendVarint(out, 8, p.Title)
 }
+
+func (s *Service) RankingSnapshot(mode Mode, limit int) (uint64, [][]byte, error) {
+	c, err := s.current(mode)
+	if err != nil {
+		return 0, nil, err
+	}
+	rows, err := s.source.Ranking(RankQuery{Mode: mode, Season: c.ID, Limit: limit})
+	if err != nil {
+		return 0, nil, err
+	}
+	out := make([][]byte, len(rows))
+	for i, row := range rows {
+		out[i] = rankWire(mode, row)
+	}
+	return c.ID, out, nil
+}
 func (s *Service) ranking(mode Mode, request []byte) ([]byte, error) {
 	season, e := scalar(request, 2)
 	if e != nil {

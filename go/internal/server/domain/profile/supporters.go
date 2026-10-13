@@ -55,9 +55,6 @@ func (s *Service) PublicSupporterDetails(ctx command.Context) (map[uint64][]byte
 }
 
 func (s *Service) handleSupporters(ctx command.Context, path string, request []byte, settings *Settings) ([]byte, bool, error) {
-	if path == "/SupporterReward" {
-		return nil, false, fmt.Errorf("profile: no supporter rental reward history exists")
-	}
 	if path == "/SupporterRegister" {
 		index, err := profileScalar(request, 2, 1)
 		if err != nil {

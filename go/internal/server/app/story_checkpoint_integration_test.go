@@ -39,6 +39,94 @@ func storyCheckpointCall(t *testing.T, owner *playerInstance, operation string, 
 	return out
 }
 
+// 2.36.7 GameFieldManager starts QuestTable6/1's accept cinema from map629.
+// GameData 20261008155037 MapTable assigns629 to pack6, while PackTable6's
+// field21 lists only601,606,608,615,630,631. It is not the full map catalog.
+func TestStoryChapterEntryCheckpointAcceptsInteriorMapAndSurvivesReload(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	s := &trapPlayerScenario{factory: factory, account: accounts[0]}
+	s.owner = openNicknamePlayer(t, factory, s.account)
+	t.Cleanup(func() { closeNicknamePlayer(t, s.owner) })
+	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
+		if rule := p.design.world.Story.Packs[6].Open; rule != nil && rule.TicketID != 0 {
+			if _, err := p.ownedItems.GrantOnce(ctx, "chapter6-entry-ticket", []gamedata.BattleReward{{Type: 19, ID: rule.TicketID, Count: 1}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	s.protocol(t, "/PackInGameInfo", trapRequest(1, 6))
+	s.position(t, 6, 629)
+	beforeGold := s.owner.assembly.wallet.Snapshot(command.Context{}).Gold
+	checkpoint := world.StoryCheckpoint{ID: "chapter6-entry", PackID: 6, QuestID: 1, Phase: "accept", Timeline: "Quest_Main_01_01", MapID: 629}
+	foreignMap := checkpoint
+	foreignMap.MapID = 51
+	body, err := json.Marshal(world.StoryCheckpointRequest{StoryCheckpoint: foreignMap, Operation: "begin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.owner.Execute(context.Background(), player.Command{Identity: command.Identity{AccountID: s.account, SessionID: "story-presentation", RequestID: fmt.Sprint(systemSequence.Add(1))}, Digest: sha256.Sum256(body), System: &player.SystemRequest{Kind: player.StoryCheckpoint, Body: body}})
+	if !errors.Is(err, world.ErrInvalidRequest) {
+		t.Fatalf("checkpoint in a different chapter's map was accepted: %v", err)
+	}
+	if pending := storyCheckpointCall(t, s.owner, "begin", checkpoint).Checkpoint; pending == nil || *pending != checkpoint {
+		t.Fatalf("chapter entry cinema did not begin: %+v", pending)
+	}
+	closeNicknamePlayer(t, s.owner)
+	s.owner = openNicknamePlayer(t, factory, s.account)
+	if pending := storyCheckpointCall(t, s.owner, "read", world.StoryCheckpoint{}).Checkpoint; pending == nil || *pending != checkpoint {
+		t.Fatalf("chapter entry cinema was lost after restart: %+v", pending)
+	}
+	storyCheckpointCall(t, s.owner, "complete", world.StoryCheckpoint{ID: checkpoint.ID})
+	if pending := storyCheckpointCall(t, s.owner, "read", world.StoryCheckpoint{}).Checkpoint; pending != nil {
+		t.Fatalf("finished entry cinema remained pending: %+v", pending)
+	}
+	if s.owner.assembly.progressState.QuestCleared(1, 6, 0) || s.owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold {
+		t.Fatal("entry cinema recovery awarded a quest-clear reward or advanced the quest")
+	}
+}
+
+// Native FieldResearchObjectController grants a research reward only when
+// CommonPacket.IsClearResearchObject is false; PackInGameInfo restores that
+// set from field11. GameData pack5/5501 in map55 grants830 gold and collection504.
+func TestResearchPointRestoresCollectedStateWithoutRepeatingRewardDelta(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	s := &trapPlayerScenario{factory: factory, account: accounts[0]}
+	s.owner = openNicknamePlayer(t, factory, s.account)
+	t.Cleanup(func() { closeNicknamePlayer(t, s.owner) })
+	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
+		if rule := p.design.world.Story.Packs[5].Open; rule != nil && rule.TicketID != 0 {
+			if _, err := p.ownedItems.GrantOnce(ctx, "research-point-ticket", []gamedata.BattleReward{{Type: 19, ID: rule.TicketID, Count: 1}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	s.protocol(t, "/PackInGameInfo", trapRequest(1, 5))
+	s.position(t, 5, 55)
+	beforeGold := s.owner.assembly.wallet.Snapshot(command.Context{}).Gold
+	response := s.protocol(t, "/FieldObjectResearch", wire.AppendVarint(trapRequest(2, 5), 3, 5501))
+	collection := false
+	for _, item := range appRows(response, 2) {
+		collection = collection || appValue(item, 2) == 504 && appValue(item, 3) == 17 && appValue(item, 4) == 1
+	}
+	if !collection || s.owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold+830 {
+		t.Fatal("research point did not grant its gold and collection reward")
+	}
+	closeNicknamePlayer(t, s.owner)
+	s.owner = openNicknamePlayer(t, factory, s.account)
+	entry := s.protocol(t, "/PackInGameInfo", trapRequest(3, 5))
+	if id, found, err := wire.Varint(entry, 11); err != nil || !found || id != 5501 {
+		t.Fatalf("rejoined field did not restore researched point: id%d found%v err%v", id, found, err)
+	}
+	preview := s.protocol(t, "/FieldObjectPreview", trapRequest(4, 5))
+	if id, found, err := wire.Varint(preview, 2); err != nil || !found || id != 5501 {
+		t.Fatalf("reward preview did not restore researched point: id%d found%v err%v", id, found, err)
+	}
+	response = s.protocol(t, "/FieldObjectResearch", wire.AppendVarint(trapRequest(5, 5), 3, 5501))
+	if len(appRows(response, 2)) != 0 || s.owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold+830 {
+		t.Fatal("research retry after rejoin repeated a client reward delta or paid gold twice")
+	}
+}
+
 func TestStoryCheckpointHTTPNativeSessionReachesActorAndPersistsCompletion(t *testing.T) {
 	factory, accounts := newIntegrationFactory(t)
 	s := &trapPlayerScenario{factory: factory, account: accounts[0]}

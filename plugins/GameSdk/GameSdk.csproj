@@ -9,6 +9,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$(BD2SdkCompileInputsFile)" Condition="'$(BD2SdkCompileInputsFile)' != ''" />
     <PackageReference Include="ICSharpCode.Decompiler" Version="9.1.0.7988" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <Compile Include="../GameNames/NameTable.cs" Link="NameTable.cs" />

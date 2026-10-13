@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -28,18 +29,31 @@ func (s *Service) AchievementExperience() (uint64, error) {
 }
 func (s *Service) achievementExperienceLocked() (uint64, error) {
 	var total uint64
-	known := map[string]bool{}
-	for key := range s.design.Achievements {
-		known["achievement:"+achievementName(key)] = true
-	}
+	seen := map[string]bool{}
 	for _, identity := range s.state.Claimed {
-		if strings.HasPrefix(identity, "achievement:") && !known[identity] {
-			return 0, fmt.Errorf("missions: incompatible claimed achievement %q missing from current GameData", identity)
-		}
-	}
-	for key, d := range s.design.Achievements {
-		if !contains(s.state.Claimed, "achievement:"+achievementName(key)) {
+		if seen[identity] {
 			continue
+		}
+		seen[identity] = true
+		name, achievement := strings.CutPrefix(identity, "achievement:")
+		if !achievement {
+			continue
+		}
+		parts := strings.Split(name, "/")
+		var key gamedata.AchievementKey
+		if len(parts) != 3 {
+			return 0, fmt.Errorf("missions: invalid claimed achievement")
+		}
+		for i, target := range []*uint64{&key.ContentsGroup, &key.GroupID, &key.ID} {
+			value, err := strconv.ParseUint(parts[i], 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("missions: invalid claimed achievement")
+			}
+			*target = value
+		}
+		d, known := s.design.Achievements[key]
+		if !known || achievementName(key) != name {
+			return 0, fmt.Errorf("missions: claimed achievement missing from current GameData")
 		}
 		if total > math.MaxUint64-d.AddExp {
 			return 0, fmt.Errorf("missions: achievement experience overflow")
@@ -47,4 +61,14 @@ func (s *Service) achievementExperienceLocked() (uint64, error) {
 		total += d.AddExp
 	}
 	return total, nil
+}
+
+func (s *Service) ClaimedMissionCount() uint64 {
+	var count uint64
+	for _, identity := range s.state.Claimed {
+		if strings.HasPrefix(identity, "mission:") {
+			count++
+		}
+	}
+	return count
 }

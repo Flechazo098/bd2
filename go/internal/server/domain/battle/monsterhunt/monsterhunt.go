@@ -56,6 +56,8 @@ type Service struct {
 	transientVersion    uint64
 	load                func(uint64) (*gamedata.MonsterHunt, error)
 	rewardGrant         func(ctx command.Context, _ string, _ []gamedata.Reward) ([]byte, error)
+	rankSource          RankSource
+	rankOwner           uint64
 }
 
 // RuleLoader returns shared immutable hunt rules.

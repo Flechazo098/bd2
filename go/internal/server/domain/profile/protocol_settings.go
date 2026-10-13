@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 )
 
-var profileCodes = map[string]int{"/UserContentsInfo": 215, "/UserContentsInfoOption": 216, "/UpdateUserContentsInfoOption": 217, "/UserGreetingChange": 219, "/UserTitleChange": 225, "/UserPortraitChange": 75, "/IdCardSave": 446, "/IdCardShopInfo": 447, "/IdCardShopBuy": 448, "/IdCardPresetSave": 449, "/IdCardPresetInfo": 450, "/IdCardPresetDelete": 451, "/IdCardRecovery": 452, "/SupporterDetail": 434, "/SupporterRegister": 435, "/SupporterRemove": 436, "/SupporterStatus": 438, "/SupporterInfo": 443, "/SupporterReward": 442}
+var profileCodes = map[string]int{"/UserContentsInfo": 215, "/UserContentsInfoOption": 216, "/UpdateUserContentsInfoOption": 217, "/UserGreetingChange": 219, "/UserTitleChange": 225, "/UserPortraitChange": 75, "/IdCardSave": 446, "/IdCardShopInfo": 447, "/IdCardShopBuy": 448, "/IdCardPresetSave": 449, "/IdCardPresetInfo": 450, "/IdCardPresetDelete": 451, "/IdCardRecovery": 452, "/SupporterDetail": 434, "/SupporterRegister": 435, "/SupporterRemove": 436, "/SupporterStatus": 438, "/SupporterInfo": 443}
 
 func (s *Service) handleSettings(ctx command.Context, path string, request []byte, seq uint64) (int, []byte, bool, error) {
 	code := profileCodes[path]

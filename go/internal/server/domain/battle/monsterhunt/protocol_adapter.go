@@ -54,9 +54,7 @@ func (s *Service) rankWire(u user) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := wire.AppendVarint(nil, 7, rank.Rank)
-	b = wire.AppendDouble(b, 8, rank.Score)
-	return wire.AppendDouble(b, 10, rank.TopPercent), nil
+	return RankWire(rank), nil
 }
 
 func (s *Service) grant(ctx command.Context, identity string, rewards []gamedata.BattleReward) ([]byte, error) {
@@ -546,13 +544,20 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		if id == 0 {
 			id = c.ID
 		}
+		if s.rankSource != nil {
+			for _, entry := range s.rankSource.Top(id, 100) {
+				out = wire.AppendBytes(out, 1, RankWire(entry))
+			}
+		}
 		if v, ok := s.state.Users[strconv.FormatUint(id, 10)]; ok && v.Played {
 			b, rankErr := s.rankWire(v)
 			if rankErr != nil {
 				e = rankErr
 				break
 			}
-			out = wire.AppendBytes(out, 1, b)
+			if s.rankSource == nil {
+				out = wire.AppendBytes(out, 1, b)
+			}
 			out = wire.AppendBytes(out, 2, b)
 		}
 	case "/MonsterHuntPresetInfo":

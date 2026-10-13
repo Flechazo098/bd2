@@ -33,6 +33,19 @@ func (p *playerAssembly) chat() error {
 				out = wire.AppendBytes(out, 7, base)
 			}
 		}
+		if p.shared != nil && p.shared.friends != nil {
+			owner, err := p.ProfileOwner(ctx)
+			if err != nil {
+				return nil, err
+			}
+			available, err := p.shared.friends.SupporterRewardAvailable(context.Background(), owner)
+			if err != nil {
+				return nil, err
+			}
+			if available {
+				out = wire.AppendVarint(out, 8, 1)
+			}
+		}
 		return out, nil
 	})
 }

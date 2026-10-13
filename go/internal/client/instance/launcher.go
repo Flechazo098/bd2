@@ -29,7 +29,13 @@ func (i Instance) WriteLauncher() (string, error) {
 			command.WriteByte('"')
 		}
 		var body strings.Builder
-		body.WriteString("Option Explicit\r\nDim shell, environment\r\nSet shell = CreateObject(\"WScript.Shell\")\r\nSet environment = shell.Environment(\"Process\")\r\n")
+		body.WriteString("Option Explicit\r\nDim shell, environment, files, processes, process, previousLog, pendingLog\r\nSet shell = CreateObject(\"WScript.Shell\")\r\nSet environment = shell.Environment(\"Process\")\r\n")
+		body.WriteString(`Set processes = GetObject("winmgmts:\\.\root\cimv2").ExecQuery("SELECT ExecutablePath FROM Win32_Process WHERE Name = 'BrownDust II.exe'")`)
+		body.WriteString("\r\nFor Each process In processes\r\nIf Not IsNull(process.ExecutablePath) Then\r\nIf LCase(process.ExecutablePath) = LCase(")
+		body.WriteString(quote(installation.Executable))
+		body.WriteString(") Then\r\nMsgBox \"This client instance is already running.\", 48, \"BD2\"\r\nWScript.Quit 1\r\nEnd If\r\nEnd If\r\nNext\r\nSet files = CreateObject(\"Scripting.FileSystemObject\")\r\npreviousLog = ")
+		body.WriteString(quote(filepath.Join(i.Root, "logs", "Player.log")))
+		body.WriteString("\r\nIf files.FileExists(previousLog) Then\r\npendingLog = files.BuildPath(files.GetParentFolderName(previousLog), \"bd2-previous.\" & files.GetTempName & \".Player-prev.log\")\r\nfiles.MoveFile previousLog, pendingLog\r\nEnd If\r\n")
 		body.WriteString(`environment("BD2_CLIENT_INSTANCE_ID") = `)
 		body.WriteString(quote(i.ID))
 		body.WriteString("\r\n")
@@ -72,7 +78,9 @@ func (i Instance) WriteLauncher() (string, error) {
 	body.WriteByte('\n')
 	body.WriteString("cd ")
 	body.WriteString(quote(installation.Root))
-	body.WriteString("\nexec ")
+	body.WriteString("\nprevious_log=")
+	body.WriteString(quote(filepath.Join(i.Root, "logs", "Player.log")))
+	body.WriteString("\nif [ -f \"$previous_log\" ]; then\n  pending_log=\"$(dirname \"$previous_log\")/bd2-previous.$(date +%Y%m%d%H%M%S).$$.Player-prev.log\"\n  ln \"$previous_log\" \"$pending_log\"\n  rm \"$previous_log\"\nfi\nexec ")
 	body.WriteString(quote(installation.Executable))
 	for _, arg := range args {
 		body.WriteByte(' ')

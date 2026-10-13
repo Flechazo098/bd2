@@ -14,6 +14,8 @@ import (
 
 type designCatalog struct {
 	friends                  gamedata.FriendRules
+	rooms                    *gamedata.RoomDesign
+	roomCommerce             *gamedata.RoomCommerceDesign
 	chat                     *gamedata.ChatDesign
 	pvp                      *pvp.Rules
 	guild                    *gamedata.GuildDesign

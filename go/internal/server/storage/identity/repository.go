@@ -312,6 +312,20 @@ type GameProfile struct {
 	UserID     string
 }
 
+func (s *Store) PublicGameProfile(ctx context.Context, accountID string) (identity.GameProfile, error) {
+	var profile identity.GameProfile
+	var ownerIndex int64
+	err := s.db.QueryRowContext(ctx, `SELECT account_id,owner_index FROM game_profiles WHERE account_id=?`, accountID).Scan(&profile.AccountID, &ownerIndex)
+	if err != nil {
+		return identity.GameProfile{}, err
+	}
+	if profile.AccountID == "" || ownerIndex <= 0 {
+		return identity.GameProfile{}, errors.New("auth: public game identity invalid")
+	}
+	profile.UID = strconv.FormatInt(ownerIndex, 10)
+	return profile, nil
+}
+
 func allocateGameProfile(tx *sql.Tx, accountID string) (GameProfile, error) {
 	var maximum int64
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(owner_index),0) FROM game_profiles`).Scan(&maximum); err != nil {

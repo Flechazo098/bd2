@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -414,6 +415,14 @@ func (s *Service) ValidateAccess(token string) (string, error) {
 		return "", ErrUnauthorized
 	}
 	return row.AccountID, nil
+}
+
+func (s *Service) SessionProfile(ctx context.Context, token string) (GameProfile, error) {
+	accountID, err := s.ValidateAccess(token)
+	if err != nil {
+		return GameProfile{}, failure(Unauthorized, "access token invalid")
+	}
+	return s.store.PublicGameProfile(ctx, accountID)
 }
 
 func (s *Service) AuthorizeAdministrator(token string) (string, error) {

@@ -159,6 +159,17 @@ func TestForestSideQuestCompletionSurvivesPackEntry(t *testing.T) {
 			if err != nil || id != uint64(step.next) || levelErr != nil || level != 0 {
 				t.Fatalf("forest continuation must remain normal side quest %d: id=%d level=%d", step.next, id, level)
 			}
+			// QuestPacket plays the completion cinema before the next objective;
+			// LoginUI acknowledges that presentation at its native end callback.
+			presentation, err := service.StoryCheckpoint(ctx, StoryCheckpointRequest{Operation: "read"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if presentation.Checkpoint != nil {
+				if _, err := service.StoryCheckpoint(ctx, StoryCheckpointRequest{Operation: "complete", StoryCheckpoint: StoryCheckpoint{ID: presentation.Checkpoint.ID}}); err != nil {
+					t.Fatal(err)
+				}
+			}
 		})
 		run(func(ctx command.Context, service *Service) {
 			rows := service.activeSideQuestWires(1)

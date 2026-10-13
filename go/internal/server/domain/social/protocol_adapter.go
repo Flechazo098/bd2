@@ -23,6 +23,7 @@ import (
 )
 
 var packetCodes = map[string]int{
+	"/SupporterReward": 442,
 	// These current request callbacks ignore the success packet code; the client enum has no corresponding entries.
 	"/GuildRaidSeasonRanking": 0, "/GuildRaidPresetDelete": 0, "/GuildRaidPresetInfoChange": 0,
 	"/GuildRaidMainInfo": 291, "/GuildRaidBossBattleInfo": 293, "/GuildRaidBossQuickBattle": 294, "/GuildRaidMemberRanking": 309, "/GuildRaidSeasonReward": 310, "/GuildRaidDeckInfo": 312, "/GuildRaidDeckSave": 313, "/GuildRaidBossBattleEnter": 316, "/GuildRaidBossBattleHistory": 339, "/GuildRaidMemberPlayHistoryInfo": 375, "/GuildRaidPresetSlotAdd": 399, "/GuildRaidPresetInfo": 403, "/GuildRaidPresetSave": 404, "/GuildRaidPresetUse": 411, "/GuildRaidBossPracticeBattleEnter": 453,
@@ -40,7 +41,7 @@ func Mutates(path string) bool {
 		}
 	}
 	switch path {
-	case "/GuildInfo", "/GuildCreate", "/GuildLeave", "/GuildJoin", "/GuildAccept", "/GuildJoinRefuse", "/GuildMemberBan", "/GuildMemberRoleEdit", "/GuildInfoEdit", "/GuildJoinSendCancel", "/GuildDeleteCancel", "/GuildSupporterAdd", "/GuildSupporterDelete", "/GuildUpdateActionInfo", "/GuildNoticeUpdate", "/GuildNameChange":
+	case "/SupporterReward", "/GuildInfo", "/GuildCreate", "/GuildLeave", "/GuildJoin", "/GuildAccept", "/GuildJoinRefuse", "/GuildMemberBan", "/GuildMemberRoleEdit", "/GuildInfoEdit", "/GuildJoinSendCancel", "/GuildDeleteCancel", "/GuildSupporterAdd", "/GuildSupporterDelete", "/GuildUpdateActionInfo", "/GuildNoticeUpdate", "/GuildNameChange":
 		return true
 	}
 	return false
@@ -246,6 +247,13 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		}
 	}
 	switch path {
+	case "/SupporterReward":
+		op.Kind = SupporterClaim
+		op.GuildID = 0
+		op.UsageIDs, e = p.integers(2)
+		if e != nil {
+			return fail(e)
+		}
 	case "/GuildInfo":
 		target, e := p.integer(2)
 		if e != nil {
@@ -473,7 +481,7 @@ func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 		}
 	}
 	if len(r.Grants) > 0 {
-		if r.Kind == RaidClaim {
+		if r.Kind == RaidClaim || r.Kind == SupporterClaim {
 			if s.config.RewardBundle == nil {
 				return plan.Code, nil, ErrInvalid
 			}
@@ -481,7 +489,11 @@ func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 			if e != nil {
 				return plan.Code, nil, e
 			}
-			plan.Response = wire.AppendVarint(wire.AppendBytes(nil, 1, bundle), 2, 1)
+			if r.Kind == SupporterClaim {
+				plan.Response = wire.AppendBytes(plan.Response, 2, bundle)
+			} else {
+				plan.Response = wire.AppendVarint(wire.AppendBytes(nil, 1, bundle), 2, 1)
+			}
 		} else if e := s.config.Grant(ctx, r.ID, r.Grants); e != nil {
 			return plan.Code, nil, e
 		}
@@ -540,6 +552,13 @@ func (s *Service) Cancel(ctx context.Context, plan *Plan) error {
 }
 
 func (s *Service) mutationResponse(ctx context.Context, path string, r Reservation, p packet) ([]byte, error) {
+	if r.Kind == SupporterClaim {
+		var out []byte
+		for _, id := range r.UsageIDs {
+			out = wire.AppendVarint(out, 1, id)
+		}
+		return out, nil
+	}
 	if r.View == nil {
 		if r.Kind == Acknowledge {
 			return nil, nil

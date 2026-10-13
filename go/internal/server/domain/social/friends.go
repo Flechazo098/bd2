@@ -3,7 +3,9 @@ package social
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/profile"
+	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/protocol/wire"
 	"context"
 	"crypto/sha256"
@@ -13,11 +15,11 @@ import (
 	"time"
 )
 
-var friendCodes = map[string]int{"/FriendInfoList": 204, "/FriendSend": 205, "/FriendAccept": 206, "/FriendRefuse": 207, "/FriendRemove": 208, "/FriendSendList": 209, "/FriendReceiveList": 210, "/FriendRecommend": 211, "/FriendSearch": 212, "/FriendSendRemove": 213}
+var friendCodes = map[string]int{"/FriendInfoList": 204, "/FriendSend": 205, "/FriendAccept": 206, "/FriendRefuse": 207, "/FriendRemove": 208, "/FriendSendList": 209, "/FriendReceiveList": 210, "/FriendRecommend": 211, "/FriendSearch": 212, "/FriendSendRemove": 213, "/LikeUser": 203, "/MyLikeInfo": 218, "/SupporterBattleInfo": 439, "/SupporterBorrow": 437, "/SupporterStatus": 438, "/MyRoomUserInfo": 228, "/MyRoomSearchFriend": 230, "/MyRoomSearchRecommend": 231, "/MyRoomSearchGuild": 424, "/MyRoomLike": 420, "/MyRoomShareOptionUpdate": 645, "/MyRoomSave": 229, "/MyRoomNameChange": 234, "/MyRoomPrimaryChange": 235, "/MyRoomMove": 419, "/MyRoomItemInfo": 232, "/MyRoomPresetInfo": 641, "/MyRoomPresetSave": 642, "/MyRoomPresetNameChange": 643, "/MyRoomPresetDelete": 644}
 
 func OwnsFriend(path string) bool { _, found := friendCodes[path]; return found }
 func FriendMutates(path string) bool {
-	return path == "/FriendSend" || path == "/FriendAccept" || path == "/FriendRefuse" || path == "/FriendRemove" || path == "/FriendSendRemove"
+	return roomMutates(path) || path == "/SupporterBattleInfo" || path == "/LikeUser" || path == "/SupporterBorrow" || path == "/FriendSend" || path == "/FriendAccept" || path == "/FriendRefuse" || path == "/FriendRemove" || path == "/FriendSendRemove"
 }
 
 type FriendProfile struct {
@@ -26,6 +28,9 @@ type FriendProfile struct {
 	Version          uint64
 	LastLoginMS      int64
 	Snapshot         profile.Snapshot
+	RoomIDs          []uint64
+	RoomItems        []inventory.Item
+	RoomCostumes     []roster.Costume
 	SupporterDetails map[uint64][]byte
 }
 
@@ -40,16 +45,21 @@ type friendReceipt struct {
 	Response []byte
 }
 type Friends struct {
-	store Store
-	rules gamedata.FriendRules
-	now   func() time.Time
+	store      Store
+	rules      gamedata.FriendRules
+	now        func() time.Time
+	rooms      *gamedata.RoomDesign
+	supporters gamedata.SupporterRules
 }
 
-func NewFriends(store Store, rules gamedata.FriendRules) (*Friends, error) {
+func NewFriends(store Store, rules gamedata.FriendRules, supporters gamedata.SupporterRules, rooms *gamedata.RoomDesign, now func() time.Time) (*Friends, error) {
 	if store == nil || rules.Friends == 0 || rules.Sent == 0 || rules.Received == 0 || rules.Recommended == 0 || rules.ExpireDays == 0 {
 		return nil, ErrInvalid
 	}
-	return &Friends{store: store, rules: rules, now: time.Now}, nil
+	if now == nil {
+		now = time.Now
+	}
+	return &Friends{store: store, rules: rules, supporters: supporters, rooms: rooms, now: now}, nil
 }
 
 func (f *Friends) Publish(ctx context.Context, p FriendProfile) error {
@@ -68,6 +78,11 @@ func (f *Friends) Publish(ctx context.Context, p FriendProfile) error {
 		if found && old.Version >= p.Version {
 			return nil
 		}
+		if f.rooms != nil {
+			if err := f.ensureRooms(tx, p); err != nil {
+				return err
+			}
+		}
 		return save(tx, "friend.directory", numberKey(p.OwnerIndex), p)
 	})
 }
@@ -81,7 +96,15 @@ func (f *Friends) Profile(ctx context.Context, owner uint64) (FriendProfile, err
 		if !found {
 			return ErrNotFound
 		}
-		return nil
+		if _, err = load(tx, "friend.like_counts", numberKey(owner), &out.Snapshot.LikeCount); err != nil {
+			return err
+		}
+		row, err := friendWire(tx, out, 0)
+		if err != nil {
+			return err
+		}
+		out.Snapshot.GuildBase, _, err = wire.Bytes(row, 7)
+		return err
 	})
 	return out, err
 }
@@ -193,7 +216,7 @@ func friendError(code, kind int, message string) error {
 	return &command.GameError{PacketCode: code, ErrorType: kind, Message: message}
 }
 
-func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner uint64, path string, raw []byte) (int, []byte, error) {
+func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner uint64, path string, raw []byte, contentType uint64) (int, []byte, error) {
 	code, known := friendCodes[path]
 	if !known {
 		return 0, nil, ErrInvalid
@@ -206,9 +229,12 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 	if err != nil || seq == 0 || seq > math.MaxInt32 {
 		return code, nil, ErrInvalid
 	}
-	target, err := p.integer(2)
-	if err != nil {
-		return code, nil, err
+	var target uint64
+	if !roomOwns(path) {
+		target, err = p.integer(2)
+		if err != nil {
+			return code, nil, err
+		}
 	}
 	if path == "/FriendInfoList" && target > 1 {
 		return code, nil, ErrInvalid
@@ -248,6 +274,37 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 			}
 		}
 		now := f.now().UnixMilli()
+		if roomOwns(path) {
+			response, err = f.room(tx, self, path, p, now)
+			if err != nil {
+				return err
+			}
+			if FriendMutates(path) {
+				return save(tx, "friend.receipts", id, friendReceipt{Digest: digest, Code: code, Response: response})
+			}
+			return nil
+		}
+
+		if path == "/LikeUser" || path == "/MyLikeInfo" {
+			response, err = f.like(tx, owner, target, path, now)
+			if err != nil {
+				return err
+			}
+			if FriendMutates(path) {
+				return save(tx, "friend.receipts", id, friendReceipt{Digest: digest, Code: code, Response: response})
+			}
+			return nil
+		}
+		if path == "/SupporterBattleInfo" || path == "/SupporterBorrow" || path == "/SupporterStatus" {
+			response, err = f.supporter(tx, self, path, p, now, identity.SessionID, contentType)
+			if err != nil {
+				return err
+			}
+			if FriendMutates(path) {
+				return save(tx, "friend.receipts", id, friendReceipt{Digest: digest, Code: code, Response: response})
+			}
+			return nil
+		}
 		edges, err := friendEdges(tx, owner, now, f.rules.ExpireDays)
 		if err != nil {
 			return err

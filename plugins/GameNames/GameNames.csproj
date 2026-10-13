@@ -22,6 +22,7 @@
     <Error Condition="!Exists('$(GameNamesTable).gz')" Text="Build a plugin with GameSdk.targets, or pass GameNamesTable pointing to generated names.json." />
   </Target>
   <ItemGroup>
+    <Compile Include="$(BD2NamesCompileInputsFile)" Condition="'$(BD2NamesCompileInputsFile)' != ''" />
     <Compile Include="Game.cs;GameMemberKind.cs;NameTable.cs" />
     <EmbeddedResource Include="$(GameNamesTable).gz" LogicalName="BD2.GameNames.names.json.gz" />
     <None Include="README.md" Pack="true" PackagePath="README.md" />

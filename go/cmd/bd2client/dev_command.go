@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	clientlayout "bd2server/internal/client/layout"
+	clientplugin "bd2server/internal/client/plugin"
 )
 
 type clientDevelopmentConfig struct {
@@ -174,36 +174,6 @@ func buildDevelopmentPlugins(root, gameDir string) error {
 	if !clientDevelopmentFile(filepath.Join(installation.BepInEx, "core", "BepInEx.dll")) {
 		return nil
 	}
-	projects := []string{
-		filepath.Join(root, "plugins", "LocalIdentity", "LocalIdentity.csproj"),
-		filepath.Join(root, "plugins", "LoginUI", "LoginUI.csproj"),
-		filepath.Join(root, "plugins", "CashShop", "CashShop.csproj"),
-		filepath.Join(root, "plugins", "FChat", "FChat.csproj"),
-	}
-	for _, project := range projects {
-		fmt.Fprintf(os.Stderr, "bd2client: preparing development plugin %s; first-time game source generation may take several minutes\n", filepath.Base(project))
-		command := exec.Command(
-			"dotnet", "build", project, "-c", "Release",
-			"-p:GameDir="+filepath.Clean(gameDir),
-			"-p:BD2ManagedDir="+filepath.Join(installation.Data, "Managed"),
-			"-p:BD2BepInExDir="+installation.BepInEx,
-			"--nologo",
-		)
-		command.Dir = root
-		// SDK preparation can decompile the entire game before the window opens.
-		// Stream progress immediately, while retaining diagnostics for failures.
-		var output bytes.Buffer
-		writer := io.MultiWriter(os.Stderr, &output)
-		command.Stdout = writer
-		command.Stderr = writer
-		err := command.Run()
-		if err != nil {
-			message := strings.TrimSpace(output.String())
-			if message == "" {
-				message = err.Error()
-			}
-			return fmt.Errorf("build development plugin %s: %s", filepath.Base(project), message)
-		}
-	}
-	return nil
+	fmt.Fprintln(os.Stderr, "bd2client: preparing four development plugins; cached inputs will be reused")
+	return clientplugin.BuildDevelopment(root, gameDir, os.Stderr)
 }

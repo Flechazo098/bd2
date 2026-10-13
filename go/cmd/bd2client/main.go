@@ -19,6 +19,13 @@ type clientRunOptions struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "prepare" {
+		if err := prepareClient(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "bd2client prepare:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	relaunched, err := relaunchDevelopmentIfNeeded(os.Args[1:])
 	if err != nil {
 		clientapp.ShowFatalError(err)

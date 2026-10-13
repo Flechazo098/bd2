@@ -24,6 +24,7 @@ type sharedRuntime struct {
 	rooms     *roomResults
 	store     *shared.Store
 	pvp       *ranking.PVP
+	huntRanks *ranking.MonsterHunt
 	guild     *social.Owner
 	friends   *social.Friends
 	delivery  atomic.Pointer[delivery.Dispatcher]
@@ -40,11 +41,15 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
+	huntRanks, err := ranking.NewMonsterHunt(ctx, rankingStore{store})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
 	guild, err := social.New(socialStore{store}, design.guild)
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	friends, err := social.NewFriends(socialStore{store}, design.friends)
+	friends, err := social.NewFriends(socialStore{store}, design.friends, design.guild.Supporters, design.rooms, time.Now)
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
@@ -56,7 +61,7 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	return &sharedRuntime{store: store, pvp: pvp, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
+	return &sharedRuntime{store: store, pvp: pvp, huntRanks: huntRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
 }
 
 func (s *sharedRuntime) wake(account string) {
@@ -68,6 +73,9 @@ func (s *sharedRuntime) wake(account string) {
 func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error {
 	if _, _, err := outbox.Validate(event); err != nil {
 		return err
+	}
+	if event.Envelope.Event.Topic == "monster_hunt.ranking" {
+		return s.consumeHuntRanking(ctx, event)
 	}
 	if event.Envelope.Event.Topic == "fishing.projection" {
 		return s.rooms.updateFishing(ctx, event)

@@ -35,6 +35,31 @@ func (s *Store) ResearchObjects(ctx command.Context, pack int) ([]int, error) {
 	sort.Ints(ids)
 	return ids, nil
 }
+
+func (s *Store) AllResearchObjects(ctx command.Context) (map[int]map[int]bool, error) {
+	store, err := s.fieldRewardEntries()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := store.ListEntries(ctx.State, "progress", "field_research")
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]map[int]bool{}
+	for key, raw := range entries {
+		packKey, objectKey, found := strings.Cut(key, ":")
+		pack, packErr := strconv.Atoi(packKey)
+		id, idErr := strconv.Atoi(objectKey)
+		if !found || packErr != nil || idErr != nil || pack <= 0 || id <= 0 || key != fieldRewardKey(pack, id) || string(raw) != "once" {
+			return nil, fmt.Errorf("progress: invalid research identity")
+		}
+		if out[pack] == nil {
+			out[pack] = map[int]bool{}
+		}
+		out[pack][id] = true
+	}
+	return out, nil
+}
 func (s *Store) ResearchObjectReply(ctx command.Context, pack, id int) ([]byte, bool, error) {
 
 	store, err := s.fieldRewardEntries()

@@ -12,9 +12,12 @@ namespace Bd2FChat;
 internal static class TranslationSettingsUI
 {
     private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+    private static AddressableAsset<GameObject> controlsAsset;
+    private static bool loadingControls, quitting;
 
     internal static void Install(Harmony harmony)
     {
+        Application.quitting += ReleaseControls;
         harmony.Patch(Declared(typeof(ChatSettingPopupUI), "SetChatSetting"),
             postfix: new HarmonyMethod(typeof(TranslationSettingsUI), nameof(ChatSettingsReady)));
         harmony.Patch(Declared(typeof(GreetingPopupUI), "OnClickUI", typeof(GameObject)),
@@ -85,16 +88,49 @@ internal static class TranslationSettingsUI
 
     internal static void Open()
     {
-        if (ClientSession.ServerOrigin == null) return;
-        UIManager.AddUI<GreetingPopupUI>(popup =>
-    {
-        try { popup.gameObject.AddComponent<TranslationSettingsPanel>().Initialize(popup); }
-        catch (Exception error)
+        if (ClientSession.ServerOrigin == null || quitting || loadingControls || UIManager.IsShowingNetworkErrorPopup) return;
+        if (controlsAsset != null) { OpenPrepared(); return; }
+        loadingControls = true;
+        try
         {
-            popup.CloseUI();
-            Plugin.Log?.LogWarning("Native translation settings panel: " + error.GetType().Name);
+            NativeTranslationControls.LoadPrefab("EquipmentFilterPopupUI", asset =>
+            {
+                loadingControls = false;
+                if (quitting) { asset.Release(); return; }
+                controlsAsset = asset;
+                if (ClientSession.ServerOrigin != null && !UIManager.IsShowingNetworkErrorPopup) OpenPrepared();
+            }, ControlsFailed);
         }
-    }, "GreetingPopupUI", true, "");
+        catch (Exception error) { ControlsFailed(error); }
+    }
+
+    private static void OpenPrepared()
+    {
+        UIManager.AddUI<GreetingPopupUI>(popup =>
+        {
+            if (quitting || ClientSession.ServerOrigin == null) { popup.CloseForceUI(true); return; }
+            try { popup.gameObject.AddComponent<TranslationSettingsPanel>().Initialize(popup, controlsAsset.Asset); }
+            catch (Exception error)
+            {
+                popup.CloseForceUI(true);
+                Plugin.Log?.LogWarning("Native translation settings panel: " + error.GetType().Name);
+            }
+        }, "GreetingPopupUI", true, "");
+    }
+
+    private static void ControlsFailed(Exception error)
+    {
+        loadingControls = false;
+        if (quitting) return;
+        UIManager.OpenBarNotice(TextComponent.Translatable("fchat.panel.controls_failed").GetString(), false, null);
+        Plugin.Log?.LogWarning("Native translation controls preload: " + error.GetType().Name);
+    }
+
+    private static void ReleaseControls()
+    {
+        quitting = true;
+        controlsAsset?.Release();
+        controlsAsset = null;
     }
 
     private static bool ConfigClick(GreetingPopupUI __instance, GameObject __0)

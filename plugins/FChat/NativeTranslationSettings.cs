@@ -13,6 +13,9 @@ namespace Bd2FChat;
 internal sealed class TranslationConfig
 {
     public bool Enabled;
+    public bool TranslateOwnMessages;
+    public string TargetLanguage = string.Empty;
+    public string LanguageBlacklist = string.Empty;
     public string ApiUrl = string.Empty;
     public string Model = string.Empty;
     public string ApiKey = string.Empty;
@@ -29,6 +32,8 @@ internal static class NativeTranslationSettings
         if (string.IsNullOrEmpty(json)) return new TranslationConfig();
         TranslationConfig config = JsonUtility.FromJson<TranslationConfig>(json) ?? new TranslationConfig();
         config.ApiKey = string.Empty;
+        config.TargetLanguage ??= string.Empty;
+        config.LanguageBlacklist ??= string.Empty;
         return config;
     }
 
@@ -69,7 +74,20 @@ internal static class NativeTranslationSettings
     private static TranslationConfig Validate(TranslationConfig input, bool complete)
     {
         if (input == null) throw new ArgumentException(TextComponent.Translatable("fchat.error.config_empty").GetString());
-        var config = new TranslationConfig { Enabled = input.Enabled, ApiUrl = (input.ApiUrl ?? string.Empty).Trim(), Model = (input.Model ?? string.Empty).Trim(), ApiKey = (input.ApiKey ?? string.Empty).Trim() };
+        var config = new TranslationConfig
+        {
+            Enabled = input.Enabled,
+            TranslateOwnMessages = input.TranslateOwnMessages,
+            TargetLanguage = (input.TargetLanguage ?? string.Empty).Trim(),
+            LanguageBlacklist = NormalizeBlacklist(input.LanguageBlacklist),
+            ApiUrl = (input.ApiUrl ?? string.Empty).Trim(),
+            Model = (input.Model ?? string.Empty).Trim(),
+            ApiKey = (input.ApiKey ?? string.Empty).Trim()
+        };
+        if ((input.TargetLanguage ?? string.Empty).Length > 200 || HasControl(input.TargetLanguage ?? string.Empty))
+            throw new ArgumentException(TextComponent.Translatable("fchat.error.target_invalid").GetString());
+        if ((input.LanguageBlacklist ?? string.Empty).Length > 2000 || config.LanguageBlacklist.Length > 2000 || HasControl(input.LanguageBlacklist ?? string.Empty))
+            throw new ArgumentException(TextComponent.Translatable("fchat.error.blacklist_invalid").GetString());
         if (complete || config.ApiUrl.Length != 0)
         {
             if (!Uri.TryCreate(config.ApiUrl, UriKind.Absolute, out Uri uri) ||
@@ -88,6 +106,17 @@ internal static class NativeTranslationSettings
     }
 
     private static bool HasControl(string value) { foreach (char c in value) if (char.IsControl(c)) return true; return false; }
+
+    private static string NormalizeBlacklist(string value)
+    {
+        var entries = new System.Collections.Generic.List<string>();
+        foreach (string entry in (value ?? string.Empty).Replace('，', ',').Split(','))
+        {
+            string trimmed = entry.Trim();
+            if (trimmed.Length != 0) entries.Add(trimmed);
+        }
+        return string.Join(", ", entries);
+    }
 
     private static string NormalizeOrigin(Uri uri)
     {

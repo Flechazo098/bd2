@@ -29,6 +29,16 @@ func (p *playerAssembly) publicFriendProfile(ctx command.Context) (social.Friend
 			return profile, err
 		}
 	}
+	for _, item := range p.ownedItems.All(ctx) {
+		if item.Type == 27 || item.Type == 28 {
+			profile.RoomItems = append(profile.RoomItems, item)
+		}
+	}
+	profile.RoomCostumes = p.collection.Costumes()
+	profile.RoomIDs, err = (social.RoomCommerce{}).OwnedRooms(ctx)
+	if err != nil {
+		return profile, err
+	}
 	profile.SupporterDetails, err = p.profileService.PublicSupporterDetails(ctx)
 	if err != nil {
 		return profile, err
@@ -94,7 +104,42 @@ func (p *playerInstance) prepareFriends(ctx context.Context, request player.Comm
 				return nil, err
 			}
 		}
-		code, body, err := p.factory.shared.friends.Execute(ctx, request.Identity, own.OwnerIndex, item.Path, item.Body)
+		if strings.HasPrefix(item.Path, "/MyRoom") {
+			var current social.FriendProfile
+			if err := p.readLocal(ctx, request.Identity, func(c command.Context) error {
+				var err error
+				current, err = p.assembly.publicFriendProfile(c)
+				return err
+			}); err != nil {
+				return nil, err
+			}
+			if err := p.factory.shared.friends.Publish(ctx, current); err != nil {
+				return nil, err
+			}
+		}
+		if err := p.factory.shared.friends.PrepareRoomText(ctx, request.Identity, item.Path, item.Body, func(text string) error {
+			return p.assembly.checkText(ctx, request.Identity.AccountID, "room_name", text, map[string]int{"/MyRoomNameChange": 234, "/MyRoomSave": 229, "/MyRoomPresetSave": 642, "/MyRoomPresetNameChange": 643}[item.Path])
+		}); err != nil {
+			return nil, err
+		}
+		var contentType uint64
+		if item.Path == "/SupporterBattleInfo" || item.Path == "/SupporterBorrow" {
+			if err := p.readLocal(ctx, request.Identity, func(c command.Context) error {
+				pack, err := p.assembly.worldService.CurrentPackID(c)
+				if err != nil {
+					return err
+				}
+				typ, found := p.assembly.design.recovery.Types[pack]
+				if !found {
+					return social.ErrInvalid
+				}
+				contentType = typ
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+		code, body, err := p.factory.shared.friends.Execute(ctx, request.Identity, own.OwnerIndex, item.Path, item.Body, contentType)
 		if errors.Is(err, social.ErrConflict) {
 			return nil, player.ErrIdentityConflict
 		}
@@ -117,6 +162,8 @@ func friendProfileChanged(requests []player.Request) bool {
 			}
 		}
 		switch r.Path {
+		case "/MyRoomExpand", "/MyRoomShopBuy", "/MyRoomShopMultiBuy":
+			return true
 		case "/UserPortraitChange", "/UserTitleChange", "/UserNicknameChange", "/SupporterRegister", "/SupporterRemove", "/UpdateUserContentsInfoOption", "/UserGreetingChange", "/IdCardSave", "/IdCardRecovery", "/AvatarUse", "/AvatarSave", "/GuildCreate", "/GuildJoin", "/GuildLeave", "/GuildMemberBan", "/GuildInfoEdit", "/GuildNameChange", "/CharLevelUp", "/CostumeLevelUp", "/CharAwake", "/EquipUse", "/EquipUpgrade", "/CostumePotentialUpgrade", "/PrestigeSkinUse":
 			return true
 		}

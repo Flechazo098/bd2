@@ -14,6 +14,14 @@ func (d *designCatalog) loadSharedDesign(c *configuration) error {
 		return fmt.Errorf("load friend design: %w", err)
 	}
 	d.friends = friendRules
+	d.rooms, err = gamedata.LoadRoomDesign(c.gameData, c.gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load room social design: %w", err)
+	}
+	d.roomCommerce, err = gamedata.LoadRoomCommerceDesign(c.gameData, c.gameDataVersion)
+	if err != nil {
+		return fmt.Errorf("load room commerce design: %w", err)
+	}
 	d.chat, err = gamedata.LoadChatDesign(c.gameData, c.gameDataVersion)
 	if err != nil {
 		return fmt.Errorf("load chat design: %w", err)

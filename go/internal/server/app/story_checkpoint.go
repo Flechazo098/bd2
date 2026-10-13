@@ -66,7 +66,10 @@ func (h storyCheckpoints) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	reply, err := future.Wait(r.Context())
 	if err != nil {
-		slog.Warn("Story checkpoint request failed", "phase", "execute", "operation", request.Operation, "error", err)
+		slog.Warn("Story checkpoint request failed", "phase", "execute", "operation", request.Operation,
+			"pack", request.PackID, "quest", request.QuestID, "difficulty", request.Difficulty,
+			"story_phase", request.Phase, "map", request.MapID, "timeline", request.Timeline,
+			"object", request.ObjectID, "talk_group", request.SimpleTalkGroupID, "error", err)
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, world.ErrInvalidRequest) {
 			status = http.StatusBadRequest

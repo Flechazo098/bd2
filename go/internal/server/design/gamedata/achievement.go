@@ -13,6 +13,7 @@ type AchievementCondition struct{ Type, SubType, ParentGroup uint64 }
 type AchievementCounterDesign struct {
 	Groups     map[int][]int
 	Conditions map[int]AchievementCondition
+	Children   map[int][]AchievementCondition
 }
 
 func LoadAchievementCounterDesign(root, version string) (*AchievementCounterDesign, error) {
@@ -32,6 +33,7 @@ func loadAchievementCounterDesign(db *sql.DB) (*AchievementCounterDesign, error)
 	defer func() { _ = rows.Close() }()
 	sets := map[int]map[int]bool{}
 	conditions := map[int]AchievementCondition{}
+	children := map[int][]AchievementCondition{}
 	for rows.Next() {
 		var raw []byte
 		if err := rows.Scan(&raw); err != nil {
@@ -51,6 +53,7 @@ func loadAchievementCounterDesign(db *sql.DB) (*AchievementCounterDesign, error)
 		// The wire update carries no content group.
 
 		if fields[13] != 0 {
+			children[fields[13]] = append(children[fields[13]], AchievementCondition{Type: uint64(fields[2]), SubType: uint64(fields[1]), ParentGroup: uint64(fields[13])})
 			continue
 		}
 		group, content := fields[9], fields[4]
@@ -70,7 +73,7 @@ func loadAchievementCounterDesign(db *sql.DB) (*AchievementCounterDesign, error)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	design := &AchievementCounterDesign{Groups: map[int][]int{}, Conditions: conditions}
+	design := &AchievementCounterDesign{Groups: map[int][]int{}, Conditions: conditions, Children: children}
 	for group, contents := range sets {
 		for content := range contents {
 			design.Groups[group] = append(design.Groups[group], content)

@@ -22,6 +22,14 @@ func (s *Store) ActivatedWaypoint(pack, id uint64) bool {
 
 	return hasWaypoint(s.state.Waypoints[pack], id)
 }
+
+func (s *Store) ActivatedWaypointCount() uint64 {
+	var count uint64
+	for _, points := range s.state.Waypoints {
+		count += uint64(len(points))
+	}
+	return count
+}
 func hasWaypoint(points []uint64, id uint64) bool {
 	return slices.Contains(points, id)
 }

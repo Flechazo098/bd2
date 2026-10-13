@@ -13,11 +13,12 @@ import (
 type GameplayAchievementRecordedEvent struct {
 	Identity             string
 	Type, SubType, Count uint64
+	RecordedHistory      bool
 }
 
 // ApplyGameplayProgress keeps one observer boundary on one validated counter
-// snapshot. Conditions are applied first and events retain their original
-// order. Event receipts and all counter changes are written atomically; the
+// snapshot. Exact conditions precede events; retained-state floors follow
+// increments. Event receipts and all counter changes are written atomically; the
 // next boundary loads fresh state from its transaction, including after retry.
 func (s *AchievementService) ApplyGameplayProgress(ctx command.Context, conditions []GameplayAchievementCondition, events []GameplayAchievementRecordedEvent) (map[int]uint64, map[int]uint64, error) {
 
@@ -42,6 +43,16 @@ func (s *AchievementService) ApplyGameplayProgress(ctx command.Context, conditio
 	for key := range groups {
 		sort.Ints(groups[key])
 	}
+	conditionGroups := func(c GameplayAchievementCondition) ([]int, error) {
+		if c.GroupID == 0 {
+			return groups[[2]uint64{c.Type, c.SubType}], nil
+		}
+		group := int(c.GroupID)
+		if uint64(group) != c.GroupID || s.design.Conditions[group].Type != c.Type || s.design.Conditions[group].SubType != c.SubType {
+			return nil, fmt.Errorf("achievement: condition group mismatch")
+		}
+		return []int{group}, nil
+	}
 	var changes []stateio.EntryMutation
 	set := func(group int, value int64) {
 		key := strconv.Itoa(group)
@@ -53,7 +64,14 @@ func (s *AchievementService) ApplyGameplayProgress(ctx command.Context, conditio
 		if condition.Value > math.MaxInt64 {
 			return nil, nil, fmt.Errorf("achievement: invalid absolute value")
 		}
-		for _, group := range groups[[2]uint64{condition.Type, condition.SubType}] {
+		if condition.LowerBound {
+			continue
+		}
+		targets, err := conditionGroups(condition)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, group := range targets {
 			if state.Counts[strconv.Itoa(group)] != int64(condition.Value) {
 				set(group, int64(condition.Value))
 			}
@@ -79,6 +97,9 @@ func (s *AchievementService) ApplyGameplayProgress(ctx command.Context, conditio
 			continue
 		}
 		for _, group := range groups[[2]uint64{event.Type, event.SubType}] {
+			if event.RecordedHistory {
+				continue
+			}
 			old := state.Counts[strconv.Itoa(group)]
 			if old > math.MaxInt64-int64(event.Count) {
 				return nil, nil, fmt.Errorf("achievement: event overflow")
@@ -87,6 +108,22 @@ func (s *AchievementService) ApplyGameplayProgress(ctx command.Context, conditio
 		}
 		pending[event.Identity] = digest
 		changes = append(changes, stateio.EntryMutation{Bucket: "achievement_events", Key: event.Identity, Payload: []byte(digest)})
+	}
+	// A retained-state floor overlaps events from the same operation. Apply it
+	// after increments so one acquisition cannot be counted twice.
+	for _, condition := range conditions {
+		if !condition.LowerBound {
+			continue
+		}
+		targets, err := conditionGroups(condition)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, group := range targets {
+			if state.Counts[strconv.Itoa(group)] < int64(condition.Value) {
+				set(group, int64(condition.Value))
+			}
+		}
 	}
 	if len(changes) != 0 {
 		if err := s.store.SaveWithEntries(ctx.State, "missions", nil, changes); err != nil {
@@ -103,23 +140,4 @@ func (s *AchievementService) AchievementValue(ctx command.Context, groupID uint6
 		return 0, err
 	}
 	return uint64(state.Counts[strconv.FormatUint(groupID, 10)]), nil
-}
-
-// SetCondition only accepts exact current-state conditions; cumulative events use RecordEvent.
-
-func (s *AchievementService) CounterValues(ctx command.Context) (map[int]uint64, error) {
-
-	state, err := s.load(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := map[int]uint64{}
-	for key, value := range state.Counts {
-		group, err := strconv.Atoi(key)
-		if err != nil {
-			return nil, err
-		}
-		out[group] = uint64(value)
-	}
-	return out, nil
 }

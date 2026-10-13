@@ -3,11 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 
 	clientconfig "bd2server/internal/client/config"
 	clientinstance "bd2server/internal/client/instance"
+	clientplugin "bd2server/internal/client/plugin"
 	clientsetup "bd2server/internal/client/setup"
 )
 
@@ -21,7 +23,7 @@ func (t task) runClient2(args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	game, managed, bep, err := t.gameDirectory(*gameDir)
+	game, _, _, err := t.gameDirectory(*gameDir)
 	if err != nil {
 		return err
 	}
@@ -52,11 +54,8 @@ func (t task) runClient2(args []string) error {
 		return fmt.Errorf("prepare second client's resources: %w", err)
 	}
 	if instance.Created {
-		for _, name := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {
-			project := filepath.Join(t.root, "plugins", name, name+".csproj")
-			if err := t.command("dotnet", "build", project, "-c", "Release", "-p:GameDir="+game, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+bep, "--nologo"); err != nil {
-				return err
-			}
+		if err := clientplugin.BuildDevelopment(t.root, game, os.Stdout); err != nil {
+			return err
 		}
 		plugins := func(name string) string {
 			return filepath.Join(t.root, "plugins", name, "bin", "Release", "netstandard2.1", "BD2"+name+".dll")

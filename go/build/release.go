@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	clientplugin "bd2server/internal/client/plugin"
 )
 
 type buildOptions struct {
@@ -115,7 +117,7 @@ func (t task) build(opts buildOptions) error {
 		fmt.Println("Built schedule release:", out)
 		return nil
 	}
-	game, managed, bep, err := t.gameDirectory(opts.gameDir)
+	game, _, _, err := t.gameDirectory(opts.gameDir)
 	if err != nil {
 		return err
 	}
@@ -157,12 +159,11 @@ func (t task) build(opts buildOptions) error {
 	if err := t.command("go", "build", "-tags", "release,production", "-trimpath", "-ldflags", clientFlags, "-o", filepath.Join(client, "bd2client"+ext), "./cmd/bd2client"); err != nil {
 		return err
 	}
+	if err := clientplugin.BuildDevelopment(t.root, game, os.Stdout); err != nil {
+		return err
+	}
 	var shared []byte
 	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {
-		project := filepath.Join(t.root, "plugins", plugin, plugin+".csproj")
-		if err := t.command("dotnet", "build", project, "-c", "Release", "-p:GameDir="+game, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+bep, "--nologo"); err != nil {
-			return err
-		}
 		out := filepath.Join(t.root, "plugins", plugin, "bin", "Release", "netstandard2.1")
 		raw, err := os.ReadFile(filepath.Join(out, "BD2.GameNames.dll"))
 		if err != nil {

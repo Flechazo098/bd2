@@ -2,6 +2,7 @@ package app
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/battle/pvp"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/profile"
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 )
 
 func (p *playerAssembly) profile(ctx command.Context) error {
@@ -35,7 +37,15 @@ func (p *playerAssembly) PublicProfile(ctx command.Context, target uint64) (prof
 		if p.shared != nil && p.shared.friends != nil {
 			published, err := p.shared.friends.Profile(context.Background(), target)
 			if err == nil {
-				return published.Snapshot, nil
+				published.Snapshot.IsFriend, err = p.shared.friends.IsFriend(context.Background(), owner, target)
+				if err != nil {
+					return profile.Snapshot{}, err
+				}
+				published.Snapshot.RoomInfo, published.Snapshot.RoomLikeCount, err = p.shared.friends.RoomProfile(context.Background(), owner, target)
+				if err == nil {
+					err = p.profileRankings(target, &published.Snapshot)
+				}
+				return published.Snapshot, err
 			}
 			if !errors.Is(err, social.ErrNotFound) {
 				return profile.Snapshot{}, err
@@ -68,13 +78,102 @@ func (p *playerAssembly) PublicProfile(ctx command.Context, target uint64) (prof
 	if err != nil {
 		return profile.Snapshot{}, err
 	}
-	return profile.Snapshot{
-		OwnerIndex: owner, UserID: p.nicknameService.CurrentNickname(), TitleID: settings.TitleID,
+	var guildBase []byte
+	if p.shared != nil && p.shared.guild != nil {
+		_, guildBase, err = p.shared.guild.LoginInfo(context.Background(), ctx.AccountID)
+		if err != nil {
+			return profile.Snapshot{}, err
+		}
+	}
+	var roomInfo []byte
+	var roomLikes uint64
+	var likes uint64
+	if p.shared != nil && p.shared.friends != nil {
+		roomInfo, roomLikes, err = p.shared.friends.RoomProfile(context.Background(), owner, owner)
+		if err != nil {
+			return profile.Snapshot{}, err
+		}
+		likes, err = p.shared.friends.LikeCount(context.Background(), owner)
+		if err != nil {
+			return profile.Snapshot{}, err
+		}
+	}
+	snapshot := profile.Snapshot{
+		RoomInfo: roomInfo, RoomLikeCount: roomLikes, GuildBase: guildBase, LikeCount: likes, OwnerIndex: owner, UserID: p.nicknameService.CurrentNickname(), TitleID: settings.TitleID,
 		PortraitCostumeID: portrait, PortraitDesignID: portraitDesign,
 		AchievementLevel: p.design.levelDesign.Level(exp), TotalBattlePower: p.deckStateStore.HighestTotalBattlePower(),
 		MonsterHuntRank: rank, MonsterHuntTopPercent: percent, Card: settings.Card,
 		Greeting: settings.Greeting, IsAllPrivate: settings.IsAllPrivate, Options: settings.Options, SortIDs: settings.SortIDs, Supporters: supporters, AvatarUse: &avatar,
-	}, nil
+	}
+	if err := p.profileRankings(owner, &snapshot); err != nil {
+		return profile.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (p *playerAssembly) profileRankings(owner uint64, snapshot *profile.Snapshot) error {
+	if p.shared == nil {
+		return nil
+	}
+	for _, mode := range []pvp.Mode{pvp.Mirror, pvp.Colosseum} {
+		var current pvp.Season
+		now := uint64(time.Now().UnixMilli())
+		for _, season := range p.design.pvp.Seasons {
+			if season.Mode == mode && season.Start <= now && (current.ID == 0 || season.Start > current.Start) {
+				current = season
+			}
+		}
+		if current.ID == 0 {
+			continue
+		}
+		rows, err := p.shared.pvp.Ranking(pvp.RankQuery{Mode: mode, Season: current.ID, OwnerIndex: owner, Limit: 1})
+		if err != nil {
+			return err
+		}
+		if mode == pvp.Mirror {
+			snapshot.PvpSeason = current.ID
+		} else {
+			snapshot.ColosseumSeason = current.ID
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		row := rows[0]
+		if mode == pvp.Mirror {
+			snapshot.PvpVP, snapshot.PvpRank = row.VP, row.Rank
+		} else {
+			snapshot.ColosseumVP, snapshot.ColosseumRank, snapshot.ColosseumTopPercent = row.VP, row.Rank, row.TopPercent
+		}
+	}
+	for _, schedule := range p.options.calendars.RegularService.Contents {
+		if schedule.ID != 6 {
+			continue
+		}
+		guild, _, err := wire.Varint(snapshot.GuildBase, 1)
+		if err != nil {
+			return err
+		}
+		if guild == 0 {
+			break
+		}
+		rows, err := p.shared.guild.Standings(context.Background(), schedule.Current.ID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Guild.ID == guild {
+				snapshot.GuildRaidRank, snapshot.GuildRaidScore = row.Rank, row.Score
+				break
+			}
+		}
+	}
+	if owner != 0 && p.shared.huntRanks != nil {
+		season := p.monsterHuntService.CurrentSeason()
+		if entry, found := p.shared.huntRanks.OwnerRank(season, owner); found {
+			snapshot.MonsterHuntRank, snapshot.MonsterHuntTopPercent = entry.Rank, entry.TopPercent
+		}
+	}
+	return nil
 }
 
 func (p *playerAssembly) OwnedItems(ctx command.Context) []assets.Item { return p.ownedItems.All(ctx) }

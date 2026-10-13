@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Text;
-using System.Text.RegularExpressions;
 using Proto.Net;
 
 namespace BD2.GameSdk;
@@ -54,6 +53,8 @@ internal sealed class Component
         catch (FormatException) { return text; }
     }
 
+    public override string ToString() => GetString();
+
     private static Dictionary<string, Dictionary<string, string>> Load()
     {
         var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
@@ -67,55 +68,12 @@ internal sealed class Component
                 using var reader = new StreamReader(stream, Encoding.UTF8, true);
                 using var content = new MemoryStream(Encoding.UTF8.GetBytes(reader.ReadToEnd()));
                 var entries = (Dictionary<string, string>)serializer.ReadObject(content);
-                var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
-                foreach (KeyValuePair<string, string> entry in entries)
-                    normalized.Add(entry.Key, Regex.Replace(entry.Value, @"%([0-9]+\$)?[0-9.]*[df]", "%$1s", RegexOptions.CultureInvariant));
-                result.Add(locale, normalized);
+                result.Add(locale, new Dictionary<string, string>(entries, StringComparer.Ordinal));
             }
         }
         return result;
     }
 
-    private static string Format(string text, object[] arguments)
-    {
-        var output = new StringBuilder(text.Length);
-        int sequential = 0;
-        for (int position = 0; position < text.Length; position++)
-        {
-            char current = text[position];
-            if (current != '%')
-            {
-                output.Append(current);
-                continue;
-            }
-            if (++position >= text.Length) throw new FormatException();
-            if (text[position] == '%')
-            {
-                output.Append('%');
-                continue;
-            }
-            int index = 0;
-            int start = position;
-            while (position < text.Length && text[position] >= '0' && text[position] <= '9')
-            {
-                int digit = text[position] - '0';
-                if (index > (int.MaxValue - digit) / 10) throw new FormatException();
-                index = index * 10 + digit;
-                position++;
-            }
-            if (position != start)
-            {
-                if (position >= text.Length || text[position] != '$' || index <= 0)
-                    throw new FormatException();
-                index--;
-                position++;
-            }
-            else index = sequential++;
-            if (position >= text.Length || text[position] != 's' || index >= arguments.Length) throw new FormatException();
-            object value = arguments[index];
-            output.Append(value is Component component ? component.GetString() : value == null ? "null" :
-                value is bool boolean ? (boolean ? "true" : "false") : Convert.ToString(value, CultureInfo.InvariantCulture));
-        }
-        return output.ToString();
-    }
+    private static string Format(string text, object[] arguments) =>
+        string.Format(CultureInfo.CurrentCulture, text, arguments);
 }

@@ -201,13 +201,12 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("attach persisted achievement experience: %w", err)
 	}
 	achievementProvider := p.worldService.GameplayAchievementProvider(ctx, p.design.achievementCounterDesign, p.design.achievementGrades)
+	achievementProvider.Potential = p.design.costumePotentialDesign
+	p.attachAchievementProjection(achievementProvider)
 	achievementProvider.StateVersion = p.stateRepository.ObservationVersion
 	p.achievementObserver, err = achievements.NewGameplayAchievementObserver(p.achievementCounters, achievementProvider)
 	if err != nil {
 		return fmt.Errorf("initialize achievement gameplay observer: %w", err)
-	}
-	if err := p.achievementObserver.SyncRecordedHistory(ctx); err != nil {
-		return fmt.Errorf("restore recorded achievement history: %w", err)
 	}
 	p.eventTasksService.AttachInventoryProvider(&eventtasks.InventoryProjection{Items: p.ownedItems, Equipment: p.ownedEquipment, Costumes: p.collection, StateVersion: p.stateRepository.ObservationVersion})
 	p.worldService.AttachSkyWayProgress(p.eventTasksService.RecordSkyWayClear, func(ctx command.Context, group uint64) error {
