@@ -1,9 +1,10 @@
 package gameconfig
 
 import (
-	"errors"
 	"net"
 	"strings"
+
+	commonconfig "bd2server/internal/common/config"
 )
 
 type RealtimeConfig struct {
@@ -18,28 +19,35 @@ type RealtimeConfig struct {
 	DevelopmentPlainLoopback bool   `json:"development_plain_loopback"`
 }
 
-func (c RealtimeConfig) Validate() error {
+// Port ranges are schema constraints; these rules cover dependent fields.
+func realtimeRules(c RealtimeConfig, problems *commonconfig.Problems) {
 	if !c.Enabled {
-		return nil
+		return
 	}
-	if c.PublicHost == "" || strings.ContainsAny(c.PublicHost, "/\\@?# \t\r\n") || c.TCPPort < 1 || c.TCPPort > 65535 || c.UDPPort < 1 || c.UDPPort > 65535 {
-		return errors.New("realtime requires a public host and valid TCP/UDP ports")
+	if c.PublicHost == "" {
+		problems.Add("realtime.public_host", commonconfig.RuleRequired, "is required")
+	} else if strings.ContainsAny(c.PublicHost, "/\\@?# \t\r\n") {
+		problems.Add("realtime.public_host", commonconfig.RuleFormat, "must be a bare host name without scheme, path or port")
 	}
-	for _, address := range []string{c.TCPListen, c.UDPListen} {
-		host, port, err := net.SplitHostPort(address)
+	for _, listener := range [...]struct{ path, address string }{{"realtime.tcp_listen", c.TCPListen}, {"realtime.udp_listen", c.UDPListen}} {
+		path := listener.path
+		host, port, err := net.SplitHostPort(listener.address)
 		if err != nil || port == "" {
-			return errors.New("realtime listener must be host:port")
-		}
-		if c.DevelopmentPlainLoopback && !net.ParseIP(host).IsLoopback() {
-			return errors.New("plaintext realtime listeners must bind loopback")
+			problems.Add(path, commonconfig.RuleFormat, "must be host:port")
+		} else if c.DevelopmentPlainLoopback && !net.ParseIP(host).IsLoopback() {
+			problems.Add(path, commonconfig.RuleConflict, "plaintext realtime listeners must bind loopback")
 		}
 	}
 	if c.DevelopmentPlainLoopback {
 		if !net.ParseIP(c.PublicHost).IsLoopback() {
-			return errors.New("plaintext realtime public host must be loopback")
+			problems.Add("realtime.public_host", commonconfig.RuleConflict, "plaintext realtime public host must be loopback")
 		}
-	} else if c.TLSCertFile == "" || c.TLSKeyFile == "" {
-		return errors.New("realtime TLS certificate and private key paths are required")
+		return
 	}
-	return nil
+	if c.TLSCertFile == "" {
+		problems.Add("realtime.tls_cert_file", commonconfig.RuleRequired, "is required unless plaintext loopback development is enabled")
+	}
+	if c.TLSKeyFile == "" {
+		problems.Add("realtime.tls_key_file", commonconfig.RuleRequired, "is required unless plaintext loopback development is enabled")
+	}
 }

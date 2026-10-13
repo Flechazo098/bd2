@@ -1,20 +1,17 @@
 package inventory
 
 import (
+	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/storage/stateio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 )
-
-const developmentSettingsVersion = 2
 
 type InventorySlotCounts struct {
 	Items            uint64 `json:"items"`
@@ -28,15 +25,45 @@ type inventorySlotSnapshot struct {
 	InventorySlotCounts
 }
 
-type developmentSettings struct {
-	Version  int                                    `json:"version"`
-	Accounts map[string]*developmentAccountSettings `json:"accounts"`
+// DevelopmentSettings is the operator's per-account development overrides
+// file. It is read at each login, so edits apply on the next login.
+type DevelopmentSettings struct {
+	Version  int                           `json:"version"`
+	Accounts map[string]DevelopmentAccount `json:"accounts"`
 }
 
-type developmentAccountSettings struct {
-	Inventory *struct {
-		Unlimited *bool `json:"unlimited"`
-	} `json:"inventory"`
+type DevelopmentAccount struct {
+	Inventory DevelopmentInventory `json:"inventory"`
+}
+
+type DevelopmentInventory struct {
+	Unlimited bool `json:"unlimited"`
+}
+
+var DevelopmentSettingsDocument = commonconfig.Document[DevelopmentSettings]{
+	Name:     "dev-tools",
+	FileName: "dev-tools.json",
+	Defaults: func() DevelopmentSettings {
+		return DevelopmentSettings{Version: 2, Accounts: map[string]DevelopmentAccount{}}
+	},
+	Base:   func() DevelopmentSettings { return DevelopmentSettings{} },
+	Decode: commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, RejectNull: true},
+	Schema: commonconfig.Schema{Title: "开发覆盖", Sections: []commonconfig.Section{{ID: "format", Title: "格式", Fields: []commonconfig.Field{
+		{Path: "version", Kind: commonconfig.KindInteger, Label: "格式版本", Required: true, Options: []commonconfig.Option{{Value: 2, Label: "2"}}},
+		{Path: "accounts", Kind: commonconfig.KindMap, Label: "账号", Required: true},
+		{Path: "accounts.*.inventory", Kind: commonconfig.KindMap, Label: "背包", Required: true},
+		{Path: "accounts.*.inventory.unlimited", Kind: commonconfig.KindBool, Label: "无限背包容量", Required: true},
+	}}}},
+	Rules: func(settings DevelopmentSettings) commonconfig.Problems {
+		var problems commonconfig.Problems
+		if settings.Accounts == nil {
+			problems.Add("accounts", commonconfig.RuleRequired, "is required")
+		}
+		if _, ok := settings.Accounts[""]; ok {
+			problems.Add("accounts", commonconfig.RuleFormat, "account IDs must be nonempty")
+		}
+		return problems
+	},
 }
 
 type inventorySlotReply struct {
@@ -151,28 +178,11 @@ func loadUnlimitedInventory(path, accountID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("player: read development settings: %w", err)
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var settings developmentSettings
-	if err := decoder.Decode(&settings); err != nil {
-		return false, errors.New("player: malformed development settings")
+	settings, err := DevelopmentSettingsDocument.Parse(data)
+	if err != nil {
+		return false, fmt.Errorf("player: malformed development settings: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return false, errors.New("player: malformed development settings")
-	}
-	if settings.Version != developmentSettingsVersion {
-		return false, errors.New("player: unsupported development settings version")
-	}
-	if settings.Accounts == nil {
-		return false, errors.New("player: malformed development settings")
-	}
-	for id, account := range settings.Accounts {
-		if id == "" || account == nil || account.Inventory == nil || account.Inventory.Unlimited == nil {
-			return false, errors.New("player: malformed development settings")
-		}
-	}
-	account := settings.Accounts[accountID]
-	return account != nil && *account.Inventory.Unlimited, nil
+	return settings.Accounts[accountID].Inventory.Unlimited, nil
 }
 
 func inventorySlotPrice(rule gamedata.InventorySlotRule, current, count uint64) (uint64, error) {

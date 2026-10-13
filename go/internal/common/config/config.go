@@ -96,10 +96,25 @@ func Ensure[T any](path string, defaults T, options WriteOptions) error {
 }
 
 func stage[T any](path string, value T, options WriteOptions) (string, error) {
-	raw, err := json.MarshalIndent(value, "", "  ")
+	raw, err := encode(value)
 	if err != nil {
 		return "", err
 	}
+	return stageBytes(path, raw, options)
+}
+
+// WriteFile atomically replaces path with raw. The file is created with mode
+// 0600 and its directory with 0755 when missing.
+func WriteFile(path string, raw []byte) error {
+	temporary, err := stageBytes(path, raw, WriteOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temporary) }()
+	return replaceFile(temporary, path)
+}
+
+func stageBytes(path string, raw []byte, options WriteOptions) (string, error) {
 	if options.FileMode == 0 {
 		options.FileMode = 0o600
 	}
@@ -114,7 +129,7 @@ func stage[T any](path string, value T, options WriteOptions) (string, error) {
 		return "", err
 	}
 	if err = file.Chmod(options.FileMode); err == nil {
-		_, err = file.Write(append(raw, '\n'))
+		_, err = file.Write(raw)
 	}
 	if err == nil {
 		err = file.Sync()

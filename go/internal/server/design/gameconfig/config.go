@@ -2,10 +2,10 @@
 package gameconfig
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
+	"strconv"
+	"strings"
 
 	commonconfig "bd2server/internal/common/config"
 )
@@ -37,48 +37,50 @@ type TextModerationProviderConfig struct {
 	SeverityThreshold int      `json:"severity_threshold"`
 }
 
+// TextScopes are the input entry points currently connected to moderation.
+var TextScopes = []string{
+	"nickname", "greeting", "master_title", "preset_name", "equipment_preset_name", "equipment_mark",
+	"monster_hunt_preset_name", "guild_raid_preset_name", "colosseum_preset_name",
+	"guild_name", "guild_message", "guild_notice", "room_name", "chat",
+}
+
 func DefaultTextModeration() TextModerationConfig {
 	return TextModerationConfig{RuleFiles: []string{}, Provider: TextModerationProviderConfig{
-		Type: "off", APIKeyHeader: "Authorization", Scopes: []string{
-			"nickname", "greeting", "master_title", "preset_name", "equipment_preset_name", "equipment_mark",
-			"monster_hunt_preset_name", "guild_raid_preset_name", "colosseum_preset_name",
-			"guild_name", "guild_message", "guild_notice", "room_name", "chat",
-		},
+		Type: "off", APIKeyHeader: "Authorization", Scopes: append([]string(nil), TextScopes...),
 		TimeoutMS: 1500, FailurePolicy: "deny", SeverityThreshold: 4,
 	}}
 }
 
+// Validate checks the moderation group as it would appear in game.json.
 func (c TextModerationConfig) Validate() error {
-	if slices.Contains(c.RuleFiles, "") {
-		return fmt.Errorf("text_moderation.rule_files must contain nonempty paths")
+	config := Default()
+	config.TextModeration = c
+	return Document.Validate(config)
+}
+
+func textModerationRules(c TextModerationConfig, problems *commonconfig.Problems) {
+	for i, file := range c.RuleFiles {
+		if file == "" {
+			problems.Add(indexed("text_moderation.rule_files", i), commonconfig.RuleRequired, "must be a nonempty path")
+		}
 	}
 	p := c.Provider
-	if p.Type != "off" && p.Type != "http_json" && p.Type != "azure_content_safety" {
-		return fmt.Errorf("text_moderation.provider.type must be off, http_json, or azure_content_safety")
-	}
-	if p.TimeoutMS < 10 || p.TimeoutMS > 30000 {
-		return fmt.Errorf("text_moderation.provider.timeout_ms must be between 10 and 30000")
-	}
-	if p.FailurePolicy != "allow" && p.FailurePolicy != "deny" {
-		return fmt.Errorf("text_moderation.provider.failure_policy must be allow or deny")
-	}
-	if p.SeverityThreshold < 0 || p.SeverityThreshold > 7 {
-		return fmt.Errorf("text_moderation.provider.severity_threshold must be between 0 and 7")
-	}
-	if p.Type != "off" && (p.Endpoint == "" || len(p.Scopes) == 0) {
-		return fmt.Errorf("text_moderation active provider requires endpoint and scopes")
+	if p.Type != "off" {
+		if p.Endpoint == "" {
+			problems.Add("text_moderation.provider.endpoint", commonconfig.RuleRequired, "is required by an active provider")
+		}
+		if len(p.Scopes) == 0 {
+			problems.Add("text_moderation.provider.scopes", commonconfig.RuleRequired, "is required by an active provider")
+		}
 	}
 	if p.Type == "azure_content_safety" && p.APIKeyEnv == "" {
-		return fmt.Errorf("text_moderation Azure provider requires api_key_env")
+		problems.Add("text_moderation.provider.api_key_env", commonconfig.RuleRequired, "is required by the Azure provider")
 	}
-	seen := map[string]bool{}
-	for _, scope := range p.Scopes {
-		if !ValidTextScope(scope) || seen[scope] {
-			return fmt.Errorf("text_moderation.provider.scopes must contain unique lowercase identifiers")
+	for i, scope := range p.Scopes {
+		if !ValidTextScope(scope) {
+			problems.Add(indexed("text_moderation.provider.scopes", i), commonconfig.RuleFormat, "must be a lowercase identifier")
 		}
-		seen[scope] = true
 	}
-	return nil
 }
 
 func ValidTextScope(scope string) bool {
@@ -122,50 +124,61 @@ func Default() Config {
 	return Config{SchemaVersion: 1, Story: StoryConfig{StartPackID: 21}, Purchases: PurchasesConfig{DiamondRecharge: DiamondRechargeConfig{Currency: "free", GoldPerPaidDiamond: 1000, DiamondsPerPaidDiamond: 1}}, TextModeration: DefaultTextModeration()}
 }
 
+// Document is game.json. Omitted gameplay groups keep their defaults, but the
+// format version is required even when every group is omitted.
+var Document = commonconfig.Document[Config]{
+	Name:     "game",
+	FileName: FileName,
+	Defaults: Default,
+	Base: func() Config {
+		defaults := Default()
+		defaults.SchemaVersion = 0
+		return defaults
+	},
+	Decode: commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, RejectNull: true},
+	Schema: schema,
+	Rules: func(c Config) commonconfig.Problems {
+		var problems commonconfig.Problems
+		realtimeRules(c.Realtime, &problems)
+		textModerationRules(c.TextModeration, &problems)
+		return problems
+	},
+	Advice: func(c Config, path string) commonconfig.Problems {
+		var advice commonconfig.Problems
+		missing := func(field, file string) {
+			if file == "" {
+				return
+			}
+			if _, err := os.Stat(ResolvePath(path, file)); err != nil {
+				advice.Add(field, commonconfig.RuleMissingFile, "%s is not readable by this server process", file)
+			}
+		}
+		for i, file := range c.TextModeration.RuleFiles {
+			missing(indexed("text_moderation.rule_files", i), file)
+		}
+		if c.Realtime.Enabled && !c.Realtime.DevelopmentPlainLoopback {
+			missing("realtime.tls_cert_file", c.Realtime.TLSCertFile)
+			missing("realtime.tls_key_file", c.Realtime.TLSKeyFile)
+		}
+		p := c.TextModeration.Provider
+		if p.Type != "off" && p.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(p.APIKeyEnv)) == "" {
+			advice.Add("text_moderation.provider.api_key_env", commonconfig.RuleEnvironment, "environment variable %s is empty in this server process", p.APIKeyEnv)
+		}
+		return advice
+	},
+}
+
+// ResolvePath resolves a file referenced by game.json relative to its directory.
+func ResolvePath(configPath, file string) string {
+	if filepath.IsAbs(file) {
+		return filepath.Clean(file)
+	}
+	return filepath.Join(filepath.Dir(configPath), file)
+}
+
 // Load generates defaults when missing and strictly validates existing files.
-func Load(path string) (Config, error) {
-	if err := commonconfig.Ensure(path, Default(), commonconfig.WriteOptions{}); err != nil {
-		return Config{}, fmt.Errorf("game configuration: initialize %s: %w", path, err)
-	}
-	defaults := Default()
-	// The format version is required even when gameplay sections are omitted.
-	defaults.SchemaVersion = 0
-	cfg, err := commonconfig.Load(path, defaults, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, RejectNull: true})
-	if err != nil {
-		return Config{}, fmt.Errorf("game configuration: load %s: %w", path, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return Config{}, fmt.Errorf("game configuration: %s: %w", path, err)
-	}
-	return cfg, nil
-}
+func Load(path string) (Config, error) { return Document.Load(path) }
 
-func (c Config) Validate() error {
-	if err := c.Realtime.Validate(); err != nil {
-		return err
-	}
-	if c.SchemaVersion != 1 {
-		return fmt.Errorf("unsupported schema_version %d (expected 1)", c.SchemaVersion)
-	}
-	if c.Story.StartPackID != 1 && c.Story.StartPackID != 21 {
-		return fmt.Errorf("story.start_pack_id must be 1 or 21, got %d", c.Story.StartPackID)
-	}
-	r := c.Purchases.DiamondRecharge
-	switch r.Currency {
-	case "free", "gold", "diamonds", "ban", "":
-	default:
-		return fmt.Errorf("purchases.diamond_recharge.currency must be free, gold, diamonds, ban, or an empty string")
-	}
-	if r.GoldPerPaidDiamond < 1 || r.GoldPerPaidDiamond > 1_000_000_000 || r.DiamondsPerPaidDiamond < 1 || r.DiamondsPerPaidDiamond > 1_000_000_000 {
-		return fmt.Errorf("purchases.diamond_recharge conversion rates must be integers between 1 and 1000000000")
-	}
-	return c.TextModeration.Validate()
-}
+func (c Config) Validate() error { return Document.Validate(c) }
 
-func BesideExecutable() (string, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("game configuration: resolve server executable: %w", err)
-	}
-	return filepath.Join(filepath.Dir(executable), FileName), nil
-}
+func indexed(path string, index int) string { return path + "[" + strconv.Itoa(index) + "]" }

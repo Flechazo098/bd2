@@ -37,3 +37,29 @@ func (s *Store) AccountForOwner(ctx context.Context, owner uint64) (string, erro
 	}
 	return account, err
 }
+
+// Player is one game profile as listed by operator tools.
+type Player struct {
+	AccountID  string
+	OwnerIndex int64
+	UserID     string
+	Active     bool
+}
+
+// Players lists every account that has a public game profile, by UID.
+func (s *Store) Players(ctx context.Context) ([]Player, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.account_id,p.owner_index,p.user_id,a.status='active' FROM game_profiles p JOIN accounts a ON a.id=p.account_id ORDER BY p.owner_index`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Player
+	for rows.Next() {
+		var player Player
+		if err := rows.Scan(&player.AccountID, &player.OwnerIndex, &player.UserID, &player.Active); err != nil {
+			return nil, err
+		}
+		out = append(out, player)
+	}
+	return out, rows.Err()
+}

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"net"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
 	eventplay "bd2server/internal/server/domain/events/play"
 	"bd2server/internal/server/gateway/realtime"
@@ -58,10 +58,10 @@ func openRealtime(c *configuration, registry *playerRegistry, game *session.Serv
 		},
 	}
 	resolve := func(path string) string {
-		if path == "" || filepath.IsAbs(path) {
+		if path == "" {
 			return path
 		}
-		return filepath.Join(filepath.Dir(c.gameConfigPath), path)
+		return gameconfig.ResolvePath(c.gameConfigPath, path)
 	}
 	chatDesign, err := gamedata.LoadChatDesign(c.gameData, c.gameDataVersion)
 	if err != nil {

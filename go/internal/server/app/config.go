@@ -1,6 +1,7 @@
 package app
 
 import (
+	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
@@ -42,6 +43,9 @@ type configuration struct {
 	versions           versionconfig.Config
 	calendars          *calendar.Set
 	gameRules          gameconfig.Config
+	gameFile           *commonconfig.File[gameconfig.Config]
+	authFile           *commonconfig.File[authconfig.Config]
+	resourceFile       *commonconfig.File[resourcepolicy.Config]
 	textModerator      *textmoderation.Service
 	authentication     authconfig.Config
 	authRuntime        authconfig.Runtime
@@ -56,9 +60,9 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	logLevel := fs.String("log-level", "", "log threshold: trace, debug, info, warn, error (default BD2_LOG_LEVEL or info)")
 	logColor := fs.String("log-color", "", "level colors: auto, always, never (default BD2_LOG_COLOR or auto)")
 	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
-	authConfigPath := fs.String("authentication-config", "", "authentication.json override for development")
-	resourceConfigPath := fs.String("resource-config", "", "resources.json override for development")
-	gameConfigPath := fs.String("game-config", "", "game.json server gameplay configuration override")
+	authConfigPath := fs.String("authentication-config", "", "authentication.json path (default DATA_DIR/config/authentication.json)")
+	resourceConfigPath := fs.String("resource-config", "", "resources.json path (default DATA_DIR/config/resources.json)")
+	gameConfigPath := fs.String("game-config", "", "game.json path (default DATA_DIR/config/game.json)")
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
 	dataDir := fs.String("data-dir", "", "server data directory (defaults beside the executable)")
 	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (defaults to versions.json)")
@@ -67,7 +71,7 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	playerSeed := fs.String("player-seed", "", "versioned starter inventory and characters")
 	readonlySeed := fs.String("readonly-seed", "", "versioned static protocol defaults")
 	mailSeed := fs.String("mail-seed", "", "versioned starter mailbox")
-	mailGrantSpool := fs.String("mail-grant-spool", "", "optional local JSON spool for idempotent dynamic system mail")
+	mailGrantSpool := fs.String("mail-grant-spool", "", "JSON spool for idempotent dynamic system mail (default DATA_DIR/mail-grants-spool.json)")
 	stateDirectory := fs.String("state-dir", "", "player and shared state directory")
 	deckSeed := fs.String("deck-seed", "", "versioned starter deck")
 	worldSeed := fs.String("world-seed", "", "versioned starter world")
@@ -108,45 +112,6 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		return nil, errors.New("project calendars require regular content and monster hunt schedules")
 	}
 	slog.Info("project calendars loaded", "directory", calendarDirectory, "revisions", calendars.Revisions, "events", len(calendars.Events))
-	if *gameConfigPath == "" {
-		*gameConfigPath, err = gameconfig.BesideExecutable()
-		if err != nil {
-			return nil, err
-		}
-	}
-	gameRules, err := gameconfig.Load(*gameConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if *authConfigPath == "" {
-		*authConfigPath, err = authconfig.BesideExecutable()
-		if err != nil {
-			return nil, err
-		}
-	}
-	authentication, err := authconfig.Load(*authConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	authRuntime, err := authentication.ResolveEnvironment()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if result == nil {
-			clear(authRuntime.MasterKey)
-		}
-	}()
-	if *resourceConfigPath == "" {
-		*resourceConfigPath, err = resourcepolicy.BesideExecutable()
-		if err != nil {
-			return nil, err
-		}
-	}
-	resources, err := resourcepolicy.Load(*resourceConfigPath)
-	if err != nil {
-		return nil, err
-	}
 	if *dataDir == "" {
 		executable, executableErr := os.Executable()
 		if executableErr != nil {
@@ -158,7 +123,44 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve server data directory: %w", err)
 	}
+	configDirectory := filepath.Join(*dataDir, "config")
+	if *gameConfigPath == "" {
+		*gameConfigPath = gameconfig.Document.Path(configDirectory)
+	}
+	gameFile, gameRules, err := gameconfig.Document.Open(*gameConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	*gameConfigPath = gameFile.Path()
+	if *authConfigPath == "" {
+		*authConfigPath = authconfig.Document.Path(configDirectory)
+	}
+	authFile, authentication, err := authconfig.Document.Open(*authConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	*authConfigPath = authFile.Path()
+	authRuntime, err := authentication.ResolveEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if result == nil {
+			clear(authRuntime.MasterKey)
+		}
+	}()
+	if *resourceConfigPath == "" {
+		*resourceConfigPath = resourcepolicy.Document.Path(configDirectory)
+	}
+	resourceFile, resources, err := resourcepolicy.Document.Open(*resourceConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	*resourceConfigPath = resourceFile.Path()
 	*devToolsConfig = resolveDevelopmentSettingsPath(*dataDir, *devToolsConfig)
+	if *mailGrantSpool == "" {
+		*mailGrantSpool = filepath.Join(*dataDir, "mail-grants-spool.json")
+	}
 	gameData := filepath.Join(*dataDir, "resources", "GameData")
 	if *stateDirectory == "" {
 		*stateDirectory = filepath.Join(*dataDir, "state")
@@ -220,6 +222,6 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		deckSeed:           *deckSeed,
 		worldSeed:          *worldSeed,
 		devToolsConfig:     *devToolsConfig,
-		versions:           versions, calendars: calendars, gameRules: gameRules, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
+		versions:           versions, calendars: calendars, gameRules: gameRules, gameFile: gameFile, authFile: authFile, resourceFile: resourceFile, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
 	}, nil
 }

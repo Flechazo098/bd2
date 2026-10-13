@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
+	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 )
@@ -83,6 +85,38 @@ func (s *Service) AttachGrantSpoolPath(ctx command.Context, path string) error {
 
 	s.grantSpoolPath = abs
 	return nil
+}
+
+var spoolWriter sync.Mutex
+
+// AppendGrant atomically adds one grant to the spool at path. The complete
+// result is decoded with the mailbox's own rules before it replaces the file,
+// so this process never publishes a spool that /MailInfo would reject.
+func AppendGrant(path string, grant Grant) error {
+	spoolWriter.Lock()
+	defer spoolWriter.Unlock()
+	spool := GrantSpool{Version: 2, Grants: []Grant{}}
+	raw, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if _, err := decodeGrantSpool(raw, grant.AccountID); err != nil {
+			return fmt.Errorf("mail: reject existing grant spool: %w", err)
+		}
+		if err := json.Unmarshal(raw, &spool); err != nil {
+			return err
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("mail: read grant spool: %w", err)
+	}
+	spool.Grants = append(spool.Grants, grant)
+	encoded, err := json.MarshalIndent(spool, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := decodeGrantSpool(encoded, grant.AccountID); err != nil {
+		return err
+	}
+	return commonconfig.WriteFile(path, append(encoded, '\n'))
 }
 
 func readGrantSpool(path, accountID string) ([]compensation, error) {

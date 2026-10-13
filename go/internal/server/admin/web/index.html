@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BD2 管理台</title>
+<link rel="stylesheet" href="assets/app.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="seal-mark" aria-hidden="true"></span><b>BD2</b><span>管理台</span></div>
+  <nav class="tabs" id="tabs" hidden>
+    <a href="#mail" data-view="mail">邮件发放</a>
+    <a href="#players" data-view="players" data-owner>玩家</a>
+    <a href="#config" data-view="config" data-owner>服务器配置</a>
+  </nav>
+  <div class="account" id="account" hidden><span class="user" id="account-name"></span><button type="button" id="logout">退出</button></div>
+</header>
+
+<main class="desk">
+  <!-- 登录 -->
+  <section class="view sign-in" id="view-sign-in" hidden>
+    <div class="card sheet">
+      <h1>进入管理台</h1>
+      <p class="muted" id="sign-in-lead">正在读取服务器信息……</p>
+      <div class="providers" id="providers"></div>
+      <p id="sign-in-status" class="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <!-- 邮件发放 -->
+  <section class="view" id="view-mail" hidden>
+    <section class="card recipient" id="recipient">
+      <div class="who">
+        <span class="eyebrow">收件人</span>
+        <div class="uid none" id="uid-display" title="点击复制 UID">——</div>
+        <p id="recipient-note" class="muted"></p>
+      </div>
+      <div class="recipient-side">
+        <label id="player-selector" class="player" hidden>切换玩家<select id="player"></select></label>
+      </div>
+    </section>
+
+    <fieldset id="tools" class="work" disabled>
+      <div class="lock"><span id="lock-note">正在读取……</span></div>
+      <section class="card catalog">
+        <div class="cat-head"><h2>物品目录</h2><span id="count" class="muted"></span></div>
+        <div class="search">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="m10.6 10.6 3.4 3.4" stroke-linecap="round"/></svg>
+          <input id="q" type="search" placeholder="名称、ID、类别或别名，空格分隔多个词" autocomplete="off" spellcheck="false" aria-label="搜索物品" aria-controls="items">
+          <kbd>/</kbd>
+        </div>
+        <div class="chips" id="cats" aria-label="按类别筛选"></div>
+        <div class="recent" id="recent" hidden><span class="eyebrow">最近寄出</span></div>
+        <ol class="items" id="items" role="listbox" aria-label="物品"><li class="empty">正在读取物品目录……</li></ol>
+        <p class="keys muted"><span><kbd>/</kbd>搜索</span><span><kbd>↑</kbd><kbd>↓</kbd>挑选</span><span><kbd>Enter</kbd>放入包裹单</span><span><kbd>Esc</kbd>清空</span></p>
+      </section>
+
+      <aside class="side">
+        <form id="form" class="card slip" novalidate>
+          <div class="slip-head"><span class="eyebrow">包裹单</span><span class="to">寄往 UID<b id="slip-uid">—</b></span></div>
+          <div class="parcel empty" id="parcel"></div>
+          <div class="field">
+            <label for="quantity">数量 <span id="qty-hint">支持 5k、2w、3万</span></label>
+            <input id="quantity" value="1" inputmode="numeric" autocomplete="off" required>
+            <div class="presets" id="presets" title="点击设为该数量，按住 Shift 点击则累加">
+              <button type="button" data-q="1">1</button><button type="button" data-q="10">10</button><button type="button" data-q="100">100</button><button type="button" data-q="1000">1k</button><button type="button" data-q="10000">1w</button>
+            </div>
+          </div>
+          <details class="letter" id="letter">
+            <summary>附信 <span id="letter-peek">测试物品</span></summary>
+            <label>邮件标题<input id="title" value="测试物品" required maxlength="500"></label>
+            <label>正文<textarea id="body" required maxlength="5000">由管理台发放。</textarea></label>
+          </details>
+          <button id="grant-submit" class="btn seal send">寄出<kbd>Ctrl ↵</kbd></button>
+          <p id="status" class="status" aria-live="polite"></p>
+        </form>
+
+        <section class="card panel">
+          <h3><label class="switch"><input id="unlimited-inventory" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span>无限背包容量</label></h3>
+          <div id="inventory-limits" class="limits"></div>
+          <p class="hint">只影响当前玩家，玩家重新登录游戏后生效，无需重启服务端。关闭后恢复该玩家原有容量。</p>
+          <p id="inventory-status" class="status" aria-live="polite"></p>
+        </section>
+
+        <section class="card panel">
+          <h3>本次寄件 <span class="muted" id="log-count"></span></h3>
+          <ol class="log" id="log"></ol>
+          <p class="log-empty" id="log-empty">寄出的物品会记在这里，点击发放标识可复制。</p>
+        </section>
+      </aside>
+    </fieldset>
+  </section>
+
+  <!-- 玩家 -->
+  <section class="view" id="view-players" hidden>
+    <section class="card roster">
+      <div class="roster-head">
+        <div><h2>玩家</h2><p class="muted">授权成员后，对方用自己的游戏账号登录管理台，只能给自己寄件、调整自己的背包。</p></div>
+        <div class="search small"><input id="player-q" type="search" placeholder="UID 或名称" autocomplete="off" aria-label="筛选玩家"></div>
+      </div>
+      <table class="roster-table">
+        <thead><tr><th>UID</th><th>名称</th><th>身份</th><th class="c">管理台成员</th><th class="c">无限背包</th><th></th></tr></thead>
+        <tbody id="roster"></tbody>
+      </table>
+      <p id="roster-status" class="status" aria-live="polite"></p>
+    </section>
+  </section>
+
+  <!-- 服务器配置 -->
+  <section class="view" id="view-config" hidden>
+    <div class="config-layout">
+      <nav class="card doc-nav" id="doc-nav" aria-label="配置文件"></nav>
+      <div class="config-main">
+        <div id="config-banners"></div>
+        <form id="config-form" class="config-form" novalidate></form>
+        <section class="card overview" id="overview"></section>
+      </div>
+    </div>
+    <div class="savebar" id="savebar" hidden>
+      <span id="savebar-text"></span>
+      <button type="button" class="btn ghost" id="show-diff">查看改动</button>
+      <button type="button" class="btn ghost" id="discard">放弃</button>
+      <button type="button" class="btn seal" id="save">保存 <kbd>Ctrl S</kbd></button>
+    </div>
+  </section>
+</main>
+
+<dialog class="ask" id="ask">
+  <h3 id="ask-title"></h3>
+  <p id="ask-body"></p>
+  <div id="ask-extra"></div>
+  <div class="ask-actions"><button type="button" class="btn" id="ask-cancel">取消</button><button type="button" class="btn seal" id="ask-ok">确定</button></div>
+</dialog>
+<div class="toast" id="toast" role="status"></div>
+</body>
+</html>

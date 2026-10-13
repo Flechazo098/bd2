@@ -114,6 +114,8 @@ type HTTP struct {
 	CommerceManifest      func() any
 	RealtimeTickets       http.Handler
 	StoryCheckpoints      http.Handler
+	// Console is the built-in administration website below /admin/.
+	Console http.Handler
 }
 
 func (h HTTP) Handler() http.Handler {
@@ -132,6 +134,10 @@ func (h HTTP) Handler() http.Handler {
 	}
 	if h.AuthenticationHandler != nil {
 		mux.Handle("/auth/", h.withAvailability(h.AuthenticationHandler))
+	}
+	if h.Console != nil {
+		mux.Handle("/admin", h.Console)
+		mux.Handle("/admin/", h.Console)
 	}
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/game/", h.game)

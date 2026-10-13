@@ -151,13 +151,16 @@ func (s *Service) createDevice(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err, "could not create transaction")
 		return
 	}
+	writeJSON(w, http.StatusCreated, map[string]any{"transaction_id": result.ID, "device_secret": result.Secret, "start_url": s.startURL(request.Provider, result), "expires_in": int64(s.config.DeviceTTL.Seconds()), "poll_interval": 2})
+}
+func (s *Service) startURL(provider string, device identity.CreatedDevice) string {
 	start := *s.config.PublicURLParsed
-	start.Path = "/auth/" + request.Provider + "/start"
+	start.Path = "/auth/" + provider + "/start"
 	query := start.Query()
-	query.Set("transaction_id", result.ID)
-	query.Set("ticket", result.StartTicket)
+	query.Set("transaction_id", device.ID)
+	query.Set("ticket", device.StartTicket)
 	start.RawQuery = query.Encode()
-	writeJSON(w, http.StatusCreated, map[string]any{"transaction_id": result.ID, "device_secret": result.Secret, "start_url": start.String(), "expires_in": int64(s.config.DeviceTTL.Seconds()), "poll_interval": 2})
+	return start.String()
 }
 func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
@@ -233,7 +236,7 @@ func (s *Service) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>BD2 login</title><p>Login complete. You can return to the game.</p>`)
+	_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>BD2 login</title><p>Login complete. You can close this page and return to the game or console.</p>`)
 }
 func (s *Service) poll(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

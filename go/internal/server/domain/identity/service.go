@@ -436,3 +436,7 @@ func (s *Service) AuthorizeAdministrator(token string) (string, error) {
 	}
 	return accountID, nil
 }
+
+// AdministratorAccountID returns the first registered account, or "" before
+// any account exists.
+func (s *Service) AdministratorAccountID() (string, error) { return s.store.AdministratorAccountID() }

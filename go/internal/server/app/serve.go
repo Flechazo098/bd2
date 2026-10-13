@@ -1,6 +1,7 @@
 package app
 
 import (
+	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/gateway/auth"
 	"bd2server/internal/server/gateway/session"
@@ -58,6 +59,7 @@ func Serve(args []string) (serveErr error) {
 	if err := lockServerState(c.stateDirectory, c.gameRules.Story.StartPackID); err != nil {
 		return err
 	}
+	c.gameFile.Lock(commonconfig.Lock{Path: "story.start_pack_id", Value: c.gameRules.Story.StartPackID, Reason: "首次初始化后已永久保存于服务器状态，不能再更改"})
 	shared, err := openSharedRuntime(context.Background(), c, design)
 	if err != nil {
 		return err
@@ -108,12 +110,17 @@ func Serve(args []string) (serveErr error) {
 		realtimeDone = realtime.done
 		realtimeTickets = realtime.tickets
 	}
+	console, consoleStore, err := openConsole(c, design, seeds, authService, authStore, instanceID)
+	if err != nil {
+		return fmt.Errorf("open administration console: %w", err)
+	}
+	defer func() { serveErr = errors.Join(serveErr, consoleStore.Close()) }()
 	dispatcher := transport.Bootstrap{Config: c.bootstrap}
 	handler := transport.HTTP{
 		Dispatcher: dispatcher, Raw: game, Authentication: c.authentication,
 		AuthenticationHandler: authHandler, ResourcePolicy: c.publicResources,
 		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID, RealtimeTickets: realtimeTickets,
-		StoryCheckpoints: storyCheckpoints{game: game, players: registry},
+		StoryCheckpoints: storyCheckpoints{game: game, players: registry}, Console: console.Handler(),
 	}.Handler()
 	server := &http.Server{
 		Addr:              c.listen,
@@ -127,6 +134,11 @@ func Serve(args []string) (serveErr error) {
 	slog.Info("BD2 server listening", "address", c.listen, "instance_id", instanceID, "server_version", c.versions.ServerVersion, "game_version", c.bootstrap.Version, "bundle", c.bootstrap.BundleVer, "resourceMode", c.publicResources.Mode, "gameData", c.verifiedGameData.ArchivePath, "gameDataEntries", c.verifiedGameData.EntryCount, "accountSeed", c.accountSeed)
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.ListenAndServe() }()
+	if link, err := console.IssueSignInLink(consoleOrigin(c)); err != nil {
+		slog.Warn("administration console sign-in link unavailable", "error", err)
+	} else {
+		slog.Info("administration console owner sign-in link (single use, 24 hours)", "url", link)
+	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, lifecycle.ShutdownSignals()...)
 	defer signal.Stop(signals)
