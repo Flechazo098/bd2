@@ -128,7 +128,7 @@ func (t *transaction) RejectDevice(id, provider, code string) (bool, error) {
 	return changed(t.tx.Exec(`UPDATE devices SET status='failed',error_code=?,state_hash=NULL,verifier_cipher=NULL,nonce_cipher=NULL WHERE id=? AND provider=? AND status='authorizing'`, code, id, provider))
 }
 func (t *transaction) InsertAccount(accountID, provider string, id identity.ProviderIdentity, now int64) error {
-	if _, e := t.tx.Exec(`INSERT INTO accounts(id,status,created_at,last_login_at) VALUES(?,'active',?,?)`, accountID, now, now); e != nil {
+	if _, e := t.tx.Exec(`INSERT INTO accounts(id,status,created_at,last_login_at) VALUES(?,'active',?,0)`, accountID, now); e != nil {
 		return e
 	}
 	if _, err := allocateGameProfile(t.tx, accountID); err != nil {
@@ -335,7 +335,7 @@ func allocateGameProfile(tx *sql.Tx, accountID string) (GameProfile, error) {
 		return GameProfile{}, errors.New("auth: public game identity space exhausted")
 	}
 	index := maximum + 1
-	userID := strconv.FormatInt(index, 10)
+	userID := "Guest_" + strconv.FormatInt(index, 10)
 	// The imported owner's display identity may be decimal without matching its
 	// numeric index. Reserved user IDs remain unavailable to subsequent players.
 	for {
@@ -350,7 +350,7 @@ func allocateGameProfile(tx *sql.Tx, accountID string) (GameProfile, error) {
 			return GameProfile{}, errors.New("auth: public game identity space exhausted")
 		}
 		index++
-		userID = strconv.FormatInt(index, 10)
+		userID = "Guest_" + strconv.FormatInt(index, 10)
 	}
 	if _, err := tx.Exec(`INSERT INTO game_profiles(account_id,owner_index,user_id) VALUES(?,?,?)`, accountID, index, userID); err != nil {
 		return GameProfile{}, err

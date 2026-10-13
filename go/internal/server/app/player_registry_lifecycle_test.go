@@ -27,6 +27,7 @@ type gatedPlayerExecutor struct {
 type gatedIdentityProfile struct {
 	source interface {
 		GameIdentity(context.Context, string) (identitystore.GameProfile, error)
+		RecordGameLogin(context.Context, string, time.Time) error
 	}
 	accountID string
 	entered   chan struct{}
@@ -39,6 +40,10 @@ func (g *gatedIdentityProfile) GameIdentity(ctx context.Context, accountID strin
 		g.once.Do(func() { close(g.entered); <-g.release })
 	}
 	return g.source.GameIdentity(ctx, accountID)
+}
+
+func (g *gatedIdentityProfile) RecordGameLogin(ctx context.Context, accountID string, at time.Time) error {
+	return g.source.RecordGameLogin(ctx, accountID, at)
 }
 
 func (g *gatedPlayerExecutor) Execute(ctx context.Context, c player.Command) (player.Reply, error) {

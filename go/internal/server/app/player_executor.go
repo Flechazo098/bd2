@@ -284,6 +284,11 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		p.assembly = nil
 		return reply, player.Failure{Cause: err, RecoveryRequired: true}
 	}
+	if isLogin && p.factory.profiles != nil {
+		if err := p.factory.profiles.RecordGameLogin(ctx, p.accountID, time.Now()); err != nil {
+			slog.Warn("game login timestamp synchronization failed", "account_id", p.accountID, "error", err)
+		}
+	}
 	if published && p.factory.wakeOutbox != nil {
 		p.factory.wakeOutbox(p.accountID)
 	}

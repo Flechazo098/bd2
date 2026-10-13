@@ -42,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 type PlayerFactory struct {
@@ -54,6 +55,7 @@ type PlayerFactory struct {
 	seeds       *seedCatalog
 	profiles    interface {
 		GameIdentity(context.Context, string) (identitystore.GameProfile, error)
+		RecordGameLogin(context.Context, string, time.Time) error
 	}
 }
 
