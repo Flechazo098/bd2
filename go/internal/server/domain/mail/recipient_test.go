@@ -1,10 +1,10 @@
 package mail_test
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/mail"
-	"bd2server/internal/server/platform/versionconfig"
 	accountstate "bd2server/internal/server/storage/account"
 	"bd2server/internal/server/storage/stateio"
 	"context"

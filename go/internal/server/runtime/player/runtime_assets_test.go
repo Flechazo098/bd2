@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/mail"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/runtime/player"
 	accountstate "bd2server/internal/server/storage/account"

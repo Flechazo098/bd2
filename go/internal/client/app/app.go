@@ -16,9 +16,10 @@ import (
 	clientconfig "bd2server/internal/client/config"
 	clientlayout "bd2server/internal/client/layout"
 	clientsetup "bd2server/internal/client/setup"
+	"bd2server/internal/common/versionconfig"
 )
 
-//go:embed web/index.html
+//go:embed web/index.html web/icon.svg web/icon.png web/icon.ico
 var webFS embed.FS
 
 var errGameAlreadyRunning = errors.New("Brown Dust II is already running") //nolint:staticcheck // ST1005
@@ -27,7 +28,7 @@ type Options struct {
 	InitialGameDir      string
 	Logger              *slog.Logger
 	LogPath             string
-	Versions            clientconfig.ReleaseVersions
+	Versions            versionconfig.Config
 	LocalIdentityPlugin string
 	LoginUIPlugin       string
 	CashShopPlugin      string

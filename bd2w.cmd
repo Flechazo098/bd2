@@ -1,7 +1,6 @@
 @echo off
 setlocal DisableDelayedExpansion
 set "BD2W_ROOT=%~dp0"
-if /I "%~1"=="check-csharp" goto check_csharp
 set "BD2W_TOOL_DIR=%BD2W_ROOT%.build\tools"
 set "BD2W_TOOL=%BD2W_TOOL_DIR%\bd2w.exe"
 set "BD2W_RUN_TOOL=%BD2W_TOOL%"
@@ -71,38 +70,3 @@ exit /b 0
 :compile_failed
 popd
 exit /b 1
-
-:check_csharp
-shift
-set "BD2W_PROJECTS="
-:check_arguments
-if "%~1"=="" goto check_start
-set "BD2W_PROJECT="
-for %%P in (GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment) do if "%~1"=="%%P" set "BD2W_PROJECT=%%P"
-if not defined BD2W_PROJECT (
-    echo bd2w: Unknown C# project: "%~1" 1>&2
-    exit /b 1
-)
-set "BD2W_PROJECTS=%BD2W_PROJECTS% %BD2W_PROJECT%"
-shift
-goto check_arguments
-:check_start
-if not defined BD2W_PROJECTS set "BD2W_PROJECTS=GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment"
-pushd "%BD2W_ROOT%"
-if errorlevel 1 exit /b 1
-set "Configuration=Release"
-set "BD2W_FAILED=0"
-for %%P in (%BD2W_PROJECTS%) do call :check_project %%P
-popd
-exit /b %BD2W_FAILED%
-
-:check_project
-echo Checking %~1
-call dotnet build "%BD2W_ROOT%plugins\%~1\%~1.csproj" -c Release -t:Rebuild --nologo -warnaserror
-if errorlevel 1 (
-    set "BD2W_FAILED=1"
-    exit /b 0
-)
-call dotnet format style "%BD2W_ROOT%plugins\%~1\%~1.csproj" --verify-no-changes --severity info --no-restore
-if errorlevel 1 set "BD2W_FAILED=1"
-exit /b 0

@@ -1,7 +1,7 @@
 package eventplay
 
 import (
-	"bd2server/internal/server/platform/versionconfig"
+	"bd2server/internal/common/versionconfig"
 	"bytes"
 	"encoding/json"
 	"fmt"

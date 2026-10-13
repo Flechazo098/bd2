@@ -3,7 +3,7 @@
 package schedule
 
 import (
-	"bd2server/internal/server/platform/versionconfig"
+	"bd2server/internal/common/versionconfig"
 	"errors"
 	"math"
 )

@@ -12,10 +12,10 @@ import (
 	"strings"
 
 	clientlayout "bd2server/internal/client/layout"
+	"bd2server/internal/common/resourcecatalog"
 )
 
 const (
-	remoteCatalogPrefix = "{BDNetwork.CdnInfo.Info}\\"
 	localCatalogPrefix  = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}\\"
 	localCatalogBackup  = "catalog.json.bd2-before-local-sync"
 	maximumCatalogBytes = 128 << 20
@@ -159,19 +159,19 @@ func readCatalog(path string) ([]byte, error) {
 }
 
 func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
-	document, ids, err := decodeCatalog(raw)
+	document, ids, err := resourcecatalog.Decode(raw)
 	if err != nil {
 		return nil, err
 	}
 	remoteCount := 0
 	for index, internalID := range ids {
-		if strings.HasPrefix(internalID, remoteCatalogPrefix) {
-			relative, err := catalogBundlePath(internalID)
+		if strings.HasPrefix(internalID, resourcecatalog.RemotePrefix) {
+			relative, err := resourcecatalog.BundlePath(internalID)
 			if err != nil {
 				return nil, err
 			}
-			source := filepath.Join(release, relative)
-			destination := filepath.Join(aa, relative)
+			source := filepath.Join(release, filepath.FromSlash(relative))
+			destination := filepath.Join(aa, filepath.FromSlash(relative))
 			if err := ensureCatalogBundleLink(source, destination); err != nil {
 				return nil, err
 			}
@@ -201,23 +201,6 @@ func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 	return localized, nil
 }
 
-func decodeCatalog(raw []byte) (map[string]json.RawMessage, []string, error) {
-	var document map[string]json.RawMessage
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	if err := decoder.Decode(&document); err != nil {
-		return nil, nil, fmt.Errorf("decode local ServerData catalog: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return nil, nil, errors.New("local ServerData catalog must contain exactly one JSON object")
-	}
-	var ids []string
-	if err := json.Unmarshal(document["m_InternalIds"], &ids); err != nil || len(ids) == 0 {
-		return nil, nil, errors.New("local ServerData catalog has no valid internal IDs")
-	}
-	return document, ids, nil
-}
-
 func ensureCatalogBundleLink(source, destination string) error {
 	sourceInfo, err := os.Stat(source)
 	if err != nil || !sourceInfo.Mode().IsRegular() {
@@ -238,24 +221,6 @@ func ensureCatalogBundleLink(source, destination string) error {
 		return fmt.Errorf("hard-link local bundle without duplicating it (keep the game and local resources on the same filesystem): %w", err)
 	}
 	return nil
-}
-
-func catalogBundlePath(internalID string) (string, error) {
-	parts := strings.Split(strings.ReplaceAll(internalID, "\\", "/"), "/")
-	if len(parts) < 5 {
-		return "", fmt.Errorf("local ServerData catalog has an invalid CDN path: %q", internalID)
-	}
-	parts = parts[4:]
-	for _, part := range parts {
-		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `:{}`) {
-			return "", fmt.Errorf("local ServerData catalog has an unsafe bundle path: %q", internalID)
-		}
-	}
-	relative := filepath.Join(parts...)
-	if !strings.EqualFold(filepath.Ext(relative), ".bundle") {
-		return "", fmt.Errorf("local ServerData catalog CDN path is not a bundle: %q", internalID)
-	}
-	return relative, nil
 }
 
 func writeExclusiveFile(path string, data []byte, mode os.FileMode) error {

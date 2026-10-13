@@ -1,17 +1,38 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"bd2server/internal/common/taskgraph"
 )
 
 type task struct {
-	root   string
-	target target
+	root     string
+	target   target
+	ctx      context.Context
+	planOnly bool
+}
+
+func (t task) execute(target string, tasks ...taskgraph.Task) error {
+	graph, err := taskgraph.New(tasks...)
+	if err != nil {
+		return err
+	}
+	if t.planOnly {
+		plan, err := graph.Plan(target)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(os.Stdout, strings.Join(plan, "\n"))
+		return err
+	}
+	return graph.Run(t.ctx, target)
 }
 
 func repositoryRoot() (string, error) {
@@ -32,7 +53,7 @@ func repositoryRoot() (string, error) {
 
 // Every child receives a process-local native target and repository-local cache.
 func (t task) command(program string, args ...string) error {
-	cmd := exec.Command(program, args...)
+	cmd := exec.CommandContext(t.ctx, program, args...)
 	cmd.Dir = filepath.Join(t.root, "go")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

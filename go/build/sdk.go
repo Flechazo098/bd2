@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	commonconfig "bd2server/internal/common/config"
 )
 
 type sdkOptions struct{ gameDir, versionConfig, packageVersion, outputDirectory, packageDirectory, gameMapping string }
@@ -53,8 +55,8 @@ func (t task) sdkOptions(args []string, mode string) (sdkOptions, error) {
 }
 
 func (t task) sdkPackageVersion(o sdkOptions) (string, string, error) {
-	var versions releaseVersions
-	if err := readJSON(o.versionConfig, &versions, false); err != nil {
+	versions, err := commonconfig.Load(o.versionConfig, releaseVersions{}, commonconfig.DecodeOptions{RejectTrailing: true, AllowBOM: true})
+	if err != nil {
 		return "", "", err
 	}
 	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(versions.Game) {
@@ -97,7 +99,7 @@ func (t task) sdkPackageVersion(o sdkOptions) (string, string, error) {
 }
 
 func (t task) sdkCommand(workdir string, env map[string]string, capture bool, args ...string) (string, error) {
-	cmd := exec.Command("dotnet", args...)
+	cmd := exec.CommandContext(t.ctx, "dotnet", args...)
 	cmd.Dir = workdir
 	cmd.Stdin = os.Stdin
 	cmd.Env = replaceEnvironment(os.Environ(), env)

@@ -3,17 +3,23 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 
+	"bd2server/internal/client/iconresource"
 	clientlayout "bd2server/internal/client/layout"
 	clientplugin "bd2server/internal/client/plugin"
+	"bd2server/internal/common/taskgraph"
 )
 
 type clientDevelopmentConfig struct {
@@ -37,7 +43,7 @@ var runDevelopmentChild = func(root string, args []string) error {
 // `production`, retaining the embedded frontend and normal native host while
 // the project-level --dev option supplies development paths and plugin builds.
 func relaunchDevelopmentIfNeeded(args []string) (bool, error) {
-	if len(args) == 0 || args[0] != "--dev" || wailsDevelopmentBuild {
+	if len(args) == 0 || args[0] != "--dev" || slices.Contains(args, "--plan") {
 		return false, nil
 	}
 	if len(args) < 2 || args[1] != "run" {
@@ -47,50 +53,104 @@ func relaunchDevelopmentIfNeeded(args []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	childArgs := []string{"run", "-tags", "production", "./cmd/bd2client", "--dev", "run"}
-	childArgs = append(childArgs, args[2:]...)
-	if err := runDevelopmentChild(root, childArgs); err != nil {
-		return false, fmt.Errorf("run Wails development client: %w", err)
+	var changed, relaunched bool
+	graph, err := taskgraph.New(
+		taskgraph.Task{Name: "client:icon", Run: func(context.Context) error {
+			var err error
+			changed, err = iconresource.Generate(root, runtime.GOOS, runtime.GOARCH)
+			return err
+		}},
+		taskgraph.Task{Name: "client:backend", DependsOn: []string{"client:icon"}, Run: func(context.Context) error {
+			if wailsDevelopmentBuild && !changed {
+				return nil
+			}
+			childArgs := []string{"run", "-tags", "production", "./cmd/bd2client", "--dev", "run"}
+			childArgs = append(childArgs, args[2:]...)
+			if err := runDevelopmentChild(root, childArgs); err != nil {
+				return fmt.Errorf("run Wails development client: %w", err)
+			}
+			relaunched = true
+			return nil
+		}},
+	)
+	if err != nil {
+		return false, err
 	}
-	return true, nil
+	err = graph.Run(context.Background(), "client:backend")
+	return relaunched, err
 }
 
-func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
+func runClientDevelopmentCommand(args []string) (bool, error) {
 	if len(args) == 0 || args[0] != "--dev" {
-		return args, clientRunOptions{}, nil
+		return false, nil
 	}
 	if len(args) < 2 || args[1] != "run" {
-		return nil, clientRunOptions{}, errors.New("usage: bd2client --dev run [client options]")
+		return true, errors.New("usage: bd2client --dev run [--plan] [client options]")
 	}
-	root, err := findClientDevelopmentRoot()
-	if err != nil {
-		return nil, clientRunOptions{}, err
-	}
-	clientArgs := append([]string(nil), args[2:]...)
-	gameDir, err := clientDevelopmentGameDirectory(clientArgs)
-	if err != nil {
-		return nil, clientRunOptions{}, err
-	}
-	if gameDir == "" {
-		config, configErr := loadClientDevelopmentConfig(filepath.Join(root, "go", "config.json"))
-		if configErr != nil {
-			return nil, clientRunOptions{}, configErr
-		}
-		gameDir = config.GameDirectory
-	}
-	if gameDir != "" {
-		if err := buildDevelopmentPlugins(root, gameDir); err != nil {
-			return nil, clientRunOptions{}, err
+	planOnly := false
+	clientArgs := make([]string, 0, len(args)-2)
+	for _, arg := range args[2:] {
+		if arg == "--plan" {
+			planOnly = true
+		} else {
+			clientArgs = append(clientArgs, arg)
 		}
 	}
-	return clientArgs, clientRunOptions{
-		versionConfigPath:   filepath.Join(root, "versions.json"),
-		logExecutablePath:   filepath.Join(root, "data", "bd2client-dev"),
-		localIdentityPlugin: filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll"),
-		loginUIPlugin:       filepath.Join(root, "plugins", "LoginUI", "bin", "Release", "netstandard2.1", "BD2LoginUI.dll"),
-		cashShopPlugin:      filepath.Join(root, "plugins", "CashShop", "bin", "Release", "netstandard2.1", "BD2CashShop.dll"),
-		fChatPlugin:         filepath.Join(root, "plugins", "FChat", "bin", "Release", "netstandard2.1", "BD2FChat.dll"),
-	}, nil
+	var root, gameDir string
+	var options clientRunOptions
+	graph, err := taskgraph.New(
+		taskgraph.Task{Name: "client:configuration", Run: func(context.Context) error {
+			var err error
+			root, err = findClientDevelopmentRoot()
+			if err != nil {
+				return err
+			}
+			gameDir, err = clientDevelopmentGameDirectory(clientArgs)
+			if err != nil {
+				return err
+			}
+			if gameDir == "" {
+				config, err := loadClientDevelopmentConfig(filepath.Join(root, "go", "config.json"))
+				if err != nil {
+					return err
+				}
+				gameDir = config.GameDirectory
+			}
+			return nil
+		}},
+		taskgraph.Task{Name: "client:plugins", DependsOn: []string{"client:configuration"}, Run: func(ctx context.Context) error {
+			if gameDir == "" {
+				return nil
+			}
+			return buildDevelopmentPlugins(ctx, root, gameDir)
+		}},
+		taskgraph.Task{Name: "client:options", DependsOn: []string{"client:plugins"}, Run: func(context.Context) error {
+			options = clientRunOptions{
+				versionConfigPath:   filepath.Join(root, "versions.json"),
+				logExecutablePath:   filepath.Join(root, "data", "bd2client-dev"),
+				localIdentityPlugin: filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll"),
+				loginUIPlugin:       filepath.Join(root, "plugins", "LoginUI", "bin", "Release", "netstandard2.1", "BD2LoginUI.dll"),
+				cashShopPlugin:      filepath.Join(root, "plugins", "CashShop", "bin", "Release", "netstandard2.1", "BD2CashShop.dll"),
+				fChatPlugin:         filepath.Join(root, "plugins", "FChat", "bin", "Release", "netstandard2.1", "BD2FChat.dll"),
+			}
+			return nil
+		}},
+		taskgraph.Task{Name: "runClient", DependsOn: []string{"client:options"}, Run: func(context.Context) error { return runClient(clientArgs, options) }},
+	)
+	if err != nil {
+		return true, err
+	}
+	if planOnly {
+		plan, err := graph.Plan("runClient")
+		if err != nil {
+			return true, err
+		}
+		fmt.Println(strings.Join(plan, " -> "))
+		return true, nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return true, graph.Run(ctx, "runClient")
 }
 
 func loadClientDevelopmentConfig(path string) (clientDevelopmentConfig, error) {
@@ -166,7 +226,7 @@ func clientDevelopmentGameDirectory(args []string) (string, error) {
 	return "", nil
 }
 
-func buildDevelopmentPlugins(root, gameDir string) error {
+func buildDevelopmentPlugins(ctx context.Context, root, gameDir string) error {
 	installation, err := clientlayout.Resolve(gameDir)
 	if err != nil {
 		return nil
@@ -175,5 +235,5 @@ func buildDevelopmentPlugins(root, gameDir string) error {
 		return nil
 	}
 	fmt.Fprintln(os.Stderr, "bd2client: preparing four development plugins; cached inputs will be reused")
-	return clientplugin.BuildDevelopment(root, gameDir, os.Stderr)
+	return clientplugin.BuildDevelopment(ctx, root, gameDir, os.Stderr)
 }

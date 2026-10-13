@@ -1,0 +1,17 @@
+{
+  "game_version": "2.36.7",
+  "game_data_version": "20261008155037",
+  "bundle_version": "20261007175947",
+  "platform": "StandaloneWindows64",
+  "server_origin": "https://bd2-test.45.76.195.129.sslip.io",
+  "build_origins": ["https://cdn.dev.bd2.pmang.cloud", "https://dl.dev.bd2.pmang.cloud"],
+  "resource_origins": ["https://dl.bd2.pmang.cloud", "https://cdn.bd2.pmang.cloud", "https://bd2-cdn.akamaized.net"],
+  "game_path": "/Build/Windows/20261002/StandaloneWindows64.2.36.7.zip",
+  "game_sha256": "3ca28b7c94d65b2cb4e33784d843902758415a3a83870c5f6198f5cd90e3bff3",
+  "game_bytes": 413552979,
+  "data_sha256": "44cc20963abf800f4b3af449ff901534a1b99089571a820eb7bbb841fd0f0cd1",
+  "data_bytes": 191754787,
+  "catalog_sha256": "c9ed216c66903bfa1e556f38cc02e2923a48164e8469767d7987f7989d86d385",
+  "catalog_bytes": 67338179,
+  "catalog_hash": "0f90a94601be05737f86a4ec7a1c889f"
+}

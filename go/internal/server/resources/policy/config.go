@@ -2,17 +2,15 @@
 package resourcepolicy
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"bd2server/internal/server/platform/configfile"
+	commonconfig "bd2server/internal/common/config"
 )
 
 const (
@@ -53,24 +51,12 @@ func Default() Config {
 // Load reads one explicit resources.json. Unknown fields and trailing JSON are
 // rejected so a misspelled URL key cannot silently fall back to another CDN.
 func Load(path string) (Config, error) {
-	if err := configfile.Ensure(path, Default()); err != nil {
+	if err := commonconfig.Ensure(path, Default(), commonconfig.WriteOptions{}); err != nil {
 		return Config{}, fmt.Errorf("resource policy: initialize %s: %w", path, err)
 	}
-	data, err := os.ReadFile(filepath.Clean(path))
+	cfg, err := commonconfig.Load(path, Config{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true})
 	if err != nil {
-		return Config{}, fmt.Errorf("resource policy: read %s: %w", path, err)
-	}
-	var cfg Config
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("resource policy: decode %s: %w", path, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return Config{}, fmt.Errorf("resource policy: trailing JSON in %s", path)
-	} else if !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("resource policy: trailing data in %s: %w", path, err)
+		return Config{}, fmt.Errorf("resource policy: load %s: %w", path, err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("resource policy: %s: %w", path, err)

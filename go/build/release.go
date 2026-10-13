@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -11,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	clientplugin "bd2server/internal/client/plugin"
+	commonconfig "bd2server/internal/common/config"
 )
 
 type buildOptions struct {
@@ -59,8 +58,8 @@ func parseOptions(args []string) (buildOptions, error) {
 	return opts, nil
 }
 func (t task) versions() (releaseVersions, error) {
-	var v releaseVersions
-	if err := readJSON(filepath.Join(t.root, "versions.json"), &v, false); err != nil {
+	v, err := commonconfig.Load(filepath.Join(t.root, "versions.json"), releaseVersions{}, commonconfig.DecodeOptions{RejectTrailing: true, AllowBOM: true})
+	if err != nil {
 		return v, err
 	}
 	valid := regexp.MustCompile(`^[A-Za-z0-9.+_-]+$`)
@@ -93,119 +92,4 @@ func (t task) schedules(gameVersion string) ([]string, string, error) {
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(lines, "\n"))))[:12]
 	return files, "bd2schedules-" + gameVersion + "-" + hash, nil
-}
-func (t task) build(opts buildOptions) error {
-	v, err := t.versions()
-	if err != nil {
-		return err
-	}
-	schedules, scheduleName, err := t.schedules(v.Game)
-	if err != nil {
-		return err
-	}
-	buildRoot := filepath.Join(t.root, ".build")
-	if opts.schedulesOnly {
-		out := filepath.Join(buildRoot, scheduleName)
-		if err := os.MkdirAll(out, 0755); err != nil {
-			return err
-		}
-		for _, file := range schedules {
-			if err := copyFile(file, filepath.Join(out, filepath.Base(file))); err != nil {
-				return err
-			}
-		}
-		fmt.Println("Built schedule release:", out)
-		return nil
-	}
-	game, _, _, err := t.gameDirectory(opts.gameDir)
-	if err != nil {
-		return err
-	}
-	packageRoot := filepath.Join(buildRoot, "package")
-	server := filepath.Join(packageRoot, "bd2server")
-	client := filepath.Join(packageRoot, "bd2client")
-	suffix := "-" + t.target.platform + "-" + t.target.architecture + ".zip"
-	serverZip := filepath.Join(buildRoot, "bd2server-"+v.Server+suffix)
-	clientZip := filepath.Join(buildRoot, "bd2client-"+v.Client+suffix)
-	if err := os.MkdirAll(buildRoot, 0755); err != nil {
-		return err
-	}
-	for _, path := range []string{packageRoot, serverZip, clientZip} {
-		if err := removeBuildOutput(buildRoot, path); err != nil {
-			return err
-		}
-	}
-	for _, path := range []string{filepath.Join(server, "go"), filepath.Join(server, "data", "state"), filepath.Join(server, "schedules"), filepath.Join(client, "plugins")} {
-		if err := os.MkdirAll(path, 0755); err != nil {
-			return err
-		}
-	}
-	if !opts.skipTests {
-		for _, args := range [][]string{{"test", "./..."}, {"vet", "./..."}, {"test", "-tags", "release,production", "./..."}, {"vet", "-tags", "release,production", "./..."}} {
-			if err := t.command("go", args...); err != nil {
-				return err
-			}
-		}
-	}
-	ext := ""
-	clientFlags := "-s -w"
-	if t.target.goos == "windows" {
-		ext = ".exe"
-		clientFlags = "-H windowsgui -s -w"
-	}
-	if err := t.command("go", "build", "-tags", "release", "-trimpath", "-ldflags", "-s -w", "-o", filepath.Join(server, "bd2server"+ext), "./cmd/bd2server"); err != nil {
-		return err
-	}
-	if err := t.command("go", "build", "-tags", "release,production", "-trimpath", "-ldflags", clientFlags, "-o", filepath.Join(client, "bd2client"+ext), "./cmd/bd2client"); err != nil {
-		return err
-	}
-	if err := clientplugin.BuildDevelopment(t.root, game, os.Stdout); err != nil {
-		return err
-	}
-	var shared []byte
-	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {
-		out := filepath.Join(t.root, "plugins", plugin, "bin", "Release", "netstandard2.1")
-		raw, err := os.ReadFile(filepath.Join(out, "BD2.GameNames.dll"))
-		if err != nil {
-			return err
-		}
-		if shared != nil && !bytes.Equal(shared, raw) {
-			return errors.New("plugins were built with different BD2.GameNames libraries")
-		}
-		shared = raw
-		for _, name := range []string{"BD2" + plugin + ".dll", "BD2.GameNames.dll"} {
-			if err := copyFile(filepath.Join(out, name), filepath.Join(client, "plugins", name)); err != nil {
-				return err
-			}
-		}
-	}
-	if err := copyTree(filepath.Join(t.root, "go", "seed"), filepath.Join(server, "go", "seed")); err != nil {
-		return err
-	}
-	for _, file := range schedules {
-		if err := copyFile(file, filepath.Join(server, "schedules", filepath.Base(file))); err != nil {
-			return err
-		}
-	}
-	for _, name := range []string{"versions.json", "README.md", "LICENSE"} {
-		for _, out := range []string{server, client} {
-			if err := copyFile(filepath.Join(t.root, name), filepath.Join(out, name)); err != nil {
-				return err
-			}
-		}
-	}
-	for _, name := range []string{"AUTHENTICATION.md", "RESOURCES.md", "GAME_CONFIGURATION.md"} {
-		if err := copyFile(filepath.Join(t.root, name), filepath.Join(server, name)); err != nil {
-			return err
-		}
-	}
-	if err := archiveDirectory(server, serverZip); err != nil {
-		return err
-	}
-	if err := archiveDirectory(client, clientZip); err != nil {
-		return err
-	}
-	fmt.Println("Built server archive:", serverZip)
-	fmt.Println("Built client archive:", clientZip)
-	return nil
 }

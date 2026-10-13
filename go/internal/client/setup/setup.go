@@ -22,6 +22,7 @@ import (
 	"bd2server/internal/client/introdb"
 	clientlayout "bd2server/internal/client/layout"
 	"bd2server/internal/client/plugin"
+	"bd2server/internal/common/versionconfig"
 )
 
 const PatchPlaceholder = "http://127.0.0.1:8080/game/"
@@ -54,7 +55,7 @@ type InstallResult struct {
 	FChat         plugin.Result `json:"fchat"`
 }
 
-func Inspect(gameDir string, versions clientconfig.ReleaseVersions) (GameStatus, error) {
+func Inspect(gameDir string, versions versionconfig.Config) (GameStatus, error) {
 	if strings.TrimSpace(gameDir) == "" {
 		return GameStatus{}, errors.New("select the Brown Dust II installation directory")
 	}
@@ -80,7 +81,7 @@ func Inspect(gameDir string, versions clientconfig.ReleaseVersions) (GameStatus,
 	return status, nil
 }
 
-func SaveSettings(gameDir string, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (clientconfig.Settings, error) {
+func SaveSettings(gameDir string, settings clientconfig.Settings, versions versionconfig.Config) (clientconfig.Settings, error) {
 	if _, err := Inspect(gameDir, versions); err != nil {
 		return clientconfig.Settings{}, err
 	}
@@ -96,7 +97,7 @@ func SaveSettings(gameDir string, settings clientconfig.Settings, versions clien
 	return clientconfig.Save(gameDir, normalized)
 }
 
-func Patch(gameDir string, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (introdb.Result, error) {
+func Patch(gameDir string, settings clientconfig.Settings, versions versionconfig.Config) (introdb.Result, error) {
 	if _, err := SaveSettings(gameDir, settings, versions); err != nil {
 		return introdb.Result{}, err
 	}
@@ -116,7 +117,7 @@ func Patch(gameDir string, settings clientconfig.Settings, versions clientconfig
 func InstallPlugins(
 	gameDir string,
 	settings clientconfig.Settings,
-	versions clientconfig.ReleaseVersions,
+	versions versionconfig.Config,
 	localIdentitySource string,
 	loginUISource string,
 	cashShopSource string,
@@ -167,7 +168,7 @@ func InstallPlugins(
 	return InstallResult{LocalIdentity: local, LoginUI: login, CashShop: cash, FChat: fchat}, nil
 }
 
-func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clientconfig.Settings, versions clientconfig.ReleaseVersions) (ResourcePolicy, error) {
+func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clientconfig.Settings, versions versionconfig.Config) (ResourcePolicy, error) {
 	normalized, err := clientconfig.Normalize(settings)
 	if err != nil {
 		return ResourcePolicy{}, err
@@ -257,7 +258,7 @@ func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clie
 	return policy, nil
 }
 
-func inspectLocalResourceDirectory(raw string, versions clientconfig.ReleaseVersions) (string, error) {
+func inspectLocalResourceDirectory(raw string, versions versionconfig.Config) (string, error) {
 	root, err := filepath.Abs(filepath.Clean(strings.TrimSpace(raw)))
 	if err != nil {
 		return "", fmt.Errorf("resolve local resource directory: %w", err)

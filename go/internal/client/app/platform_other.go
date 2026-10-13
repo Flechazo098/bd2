@@ -10,7 +10,7 @@ import (
 
 func ShowFatalError(err error) {
 	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "BD2 Client Studio:", err)
+		_, _ = fmt.Fprintln(os.Stderr, "BD2 Launcher:", err)
 	}
 }
 

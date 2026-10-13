@@ -1,7 +1,7 @@
 package app
 
 import (
-	"bd2server/internal/server/platform/versionconfig"
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/resources/fetch"
 	"context"
 	"errors"

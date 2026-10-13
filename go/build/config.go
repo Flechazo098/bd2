@@ -1,40 +1,21 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
+
+	commonconfig "bd2server/internal/common/config"
 )
 
-func readJSON(path string, v any, strict bool) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	d := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})))
-	if strict {
-		d.DisallowUnknownFields()
-	}
-	if err = d.Decode(v); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
-	}
-	if err = d.Decode(new(any)); err != io.EOF {
-		return fmt.Errorf("%s must contain one JSON object", path)
-	}
-	return nil
-}
 func (t task) gameDirectory(explicit string) (string, string, string, error) {
 	if explicit == "" {
-		var c struct {
+		c, err := commonconfig.Load(filepath.Join(t.root, "go", "config.json"), struct {
 			SchemaVersion int    `json:"schema_version"`
 			GameDirectory string `json:"game_directory"`
-		}
-		if err := readJSON(filepath.Join(t.root, "go", "config.json"), &c, true); err != nil {
+		}{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, AllowBOM: true})
+		if err != nil {
 			return "", "", "", fmt.Errorf("read go/config.json or pass -GameDir: %w", err)
 		}
 		if c.SchemaVersion != 1 || strings.TrimSpace(c.GameDirectory) == "" {

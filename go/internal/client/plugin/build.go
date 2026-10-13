@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ import (
 
 	"bd2server/internal/buildversion"
 	clientlayout "bd2server/internal/client/layout"
+	"bd2server/internal/common/taskgraph"
 )
 
 var developmentProjects = []struct{ name, key string }{
@@ -23,7 +25,10 @@ var developmentProjects = []struct{ name, key string }{
 
 // BuildDevelopment compiles the client plugins as one dependency graph, sharing
 // the game SDK and version preparation across the four entry projects.
-func BuildDevelopment(root, gameDir string, progress io.Writer) error {
+func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	started := time.Now()
 	installation, err := clientlayout.Resolve(gameDir)
 	if err != nil {
@@ -39,7 +44,7 @@ func BuildDevelopment(root, gameDir string, progress io.Writer) error {
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		return err
 	}
-	unlock, err := acquireBuildLock(filepath.Dir(work), progress)
+	unlock, err := acquireBuildLock(ctx, filepath.Dir(work), progress)
 	if err != nil {
 		return err
 	}
@@ -80,102 +85,141 @@ func BuildDevelopment(root, gameDir string, progress io.Writer) error {
 	}
 	sdkKey := digestInputs(sdkInputsKey)
 	sdkManifestPath := filepath.Join(work, "sdk-build.json")
-	if err := writeBuildInput(sdkInputs, sdkFingerprint); err != nil {
-		return err
-	}
-	if err := writeBuildInput(namesInputs, namesFingerprint); err != nil {
-		return err
-	}
-	prepareStarted := time.Now()
 	sdkTool := filepath.Join(root, "plugins", "GameSdk", "bin", "Release", "net8.0", "GameSdk.dll")
-	if !currentBuild(sdkManifestPath, sdkKey, digests) {
-		_, _ = fmt.Fprintln(progress, "Client plugins: preparing the shared game SDK...")
-		if err := runPluginBuild(root, progress, "build", filepath.Join(root, "plugins", "GameSdk", "GameSdk.csproj"), "-c", "Release", "--nologo", "-v:quiet", "-clp:NoSummary", "-p:BD2SdkCompileInputsFile="+sdkInputs); err != nil {
-			return err
-		}
-		if err := runPluginBuild(root, progress, sdkTool, "prepare-embedded", filepath.Join(managed, "Assembly-CSharp.dll"), sdkDir, "--game-version", gameVersion); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(progress, "Client plugins: SDK preparation completed in %s\n", time.Since(prepareStarted).Round(time.Millisecond))
-	} else {
-		_, _ = fmt.Fprintf(progress, "Client plugins: shared SDK reused (%s)\n", time.Since(prepareStarted).Round(time.Millisecond))
-	}
-	sharedRaw, err := os.ReadFile(filepath.Join(sdkDir, "shared-sdk.txt"))
+	var sdkReused bool
+	var shared string
+	prepareStarted := time.Now()
+	graph, err := taskgraph.New(
+		taskgraph.Task{Name: "sdkInputs", Run: func(context.Context) error {
+			if err := writeBuildInput(sdkInputs, sdkFingerprint); err != nil {
+				return err
+			}
+			if err := writeBuildInput(namesInputs, namesFingerprint); err != nil {
+				return err
+			}
+
+			sdkReused = currentBuild(sdkManifestPath, sdkKey, digests)
+			return nil
+		}},
+		taskgraph.Task{Name: "sdkCompile", DependsOn: []string{"sdkInputs"}, Run: func(context.Context) error {
+			if sdkReused {
+				return nil
+			}
+			_, _ = fmt.Fprintln(progress, "Client plugins: preparing the shared game SDK...")
+			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "GameSdk", "GameSdk.csproj"), "-c", "Release", "--nologo", "-v:quiet", "-clp:NoSummary", "-p:BD2SdkCompileInputsFile="+sdkInputs); err != nil {
+				return err
+			}
+
+			return nil
+		}},
+		taskgraph.Task{Name: "sdkPrepare", DependsOn: []string{"sdkCompile"}, Run: func(context.Context) error {
+			if !sdkReused {
+				if err := runPluginBuild(ctx, root, progress, sdkTool, "prepare-embedded", filepath.Join(managed, "Assembly-CSharp.dll"), sdkDir, "--game-version", gameVersion); err != nil {
+					return err
+				}
+
+				_, _ = fmt.Fprintf(progress, "Client plugins: SDK preparation completed in %s\n", time.Since(prepareStarted).Round(time.Millisecond))
+			} else {
+				_, _ = fmt.Fprintf(progress, "Client plugins: shared SDK reused (%s)\n", time.Since(prepareStarted).Round(time.Millisecond))
+			}
+			sharedRaw, err := os.ReadFile(filepath.Join(sdkDir, "shared-sdk.txt"))
+			if err != nil {
+				return err
+			}
+			shared = strings.TrimSpace(string(sharedRaw))
+
+			return nil
+		}},
+		taskgraph.Task{Name: "versionSources", DependsOn: []string{"sdkPrepare"}, Run: func(context.Context) error {
+			versionStarted := time.Now()
+			_, _ = fmt.Fprintln(progress, "Client plugins: generating version and compilation fingerprints...")
+			for _, project := range developmentProjects {
+				if err := buildversion.Generate(versionConfig, filepath.Join(versionDir, project.key+".g.cs"), project.key); err != nil {
+					return err
+				}
+				inputStamp, err := projectFingerprint(root, inputs, project.name, filepath.Join(versionDir, project.key+".g.cs"))
+				if err != nil {
+					return err
+				}
+				if err := writeBuildInput(filepath.Join(compileInputsDir, project.key+".g.cs"), inputStamp); err != nil {
+					return err
+				}
+			}
+			_, _ = fmt.Fprintf(progress, "Client plugins: version sources prepared in %s\n", time.Since(versionStarted).Round(time.Millisecond))
+
+			return nil
+		}},
+		taskgraph.Task{Name: "pluginsCompile", DependsOn: []string{"versionSources"}, Run: func(context.Context) error {
+			compileStarted := time.Now()
+			_, _ = fmt.Fprintln(progress, "Client plugins: compiling all four plugins as one parallel dependency graph...")
+			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "ClientPlugins.proj"), "-m", "-c", "Release", "--nologo",
+				"-p:GameDir="+installation.Root, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+installation.BepInEx,
+				"-p:BD2SdkPrepared=true", "-p:BD2SdkDir="+sdkDir, "-p:BD2SharedSdkDir="+shared,
+				"-p:BD2PreparedVersionDir="+versionDir, "-p:BD2CompileInputsDir="+compileInputsDir, "-p:BD2NamesCompileInputsFile="+namesInputs, "-v:quiet", "-clp:NoSummary"); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(progress, "Client plugins: compilation and reobfuscation completed in %s\n", time.Since(compileStarted).Round(time.Millisecond))
+
+			return nil
+		}},
+		taskgraph.Task{Name: "cacheCommit", DependsOn: []string{"pluginsCompile"}, Run: func(context.Context) error {
+			outputs := []string{sdkTool, sdkInputs, namesInputs, strings.TrimSuffix(sdkTool, ".dll") + ".deps.json", strings.TrimSuffix(sdkTool, ".dll") + ".runtimeconfig.json",
+				filepath.Join(sdkDir, "GameSdkIdentity.g.cs"), filepath.Join(sdkDir, "shared-sdk.txt"), filepath.Join(sdkDir, "GameSourceNavigation.props"),
+				filepath.Join(shared, "ref", "Assembly-CSharp.Readable.dll"), filepath.Join(shared, "names.json"), filepath.Join(shared, "names.json.gz")}
+			for _, name := range []string{"ready.txt", "navigation.json", "GameSourceNavigation.props", "Assembly-CSharp.Readable.dll", "Assembly-CSharp.Readable.xml",
+				"ref/Assembly-CSharp.Readable.xml", "lib/Assembly-CSharp.Readable.dll", "lib/Assembly-CSharp.Readable.pdb", "lib/Assembly-CSharp.Readable.xml", "lib/navigation.json"} {
+				outputs = append(outputs, filepath.Join(shared, filepath.FromSlash(name)))
+			}
+			toolDependencies, err := filepath.Glob(filepath.Join(filepath.Dir(sdkTool), "*.dll"))
+			if err != nil {
+				return err
+			}
+			outputs = append(outputs, toolDependencies...)
+			sdkOutputs := append([]string(nil), outputs...)
+			for _, project := range developmentProjects {
+				output := filepath.Join(root, "plugins", project.name, "bin", "Release", "netstandard2.1")
+				outputs = append(outputs, filepath.Join(output, "BD2"+project.name+".dll"), filepath.Join(output, GameNames.fileName), filepath.Join(versionDir, project.key+".g.cs"), filepath.Join(compileInputsDir, project.key+".g.cs"))
+			}
+			sums := make(map[string]string, len(outputs))
+			for _, output := range outputs {
+				sum, err := digests.digest(output)
+				if err != nil {
+					return err
+				}
+				sums[output] = sum
+			}
+			finalInputs, err := snapshotInputs(root, managed, installation.BepInEx, digests)
+			if err != nil {
+				return err
+			}
+			if digestInputs(finalInputs) != fingerprint {
+				return errors.New("client plugin inputs changed during compilation; run preparation again")
+			}
+			if err := saveBuildManifest(manifestPath, buildManifest{Input: fingerprint, Outputs: sums}); err != nil {
+				return err
+			}
+			sdkSums := make(map[string]string, len(sdkOutputs))
+			for _, output := range sdkOutputs {
+				sdkSums[output] = sums[output]
+			}
+			if err := saveBuildManifest(sdkManifestPath, buildManifest{Input: sdkKey, Outputs: sdkSums}); err != nil {
+				return err
+			}
+
+			return nil
+		}},
+	)
 	if err != nil {
 		return err
 	}
-	shared := strings.TrimSpace(string(sharedRaw))
-	versionStarted := time.Now()
-	_, _ = fmt.Fprintln(progress, "Client plugins: generating version and compilation fingerprints...")
-	for _, project := range developmentProjects {
-		if err := buildversion.Generate(versionConfig, filepath.Join(versionDir, project.key+".g.cs"), project.key); err != nil {
-			return err
-		}
-		inputStamp, err := projectFingerprint(root, inputs, project.name, filepath.Join(versionDir, project.key+".g.cs"))
-		if err != nil {
-			return err
-		}
-		if err := writeBuildInput(filepath.Join(compileInputsDir, project.key+".g.cs"), inputStamp); err != nil {
-			return err
-		}
-	}
-	_, _ = fmt.Fprintf(progress, "Client plugins: version sources prepared in %s\n", time.Since(versionStarted).Round(time.Millisecond))
-	compileStarted := time.Now()
-	_, _ = fmt.Fprintln(progress, "Client plugins: compiling all four plugins as one parallel dependency graph...")
-	if err := runPluginBuild(root, progress, "build", filepath.Join(root, "plugins", "ClientPlugins.proj"), "-m", "-c", "Release", "--nologo",
-		"-p:GameDir="+installation.Root, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+installation.BepInEx,
-		"-p:BD2SdkPrepared=true", "-p:BD2SdkDir="+sdkDir, "-p:BD2SharedSdkDir="+shared,
-		"-p:BD2PreparedVersionDir="+versionDir, "-p:BD2CompileInputsDir="+compileInputsDir, "-p:BD2NamesCompileInputsFile="+namesInputs, "-v:quiet", "-clp:NoSummary"); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(progress, "Client plugins: compilation and reobfuscation completed in %s\n", time.Since(compileStarted).Round(time.Millisecond))
-	outputs := []string{sdkTool, sdkInputs, namesInputs, strings.TrimSuffix(sdkTool, ".dll") + ".deps.json", strings.TrimSuffix(sdkTool, ".dll") + ".runtimeconfig.json",
-		filepath.Join(sdkDir, "GameSdkIdentity.g.cs"), filepath.Join(sdkDir, "shared-sdk.txt"), filepath.Join(sdkDir, "GameSourceNavigation.props"),
-		filepath.Join(shared, "ref", "Assembly-CSharp.Readable.dll"), filepath.Join(shared, "names.json"), filepath.Join(shared, "names.json.gz")}
-	for _, name := range []string{"ready.txt", "navigation.json", "GameSourceNavigation.props", "Assembly-CSharp.Readable.dll", "Assembly-CSharp.Readable.xml",
-		"ref/Assembly-CSharp.Readable.xml", "lib/Assembly-CSharp.Readable.dll", "lib/Assembly-CSharp.Readable.pdb", "lib/Assembly-CSharp.Readable.xml", "lib/navigation.json"} {
-		outputs = append(outputs, filepath.Join(shared, filepath.FromSlash(name)))
-	}
-	toolDependencies, err := filepath.Glob(filepath.Join(filepath.Dir(sdkTool), "*.dll"))
-	if err != nil {
-		return err
-	}
-	outputs = append(outputs, toolDependencies...)
-	sdkOutputs := append([]string(nil), outputs...)
-	for _, project := range developmentProjects {
-		output := filepath.Join(root, "plugins", project.name, "bin", "Release", "netstandard2.1")
-		outputs = append(outputs, filepath.Join(output, "BD2"+project.name+".dll"), filepath.Join(output, GameNames.fileName), filepath.Join(versionDir, project.key+".g.cs"), filepath.Join(compileInputsDir, project.key+".g.cs"))
-	}
-	sums := make(map[string]string, len(outputs))
-	for _, output := range outputs {
-		sum, err := digests.digest(output)
-		if err != nil {
-			return err
-		}
-		sums[output] = sum
-	}
-	finalInputs, err := snapshotInputs(root, managed, installation.BepInEx, digests)
-	if err != nil {
-		return err
-	}
-	if digestInputs(finalInputs) != fingerprint {
-		return errors.New("client plugin inputs changed during compilation; run preparation again")
-	}
-	if err := saveBuildManifest(manifestPath, buildManifest{Input: fingerprint, Outputs: sums}); err != nil {
-		return err
-	}
-	sdkSums := make(map[string]string, len(sdkOutputs))
-	for _, output := range sdkOutputs {
-		sdkSums[output] = sums[output]
-	}
-	if err := saveBuildManifest(sdkManifestPath, buildManifest{Input: sdkKey, Outputs: sdkSums}); err != nil {
+	if err := graph.Run(ctx, "cacheCommit"); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(progress, "Client plugins: all four ready in %s\n", time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
-func acquireBuildLock(work string, progress io.Writer) (func(), error) {
+func acquireBuildLock(ctx context.Context, work string, progress io.Writer) (func(), error) {
 	lock := filepath.Join(work, "build.lock")
 	file, err := os.OpenFile(lock, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -185,6 +229,10 @@ func acquireBuildLock(work string, progress io.Writer) (func(), error) {
 	announced := false
 	lastNotice := started
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 		locked, err := tryBuildFileLock(file)
 		if err != nil {
 			_ = file.Close()
@@ -205,12 +253,19 @@ func acquireBuildLock(work string, progress io.Writer) (func(), error) {
 			_, _ = fmt.Fprintf(progress, "Client plugins: still waiting for the current build (%s)...\n", time.Since(started).Round(time.Second))
 			lastNotice = time.Now()
 		}
-		time.Sleep(250 * time.Millisecond)
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 
-func runPluginBuild(root string, progress io.Writer, args ...string) error {
-	command := exec.Command("dotnet", args...)
+func runPluginBuild(ctx context.Context, root string, progress io.Writer, args ...string) error {
+	command := exec.CommandContext(ctx, "dotnet", args...)
 	command.Dir = root
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")

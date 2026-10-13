@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/domain/command"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/storage/stateio"
 )
 

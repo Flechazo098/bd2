@@ -3,17 +3,16 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	clientlayout "bd2server/internal/client/layout"
+	commonconfig "bd2server/internal/common/config"
 )
 
 const (
@@ -149,48 +148,16 @@ func Save(gameDir string, in Settings) (Settings, error) {
 		return Settings{}, err
 	}
 	path := Path(gameDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return Settings{}, fmt.Errorf("client config: create config directory: %w", err)
-	}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return Settings{}, err
-	}
-	data = append(data, '\n')
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".bd2-client-*.tmp")
-	if err != nil {
-		return Settings{}, fmt.Errorf("client config: create temporary config: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err = temporary.Chmod(0o600); err == nil {
-		_, err = temporary.Write(data)
-	}
-	if err == nil {
-		err = temporary.Sync()
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return Settings{}, fmt.Errorf("client config: stage config: %w", err)
-	}
-	if err := replaceFile(temporaryPath, path); err != nil {
-		return Settings{}, fmt.Errorf("client config: install config: %w", err)
+	if err := commonconfig.Save(path, settings, commonconfig.WriteOptions{}); err != nil {
+		return Settings{}, fmt.Errorf("client config: save: %w", err)
 	}
 	return settings, nil
 }
 
 func Load(gameDir string) (Settings, error) {
-	data, err := os.ReadFile(Path(gameDir))
+	settings, err := commonconfig.Load(Path(gameDir), Settings{}, commonconfig.DecodeOptions{DisallowUnknownFields: true})
 	if err != nil {
-		return Settings{}, err
-	}
-	var settings Settings
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&settings); err != nil {
-		return Settings{}, fmt.Errorf("client config: decode: %w", err)
+		return Settings{}, fmt.Errorf("client config: load: %w", err)
 	}
 	if settings.SchemaVersion != SchemaVersion {
 		return Settings{}, fmt.Errorf("client config: unsupported schema_version %d", settings.SchemaVersion)

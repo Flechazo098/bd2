@@ -4,6 +4,7 @@
 package world
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
@@ -11,7 +12,6 @@ import (
 	"bd2server/internal/server/domain/roster/deck"
 	"bd2server/internal/server/domain/world/progress"
 	"bd2server/internal/server/domain/world/todayquest"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"

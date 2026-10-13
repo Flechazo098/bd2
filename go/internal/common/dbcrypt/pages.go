@@ -1,4 +1,6 @@
-package introdb
+// Package dbcrypt implements the database page cipher shared by client Intro
+// assets and versioned GameData SQLite archives.
+package dbcrypt
 
 import (
 	"crypto/aes"
@@ -12,8 +14,8 @@ const PageSize = 4096
 
 var Header = []byte("SQLite format 3\x00")
 
-func decryptPages(in []byte) ([]byte, error) { return cryptPages(in, false) }
-func encryptPages(in []byte) ([]byte, error) { return cryptPages(in, true) }
+func DecryptPages(in []byte) ([]byte, error) { return cryptPages(in, false) }
+func EncryptPages(in []byte) ([]byte, error) { return cryptPages(in, true) }
 
 func cryptPages(in []byte, encrypt bool) ([]byte, error) {
 	if len(in) == 0 || len(in)%PageSize != 0 {

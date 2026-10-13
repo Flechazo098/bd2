@@ -1,17 +1,17 @@
 // Package versionconfig loads repository-wide game compatibility, component
-// release, seed, and resource versions. The same versions.json drives plugins.
+// release, seed, and resource versions for the server, client, and build tools.
 package versionconfig
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+
+	commonconfig "bd2server/internal/common/config"
 )
 
 const FileName = "versions.json"
@@ -24,7 +24,7 @@ var (
 	current         *Config
 )
 
-// Config is the single version selection shared by the server and plugins.
+// Config is the version contract shared by the server, client, and plugins.
 // SourcePath is populated by Load and is not part of the JSON document.
 type Config struct {
 	GameVersion     string         `json:"game_version"`
@@ -52,21 +52,9 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("versionconfig: resolve path: %w", err)
 	}
-	data, err := os.ReadFile(path)
+	cfg, err := commonconfig.Load(path, Config{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true})
 	if err != nil {
-		return Config{}, fmt.Errorf("versionconfig: read %s: %w", path, err)
-	}
-	var cfg Config
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("versionconfig: decode %s: %w", path, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return Config{}, fmt.Errorf("versionconfig: trailing JSON in %s", path)
-	} else if !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("versionconfig: trailing data in %s: %w", path, err)
+		return Config{}, fmt.Errorf("versionconfig: load %s: %w", path, err)
 	}
 	cfg.SourcePath = path
 	if err := cfg.Validate(); err != nil {

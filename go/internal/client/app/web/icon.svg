@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 64 64" fill="none">
+  <title>BD2 Launcher — Threshold</title>
+  <desc>Two ivory pillars suggest II and an open portal; a bronze arrow marks entry. Editable vector paths on a transparent canvas.</desc>
+  <g id="app-tile">
+    <rect x="3" y="3" width="58" height="58" rx="12" fill="#D7C5AA"/>
+    <rect x="4" y="4" width="56" height="56" rx="11" fill="#382E26"/>
+  </g>
+  <g id="portal-pillars" fill="#EEE7DA">
+    <path id="pillar-left" d="M12 45H15V23C15 21.7 15.65 20.48 16.73 19.76L29 11.5V20.5L23 24.5V45H26V50H12Z"/>
+    <path id="pillar-right" d="M52 45H49V23C49 21.7 48.35 20.48 47.27 19.76L35 11.5V20.5L41 24.5V45H38V50H52Z"/>
+  </g>
+  <path id="enter-arrow" d="M28 28.5L38 35L28 41.5Z" fill="#BD905B"/>
+</svg>

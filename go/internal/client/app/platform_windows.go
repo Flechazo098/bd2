@@ -34,12 +34,12 @@ func ShowFatalError(err error) {
 		return
 	}
 	message, conversionErr := syscall.UTF16PtrFromString(fmt.Sprintf(
-		"BD2 Client Studio could not start:\n\n%s\n\nSee the logs directory next to bd2client.exe for details.", err,
+		"BD2 Launcher could not start:\n\n%s\n\nSee the logs directory next to bd2client.exe for details.", err,
 	))
 	if conversionErr != nil {
 		return
 	}
-	title, conversionErr := syscall.UTF16PtrFromString("BD2 Client Studio")
+	title, conversionErr := syscall.UTF16PtrFromString("BD2 Launcher")
 	if conversionErr != nil {
 		return
 	}
@@ -78,7 +78,7 @@ func launchGame(target, proxyURL string) error {
 		return err
 	}
 	// Unity creates the top-level window asynchronously. Best-effort foreground
-	// activation prevents the new window from opening behind Client Studio.
+	// activation prevents the new window from opening behind BD2 Launcher.
 	activateProcessWindow(uint32(command.Process.Pid), 15*time.Second)
 	return nil
 }

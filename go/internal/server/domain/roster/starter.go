@@ -4,8 +4,8 @@
 package roster
 
 import (
+	"bd2server/internal/common/versionconfig"
 	assets "bd2server/internal/server/domain/inventory"
-	"bd2server/internal/server/platform/versionconfig"
 	"encoding/json"
 	"errors"
 	"fmt"

@@ -1,4 +1,4 @@
-// Package logging configures the server's structured console logging.
+// Package logging provides structured text handlers, levels, and terminal colors.
 package logging
 
 import (
@@ -28,7 +28,7 @@ type Options struct {
 	Color ColorMode
 }
 
-// OptionsFromEnv reads process-wide defaults for every server command.
+// OptionsFromEnv reads process-wide BD2 logging defaults.
 func OptionsFromEnv() (Options, error) {
 	options := Options{Level: slog.LevelInfo, Color: ColorAuto}
 	if value := os.Getenv("BD2_LOG_LEVEL"); value != "" {

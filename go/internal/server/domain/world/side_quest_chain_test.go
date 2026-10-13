@@ -10,12 +10,12 @@ import (
 	"slices"
 	"testing"
 
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/world/progress"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/protocol/wire"
 	accountstate "bd2server/internal/server/storage/account"
 	"bd2server/internal/server/storage/stateio"

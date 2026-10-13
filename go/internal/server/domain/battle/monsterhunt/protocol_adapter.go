@@ -1,11 +1,11 @@
 package monsterhunt
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/protocol/staticdata"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"

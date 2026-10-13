@@ -4,8 +4,8 @@
 package login
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/domain/command"
-	"bd2server/internal/server/platform/versionconfig"
 	"errors"
 )
 

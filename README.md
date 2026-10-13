@@ -42,6 +42,10 @@
 .\bd2w sdk pack --game-dir '<客户端目录>'
 .\bd2w sdk verify --game-dir '<客户端目录>'
 .\bd2w sdk update-names --game-dir '<客户端目录>' --game-mapping '<映射文件>'
+.\bd2w deobfuscate --source '<Assembly-CSharp目录>' --mapping '<映射文件>' --output '<源码镜像目录>'
+.\bd2w diff --a '<旧源码目录>' --b '<新源码目录>' --out '<报告目录>/report.txt'
+.\bd2w download-client --package-dir '<客户端发布包目录>'
+.\bd2w download-resources --output '<资源目录>' --bundle-version '<资源版本>' --game-data-version '<GameData版本>'
 ```
 
 ## 客户端插件项目
@@ -54,7 +58,7 @@
 
 ## 可视化客户端工具
 
-BD2 Client Studio 是使用 Wails 的独立桌面客户端设置工具。Windows 使用系统 WebView2 Runtime，macOS 使用系统 WKWebView。它提供以下操作：
+BD2 Launcher 是使用 Wails 的独立桌面游戏启动器。Windows 使用系统 WebView2 Runtime，macOS 使用系统 WKWebView。它提供以下操作：
 
 - 选择并验证 Brown Dust II 安装目录。
 - 填写服务器 origin 和端口，自动写入游戏目录下的 `BepInEx/config/bd2.client.json`。

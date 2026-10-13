@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
@@ -10,7 +11,6 @@ import (
 	"bd2server/internal/server/domain/identity"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/platform/textmoderation"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/runtime/player"
 	identitystore "bd2server/internal/server/storage/identity"
 	"bytes"

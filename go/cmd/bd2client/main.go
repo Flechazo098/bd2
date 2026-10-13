@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 
 	clientapp "bd2server/internal/client/app"
 	clientconfig "bd2server/internal/client/config"
+	"bd2server/internal/client/download"
+	"bd2server/internal/common/versionconfig"
 )
 
 type clientRunOptions struct {
@@ -19,6 +23,15 @@ type clientRunOptions struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "download-resources" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := download.RunResources(ctx, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "bd2client download-resources:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "prepare" {
 		if err := prepareClient(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "bd2client prepare:", err)
@@ -35,9 +48,9 @@ func main() {
 	if relaunched {
 		return
 	}
-	args, options, err := developmentRunOptions(os.Args[1:])
-	if err == nil {
-		err = runClient(args, options)
+	handled, err := runClientDevelopmentCommand(os.Args[1:])
+	if !handled && err == nil {
+		err = runClient(os.Args[1:], clientRunOptions{})
 	}
 	if err != nil {
 		clientapp.ShowFatalError(err)
@@ -63,11 +76,11 @@ func runClient(args []string, options clientRunOptions) error {
 	defer func() { _ = logCloser.Close() }()
 	logger.Info("bd2client starting", "log_path", logPath)
 
-	var versions clientconfig.ReleaseVersions
+	var versions versionconfig.Config
 	if options.versionConfigPath == "" {
 		versions, err = clientconfig.ReleaseVersionsBesideExecutable()
 	} else {
-		versions, err = clientconfig.LoadReleaseVersions(options.versionConfigPath)
+		versions, err = versionconfig.Load(options.versionConfigPath)
 	}
 	if err != nil {
 		logger.Error("client release version manifest is invalid", "error", err)

@@ -1,13 +1,13 @@
 package app
 
 import (
+	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/events/calendar"
 	"bd2server/internal/server/gateway/authconfig"
 	"bd2server/internal/server/gateway/bootstrap"
 	"bd2server/internal/server/platform/textmoderation"
-	"bd2server/internal/server/platform/versionconfig"
 	"bd2server/internal/server/resources/policy"
 	"context"
 	"errors"

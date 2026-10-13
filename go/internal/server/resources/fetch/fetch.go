@@ -14,15 +14,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
+	"bd2server/internal/common/resourcecatalog"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/resources/policy"
 )
-
-const catalogPlaceholder = "{BDNetwork.CdnInfo.Info}"
 
 var catalogHashPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 var resourceVersionPattern = regexp.MustCompile(`^[0-9]{14}$`)
@@ -124,7 +122,7 @@ func fetchServerData(ctx context.Context, options Options, root string) (string,
 	if !catalogHashPattern.MatchString(hash) {
 		return "", 0, 0, fmt.Errorf("resource fetch: invalid catalog hash %q", hash)
 	}
-	paths, err := catalogPaths(catalog)
+	paths, err := resourcecatalog.BundlePaths(catalog)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -156,41 +154,6 @@ func fetchServerData(ctx context.Context, options Options, root string) (string,
 		}
 	}
 	return strings.ToLower(hash), len(paths), total, nil
-}
-
-func catalogPaths(data []byte) ([]string, error) {
-	var catalog struct {
-		InternalIDs []string `json:"m_InternalIds"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	if err := decoder.Decode(&catalog); err != nil {
-		return nil, fmt.Errorf("resource fetch: decode catalog: %w", err)
-	}
-	unique := make(map[string]struct{})
-	for _, internalID := range catalog.InternalIDs {
-		if !strings.HasPrefix(internalID, catalogPlaceholder) {
-			continue
-		}
-		parts := strings.Split(strings.ReplaceAll(internalID, "\\", "/"), "/")
-		if len(parts) < 5 {
-			continue
-		}
-		candidate := strings.TrimLeft(strings.Join(parts[4:], "/"), "/")
-		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(candidate)))
-		if candidate == "" || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(filepath.FromSlash(candidate)) {
-			return nil, fmt.Errorf("resource fetch: unsafe catalog path %q", candidate)
-		}
-		unique[clean] = struct{}{}
-	}
-	if len(unique) == 0 {
-		return nil, errors.New("resource fetch: catalog contains no resource bundle paths")
-	}
-	paths := make([]string, 0, len(unique))
-	for path := range unique {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths, nil
 }
 
 func downloadBytes(ctx context.Context, client *http.Client, rawURL string, limit int64) ([]byte, error) {

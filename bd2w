@@ -2,44 +2,12 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 
-if [ "${1-}" = check-csharp ]; then
-    shift
-    (
-        cd "$root"
-        if [ "$#" -eq 0 ]; then
-            set -- GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment
-        fi
-        for project do
-            case "$project" in
-                GameSdk|GameNames|LocalIdentity|LoginUI|CashShop|FChat|CaptureEnvironment) ;;
-                *) printf 'bd2w: unknown C# project: %s\n' "$project" >&2; exit 1 ;;
-            esac
-        done
-        Configuration=Release
-        export Configuration
-        failed=0
-        for project do
-            printf 'Checking %s\n' "$project"
-            project_file="$root/plugins/$project/$project.csproj"
-            if ! dotnet build "$project_file" -c Release -t:Rebuild --nologo -warnaserror; then
-                failed=1
-                continue
-            fi
-            if ! dotnet format style "$project_file" --verify-no-changes --severity info --no-restore; then
-                failed=1
-            fi
-        done
-        exit "$failed"
-    )
-    exit $?
-fi
-
 tool_dir="$root/.build/tools"
 tool="$tool_dir/bd2w"
 
 tool_is_current() {
     [ -f "$tool" ] || return 1
-    newer_sources=$(find "$root/go/build" "$root/go/go.mod" "$root/go/go.sum" -type f -newer "$tool" -print) || {
+    newer_sources=$(find "$root/go/build" "$root/go/internal/common" "$root/go/internal/client" "$root/go/go.mod" "$root/go/go.sum" -type f -newer "$tool" -print) || {
         printf 'bd2w: cannot check build tool source timestamps.\n' >&2
         exit 1
     }

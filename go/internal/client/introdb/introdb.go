@@ -11,13 +11,12 @@ import (
 	"os"
 
 	clientlayout "bd2server/internal/client/layout"
+	"bd2server/internal/common/dbcrypt"
 )
 
 const (
 	oldURL = "https://mt.bd2.pmang.cloud/"
 )
-
-var salt = Header
 
 // Result describes a completed in-place client patch. BackupPath is the
 // immutable pre-patch copy and is never overwritten by a later invocation.
@@ -61,7 +60,7 @@ func PatchClient(gameDir, newURL string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	plain, err := DecryptPages(script)
+	plain, err := dbcrypt.DecryptPages(script)
 	if err != nil {
 		return Result{}, fmt.Errorf("introdb: decrypt Intro TextAsset: %w", err)
 	}
@@ -82,7 +81,7 @@ func PatchClient(gameDir, newURL string) (Result, error) {
 		return Result{}, err
 	}
 	updated := bytes.Replace(plain, []byte(oldURL), []byte(newURL), 1)
-	ciphertext, err := EncryptPages(updated)
+	ciphertext, err := dbcrypt.EncryptPages(updated)
 	if err != nil {
 		return Result{}, err
 	}
@@ -93,7 +92,7 @@ func PatchClient(gameDir, newURL string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("introdb: re-read staged Intro: %w", err)
 	}
-	stagedPlain, err := DecryptPages(stagedScript)
+	stagedPlain, err := dbcrypt.DecryptPages(stagedScript)
 	if err != nil {
 		return Result{}, fmt.Errorf("introdb: decrypt staged Intro: %w", err)
 	}
@@ -130,11 +129,11 @@ func VerifyClient(gameDir string) (VerifyResult, error) {
 	if err != nil {
 		return VerifyResult{}, err
 	}
-	p, err := DecryptPages(script)
+	p, err := dbcrypt.DecryptPages(script)
 	if err != nil {
 		return VerifyResult{}, fmt.Errorf("introdb: decrypt Intro TextAsset: %w", err)
 	}
-	if !bytes.HasPrefix(p, salt) {
+	if !bytes.HasPrefix(p, dbcrypt.Header) {
 		return VerifyResult{}, errors.New("introdb: decrypted Intro is not a SQLite database")
 	}
 	if !bytes.Contains(p, []byte("ServerURLTable")) || !bytes.Contains(p, []byte("LIVE_URL")) {
@@ -167,14 +166,8 @@ func ResourcesPath(gameDir string) (string, error) {
 	return p, nil
 }
 
-// DecryptPages decrypts the game's independent 4096-byte AES-CBC pages.
-func DecryptPages(in []byte) ([]byte, error) { return decryptPages(in) }
-
-// EncryptPages encrypts the game's independent 4096-byte AES-CBC pages.
-func EncryptPages(in []byte) ([]byte, error) { return encryptPages(in) }
-
 func validateIntroDB(p []byte, expected string) error {
-	if !bytes.HasPrefix(p, salt) {
+	if !bytes.HasPrefix(p, dbcrypt.Header) {
 		return errors.New("introdb: decrypted Intro is not a SQLite database (wrong cipher parameters or asset)")
 	}
 	if !bytes.Contains(p, []byte("ServerURLTable")) || !bytes.Contains(p, []byte("LIVE_URL")) {

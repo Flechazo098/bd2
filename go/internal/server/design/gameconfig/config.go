@@ -2,16 +2,12 @@
 package gameconfig
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
 
-	"bd2server/internal/server/platform/configfile"
+	commonconfig "bd2server/internal/common/config"
 )
 
 const FileName = "game.json"
@@ -128,54 +124,20 @@ func Default() Config {
 
 // Load generates defaults when missing and strictly validates existing files.
 func Load(path string) (Config, error) {
-	if err := configfile.Ensure(path, Default()); err != nil {
+	if err := commonconfig.Ensure(path, Default(), commonconfig.WriteOptions{}); err != nil {
 		return Config{}, fmt.Errorf("game configuration: initialize %s: %w", path, err)
 	}
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return Config{}, fmt.Errorf("game configuration: read %s: %w", path, err)
-	}
-	cfg := Default()
+	defaults := Default()
 	// The format version is required even when gameplay sections are omitted.
-	cfg.SchemaVersion = 0
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("game configuration: decode %s: %w", path, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("game configuration: trailing data in %s", path)
-	}
-	// encoding/json accepts null for scalar and struct fields. These rules have
-	// explicit defaults for omissions, while null is a configuration error.
-	var document any
-	if err := json.Unmarshal(data, &document); err != nil {
-		return Config{}, fmt.Errorf("game configuration: decode %s: %w", path, err)
-	}
-	if containsNull(document) {
-		return Config{}, fmt.Errorf("game configuration: null is not allowed in %s", path)
+	defaults.SchemaVersion = 0
+	cfg, err := commonconfig.Load(path, defaults, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, RejectNull: true})
+	if err != nil {
+		return Config{}, fmt.Errorf("game configuration: load %s: %w", path, err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("game configuration: %s: %w", path, err)
 	}
 	return cfg, nil
-}
-
-func containsNull(value any) bool {
-	switch value := value.(type) {
-	case nil:
-		return true
-	case map[string]any:
-		for _, child := range value {
-			if containsNull(child) {
-				return true
-			}
-		}
-	case []any:
-		return slices.ContainsFunc(value, containsNull)
-	}
-	return false
 }
 
 func (c Config) Validate() error {

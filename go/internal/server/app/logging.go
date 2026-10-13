@@ -3,7 +3,7 @@ package app
 import (
 	"io"
 
-	"bd2server/internal/server/platform/logging"
+	"bd2server/internal/common/logging"
 )
 
 func ConfigureLogging(writer io.Writer, levelOverride, colorOverride string) error {

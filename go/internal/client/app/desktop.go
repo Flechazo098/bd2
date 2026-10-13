@@ -21,6 +21,10 @@ func Run(runOptions Options) error {
 	if err != nil {
 		return fmt.Errorf("load embedded client interface: %w", err)
 	}
+	icon, err := webFS.ReadFile("web/icon.png")
+	if err != nil {
+		return fmt.Errorf("load launcher icon: %w", err)
+	}
 	host := NativeHost{
 		BrowseDirectory: func(ctx context.Context, title string) (string, error) {
 			return wailsruntime.OpenDirectoryDialog(ctx, wailsruntime.OpenDialogOptions{Title: title})
@@ -30,7 +34,7 @@ func Run(runOptions Options) error {
 	studio := NewStudio(runOptions, host)
 	studio.log().Info("starting native client window", "windows_engine", "WebView2", "macos_engine", "WKWebView")
 	err = wails.Run(&options.App{
-		Title:            "BD2 Client Studio",
+		Title:            "BD2 Launcher",
 		Frameless:        true,
 		Width:            1080,
 		Height:           720,
@@ -58,6 +62,7 @@ func Run(runOptions Options) error {
 			EnableSwipeGestures:  false,
 		},
 		Mac: &mac.Options{
+			About:       &mac.AboutInfo{Title: "BD2 Launcher", Icon: icon},
 			TitleBar:    &mac.TitleBar{HideTitle: true, HideTitleBar: true, FullSizeContent: true, TitlebarAppearsTransparent: true},
 			Appearance:  mac.NSAppearanceNameAqua,
 			DisableZoom: true,

@@ -4,6 +4,4 @@ package main
 
 func relaunchDevelopmentIfNeeded([]string) (bool, error) { return false, nil }
 
-func developmentRunOptions(args []string) ([]string, clientRunOptions, error) {
-	return args, clientRunOptions{}, nil
-}
+func runClientDevelopmentCommand([]string) (bool, error) { return false, nil }

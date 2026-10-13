@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"bd2server/internal/server/design/dbcrypt"
+	"bd2server/internal/common/dbcrypt"
 )
 
 // DatabaseName maps a logical client DB name to its GameData archive entry.

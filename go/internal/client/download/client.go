@@ -1,0 +1,108 @@
+package download
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+
+	commonconfig "bd2server/internal/common/config"
+	"bd2server/internal/common/versionconfig"
+)
+
+type Options struct {
+	PackageDir, Manifest               string
+	GameDir, ResourceDir, ServerOrigin string
+	Workers                            int
+	ProbeOnly                          bool
+}
+
+type Installation struct {
+	GameDir, ResourceDir, ServerOrigin string
+	Versions                           versionconfig.Config
+}
+
+func Client(ctx context.Context, options Options, out io.Writer) (Installation, error) {
+	var result Installation
+	if options.Workers < 1 || options.Workers > 16 {
+		return result, errors.New("download workers must be 1-16")
+	}
+	packageDir, err := filepath.Abs(options.PackageDir)
+	if err != nil {
+		return result, err
+	}
+	manifestPath := options.Manifest
+	if manifestPath == "" {
+		manifestPath = filepath.Join(packageDir, "client-download.json")
+	}
+	m, err := commonconfig.Load(manifestPath, manifest{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, AllowBOM: true, RejectNull: true})
+	if err != nil {
+		return result, fmt.Errorf("download manifest: %w", err)
+	}
+	if !timestamp.MatchString(m.GameDataVersion) || !timestamp.MatchString(m.BundleVersion) || !gameVersionPattern.MatchString(m.GameVersion) || m.Platform != "StandaloneWindows64" || !strings.HasPrefix(m.GamePath, "/Build/") {
+		return result, errors.New("invalid Windows game download manifest")
+	}
+	if !sha256Pattern.MatchString(m.GameSHA256) || !sha256Pattern.MatchString(m.DataSHA256) || !sha256Pattern.MatchString(m.CatalogSHA256) || m.GameBytes <= 0 || m.DataBytes <= 0 || m.CatalogBytes <= 0 {
+		return result, errors.New("download manifest requires pinned checksums and positive lengths")
+	}
+	result.Versions = versionconfig.Config{GameVersion: m.GameVersion, GameDataVersion: m.GameDataVersion, BundleVersion: m.BundleVersion}
+	if options.GameDir == "" {
+		options.GameDir = filepath.Join(packageDir, "game")
+	}
+	if options.ResourceDir == "" {
+		options.ResourceDir = filepath.Join(packageDir, "resources")
+	}
+	result.GameDir, err = filepath.Abs(options.GameDir)
+	if err != nil {
+		return result, err
+	}
+	result.ResourceDir, err = filepath.Abs(options.ResourceDir)
+	if err != nil {
+		return result, err
+	}
+	result.ServerOrigin = options.ServerOrigin
+	if result.ServerOrigin == "" {
+		result.ServerOrigin = m.ServerOrigin
+	}
+	if !options.ProbeOnly {
+		if err := requireStopped(result.GameDir); err != nil {
+			return result, err
+		}
+	}
+	d, err := newDownloader(packageDir, out)
+	if err != nil {
+		return result, err
+	}
+	defer d.client.CloseIdleConnections()
+	builds, err := d.fastest(ctx, m.BuildOrigins, m.GamePath, "Game ZIP")
+	if err != nil {
+		return result, err
+	}
+	dataPath := "/GameData/" + m.GameDataVersion
+	serverPath := "/ServerData/" + m.Platform + "/HD/" + m.BundleVersion
+	dataOrigins, err := d.fastest(ctx, m.ResourceOrigins, dataPath+"/release/common-dbdata.bin", "GameData")
+	if err != nil {
+		return result, err
+	}
+	bundleOrigins, err := d.fastest(ctx, m.ResourceOrigins, serverPath+"/catalog_alpha.json", "ServerData")
+	if err != nil {
+		return result, err
+	}
+	if options.ProbeOnly {
+		return result, nil
+	}
+	archive := filepath.Join(packageDir, "downloads", "BrownDust-II-"+m.GameVersion+".zip")
+	if err := d.receiveAll(ctx, []file{{remote: m.GamePath, target: archive, digest: m.GameSHA256, size: m.GameBytes}}, builds, 1); err != nil {
+		return result, err
+	}
+	if err := extractArchive(archive, result.GameDir, true, m.GameSHA256); err != nil {
+		return result, err
+	}
+	if err := d.resources(ctx, result.ResourceDir, m, serverPath, dataPath, bundleOrigins, dataOrigins, options.Workers); err != nil {
+		return result, err
+	}
+	d.log("Downloaded: game=%s resources=%s", result.GameDir, result.ResourceDir)
+	return result, nil
+}

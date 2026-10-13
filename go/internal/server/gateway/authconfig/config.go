@@ -3,17 +3,15 @@ package authconfig
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"bd2server/internal/server/platform/configfile"
+	commonconfig "bd2server/internal/common/config"
 )
 
 const FileName = "authentication.json"
@@ -61,25 +59,12 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("authconfig: resolve path: %w", err)
 	}
-	if err := configfile.Ensure(path, Default()); err != nil {
+	if err := commonconfig.Ensure(path, Default(), commonconfig.WriteOptions{}); err != nil {
 		return Config{}, fmt.Errorf("authconfig: initialize %s: %w", path, err)
 	}
-	file, err := os.Open(path)
+	config, err := commonconfig.Load(path, Config{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true})
 	if err != nil {
-		return Config{}, fmt.Errorf("authconfig: open %s: %w", path, err)
-	}
-	defer func() { _ = file.Close() }()
-	var config Config
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&config); err != nil {
-		return Config{}, fmt.Errorf("authconfig: decode %s: %w", path, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return Config{}, fmt.Errorf("authconfig: trailing JSON in %s", path)
-	} else if !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("authconfig: trailing data in %s: %w", path, err)
+		return Config{}, fmt.Errorf("authconfig: load %s: %w", path, err)
 	}
 	if err := config.Validate(); err != nil {
 		return Config{}, fmt.Errorf("authconfig: %s: %w", path, err)

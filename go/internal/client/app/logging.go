@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"bd2server/internal/common/logging"
 )
 
 const (
@@ -38,7 +40,7 @@ func OpenPersistentLogger(executablePath string) (*slog.Logger, io.Closer, strin
 		if homeErr != nil {
 			return nil, nil, "", fmt.Errorf("locate macOS user home for logs: %w", homeErr)
 		}
-		logDirectory = filepath.Join(home, "Library", "Logs", "BD2 Client Studio")
+		logDirectory = filepath.Join(home, "Library", "Logs", "BD2 Launcher")
 	}
 	if err := os.MkdirAll(logDirectory, 0o700); err != nil {
 		return nil, nil, "", fmt.Errorf("create bd2client log directory: %w", err)
@@ -48,7 +50,12 @@ func OpenPersistentLogger(executablePath string) (*slog.Logger, io.Closer, strin
 	if err != nil {
 		return nil, nil, "", err
 	}
-	logger := slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler, err := logging.NewHandler(writer, logging.Options{Level: slog.LevelInfo, Color: logging.ColorNever})
+	if err != nil {
+		_ = writer.Close()
+		return nil, nil, "", err
+	}
+	logger := slog.New(handler)
 	return logger, writer, path, nil
 }
 

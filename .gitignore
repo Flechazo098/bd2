@@ -22,6 +22,7 @@ dist/
 **/dist-newstyle/
 go/.cache/
 go/coverage.out
+go/cmd/bd2client/icon_windows_*.syso
 *.prof
 *.pprof
 plugins/**/bin/
