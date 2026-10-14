@@ -33,7 +33,9 @@ internal static class NativeChatTranslation
     {
         ChatTranslationProvider.Diagnostics = message => Plugin.Log?.LogInfo(message);
         NativeTranslationDisplay.Install(harmony);
-        harmony.Patch(AccessTools.PropertySetter(typeof(ChatSettingPacket), nameof(ChatSettingPacket.IsOnAutoTranslateChat)),
+        harmony.Patch(typeof(ChatSettingPacket).GetGameProperty(nameof(ChatSettingPacket.IsOnAutoTranslateChat),
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetSetMethod() ??
+            throw new MissingMethodException(nameof(ChatSettingPacket), nameof(ChatSettingPacket.IsOnAutoTranslateChat)),
             prefix: new HarmonyMethod(typeof(NativeChatTranslation), nameof(BeforeAutomaticChanged)),
             postfix: new HarmonyMethod(typeof(NativeChatTranslation), nameof(AutomaticChanged)));
         harmony.Patch(Game.Method(() => Guild.SendGuildChatTranslateRequest(0, null, 0, 0)),
