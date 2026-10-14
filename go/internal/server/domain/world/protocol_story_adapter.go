@@ -972,6 +972,8 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 	}
 	switch path {
+	case "/TimePause":
+		return s.handleTimePause(ctx, request)
 	case "/MonsterInfo":
 		return s.handleMonsterInfo(ctx, request)
 	case "/FieldMonsterRegen":
@@ -1106,6 +1108,9 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		return 40, response, true, nil
 	case "/PackInGameInfo":
+		if err := s.ResumeFieldTime(ctx); err != nil {
+			return 0, nil, true, err
+		}
 		if s.battleActive != nil && s.battleActive(ctx) {
 			return 0, nil, true, fmt.Errorf("%w: active battle", ErrInvalidRequest)
 		}

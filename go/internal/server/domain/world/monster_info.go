@@ -41,6 +41,15 @@ func (s *Service) monsterTime() time.Time {
 	return time.Now()
 }
 func (s *Service) loadMonsterState(ctx command.Context) (fieldMonsterSnapshot, error) {
+	v, err := s.readMonsterState(ctx)
+	if err != nil || s.monsterStore == nil {
+		return v, err
+	}
+	_, err = s.advanceFieldPause(ctx, &v, false)
+	return v, err
+}
+
+func (s *Service) readMonsterState(ctx command.Context) (fieldMonsterSnapshot, error) {
 	v := fieldMonsterSnapshot{Monsters: map[string]fieldMonsterState{}, Claims: map[string]bool{}, Requests: map[string]fieldMonsterReply{}}
 	if s.monsterStore == nil {
 		return v, nil

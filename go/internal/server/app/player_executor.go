@@ -311,6 +311,9 @@ func (p *playerAssembly) dispatch(ctx command.Context, path string, request []by
 }
 
 func (p *playerAssembly) beginLogin(ctx command.Context) error {
+	if err := p.worldService.ResumeFieldTime(ctx); err != nil {
+		return err
+	}
 	for _, observer := range p.observers {
 		if hook, ok := observer.(interface{ BeginLogin(command.Context) }); ok {
 			hook.BeginLogin(ctx)
