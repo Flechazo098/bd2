@@ -48,6 +48,10 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 		return fmt.Errorf("load cash bonus claims: %w", err)
 	}
 	p.cashService.AttachLegacyCounts(p.gachaService)
+	if err := p.ownedEquipment.AttachRankPurchases(p.design.equipmentRankPurchases, p.cashService.ChargeGameplayPurchase); err != nil {
+		return err
+	}
+	p.rosterProgressService.AttachPurchase(p.cashService.ChargeGameplayPurchase)
 	var cashSpecialProducts []gamedata.CashProductKey
 	if infinite := p.design.infiniteGacha; infinite != nil {
 		cashSpecialProducts = append(cashSpecialProducts, gamedata.CashProductKey{GroupID: infinite.ProductGroupID, ProductID: infinite.ProductID, SaleGroup: infinite.SaleGroup})

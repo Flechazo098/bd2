@@ -83,6 +83,7 @@ type playerAssembly struct {
 	gachaService            *gacha.Service
 	pictorialService        *pictorial.Service
 	charAwakeService        *roster.CharAwakeService
+	rosterProgressService   *roster.RosterProgressService
 	costumePotentialService *roster.CostumePotentialService
 	costumeBurstService     *roster.CostumeBurstService
 	friendshipService       *roster.FriendshipService

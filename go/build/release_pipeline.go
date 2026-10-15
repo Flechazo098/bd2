@@ -3,13 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	clientplugin "bd2server/internal/client/plugin"
+	clientupdate "bd2server/internal/client/update"
+	releasepkg "bd2server/internal/common/release"
 	"bd2server/internal/common/taskgraph"
+	"bd2server/internal/common/versionconfig"
 )
 
 type release struct {
@@ -171,9 +176,34 @@ func (r *release) stageAssets() error {
 			return err
 		}
 	}
-	for _, name := range []string{"versions.json", "README.md", "LICENSE"} {
+	if err := r.writePluginStore(); err != nil {
+		return err
+	}
+	for _, name := range []string{"versions.json", "README.md", "LICENSE", "CHANGELOG.md", releasepkg.ChangelogSignatureName} {
+		// Unsigned development changelogs ship without a signature and show no notices.
+		if name == releasepkg.ChangelogSignatureName && !regular(filepath.Join(root, name)) {
+			continue
+		}
 		for _, out := range []string{r.server, r.client} {
 			if err := copyFile(filepath.Join(root, name), filepath.Join(out, name)); err != nil {
+				return err
+			}
+		}
+	}
+	if regular(filepath.Join(root, releasepkg.FingerprintFileName)) {
+		f, err := releasepkg.LoadFingerprint(filepath.Join(root, releasepkg.FingerprintFileName), releasepkg.BuiltinChannel().TrustedKeys)
+		if err != nil {
+			return err
+		}
+		v, err := versionconfig.Load(filepath.Join(root, "versions.json"))
+		if err != nil {
+			return err
+		}
+		if err := f.MatchesVersions(v); err != nil {
+			return err
+		}
+		for _, out := range []string{r.server, r.client} {
+			if err := copyFile(filepath.Join(root, releasepkg.FingerprintFileName), filepath.Join(out, releasepkg.FingerprintFileName)); err != nil {
 				return err
 			}
 		}
@@ -183,7 +213,42 @@ func (r *release) stageAssets() error {
 			return err
 		}
 	}
+	for _, name := range []string{"bd2server.service", "bd2-docker-update.sh", "bd2-docker-update.service", "bd2-docker-update.path"} {
+		source := filepath.Join(root, "tools", "server", name)
+		if err := copyFile(source, filepath.Join(r.server, name)); err != nil {
+			return fmt.Errorf("stage server installation file %s: %w", name, err)
+		}
+		if strings.HasSuffix(name, ".sh") {
+			if err := os.Chmod(filepath.Join(r.server, name), 0o755); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
+}
+
+// writePluginStore describes the packaged plugin set so the launcher's
+// updater knows which versions it holds.
+func (r *release) writePluginStore() error {
+	versions, err := versionconfig.Load(filepath.Join(r.task.root, "versions.json"))
+	if err != nil {
+		return err
+	}
+	byID := versions.Plugins.ByID()
+	store := clientupdate.Store{Version: versions.ClientVersion}
+	for _, spec := range clientplugin.Shipped {
+		sum, err := releasepkg.HashFile(filepath.Join(r.client, "plugins", spec.FileName()))
+		if err != nil {
+			return err
+		}
+		id := pluginIDs[spec.FileName()]
+		store.Files = append(store.Files, clientupdate.StoredFile{ID: id, Name: spec.FileName(), Version: byID[id], SHA256: sum})
+	}
+	raw, err := json.MarshalIndent(store, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(r.client, "plugins", clientupdate.StoreFile), append(raw, '\n'), 0o644)
 }
 
 func (r *release) archive() error {

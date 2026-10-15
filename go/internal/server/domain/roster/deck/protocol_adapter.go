@@ -22,6 +22,8 @@ import (
 // typed request before committing a replacement JSON state.
 func (s *Store) Handle(ctx command.Context, path string, req []byte) (int, []byte, bool, error) {
 	switch path {
+	case "/RecommendDeckInfo", "/RecommendDeckUserOptionSave":
+		return s.handleRecommendation(ctx, path, req)
 	case "/TalentSlotSave", "/CharAutoReviveSet":
 		return s.handleFieldSettings(ctx, path, req)
 	case "/PresetInfo":

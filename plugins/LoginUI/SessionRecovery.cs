@@ -126,6 +126,7 @@ internal static class SessionRecovery
 
     internal static void IntroAwakePostfix(object __instance)
     {
+        UpdateCompatibility.LoginCheckInProgress = false;
         try
         {
             EnsureRecoveryHost();
@@ -165,6 +166,11 @@ internal static class SessionRecovery
     {
         internal readonly CancellationTokenSource Lifetime = new();
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
+        private void Update()
+        {
+            if (!Lifetime.IsCancellationRequested) UpdateCompatibility.ShowPendingPopup();
+        }
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0051", Justification = "Unity invokes this instance lifecycle callback.")]
         private void OnDestroy()
         {
             Lifetime.Cancel();
@@ -187,6 +193,8 @@ internal static class SessionRecovery
         EnsureGameRelay();
         if (gameRequest)
         {
+            foreach (KeyValuePair<string, string> header in UpdateCompatibility.Headers)
+                __instance.SetRequestHeader(header.Key, header.Value);
             GameRequests.RemoveAll(reference => !reference.TryGetTarget(out _));
             if (GameRequests.Count >= 128) GameRequests.RemoveAt(0);
             GameRequests.Add(new WeakReference<UnityWebRequest>(__instance));
@@ -216,6 +224,8 @@ internal static class SessionRecovery
             {
                 return;
             }
+            UpdateCompatibility.Observe(request);
+            if (UpdateCompatibility.IsBlocked) return;
             try
             {
                 if (request.result != UnityWebRequest.Result.Success || request.responseCode >= 400)
@@ -275,6 +285,7 @@ internal static class SessionRecovery
 
     internal static bool BeginSessionRecovery(string reason)
     {
+        if (UpdateCompatibility.IsBlocked) return false;
         try
         {
             if (ServerRoot == null)
@@ -304,6 +315,9 @@ internal static class SessionRecovery
 
     internal static bool ExponentialBackoffPrefix(object __0, object __1)
     {
+        foreach (WeakReference<UnityWebRequest> reference in GameRequests)
+            if (reference.TryGetTarget(out UnityWebRequest request) && request.isDone) UpdateCompatibility.Observe(request);
+        if (UpdateCompatibility.IsBlocked) return false;
         try
         {
             try
@@ -499,6 +513,9 @@ internal static class SessionRecovery
             yield break;
         }
         Log?.LogInfo("Server became ready; restarting client to restore session");
+        bool compatible = false;
+        yield return UpdateCompatibility.Check(allowed => compatible = allowed, lifetime);
+        if (!compatible || generation != Volatile.Read(ref RecoveryGeneration) || UpdateCompatibility.IsBlocked) yield break;
         SetRecoveryMessage(TextComponent.Translatable("loginui.recovery.restoring_session").GetString());
         if (!RestartClientForRecovery())
         {
@@ -531,7 +548,7 @@ internal static class SessionRecovery
         var interval = new WaitForSecondsRealtime(5f);
         while (true)
         {
-            if (ServerRoot == null || !EstablishedGameSession || Volatile.Read(ref SessionRecoveryInProgress) != 0)
+            if (ServerRoot == null || UpdateCompatibility.IsBlocked || !EstablishedGameSession || Volatile.Read(ref SessionRecoveryInProgress) != 0)
             {
                 yield return interval;
                 continue;
@@ -614,7 +631,7 @@ internal static class SessionRecovery
         SessionDiagnostics.Record("event=client-network-error error_code=" + SessionDiagnostics.Code(__0) +
             " reason=" + SessionDiagnostics.ErrorReason(__0) + " service_code=" + SessionDiagnostics.Code(__1) +
             " suppressed=" + (Volatile.Read(ref SessionRecoveryInProgress) != 0));
-        return Volatile.Read(ref SessionRecoveryInProgress) == 0;
+        return !UpdateCompatibility.IsBlocked && Volatile.Read(ref SessionRecoveryInProgress) == 0;
     }
 
     internal static void SetIntroStatePostfix(object __instance, object __0)

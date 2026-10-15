@@ -5,5 +5,8 @@
   "loginui.recovery.reconnecting": "서버에 다시 연결하는 중…",
   "loginui.recovery.waiting_server": "서버가 시작되기를 기다리는 중…",
   "loginui.recovery.restoring_session": "로그인 세션을 복구하는 중…",
-  "loginui.recovery.safe_scene": "안전한 장소로 돌아가는 중…"
+  "loginui.recovery.safe_scene": "안전한 장소로 돌아가는 중…",
+  "loginui.update.required": "서버가 업데이트되어 클라이언트 업데이트가 필요합니다. 게임을 종료하고 런처를 열어 업데이트를 확인해 주세요. 필요한 클라이언트 및 게임 리소스 업데이트를 모두 적용한 후 다시 로그인해 주세요.",
+  "loginui.update.check_failed": "서버에서 요구하는 클라이언트 버전을 확인할 수 없습니다. 게임을 종료하고 런처를 열어 네트워크 연결을 확인하고 사용 가능한 업데이트를 적용한 후 다시 시도해 주세요.",
+  "loginui.update.exit": "게임 종료"
 }

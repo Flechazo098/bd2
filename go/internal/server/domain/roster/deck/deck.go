@@ -56,6 +56,11 @@ func (s *Store) PortraitCostume() uint64 {
 }
 
 type Store struct {
+	recommendQuery    func(command.Context, RecommendContext) ([]RecommendRecord, error)
+	recommendUnique   map[uint64]uint64
+	recommendIdentity func(command.Context) (RecommendIdentity, error)
+	recommendPower    func(command.Context, []roster.Character) (uint64, error)
+
 	autoRecovery        func(ctx command.Context, _ uint64, _ uint64, _ []uint64) (roster.AutoRecoveryResult, error)
 	autoRecoveryAllowed func(ctx command.Context) (bool, error)
 	fieldSettingsDesign *gamedata.FieldSettingsDesign

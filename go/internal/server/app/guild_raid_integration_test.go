@@ -281,6 +281,15 @@ func TestNativeGuildRaidSettlesBothMembersAndClaimsOnce(t *testing.T) {
 		if appValue(entered, 4) != 1 {
 			t.Fatal("raid enter omitted native engine mode")
 		}
+		if i == 0 {
+			g.close()
+			f.open(g)
+			resume := g.pvpCall("/BattleResume", nil)
+			mode := appRows(resume, 1)
+			if len(mode) != 1 || appValue(mode[0], 1) != social.RaidBattleMode || appValue(mode[0], 2) != boss.DeckID || appValue(mode[0], 3) != 0 || appValue(resume, 3) != level || appValue(resume, 4) != boss.MonsterID || appValue(resume, 17) != season {
+				t.Fatal("reconnecting before the first raid turn lost the entered boss or season")
+			}
+		}
 		g.pvpCall("/BattleStart", appScalar(2, boss.DeckID))
 		g.seq++
 		end := registryCommand(g.account, fmt.Sprintf("raid-end-%d", i), "/BattleEnd", append(appScalar(1, g.seq), appScalar(2, 1)...))

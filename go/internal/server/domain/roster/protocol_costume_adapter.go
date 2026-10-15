@@ -22,7 +22,7 @@ import (
 )
 
 func CostumeWire(v Costume) []byte {
-	out := ownership.Costume{InvenIndex: v.InvenIndex, ID: v.ID, Level: v.Level, UseChar: v.UseChar, SortID: v.SortID, PotentialIDs: v.PotentialIDs, DesignID: v.DesignID, BurstLevel: v.BurstLevel, TimeValue: v.TimeValue}
+	out := ownership.Costume{InvenIndex: v.InvenIndex, ID: v.ID, Level: v.Level, UseChar: v.UseChar, SortID: v.SortID, PotentialIDs: v.PotentialIDs, PotentialLockIDs: v.PotentialLockIDs, DesignID: v.DesignID, BurstLevel: v.BurstLevel, TimeValue: v.TimeValue}
 	for _, p := range v.Pictorialbook {
 		out.Pictorialbook = append(out.Pictorialbook, ownership.Pictorial{ID: p.ID, GroupID: p.GroupID})
 	}
@@ -1078,9 +1078,10 @@ func OpenCollectionStore(ctx command.Context, store stateio.Store, base []Costum
 	s := &CollectionStore{store: entries, base: append([]Costume(nil), base...), data: collectionSnapshot{
 		Version: versionconfig.State(), NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
 		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{}, GachaSelectionChanges: map[string]uint64{},
-		CostumePotential:   map[string][]uint64{},
+		CostumePotential: map[string][]uint64{}, CostumePotentialLocks: map[string][]uint64{},
 		CostumeBurstLevels: map[string]uint64{}, CostumeBurstUpgrades: map[string]CostumeBurstUpgradeRecord{},
 		CharAwake:      map[string]CharAwakeProgress{},
+		CharPartners:   map[string]CharPartnerProgress{},
 		Friendships:    map[string]FriendshipEntry{},
 		StepUpProgress: map[string]uint64{}, GachaUsers: map[string]GachaUserState{}, GachaFixed: map[string]GachaFixedState{},
 		GachaApplied: map[string]bool{}, GachaPointExchange: map[string]GachaPointExchange{}, Grants: map[string]CollectionGrant{},
@@ -1115,6 +1116,9 @@ func OpenCollectionStore(ctx command.Context, store stateio.Store, base []Costum
 	}
 	if s.data.CharAwake == nil {
 		return nil, errors.New("player: collection save requires char_awake; migrate the development save")
+	}
+	if s.data.CharPartners == nil {
+		s.data.CharPartners = map[string]CharPartnerProgress{}
 	}
 	if err := s.validateCostumeBurstStorage(); err != nil {
 		return nil, err

@@ -25,6 +25,8 @@ type Inventory struct {
 	itemStacks  *gamedata.ItemStackDesign
 	owned       ownedSnapshot
 	persisted   ownedSnapshot
+	capacity    *InventorySlots
+	discard     map[uint64]func(command.Context, Item) error
 	corePresent bool
 }
 
@@ -32,6 +34,7 @@ type ownedSnapshot struct {
 	Version      string              `json:"version"`
 	NextIndex    uint64              `json:"next_index"`
 	Items        []Item              `json:"-"`
+	Storage      []Item              `json:"-"`
 	Granted      map[string]bool     `json:"-"`
 	GrantItems   map[string][]uint64 `json:"-"`
 	GrantRewards map[string][]Item   `json:"-"`
@@ -64,7 +67,7 @@ func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*I
 		if err := json.Unmarshal(data, &s.owned); err != nil {
 			return nil, fmt.Errorf("player: decode inventory: %w", err)
 		}
-	} else if err := stateio.RequireNoEntries(entries, ctx.State, "items", "items", "granted", "grant_items", "grant_rewards"); err != nil {
+	} else if err := stateio.RequireNoEntries(entries, ctx.State, "items", "items", "granted", "grant_items", "grant_rewards", "storage"); err != nil {
 		return nil, fmt.Errorf("player: invalid inventory storage: %w", err)
 	}
 	if s.owned.Version != versionconfig.State() || s.owned.NextIndex < 900000001 {
@@ -110,6 +113,9 @@ func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*I
 		s.owned.Items = append(s.owned.Items, item)
 	}
 	sort.Slice(s.owned.Items, func(i, j int) bool { return s.owned.Items[i].InvenIndex < s.owned.Items[j].InvenIndex })
+	if err := s.loadItemStorage(ctx); err != nil {
+		return nil, err
+	}
 	s.persisted = cloneOwnedSnapshot(s.owned)
 	return s, nil
 }
@@ -219,7 +225,7 @@ func (s *Inventory) GrantOnce(ctx command.Context, identity string, rewards []ga
 
 func cloneOwnedSnapshot(current ownedSnapshot) ownedSnapshot {
 	next := ownedSnapshot{Version: current.Version, NextIndex: current.NextIndex,
-		Items: append([]Item(nil), current.Items...), Granted: make(map[string]bool, len(current.Granted)+1), GrantItems: make(map[string][]uint64, len(current.GrantItems)+1), GrantRewards: make(map[string][]Item, len(current.GrantRewards)+1)}
+		Items: append([]Item(nil), current.Items...), Storage: append([]Item(nil), current.Storage...), Granted: make(map[string]bool, len(current.Granted)+1), GrantItems: make(map[string][]uint64, len(current.GrantItems)+1), GrantRewards: make(map[string][]Item, len(current.GrantRewards)+1)}
 	maps.Copy(next.Granted, current.Granted)
 	for k, v := range current.GrantItems {
 		next.GrantItems[k] = append([]uint64(nil), v...)
@@ -279,6 +285,11 @@ func (s *Inventory) commitOwned(ctx command.Context, next ownedSnapshot) error {
 	for index := range before {
 		changes = append(changes, stateio.EntryMutation{Bucket: "items", Key: strconv.FormatUint(index, 10), Delete: true})
 	}
+	storageChanges, err := itemEntryChanges("storage", s.persisted.Storage, next.Storage)
+	if err != nil {
+		return err
+	}
+	changes = append(changes, storageChanges...)
 	if s.corePresent && next.Version == s.persisted.Version && next.NextIndex == s.persisted.NextIndex {
 		data = nil
 	}

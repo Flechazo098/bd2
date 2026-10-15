@@ -188,43 +188,10 @@ func (s *Service) encounter(n *snapshot, automatic bool) (*Encounter, error) {
 	if e != nil {
 		return nil, e
 	}
-	var sizeRow []byte
-	best = -1
-	for _, row := range s.design.Tables["FishingFishSizePoolTable"] {
-		v := int64(num(row, 1))
-		if float64(v) <= luck[5] && v > best {
-			sizeRow = row
-			best = v
-		}
-	}
-	lo, e := ints(sizeRow, 4)
+	size, e := s.fishSize(fish, luck[5])
 	if e != nil {
 		return nil, e
 	}
-	hi, e := ints(sizeRow, 3)
-	if e != nil {
-		return nil, e
-	}
-	ratios, e := ints(sizeRow, 5)
-	if e != nil {
-		return nil, e
-	}
-	indices := make([]uint64, len(lo))
-	for i := range indices {
-		indices[i] = uint64(i)
-	}
-	idx, e := s.weighted(indices, ratios)
-	if e != nil || len(lo) != len(hi) {
-		return nil, fmt.Errorf("fishing: invalid size pool")
-	}
-	if hi[idx] < lo[idx] {
-		return nil, fmt.Errorf("fishing: invalid size interval")
-	}
-	r, e := s.sample(hi[idx] - lo[idx] + 1)
-	if e != nil {
-		return nil, e
-	}
-	size := uint64(math.Round(dbl(fish, 15) + (dbl(fish, 14)-dbl(fish, 15))*float64(lo[idx]+r)/1000))
 	char, e := s.design.Row("FishingCharTable", 1, n.Level)
 	if e != nil {
 		return nil, e
@@ -254,6 +221,19 @@ func (s *Service) purchase(ctx command.Context, path string, req []byte, n *snap
 	var out []byte
 	switch path {
 	case "/FishingBoatUpgrade":
+		t, e := loadTrap(ctx)
+		if e != nil {
+			return nil, e
+		}
+		if e = s.refreshTrap(n, &t); e != nil {
+			return nil, e
+		}
+		if t.Receipt > 0 {
+			t.Cursor = s.now().Unix()
+		}
+		if e = saveTrap(ctx, t); e != nil {
+			return nil, e
+		}
 		id = n.Boat + 1
 		row, err = s.design.Row("FishingBoatTable", 8, id)
 		fields = [3]int{4, 3, 2}
@@ -310,6 +290,17 @@ func (s *Service) purchase(ctx command.Context, path string, req []byte, n *snap
 		}
 		n.Skin = skins[0]
 		out = wire.AppendVarint(nil, 1, id)
+		t, e := loadTrap(ctx)
+		if e != nil {
+			return nil, e
+		}
+		if e = s.refreshTrap(n, &t); e != nil {
+			return nil, e
+		}
+		if e = saveTrap(ctx, t); e != nil {
+			return nil, e
+		}
+		out = wire.AppendVarint(out, 2, uint64(t.Receipt))
 		if len(bundle) > 0 {
 			out = wire.AppendBytes(out, 3, bundle)
 		}
@@ -319,4 +310,44 @@ func (s *Service) purchase(ctx command.Context, path string, req []byte, n *snap
 		n.Skins = append(n.Skins, id)
 	}
 	return out, s.emit(ctx, n, 0, key)
+}
+
+func (s *Service) fishSize(fish []byte, luck float64) (uint64, error) {
+	var sizeRow []byte
+	best := int64(-1)
+	for _, row := range s.design.Tables["FishingFishSizePoolTable"] {
+		v := int64(num(row, 1))
+		if float64(v) <= luck && v > best {
+			sizeRow = row
+			best = v
+		}
+	}
+	lo, e := ints(sizeRow, 4)
+	if e != nil {
+		return 0, e
+	}
+	hi, e := ints(sizeRow, 3)
+	if e != nil {
+		return 0, e
+	}
+	ratios, e := ints(sizeRow, 5)
+	if e != nil {
+		return 0, e
+	}
+	indices := make([]uint64, len(lo))
+	for i := range indices {
+		indices[i] = uint64(i)
+	}
+	idx, e := s.weighted(indices, ratios)
+	if e != nil || len(lo) != len(hi) {
+		return 0, fmt.Errorf("fishing: invalid size pool")
+	}
+	if hi[idx] < lo[idx] {
+		return 0, fmt.Errorf("fishing: invalid size interval")
+	}
+	r, e := s.sample(hi[idx] - lo[idx] + 1)
+	if e != nil {
+		return 0, e
+	}
+	return uint64(math.Round(dbl(fish, 15) + (dbl(fish, 14)-dbl(fish, 15))*float64(lo[idx]+r)/1000)), nil
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	commonconfig "bd2server/internal/common/config"
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/versionconfig"
 )
 
@@ -17,6 +18,7 @@ type Options struct {
 	GameDir, ResourceDir, ServerOrigin string
 	Workers                            int
 	ProbeOnly                          bool
+	Pinned                             *release.GameResources
 }
 
 type Installation struct {
@@ -37,9 +39,20 @@ func Client(ctx context.Context, options Options, out io.Writer) (Installation, 
 	if manifestPath == "" {
 		manifestPath = filepath.Join(packageDir, "client-download.json")
 	}
-	m, err := commonconfig.Load(manifestPath, manifest{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, AllowBOM: true, RejectNull: true})
-	if err != nil {
-		return result, fmt.Errorf("download manifest: %w", err)
+	var m manifest
+	if options.Pinned != nil {
+		m = *options.Pinned
+		if err := m.Validate(); err != nil {
+			return result, err
+		}
+		if len(m.ResourceFiles) == 0 {
+			return result, errors.New("signed game update requires a complete resource inventory")
+		}
+	} else {
+		m, err = commonconfig.Load(manifestPath, manifest{}, commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, AllowBOM: true, RejectNull: true})
+		if err != nil {
+			return result, fmt.Errorf("download manifest: %w", err)
+		}
 	}
 	if !timestamp.MatchString(m.GameDataVersion) || !timestamp.MatchString(m.BundleVersion) || !gameVersionPattern.MatchString(m.GameVersion) || m.Platform != "StandaloneWindows64" || !strings.HasPrefix(m.GamePath, "/Build/") {
 		return result, errors.New("invalid Windows game download manifest")

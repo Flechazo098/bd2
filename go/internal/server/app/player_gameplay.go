@@ -10,6 +10,7 @@ import (
 	"bd2server/internal/server/domain/events"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/domain/world/todayquest"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
@@ -19,6 +20,17 @@ import (
 func (p *playerAssembly) gameplay(ctx command.Context) error {
 	var err error
 	p.battleService = battle.NewService(p.options.gameData, p.options.gameDataVersion, p.worldService.CurrentPackID)
+	if err := p.battleService.Restore(ctx); err != nil {
+		return fmt.Errorf("load battle checkpoint: %w", err)
+	}
+	p.battleService.AttachCompletion(p.completeBattle)
+	p.battleService.AttachPreparation(p.prepareBattle)
+	p.battleService.AttachAbandonment(func(ctx command.Context, identity string) error {
+		return p.deckStateStore.CompleteRecommendation(ctx, identity, false)
+	})
+	p.battleService.AttachExternalResume(func(ctx command.Context, mode uint64, identity string) ([]byte, error) {
+		return social.InitialRaidResume(ctx, p.design.guild, mode, identity)
+	})
 	freeHuntingAP, bonusHuntingAP, err := p.login.SeedHuntingAP()
 	if err != nil {
 		return fmt.Errorf("read initial hunting AP: %w", err)

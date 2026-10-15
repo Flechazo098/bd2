@@ -80,6 +80,8 @@ BD2 Launcher 是使用 Wails 的独立桌面游戏启动器。Windows 使用系�
 
 服务端自带网页管理台，地址为 `<服务器地址>/admin/`，可以可视化修改上述配置、给玩家寄送物品和调整背包容量，详细见 [网页管理台](ADMIN_CONSOLE.md)。
 
+启动器和服务端会自动检查新版本；服务端更新可在网页管理台“版本更新”页或用 `bd2server update status|check|apply|cancel` 应用，应用前会通知在线玩家并保存存档。游戏内“新闻”公告来自签名的 [更新日志](CHANGELOG.md)，按玩家的游戏语言显示。
+
 服务端日志默认输出 INFO 及以上级别，仅终端启用颜色：TRACE 灰、DEBUG 青、INFO 绿、WARN 黄、ERROR 红。可用 `serve --log-level debug --log-color auto` 调整，或设置 `BD2_LOG_LEVEL` 和 `BD2_LOG_COLOR` 环境变量，显式命令行参数优先。级别支持 `trace/debug/info/warn/error`，颜色支持 `auto/always/never`。`auto` 下文件和重定向保持纯文本，`NO_COLOR` 或 `TERM=dumb` 也会关闭颜色；如需在 Docker 日志流中显示颜色，可显式选择 `always`。
 
 ### 启动客户端

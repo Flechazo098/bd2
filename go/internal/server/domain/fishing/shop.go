@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
+	"strconv"
 	"time"
 )
 
@@ -275,9 +277,21 @@ func (s *Service) fishPrice(fish Item, base uint64) (uint64, error) {
 			break
 		}
 	}
-	price := math.Round(float64(base) * premium)
-	if !isFinite(price) || price < 0 || price > math.MaxInt32 {
+	if !isFinite(premium) || premium < 0 {
+		return 0, fmt.Errorf("fishing: invalid price premium")
+	}
+	decimal, ok := new(big.Rat).SetString(strconv.FormatFloat(premium, 'g', 7, 32))
+	if !ok {
+		return 0, fmt.Errorf("fishing: invalid decimal premium")
+	}
+	decimal.Mul(decimal, new(big.Rat).SetInt(new(big.Int).SetUint64(base)))
+	price, remain := new(big.Int), new(big.Int)
+	price.QuoRem(decimal.Num(), decimal.Denom(), remain)
+	if remain.Lsh(remain, 1).Cmp(decimal.Denom()) >= 0 {
+		price.Add(price, big.NewInt(1))
+	}
+	if !price.IsUint64() || price.Uint64() > math.MaxInt32 {
 		return 0, fmt.Errorf("fishing: price overflow")
 	}
-	return uint64(price), nil
+	return price.Uint64(), nil
 }

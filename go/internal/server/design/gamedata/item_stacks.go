@@ -6,7 +6,8 @@ import (
 )
 
 type ItemStackDesign struct {
-	Limits map[[2]uint64]uint64
+	Limits      map[[2]uint64]uint64
+	Discardable map[[2]uint64]bool
 }
 
 func LoadItemStackDesign(root, version string) (*ItemStackDesign, error) {
@@ -15,13 +16,13 @@ func LoadItemStackDesign(root, version string) (*ItemStackDesign, error) {
 		return nil, err
 	}
 	defer release()
-	design := &ItemStackDesign{Limits: map[[2]uint64]uint64{}}
+	design := &ItemStackDesign{Limits: map[[2]uint64]uint64{}, Discardable: map[[2]uint64]bool{}}
 	for _, source := range []struct {
-		name                      string
-		kind, idField, limitField uint64
+		name                                  string
+		kind, idField, limitField, trashField uint64
 	}{
-		{"FoodTable", 5, 7, 16}, {"ResourceTable", 8, 4, 12},
-		{"RandomBoxTable", 9, 4, 12}, {"UseItemTable", 14, 3, 10},
+		{"FoodTable", 5, 7, 16, 11}, {"ResourceTable", 8, 4, 12, 10},
+		{"RandomBoxTable", 9, 4, 12, 8}, {"UseItemTable", 14, 3, 10, 8},
 	} {
 		rows, err := db.Query("SELECT id,ProtoBuf FROM " + source.name + " ORDER BY id")
 		if err != nil {
@@ -44,6 +45,12 @@ func LoadItemStackDesign(root, version string) (*ItemStackDesign, error) {
 				_ = rows.Close()
 				return nil, fmt.Errorf("gamedata: invalid %s stack limit %d", source.name, id)
 			}
+			notTrash, err := optionalScalar(raw, int(source.trashField))
+			if err != nil || notTrash > 1 {
+				_ = rows.Close()
+				return nil, fmt.Errorf("gamedata: invalid %s trash flag", source.name)
+			}
+			design.Discardable[[2]uint64{source.kind, id}] = notTrash == 0
 			if limit > 0 {
 				design.Limits[[2]uint64{source.kind, id}] = limit
 			}

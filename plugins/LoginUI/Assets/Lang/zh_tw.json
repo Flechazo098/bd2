@@ -5,5 +5,8 @@
   "loginui.recovery.reconnecting": "正在重新連線至伺服器……",
   "loginui.recovery.waiting_server": "等待伺服器啟動……",
   "loginui.recovery.restoring_session": "正在恢復登入工作階段……",
-  "loginui.recovery.safe_scene": "正在返回安全場景……"
+  "loginui.recovery.safe_scene": "正在返回安全場景……",
+  "loginui.update.required": "伺服器已更新，需要更新用戶端。請離開遊戲，開啟啟動器檢查更新，完成所有必要的用戶端和遊戲資源更新後再登入。",
+  "loginui.update.check_failed": "無法驗證此伺服器的用戶端版本要求。請離開遊戲，開啟啟動器檢查網路連線並安裝可用更新，然後重試。",
+  "loginui.update.exit": "離開遊戲"
 }

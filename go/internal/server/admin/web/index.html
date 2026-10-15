@@ -1,104 +1,113 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en-US">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BD2 管理台</title>
+<title>BD2</title>
 <link rel="stylesheet" href="assets/app.css">
+<script src="assets/text.js" defer></script>
 <script src="assets/app.js" defer></script>
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="seal-mark" aria-hidden="true"></span><b>BD2</b><span>管理台</span></div>
+  <div class="brand"><span class="seal-mark" aria-hidden="true"></span><b>BD2</b><span data-i18n="console.brand"></span></div>
   <nav class="tabs" id="tabs" hidden>
-    <a href="#mail" data-view="mail">邮件发放</a>
-    <a href="#players" data-view="players" data-owner>玩家</a>
-    <a href="#config" data-view="config" data-owner>服务器配置</a>
+    <a href="#mail" data-view="mail" data-i18n="console.nav.mail"></a>
+    <a href="#players" data-view="players" data-owner data-i18n="console.nav.players"></a>
+    <a href="#config" data-view="config" data-owner data-i18n="console.nav.config"></a>
+    <a href="#updates" data-view="updates" data-owner data-i18n="console.nav.updates"></a>
   </nav>
-  <div class="account" id="account" hidden><span class="user" id="account-name"></span><button type="button" id="logout">退出</button></div>
+  <div class="account" id="account" hidden><span class="user" id="account-name"></span><button type="button" id="logout" data-i18n="console.logout"></button></div>
+  <select class="locale" id="locale" data-i18n-attr="aria-label:console.language;title:console.language">
+    <option value="en_us" lang="en">English</option>
+    <option value="ko_kr" lang="ko">한국어</option>
+    <option value="ja_jp" lang="ja">日本語</option>
+    <option value="zh_tw" lang="zh-TW">繁體中文</option>
+    <option value="zh_cn" lang="zh-CN">简体中文</option>
+  </select>
 </header>
 
 <main class="desk">
-  <!-- 登录 -->
+  <!-- Sign in -->
   <section class="view sign-in" id="view-sign-in" hidden>
     <div class="card sheet">
-      <h1>进入管理台</h1>
-      <p class="muted" id="sign-in-lead">正在读取服务器信息……</p>
+      <h1 data-i18n="console.signin.title"></h1>
+      <p class="muted" id="sign-in-lead" data-i18n="console.signin.loading"></p>
       <div class="providers" id="providers"></div>
       <p id="sign-in-status" class="status" aria-live="polite"></p>
     </div>
   </section>
 
-  <!-- 邮件发放 -->
+  <!-- Mail -->
   <section class="view" id="view-mail" hidden>
     <section class="card recipient" id="recipient">
       <div class="who">
-        <span class="eyebrow">收件人</span>
-        <div class="uid none" id="uid-display" title="点击复制 UID">——</div>
+        <span class="eyebrow" data-i18n="console.mail.recipient"></span>
+        <div class="uid none" id="uid-display" data-i18n-attr="title:console.mail.copy_uid">——</div>
         <p id="recipient-note" class="muted"></p>
       </div>
       <div class="recipient-side">
-        <label id="player-selector" class="player" hidden>切换玩家<select id="player"></select></label>
+        <label id="player-selector" class="player" hidden><span data-i18n="console.mail.switch_player"></span><select id="player"></select></label>
       </div>
     </section>
 
     <fieldset id="tools" class="work" disabled>
-      <div class="lock"><span id="lock-note">正在读取……</span></div>
+      <div class="lock"><span id="lock-note" data-i18n="console.loading"></span></div>
       <section class="card catalog">
-        <div class="cat-head"><h2>物品目录</h2><span id="count" class="muted"></span></div>
+        <div class="cat-head"><h2 data-i18n="console.mail.catalog"></h2><span id="count" class="muted"></span></div>
         <div class="search">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="m10.6 10.6 3.4 3.4" stroke-linecap="round"/></svg>
-          <input id="q" type="search" placeholder="名称、ID、类别或别名，空格分隔多个词" autocomplete="off" spellcheck="false" aria-label="搜索物品" aria-controls="items">
+          <input id="q" type="search" data-i18n-attr="placeholder:console.mail.search.placeholder;aria-label:console.mail.search.label" autocomplete="off" spellcheck="false" aria-controls="items">
           <kbd>/</kbd>
         </div>
-        <div class="chips" id="cats" aria-label="按类别筛选"></div>
-        <div class="recent" id="recent" hidden><span class="eyebrow">最近寄出</span></div>
-        <ol class="items" id="items" role="listbox" aria-label="物品"><li class="empty">正在读取物品目录……</li></ol>
-        <p class="keys muted"><span><kbd>/</kbd>搜索</span><span><kbd>↑</kbd><kbd>↓</kbd>挑选</span><span><kbd>Enter</kbd>放入包裹单</span><span><kbd>Esc</kbd>清空</span></p>
+        <div class="chips" id="cats" data-i18n-attr="aria-label:console.mail.filter_label"></div>
+        <div class="recent" id="recent" hidden><span class="eyebrow" data-i18n="console.mail.recent"></span></div>
+        <ol class="items" id="items" role="listbox" data-i18n-attr="aria-label:console.mail.items_label"><li class="empty" data-i18n="console.mail.catalog_loading"></li></ol>
+        <p class="keys muted"><span><kbd>/</kbd><span data-i18n="console.mail.keys.search"></span></span><span><kbd>↑</kbd><kbd>↓</kbd><span data-i18n="console.mail.keys.pick"></span></span><span><kbd>Enter</kbd><span data-i18n="console.mail.keys.add"></span></span><span><kbd>Esc</kbd><span data-i18n="console.mail.keys.clear"></span></span></p>
       </section>
 
       <aside class="side">
         <form id="form" class="card slip" novalidate>
-          <div class="slip-head"><span class="eyebrow">包裹单</span><span class="to">寄往 UID<b id="slip-uid">—</b></span></div>
+          <div class="slip-head"><span class="eyebrow" data-i18n="console.mail.slip"></span><span class="to"><span data-i18n="console.mail.slip.to"></span><b id="slip-uid">—</b></span></div>
           <div class="parcel empty" id="parcel"></div>
           <div class="field">
-            <label for="quantity">数量 <span id="qty-hint">支持 5k、2w、3万</span></label>
+            <label for="quantity"><span data-i18n="console.mail.quantity"></span> <span id="qty-hint" data-i18n="console.mail.quantity.hint"></span></label>
             <input id="quantity" value="1" inputmode="numeric" autocomplete="off" required>
-            <div class="presets" id="presets" title="点击设为该数量，按住 Shift 点击则累加">
-              <button type="button" data-q="1">1</button><button type="button" data-q="10">10</button><button type="button" data-q="100">100</button><button type="button" data-q="1000">1k</button><button type="button" data-q="10000">1w</button>
+            <div class="presets" id="presets" data-i18n-attr="title:console.mail.presets.title">
+              <button type="button" data-q="1">1</button><button type="button" data-q="10">10</button><button type="button" data-q="100">100</button><button type="button" data-q="1000" data-i18n="console.mail.presets.thousand"></button><button type="button" data-q="10000" data-i18n="console.mail.presets.ten_thousand"></button>
             </div>
           </div>
           <details class="letter" id="letter">
-            <summary>附信 <span id="letter-peek">测试物品</span></summary>
-            <label>邮件标题<input id="title" value="测试物品" required maxlength="500"></label>
-            <label>正文<textarea id="body" required maxlength="5000">由管理台发放。</textarea></label>
+            <summary data-i18n-attr="data-expand:console.mail.letter.expand;data-collapse:console.mail.letter.collapse"><span data-i18n="console.mail.letter"></span> <span id="letter-peek"></span></summary>
+            <label><span data-i18n="console.mail.letter.title"></span><input id="title" data-i18n-attr="value:console.mail.letter.default_title" required maxlength="500"></label>
+            <label><span data-i18n="console.mail.letter.body"></span><textarea id="body" data-i18n="console.mail.letter.default_body" required maxlength="5000"></textarea></label>
           </details>
-          <button id="grant-submit" class="btn seal send">寄出<kbd>Ctrl ↵</kbd></button>
+          <button id="grant-submit" class="btn seal send"><span data-i18n="console.mail.send"></span><kbd>Ctrl ↵</kbd></button>
           <p id="status" class="status" aria-live="polite"></p>
         </form>
 
         <section class="card panel">
-          <h3><label class="switch"><input id="unlimited-inventory" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span>无限背包容量</label></h3>
+          <h3><label class="switch"><input id="unlimited-inventory" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span data-i18n="console.inventory.unlimited"></span></label></h3>
           <div id="inventory-limits" class="limits"></div>
-          <p class="hint">只影响当前玩家，玩家重新登录游戏后生效，无需重启服务端。关闭后恢复该玩家原有容量。</p>
+          <p class="hint" data-i18n="console.mail.inventory.hint"></p>
           <p id="inventory-status" class="status" aria-live="polite"></p>
         </section>
 
         <section class="card panel">
-          <h3>本次寄件 <span class="muted" id="log-count"></span></h3>
+          <h3><span data-i18n="console.mail.log.title"></span> <span class="muted" id="log-count"></span></h3>
           <ol class="log" id="log"></ol>
-          <p class="log-empty" id="log-empty">寄出的物品会记在这里，点击发放标识可复制。</p>
+          <p class="log-empty" id="log-empty" data-i18n="console.mail.log.empty"></p>
         </section>
       </aside>
     </fieldset>
   </section>
 
-  <!-- 玩家 -->
+  <!-- Players -->
   <section class="view" id="view-players" hidden>
     <section class="card roster">
       <div class="roster-head">
-        <div><h2>玩家</h2><p class="muted">按游戏账号任命管理员，对方用自己的游戏账号登录管理台。管理员默认可以寄件和查看玩家，其余权限由服主逐项授予。</p></div>
-        <div class="search small"><input id="player-q" type="search" placeholder="UID 或名称" autocomplete="off" aria-label="筛选玩家"></div>
+        <div><h2 data-i18n="console.roster.title"></h2><p class="muted" data-i18n="console.roster.lead"></p></div>
+        <div class="search small"><input id="player-q" type="search" data-i18n-attr="placeholder:console.roster.search.placeholder;aria-label:console.roster.search.label" autocomplete="off"></div>
       </div>
       <table class="roster-table">
         <thead><tr id="roster-head-row"></tr></thead>
@@ -108,10 +117,10 @@
     </section>
   </section>
 
-  <!-- 服务器配置 -->
+  <!-- Server configuration -->
   <section class="view" id="view-config" hidden>
     <div class="config-layout">
-      <nav class="card doc-nav" id="doc-nav" aria-label="配置文件"></nav>
+      <nav class="card doc-nav" id="doc-nav" data-i18n-attr="aria-label:console.config.documents"></nav>
       <div class="config-main">
         <div id="config-banners"></div>
         <form id="config-form" class="config-form" novalidate></form>
@@ -120,10 +129,24 @@
     </div>
     <div class="savebar" id="savebar" hidden>
       <span id="savebar-text"></span>
-      <button type="button" class="btn ghost" id="show-diff">查看改动</button>
-      <button type="button" class="btn ghost" id="discard">放弃</button>
-      <button type="button" class="btn seal" id="save">保存 <kbd>Ctrl S</kbd></button>
+      <button type="button" class="btn ghost" id="show-diff" data-i18n="console.config.show_diff"></button>
+      <button type="button" class="btn ghost" id="discard" data-i18n="console.config.discard"></button>
+      <button type="button" class="btn seal" id="save"><span data-i18n="console.config.save"></span> <kbd>Ctrl S</kbd></button>
     </div>
+  </section>
+
+  <!-- Updates -->
+  <section class="view" id="view-updates" hidden>
+    <section class="card updates">
+      <div class="roster-head">
+        <div><h2 data-i18n="console.updates.title"></h2><p class="muted" data-i18n="console.updates.lead"></p></div>
+        <button type="button" class="btn" id="update-check" data-i18n="console.updates.check"></button>
+      </div>
+      <dl class="update-facts" id="update-facts"></dl>
+      <div id="update-available"></div>
+      <div class="update-actions" id="update-actions"></div>
+      <p id="update-status" class="status" aria-live="polite"></p>
+    </section>
   </section>
 </main>
 
@@ -131,7 +154,7 @@
   <h3 id="ask-title"></h3>
   <p id="ask-body"></p>
   <div id="ask-extra"></div>
-  <div class="ask-actions"><button type="button" class="btn" id="ask-cancel">取消</button><button type="button" class="btn seal" id="ask-ok">确定</button></div>
+  <div class="ask-actions"><button type="button" class="btn" id="ask-cancel" data-i18n="console.dialog.cancel"></button><button type="button" class="btn seal" id="ask-ok"></button></div>
 </dialog>
 <div class="toast" id="toast" role="status"></div>
 </body>

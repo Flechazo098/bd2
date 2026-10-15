@@ -47,25 +47,29 @@ type equipmentSnapshot struct {
 	Version   string            `json:"version"`
 	NextIndex uint64            `json:"next_index"`
 	Equipment []Equipment       `json:"-"`
+	Storage   []Equipment       `json:"-"`
 	Granted   map[string]uint64 `json:"-"`
 }
 
 // EquipmentInventory persists non-stackable equipment independently from
 // ItemDBInfo inventory because the wire protocols are different types.
 type EquipmentInventory struct {
-	store        stateio.ScopedEntryStore
-	owned        equipmentSnapshot
-	persisted    equipmentSnapshot
-	corePresent  bool
-	characters   EquipmentCharacterSource
-	slots        map[uint64]uint64
-	upgrade      *gamedata.EquipmentUpgradeDesign
-	craft        *gamedata.EquipmentCraftDesign
-	smelting     *gamedata.EquipmentSmeltingDesign
-	optionReroll *gamedata.EquipmentOptionRerollDesign
-	statDesign   *gamedata.EquipmentStatDesign
-	wallet       *Wallet
-	inventory    *Inventory
+	store              stateio.ScopedEntryStore
+	owned              equipmentSnapshot
+	persisted          equipmentSnapshot
+	capacity           *InventorySlots
+	rankPurchases      *gamedata.EquipmentRankPurchaseDesign
+	chargeRankPurchase func(command.Context, string, gamedata.CashProductKey) error
+	corePresent        bool
+	characters         EquipmentCharacterSource
+	slots              map[uint64]uint64
+	upgrade            *gamedata.EquipmentUpgradeDesign
+	craft              *gamedata.EquipmentCraftDesign
+	smelting           *gamedata.EquipmentSmeltingDesign
+	optionReroll       *gamedata.EquipmentOptionRerollDesign
+	statDesign         *gamedata.EquipmentStatDesign
+	wallet             *Wallet
+	inventory          *Inventory
 
 	smeltCache    map[string]smeltingReply
 	pendingReroll *equipmentOptionRerollPending
@@ -196,7 +200,7 @@ func OpenEquipmentInventory(ctx command.Context, store stateio.Store) (*Equipmen
 		if err := json.Unmarshal(data, &s.owned); err != nil {
 			return nil, fmt.Errorf("player: decode equipment: %w", err)
 		}
-	} else if err := stateio.RequireNoEntries(entries, ctx.State, "equipment", "equipment", "granted", "reroll_pending", "presets"); err != nil {
+	} else if err := stateio.RequireNoEntries(entries, ctx.State, "equipment", "equipment", "granted", "reroll_pending", "presets", "storage"); err != nil {
 		return nil, fmt.Errorf("player: invalid equipment storage: %w", err)
 	}
 	if s.owned.Version != versionconfig.State() || s.owned.NextIndex < 910000001 {
@@ -227,6 +231,9 @@ func OpenEquipmentInventory(ctx command.Context, store stateio.Store) (*Equipmen
 		if len(entry.Rank) != 3 {
 			return nil, fmt.Errorf("player: equipment %d requires exactly three rank slots, found %d; repair the development save before starting", entry.InvenIndex, len(entry.Rank))
 		}
+	}
+	if err := s.loadEquipmentStorage(ctx); err != nil {
+		return nil, err
 	}
 	pendingEntries, err := entries.ListEntries(ctx.State, "equipment", "reroll_pending")
 	if err != nil {
@@ -314,11 +321,13 @@ func (s *EquipmentInventory) grantLocked(ctx command.Context, identity string, e
 	if len(entry.Rank) != 3 {
 		return Equipment{}, errors.New("player: equipment requires exactly three rank slots")
 	}
+	if s.owned.NextIndex == math.MaxUint64 {
+		return Equipment{}, errors.New("inventory: equipment index exhausted")
+	}
 	entry.InvenIndex = s.owned.NextIndex
-	next := equipmentSnapshot{Version: s.owned.Version, NextIndex: s.owned.NextIndex + 1,
-		Equipment: append([]Equipment(nil), s.owned.Equipment...), Granted: make(map[string]uint64, len(s.owned.Granted)+1)}
+	next := cloneEquipmentSnapshot(s.owned)
+	next.NextIndex++
 	next.Equipment = append(next.Equipment, entry)
-	maps.Copy(next.Granted, s.owned.Granted)
 	next.Granted[identity] = entry.InvenIndex
 	if err := s.commitLocked(ctx, next, "grant"); err != nil {
 		return Equipment{}, err
@@ -768,9 +777,12 @@ func validEquipmentMark(raw []byte) bool {
 
 func cloneEquipmentSnapshot(current equipmentSnapshot) equipmentSnapshot {
 	next := equipmentSnapshot{Version: current.Version, NextIndex: current.NextIndex,
-		Equipment: append([]Equipment(nil), current.Equipment...), Granted: make(map[string]uint64, len(current.Granted))}
+		Equipment: append([]Equipment(nil), current.Equipment...), Storage: append([]Equipment(nil), current.Storage...), Granted: make(map[string]uint64, len(current.Granted))}
 	for i := range next.Equipment {
 		next.Equipment[i] = cloneEquipment(next.Equipment[i])
+	}
+	for i := range next.Storage {
+		next.Storage[i] = cloneEquipment(next.Storage[i])
 	}
 	maps.Copy(next.Granted, current.Granted)
 	return next
@@ -845,6 +857,9 @@ func optionChoiceExists(group gamedata.OptionGroup, id uint64) bool {
 }
 
 func (s *EquipmentInventory) commitLocked(ctx command.Context, next equipmentSnapshot, operation string) error {
+	if err := s.removeAbsentPresetEquipment(ctx, next); err != nil {
+		return err
+	}
 	if err := s.persistEquipment(ctx, next, operation); err != nil {
 		return err
 	}
@@ -886,6 +901,11 @@ func (s *EquipmentInventory) persistEquipmentState(ctx command.Context, next equ
 	for index := range before {
 		changes = append(changes, stateio.EntryMutation{Bucket: "equipment", Key: strconv.FormatUint(index, 10), Delete: true})
 	}
+	storageChanges, err := equipmentStorageChanges(s.persisted.Storage, next.Storage)
+	if err != nil {
+		return err
+	}
+	changes = append(changes, storageChanges...)
 	if pendingDirty {
 		change := stateio.EntryMutation{Bucket: "reroll_pending", Key: "current", Delete: pending == nil}
 		if pending != nil {

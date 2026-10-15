@@ -16,6 +16,7 @@ import (
 )
 
 var codes = map[string]int{
+	"/PvpBattleReplayInfo": 0, "/PvpBattleReset": 0,
 	"/PvpBattleUserInfo": 86, "/PvpBattleDeckInfo": 87, "/PvpBattleDeckSave": 88, "/PvpBattleMatching": 89, "/PvpBattleStart": 90, "/PvpBattleEnd": 91, "/PvpBattleReward": 92, "/PvpBattleRanking": 93, "/PvpBattleRankUserDetail": 94, "/PvpBattleHistory": 97, "/PvpBattleHistoryDeckInfo": 98, "/PvpSeasonReward": 136, "/PvpBattleOnceRewardInfo": 277, "/PvpContentsItemRenew": 401,
 	"/ColosseumUserInfo": 473, "/ColosseumSeasonReward": 474, "/ColosseumDeckInfo": 475, "/ColosseumDeckSave": 476, "/ColosseumContentsItemRenew": 478, "/ColosseumRanking": 479, "/ColosseumRankDetail": 480, "/ColosseumBattleHistory": 481, "/ColosseumBattleReplayInfo": 482, "/ColosseumBattleMatching": 483, "/ColosseumBattleStart": 484, "/ColosseumBattleEnd": 485, "/ColosseumBlessInfo": 486, "/ColosseumBlessSave": 487, "/ColosseumBattleCountReset": 488, "/ColosseumApBuy": 489,
 	"/ColosseumPresetInfo": 493, "/ColosseumPresetSave": 494, "/ColosseumPresetDelete": 495, "/ColosseumPresetSlotAdd": 496, "/ColosseumPresetInfoChange": 497,
@@ -145,14 +146,14 @@ func (s *Service) handle(ctx command.Context, mode Mode, path string, request []
 		return s.rankDetail(mode, request)
 	case "/PvpBattleHistory", "/ColosseumBattleHistory":
 		return s.history(ctx, mode)
-	case "/PvpBattleHistoryDeckInfo", "/ColosseumBattleReplayInfo":
-		return s.replay(ctx, mode, request)
+	case "/PvpBattleHistoryDeckInfo", "/PvpBattleReplayInfo", "/ColosseumBattleReplayInfo":
+		return s.replay(ctx, mode, request, path == "/PvpBattleReplayInfo")
 	case "/ColosseumBlessInfo":
 		out := appendInts(nil, 1, m.AttackBless)
 		return appendInts(out, 2, m.DefenseBless), nil
 	case "/ColosseumBlessSave":
 		return nil, s.saveBless(ctx, request)
-	case "/ColosseumBattleCountReset":
+	case "/ColosseumBattleCountReset", "/PvpBattleReset":
 		season, e := s.current(mode)
 		if e != nil {
 			return nil, e
@@ -649,7 +650,7 @@ func (s *Service) history(ctx command.Context, mode Mode) ([]byte, error) {
 	}
 	return out, nil
 }
-func (s *Service) replay(ctx command.Context, mode Mode, request []byte) ([]byte, error) {
+func (s *Service) replay(ctx command.Context, mode Mode, request []byte, includeSeeds bool) ([]byte, error) {
 	index, e := scalar(request, 2)
 	if e != nil || index == 0 {
 		return nil, fmt.Errorf("pvp: invalid battle index")
@@ -676,11 +677,18 @@ func (s *Service) replay(ctx command.Context, mode Mode, request []byte) ([]byte
 		return nil, fmt.Errorf("pvp: replay ownership mismatch")
 	}
 	blue, red := b.Attacker, b.Defender
-	if mode == Mirror && b.Defender.Profile.OwnerID == s.profile.OwnerID {
+	if mode == Mirror && !includeSeeds && b.Defender.Profile.OwnerID == s.profile.OwnerID {
 		blue, red = red, blue
 	}
 	out := wire.AppendBytes(nil, 1, blue.Snapshot.FullDeck)
 	out = wire.AppendBytes(out, 2, red.Snapshot.FullDeck)
+	if mode == Mirror && includeSeeds {
+		seeds := b.Seeds
+		if len(seeds) == 0 {
+			return nil, fmt.Errorf("pvp: replay random seeds unavailable")
+		}
+		out = appendInts(out, 3, seeds)
+	}
 	if mode == Colosseum {
 		out = wire.AppendVarint(out, 3, b.Seed)
 		out = wire.AppendVarint(out, 5, b.FirstAttack)

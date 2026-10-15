@@ -71,7 +71,7 @@ func Save[T any](path string, value T, options WriteOptions) error {
 		return err
 	}
 	defer func() { _ = os.Remove(temporary) }()
-	return replaceFile(temporary, path)
+	return ReplaceFile(temporary, path)
 }
 
 // Ensure publishes defaults atomically and never replaces an existing file.
@@ -111,7 +111,7 @@ func WriteFile(path string, raw []byte) error {
 		return err
 	}
 	defer func() { _ = os.Remove(temporary) }()
-	return replaceFile(temporary, path)
+	return ReplaceFile(temporary, path)
 }
 
 func stageBytes(path string, raw []byte, options WriteOptions) (string, error) {

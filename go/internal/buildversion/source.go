@@ -13,19 +13,22 @@ import (
 )
 
 type Config struct {
-	GameVersion     string `json:"game_version"`
-	ClientVersion   string `json:"client_version"`
-	ServerVersion   string `json:"server_version"`
-	GameDataVersion string `json:"game_data_version"`
-	BundleVersion   string `json:"bundle_version"`
-	SeedDirectory   string `json:"seed_directory"`
-	Plugins         struct {
-		LocalIdentity      string `json:"local_identity"`
-		CaptureEnvironment string `json:"capture_environment"`
-		LoginUI            string `json:"login_ui"`
-		CashShop           string `json:"cash_shop"`
-		FChat              string `json:"fchat"`
-	} `json:"plugins"`
+	GameVersion     string         `json:"game_version"`
+	ClientVersion   string         `json:"client_version"`
+	ServerVersion   string         `json:"server_version"`
+	GameDataVersion string         `json:"game_data_version"`
+	BundleVersion   string         `json:"bundle_version"`
+	SeedDirectory   string         `json:"seed_directory"`
+	Plugins         pluginVersions `json:"plugins"`
+	MinimumPlugins  pluginVersions `json:"minimum_plugins"`
+}
+
+type pluginVersions struct {
+	LocalIdentity      string `json:"local_identity"`
+	CaptureEnvironment string `json:"capture_environment"`
+	LoginUI            string `json:"login_ui"`
+	CashShop           string `json:"cash_shop"`
+	FChat              string `json:"fchat"`
 }
 
 func readConfig(path string, config *Config) error {

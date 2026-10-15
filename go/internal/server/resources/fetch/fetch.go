@@ -5,6 +5,8 @@ package resourcefetch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/resourcecatalog"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/resources/policy"
@@ -32,12 +35,15 @@ type Options struct {
 	GameDataVersion string
 	Client          *http.Client
 	Progress        func(string)
+	Pinned          *release.GameResources
 }
 
 type Manifest struct {
-	BundleVersion   string `json:"bundle_version"`
-	GameDataVersion string `json:"game_data_version"`
-	Platform        string `json:"platform"`
+	InventoryID     string         `json:"inventory_id,omitempty"`
+	VerifiedFiles   []VerifiedFile `json:"verified_files,omitempty"`
+	BundleVersion   string         `json:"bundle_version"`
+	GameDataVersion string         `json:"game_data_version"`
+	Platform        string         `json:"platform"`
 	ServerData      struct {
 		CatalogHash string `json:"catalog_hash"`
 		Bundles     int    `json:"bundles"`
@@ -46,7 +52,17 @@ type Manifest struct {
 	GameData gamedata.Result `json:"game_data"`
 }
 
+type VerifiedFile struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Modified int64  `json:"modified"`
+	SHA256   string `json:"sha256"`
+}
+
 func Fetch(ctx context.Context, options Options) (Manifest, error) {
+	if options.Pinned != nil {
+		return fetchPinned(ctx, options)
+	}
 	if options.OutputRoot == "" || options.BundleVersion == "" || options.GameDataVersion == "" {
 		return Manifest{}, errors.New("resource fetch: output and resource versions are required")
 	}
@@ -180,7 +196,7 @@ func downloadBytes(ctx context.Context, client *http.Client, rawURL string, limi
 	return data, nil
 }
 
-func downloadFile(ctx context.Context, client *http.Client, rawURL, target string) (int64, error) {
+func downloadFile(ctx context.Context, client *http.Client, rawURL, target string, expected ...release.ResourceFile) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return 0, err
 	}
@@ -203,7 +219,12 @@ func downloadFile(ctx context.Context, client *http.Client, rawURL, target strin
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	written, copyErr := io.Copy(temporary, response.Body)
+	hash := sha256.New()
+	var source io.Reader = response.Body
+	if len(expected) != 0 {
+		source = io.LimitReader(response.Body, expected[0].Size+1)
+	}
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), source)
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if copyErr != nil {
@@ -217,6 +238,9 @@ func downloadFile(ctx context.Context, client *http.Client, rawURL, target strin
 	}
 	if written == 0 {
 		return 0, errors.New("empty response")
+	}
+	if len(expected) != 0 && (written != expected[0].Size || hex.EncodeToString(hash.Sum(nil)) != expected[0].SHA256) {
+		return 0, errors.New("signed resource size or SHA-256 mismatch")
 	}
 	if err := replaceFile(temporaryPath, target); err != nil {
 		return 0, err

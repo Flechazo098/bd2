@@ -13,16 +13,17 @@ import (
 )
 
 type Costume struct {
-	InvenIndex    uint64      `json:"inven_index"`
-	ID            uint64      `json:"id"`
-	Level         uint64      `json:"level,omitempty"`
-	UseChar       uint64      `json:"use_char,omitempty"`
-	SortID        uint64      `json:"sort_id,omitempty"`
-	PotentialIDs  []uint64    `json:"-"`
-	DesignID      uint64      `json:"design_id,omitempty"`
-	BurstLevel    uint64      `json:"burst_level,omitempty"`
-	TimeValue     uint64      `json:"time_value,omitempty"`
-	Pictorialbook []Pictorial `json:"pictorialbook,omitempty"`
+	InvenIndex       uint64      `json:"inven_index"`
+	ID               uint64      `json:"id"`
+	Level            uint64      `json:"level,omitempty"`
+	UseChar          uint64      `json:"use_char,omitempty"`
+	SortID           uint64      `json:"sort_id,omitempty"`
+	PotentialLockIDs []uint64    `json:"-"`
+	PotentialIDs     []uint64    `json:"-"`
+	DesignID         uint64      `json:"design_id,omitempty"`
+	BurstLevel       uint64      `json:"burst_level,omitempty"`
+	TimeValue        uint64      `json:"time_value,omitempty"`
+	Pictorialbook    []Pictorial `json:"pictorialbook,omitempty"`
 }
 
 type Pictorial struct {

@@ -27,6 +27,7 @@ func main() {
 func usage() {
 	fmt.Println(`Usage:
   bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
+  bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement]
   bd2w runClient [client options]
   bd2w runClient2 [--instance player2] [--game-dir directory]
   bd2w plugins [--game-dir directory]
@@ -72,10 +73,10 @@ func run(args []string) error {
 	case "diff":
 		return t.execute("diff", taskgraph.Task{Name: "diff", Run: func(context.Context) error { return sourcetools.RunDiff(args[1:], os.Stdout) }})
 	}
-	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" && args[0] != "plugins" && args[0] != "check-csharp" && args[0] != "download-client" && args[0] != "download-resources" {
+	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" && args[0] != "plugins" && args[0] != "check-csharp" && args[0] != "download-client" && args[0] != "download-resources" && args[0] != "release" {
 		return fmt.Errorf("unknown task %q; use --help for available commands", args[0])
 	}
-	if len(args) == 2 && isHelp(args[1]) {
+	if len(args) == 2 && isHelp(args[1]) && args[0] != "release" {
 		usage()
 		return nil
 	}
@@ -111,6 +112,8 @@ func run(args []string) error {
 		return t.execute("version-source", taskgraph.Task{Name: "version-source", Run: func(context.Context) error { return t.generateVersionSource(args[1:]) }})
 	case "check-csharp":
 		return t.checkCSharp(args[1:])
+	case "release":
+		return t.release(args[1:])
 	case "download-client", "download-resources":
 		return t.runDownload(args[0], args[1:])
 	case "sdk":

@@ -9,25 +9,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"bd2server/internal/common/release"
 )
 
-type manifest struct {
-	GameVersion     string   `json:"game_version"`
-	GameDataVersion string   `json:"game_data_version"`
-	BundleVersion   string   `json:"bundle_version"`
-	Platform        string   `json:"platform"`
-	ServerOrigin    string   `json:"server_origin"`
-	BuildOrigins    []string `json:"build_origins"`
-	ResourceOrigins []string `json:"resource_origins"`
-	GamePath        string   `json:"game_path"`
-	GameSHA256      string   `json:"game_sha256"`
-	GameBytes       int64    `json:"game_bytes"`
-	DataSHA256      string   `json:"data_sha256"`
-	DataBytes       int64    `json:"data_bytes"`
-	CatalogSHA256   string   `json:"catalog_sha256"`
-	CatalogBytes    int64    `json:"catalog_bytes"`
-	CatalogHash     string   `json:"catalog_hash"`
-}
+type manifest = release.GameResources
 
 var timestamp = regexp.MustCompile(`^[0-9]{14}$`)
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)

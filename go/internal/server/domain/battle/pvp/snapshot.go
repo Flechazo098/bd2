@@ -268,3 +268,15 @@ func (b *OwnedSnapshotBuilder) validateSkills(index uint64, entry []byte, costum
 	}
 	return nil
 }
+
+func (p PublishedSnapshot) Deck() [][]byte {
+	entries, _ := messages(p.Snapshot.FullDeck, 1)
+	return entries
+}
+func (s *Service) AttachCompletion(f func(command.Context, Mode, string, bool, [][]byte) ([]byte, error)) {
+	s.completion = f
+}
+
+func (s *Service) AttachPreparation(f func(command.Context, Mode, string, PublishedSnapshot, []byte) error) {
+	s.preparation = f
+}

@@ -34,6 +34,12 @@ func (p *playerInstance) recoverSharedBattle(ctx context.Context) (result error)
 		}
 	}()
 	c := command.Context{Identity: command.Identity{AccountID: p.accountID, SessionID: "recovery", RequestID: "shared-battle"}, State: tx, Cancellation: ctx}
+	if err := p.assembly.battleService.Restore(c); err != nil {
+		return err
+	}
+	if p.assembly.battleService.Active(c) {
+		return nil
+	}
 	published := false
 	c.Emit = func(event command.Event) error {
 		if err := outbox.Publish(tx, p.accountID, event); err != nil {

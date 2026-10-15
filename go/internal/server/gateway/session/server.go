@@ -57,6 +57,10 @@ type Server struct {
 	now         func() time.Time
 	sessionTTL  time.Duration
 	maxSessions int
+	// Broadcast returns Notify fields appended to every game response.
+	Broadcast func() []byte
+	// LoggedIn receives an account's LoginUserRequest.language_type.
+	LoggedIn func(accountID string, language uint64)
 }
 
 func NewServer(router RuntimeRouter, auth LoginAuthenticator) (*Server, error) {
@@ -127,12 +131,12 @@ func (s *Server) dispatchRaw(ctx context.Context, path string, body []byte, cook
 	defer func() { timing.encode += time.Since(started) }()
 	if path != "/BatchRequest" {
 		item := response.Responses[0]
-		encoded, err := protocol.EncodeWithNotify(item.PacketCode, item.Body, game.key, s.now().UnixMilli(), item.Notification)
+		encoded, err := protocol.EncodeWithNotify(item.PacketCode, item.Body, game.key, s.now().UnixMilli(), s.notification(item.Notification))
 		return transport.RawReply{Body: encoded}, err
 	}
 	items := make([]protocol.BatchResponse, 0, len(requests))
 	for i, item := range response.Responses {
-		envelope, err := protocol.EnvelopeWithNotify(item.PacketCode, item.Body, game.key, s.now().UnixMilli(), item.Notification)
+		envelope, err := protocol.EnvelopeWithNotify(item.PacketCode, item.Body, game.key, s.now().UnixMilli(), s.notification(item.Notification))
 		if err != nil {
 			return transport.RawReply{}, err
 		}
@@ -140,6 +144,19 @@ func (s *Server) dispatchRaw(ctx context.Context, path string, body []byte, cook
 	}
 	encoded, err := json.Marshal(items)
 	return transport.RawReply{Body: encoded}, err
+}
+
+// notification merges the server-wide Notify fields after the player's own;
+// concatenated protobuf messages merge field by field.
+func (s *Server) notification(player []byte) []byte {
+	if s.Broadcast == nil {
+		return player
+	}
+	shared := s.Broadcast()
+	if len(shared) == 0 {
+		return player
+	}
+	return append(append([]byte(nil), player...), shared...)
 }
 func (s *Server) execute(ctx context.Context, c player.Command, expectedGeneration uint64, timing *requestTiming) (player.Reply, uint64, error) {
 	owner, release, err := s.router.Acquire(ctx, c.Identity.AccountID)
@@ -233,6 +250,10 @@ func (s *Server) login(ctx context.Context, body []byte, timing *requestTiming) 
 	game.generation = generation
 	s.sessions[sessionTokenKey(token)] = game
 	s.mu.Unlock()
+	if s.LoggedIn != nil {
+		language, _, _ := wire.Varint(request, 7)
+		s.LoggedIn(accountID, language)
+	}
 	return transport.RawReply{Body: encoded, Cookie: token}, nil
 }
 func requestIdentity(game *gameSession, requests []player.Request) (command.Identity, [32]byte, error) {

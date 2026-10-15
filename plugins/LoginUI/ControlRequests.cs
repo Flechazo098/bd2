@@ -18,6 +18,7 @@ internal static class ControlRequests
         public string Error;
         public int StatusCode;
         public bool RefreshInvalid;
+        public bool UpdateRequired;
     }
 
     // Native HTTP avoids UnityTls for owned auth/control endpoints. The coroutine
@@ -39,7 +40,8 @@ internal static class ControlRequests
         bool responseConsumed = false;
         try
         {
-            task = PlatformControlHttp.Send(uri, method, payload, authorization, timeoutSeconds, cancel.Token, generation);
+            task = PlatformControlHttp.Send(uri, method, payload, authorization, timeoutSeconds, cancel.Token, generation,
+                requestHeaders: UpdateCompatibility.Headers);
             // Native work may finish after its Unity owner is destroyed. Observe it
             // and clear the upload clone only when transport no longer reads it.
             task.ContinueWith(finished =>
@@ -66,6 +68,7 @@ internal static class ControlRequests
                     StatusCode = result.StatusCode,
                     Body = result.Body,
                     RefreshInvalid = result.RefreshInvalid,
+                    UpdateRequired = UpdateCompatibility.Observe(result),
                     Error = result.Error
                 });
             }

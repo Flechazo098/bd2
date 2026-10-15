@@ -10,6 +10,9 @@ import (
 )
 
 type Service struct {
+	preparation      func(command.Context, Completion) error
+	restored         *battleState
+	completion       func(command.Context, Completion) ([]byte, error)
 	states           map[string]*battleState
 	transientVersion uint64
 
@@ -32,6 +35,8 @@ type Service struct {
 	eventBattles       []EventBattleRuntime
 	fieldMonsters      FieldMonsterRuntime
 	consumeFieldBuff   func(ctx command.Context, _ string) error
+	externalResume     func(command.Context, uint64, string) ([]byte, error)
+	abandonment        func(command.Context, string) error
 }
 type FieldMonsterRuntime interface {
 	BeginFieldMonsterBattle(ctx command.Context, _ int, _ uint64, _ uint64) (string, bool, error)
@@ -47,7 +52,7 @@ func (s *Service) AttachFieldBuffConsume(consume func(ctx command.Context, _ str
 // EventBattleRuntime owns event stage eligibility, costs and settlement while
 // the normal battle service transports the client's turn simulation.
 type EventBattleRuntime interface {
-	HandlesBattle(mode uint64) bool
+	HandlesBattle(Mode uint64) bool
 	EnterBattle(ctx command.Context, request []byte, receipt string) ([]byte, error)
 	CompleteBattle(ctx command.Context, request []byte, receipt string) ([]byte, error)
 }
@@ -58,24 +63,27 @@ func (s *Service) AttachEventBattle(runtime EventBattleRuntime) {
 	}
 }
 
-func (s *Service) BeginExternal(ctx command.Context, mode, deck uint64, receipt string) error {
-	if (mode != 23 && mode != 26) || deck == 0 || receipt == "" {
+func (s *Service) BeginExternal(ctx command.Context, Mode, Deck uint64, receipt string) error {
+	if err := s.restore(ctx); err != nil {
+		return err
+	}
+	if (Mode != 23 && Mode != 26) || Deck == 0 || receipt == "" {
 		return fmt.Errorf("battle: invalid external encounter")
 	}
 	state := s.stateLocked(ctx)
-	if state.entered && state.enterReceipt != receipt {
+	if state.Entered && state.EnterReceipt != receipt {
 		return fmt.Errorf("battle: another encounter is active")
 	}
-	*state = battleState{entered: true, index: deck, deck: deck, mode: mode, enterReceipt: receipt}
+	*state = battleState{Entered: true, Index: Deck, Deck: Deck, Mode: Mode, EnterReceipt: receipt}
 	s.transientVersion++
-	return nil
+	return s.persist(ctx)
 }
 
-func (s *Service) RoundCount(ctx command.Context) uint64 { return s.stateLocked(ctx).round }
+func (s *Service) RoundCount(ctx command.Context) uint64 { return s.stateLocked(ctx).Round }
 
-func (s *Service) eventBattle(mode uint64) EventBattleRuntime {
+func (s *Service) eventBattle(Mode uint64) EventBattleRuntime {
 	for _, runtime := range s.eventBattles {
-		if runtime.HandlesBattle(mode) {
+		if runtime.HandlesBattle(Mode) {
 			return runtime
 		}
 	}
@@ -91,13 +99,13 @@ func (s *Service) AttachMonsterHunt(runtime MonsterHuntRuntime) {
 	s.monsterHunt = runtime
 }
 
-func isMonsterHunt(mode uint64) bool { return mode == 8 || mode == 24 }
+func isMonsterHunt(Mode uint64) bool { return Mode == 8 || Mode == 24 }
 
 // HuntingRuntime validates the active hunting ground and settles each won
 // encounter with the account's persistent AP, monsters and reward ledger.
 type HuntingRuntime interface {
-	ValidateBattle(ctx command.Context, pack int, mode, monster, deck uint64) error
-	CompleteBattle(ctx command.Context, pack int, mode, monster, deck uint64, receipt string) ([]byte, [][]byte, error)
+	ValidateBattle(ctx command.Context, Pack int, Mode, Monster, Deck uint64) error
+	CompleteBattle(ctx command.Context, Pack int, Mode, Monster, Deck uint64, receipt string) ([]byte, [][]byte, error)
 }
 
 type SkyWayRuntime interface {
@@ -115,29 +123,37 @@ func (s *Service) AttachHunting(runtime HuntingRuntime) {
 }
 
 type battleState struct {
-	entered       bool
-	retryable     bool
-	index         uint64
-	round         uint64
-	monster       uint64
-	deck          uint64
-	pack          int
-	mode          uint64
-	enterReceipt  string
-	fieldInstance string
-	initialBlue   [][]byte
-	phases        []gamedata.BattlePhase
-	phase         int
-	phaseStarted  bool
-	phaseSeq      uint64
-	phaseReply    []byte
-	endSeq        uint64
-	endRequest    []byte
-	endReply      []byte
+	EntryRequest  []byte
+	EntryResponse []byte
+	EnteredDeck   [][]byte
+	Participating []uint64
+	Checkpoint    []byte
+	PreviousBlue  []byte
+	LastBlue      []byte
+	Entered       bool
+	Retryable     bool
+	Index         uint64
+	Round         uint64
+	Monster       uint64
+	Quest         uint64
+	Deck          uint64
+	Pack          int
+	Mode          uint64
+	EnterReceipt  string
+	Attempt       uint64
+	FieldInstance string
+	InitialBlue   [][]byte
+	Phases        []gamedata.BattlePhase
+	Phase         int
+	PhaseStarted  bool
+	PhaseSeq      uint64
+	PhaseReply    []byte
+	EndSeq        uint64
+	EndRequest    []byte
+	EndReply      []byte
 }
 
-// BeginLogin creates the transient battle state owned by this login identity.
-// Persistent rewards require a successful BattleEnd command transaction.
+// BeginLogin binds the login to the account encounter loaded during initialization.
 func (s *Service) BeginLogin(ctx command.Context) {
 	id := ctx.SessionID
 
@@ -157,7 +173,11 @@ func (s *Service) BeginLogin(ctx command.Context) {
 				}
 			}
 		}
-		s.states[id] = &battleState{}
+		if s.restored != nil {
+			s.states[id] = s.restored
+		} else {
+			s.states[id] = &battleState{}
+		}
 	}
 }
 
@@ -174,17 +194,14 @@ func (s *Service) AttachTutorialWin(callback func(ctx command.Context) error) {
 	s.onTutorialWin = callback
 }
 
-// AttachCommittedHealth persists only completed battle results. Round state
-// remains transient, so reconnect rolls back an unfinished battle.
-// The callback may normalize values to field HP; the response uses those
-// committed values rather than echoing battle-only HP buffs.
+// AttachCommittedHealth persists completed field HP after battle-only bonuses are removed.
 func (s *Service) AttachCommittedHealth(callback func(ctx command.Context, _ map[uint64]uint64) error) {
 	s.commitHealth = callback
 }
 
 func (s *Service) Active(ctx command.Context) bool {
 
-	return s.stateLocked(ctx).entered
+	return s.stateLocked(ctx).Entered
 }
 
 func NewService(gameDataRoot, gameDataVersion string, currentPack func(command.Context) (int, error)) *Service {
@@ -203,7 +220,7 @@ func (s *Service) AttachQuestBattleValidation(validate func(command.Context, int
 	s.validateQuest = validate
 }
 
-// AttachCurrentDifficulty selects the GameData quest deck for the active pack.
+// AttachCurrentDifficulty selects the GameData quest Deck for the active Pack.
 func (s *Service) AttachCurrentDifficulty(resolve func(command.Context) (uint64, error)) {
 	s.currentDifficulty = resolve
 }
@@ -219,27 +236,10 @@ func (s *Service) PictorialBuffs(ctx command.Context) ([]gamedata.PictorialBuffS
 	return s.buffs(ctx)
 }
 
-// The local engine does not simulate combat. With verification disabled
-// and no battle_result the client explicitly preserves its blue team;
-// fabricating a verified result would overwrite HP, SP and action state.
-// Dynamic official turn/SP values are not available in this request.
-
-// Packet code 142 follows BattleVerify(141). State 3 is the protocol's
-// explicit SUCCESS value; PVE does not require authoritative team lists.
-
-// The local engine is the normal deterministic engine.
-
-// Retry requests carry the current deck; the response must restore
-// the first phase's deck, as PhaseBattleManager.ApplyRetryResponse does.
-
-//nolint:staticcheck // QF1003
-
-// Stable per-battle/round seed; reproducible across retries.
-
-// Monster Hunt owns its remaining HP, progression and daily/season
-// rewards. Field HP and ordinary pack rewards must not settle here.
-
 func (s *Service) stateLocked(ctx command.Context) *battleState {
+	if s.restored != nil {
+		return s.restored
+	}
 	if s.states == nil {
 		s.states = make(map[string]*battleState)
 	}

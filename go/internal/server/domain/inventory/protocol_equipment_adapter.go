@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -36,11 +35,19 @@ func equipmentOptionWire(v EquipmentOption) []byte {
 }
 
 func (s *EquipmentInventory) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
-	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipBatchUse" && path != "/EquipPresetInfo" && path != "/EquipPresetSave" && path != "/EquipPresetNameChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipOptionReRoll" && path != "/EquipOptionReRollConfirm" && path != "/EquipMainOptChange" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" && path != "/EquipMaking" && path != "/EquipBreak" && path != "/EquipMakingToBreakAuto" && path != "/EquipUpgradeToBreakAuto" {
+	if path != "/EquipInfo" && path != "/EquipUse" && path != "/EquipClear" && path != "/EquipChange" && path != "/EquipBatchUse" && path != "/EquipPresetInfo" && path != "/EquipPresetSave" && path != "/EquipPresetNameChange" && path != "/EquipUpgrade" && path != "/EquipSequenceUpgrade" && path != "/EquipSmelting" && path != "/EquipSequenceSmelting" && path != "/EquipOptionReRoll" && path != "/EquipOptionReRollConfirm" && path != "/EquipMainOptChange" && path != "/EquipMarkSet" && path != "/EquipMarkDelete" && path != "/EquipLock" && path != "/EquipMaking" && path != "/EquipBreak" && path != "/EquipMakingToBreakAuto" && path != "/EquipUpgradeToBreakAuto" && path != "/EquipFromMakingToBreak" && path != "/EquipFromMakingToUpgrade" && path != "/EquipFromUpgradeToBreak" && path != "/EquipRankUpgradeBuy" && path != "/EquipStorageInfo" && path != "/EquipStorageOut" && path != "/EquipStoragePut" {
 		return 0, nil, false, nil
 	}
 	if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
 		return 0, nil, true, fmt.Errorf("player: %s invalid sequence", path)
+	}
+	switch path {
+	case "/EquipStorageInfo", "/EquipStorageOut", "/EquipStoragePut":
+		return s.handleEquipmentStorage(ctx, path, request)
+	case "/EquipRankUpgradeBuy":
+		return s.rankUpgradeBuy(ctx, request)
+	case "/EquipFromMakingToBreak", "/EquipFromMakingToUpgrade", "/EquipFromUpgradeToBreak":
+		return s.fromMakingOrUpgrade(ctx, path, request)
 	}
 	if path == "/EquipUse" {
 		return s.use(ctx, request)
@@ -1221,87 +1228,24 @@ func (s *EquipmentInventory) upgradeSequence(ctx command.Context, request []byte
 		return 0, nil, true, errors.New("player: EquipSequenceUpgrade invalid target")
 	}
 
-	if s.upgrade == nil || s.wallet == nil {
-
-		return 0, nil, true, errors.New("player: equipment upgrade unavailable")
+	result, err := s.runEquipmentSequence(ctx, index, count, goldLimit, target)
+	if err != nil {
+		return 0, nil, true, err
 	}
-	position := s.equipmentPositionLocked(index)
-	if position < 0 {
-
-		return 0, nil, true, fmt.Errorf("player: EquipSequenceUpgrade unknown equipment %d", index)
-	}
-	maximum := s.upgrade.MaxLevel[s.owned.Equipment[position].ID]
-	if target == 0 || target > maximum {
-		target = maximum
-	}
-	var attempts, usedGold uint64
-	result := uint64(equipUpgradeStopMaxTryCount)
-	var consumed []Item
-	var lack []Item
-	for attempts < count {
-		entry := s.owned.Equipment[position]
-		if entry.Level >= maximum {
-			result = equipUpgradeStopMaxLevel
-			break
-		}
-		if entry.Level >= target {
-			result = equipUpgradeStopTargetLevel
-			break
-		}
-		level, _, designErr := s.upgrade.Level(entry.ID, entry.Level)
-		if designErr != nil {
-
-			return 0, nil, true, designErr
-		}
-		materials, gold, costErr := s.selectUpgradeCosts(ctx, level.Costs)
-		if costErr != nil {
-			result = equipUpgradeStopNotEnough
-			lack = upgradeLackItems(level.Costs)
-			break
-		}
-		if goldLimit != 0 && usedGold+gold > goldLimit {
-			result = equipUpgradeStopGoldLimit
-			break
-		}
-		if gold != 0 && !s.wallet.CanSpendGold(gold) {
-			result = equipUpgradeStopNotEnough
-			lack = upgradeLackItems(level.Costs)
-			break
-		}
-		updated, success, spent, actual, attemptErr := s.attemptUpgradeLocked(ctx, index, materials)
-		if attemptErr != nil {
-
-			return 0, nil, true, attemptErr
-		}
-		attempts++
-		usedGold += spent
-		consumed = append(consumed, actual...)
-		position = s.equipmentPositionLocked(index)
-		if success && updated.Level >= target {
-			result = equipUpgradeStopTargetLevel
-			if updated.Level >= maximum {
-				result = equipUpgradeStopMaxLevel
-			}
-			break
-		}
-	}
-	entry := s.owned.Equipment[position]
-
+	entry := result.Equipment[0]
 	response := wire.AppendBytes(nil, 1, EquipmentWire(entry))
 	if character, ok := s.equippedCharacter(ctx, entry); ok {
 		response = wire.AppendBytes(response, 2, character.Response)
 	}
-	response = wire.AppendVarint(response, 3, result)
-	response = wire.AppendVarint(response, 4, attempts)
-	for _, item := range consumed {
+	response = wire.AppendVarint(response, 3, result.Result)
+	response = wire.AppendVarint(response, 4, result.Attempts)
+	for _, item := range result.Consumed {
 		response = wire.AppendBytes(response, 5, ItemWire(item))
 	}
-	for _, item := range lack {
+	for _, item := range result.Lack {
 		response = wire.AppendBytes(response, 6, ItemWire(item))
 	}
-	if usedGold != 0 {
-		response = wire.AppendVarint(response, 7, usedGold)
-	}
+	response = wire.AppendVarint(response, 7, result.Gold)
 	return 176, response, true, nil
 }
 
@@ -1752,9 +1696,7 @@ func (s *EquipmentInventory) use(ctx command.Context, request []byte) (int, []by
 		return 0, nil, true, fmt.Errorf("player: EquipUse unknown character %d", characterIndex)
 	}
 
-	next := equipmentSnapshot{Version: s.owned.Version, NextIndex: s.owned.NextIndex,
-		Equipment: append([]Equipment(nil), s.owned.Equipment...), Granted: make(map[string]uint64, len(s.owned.Granted))}
-	maps.Copy(next.Granted, s.owned.Granted)
+	next := cloneEquipmentSnapshot(s.owned)
 	position := -1
 	for i, current := range next.Equipment {
 		if current.InvenIndex == equipmentIndex {

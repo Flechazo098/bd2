@@ -5,5 +5,8 @@
   "loginui.recovery.reconnecting": "Reconnecting to server…",
   "loginui.recovery.waiting_server": "Waiting for server to start…",
   "loginui.recovery.restoring_session": "Restoring login session…",
-  "loginui.recovery.safe_scene": "Returning to a safe scene…"
+  "loginui.recovery.safe_scene": "Returning to a safe scene…",
+  "loginui.update.required": "The server has been updated and requires a client update. Please exit the game, open the launcher, check for updates, and apply all required client and game resource updates before logging in again.",
+  "loginui.update.check_failed": "Unable to verify the client requirements of this server. Please exit the game, open the launcher, check your connection and apply available updates, then try again.",
+  "loginui.update.exit": "Exit game"
 }

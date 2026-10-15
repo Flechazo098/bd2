@@ -97,7 +97,7 @@ func (s *Service) matching(ctx command.Context, mode Mode, request []byte) ([]by
 	c := &challenge{ID: fmt.Sprintf("%s:%s:%d", mode, s.profile.OwnerID, index), BattleIndex: index, Season: season.ID, Seed: seed & math.MaxInt32, FirstAttack: 1, Multiplier: multiplier, IssuedAt: uint64(s.now().UnixMilli()), Attacker: cloneSnapshot(own), Candidates: accepted}
 	if mode == Mirror {
 		c.Selected = accepted[0].Profile.OwnerIndex
-		c.Started = true
+		c.Started = false
 	} else {
 		values, e := s.rules.Design.ColosseumRule(season.ID, 13)
 		if e != nil || len(values) != 1 {
@@ -119,6 +119,11 @@ func (s *Service) matching(ctx command.Context, mode Mode, request []byte) ([]by
 	} else {
 		c.MatchReply = colosseumMatching(c)
 	}
+	if s.preparation != nil {
+		if err := s.preparation(ctx, mode, c.ID, cloneSnapshot(c.Attacker), append([]byte(nil), request...)); err != nil {
+			return nil, err
+		}
+	}
 	m.Active = c
 	if e = s.save(ctx); e != nil {
 		return nil, e
@@ -136,7 +141,17 @@ func (s *Service) start(ctx command.Context, mode Mode, request []byte) ([]byte,
 		return nil, fmt.Errorf("pvp: battle start has no issued challenge")
 	}
 	if mode == Mirror {
-		return wire.AppendVarint(nil, 1, c.Seed), nil
+		seed, err := randomID()
+		if err != nil {
+			return nil, err
+		}
+		seed &= math.MaxInt32
+		c.Seeds = append(c.Seeds, seed)
+		c.Started = true
+		if err = s.save(ctx); err != nil {
+			return nil, err
+		}
+		return wire.AppendVarint(nil, 1, seed), nil
 	}
 	owner, e := scalar(request, 2)
 	if e != nil || owner == 0 {
@@ -255,7 +270,7 @@ func (s *Service) finish(ctx command.Context, mode Mode, request []byte) ([]byte
 	if e != nil {
 		return nil, e
 	}
-	settled := BattleSettled{Version: 1, ChallengeID: c.ID, BattleIndex: c.BattleIndex, Mode: mode, Season: season.ID, Attacker: c.Attacker, Defender: enemy, Result: result, Multiplier: c.Multiplier, Seed: c.Seed, FirstAttack: c.FirstAttack, Timestamp: acceptedAt, AttackerChange: change.Attacker, DefenderChange: change.Defender}
+	settled := BattleSettled{Seeds: append([]uint64(nil), c.Seeds...), Version: 1, ChallengeID: c.ID, BattleIndex: c.BattleIndex, Mode: mode, Season: season.ID, Attacker: c.Attacker, Defender: enemy, Result: result, Multiplier: c.Multiplier, Seed: c.Seed, FirstAttack: c.FirstAttack, Timestamp: acceptedAt, AttackerChange: change.Attacker, DefenderChange: change.Defender}
 	raw, e := json.Marshal(settled)
 	if e != nil {
 		return nil, e
@@ -298,6 +313,15 @@ func (s *Service) finish(ctx command.Context, mode Mode, request []byte) ([]byte
 			return nil, e
 		}
 		out = appendDouble(out, 6, rank.TopPercent)
+	}
+	if s.completion != nil {
+		extra, err := s.completion(ctx, mode, c.ID, result == 1, c.Attacker.Deck())
+		if err != nil {
+			return nil, err
+		}
+		if mode == Mirror {
+			out = append(out, extra...)
+		}
 	}
 	return out, nil
 }

@@ -218,6 +218,16 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 		return nil, fmt.Errorf("account: session key: %w", err)
 	}
 	user := append([]byte(nil), s.UserInfo...)
+	if s.recommendation != nil {
+		options, err := s.recommendation.RecommendationOptionWire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		user, _, err = wire.ReplaceBytes(user, 51, options)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.avatarSelection != nil {
 		chosen, err := s.avatarSelection.FirstChosen(ctx)
 		if err != nil {

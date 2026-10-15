@@ -5,9 +5,11 @@ package app
 import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/world/progress"
+	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/runtime/player"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"maps"
 	"testing"
 )
@@ -78,7 +80,9 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			})
 			run := func(identity, path string, body []byte) []byte {
 				t.Helper()
-				reply := registryExecute(t, runtime, registryCommand(accounts[0], scenario.name+identity, path, body))
+				request := registryCommand(accounts[0], scenario.name+identity, path, body)
+				request.Identity.SessionID = scenario.name
+				reply := registryExecute(t, runtime, request)
 				return reply.Responses[0].Body
 			}
 			beforeGold := owner.assembly.wallet.Snapshot(command.Context{}).Gold
@@ -86,14 +90,16 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			invalid := append(appScalar(1, 99), appScalar(3, scenario.monster)...)
 			invalid = append(invalid, appScalar(4, 303)...)
 			invalid = append(invalid, appScalar(5, 1)...)
-			future, err := runtime.Submit(context.Background(), registryCommand(accounts[0], scenario.name+"wrong-monster-deck", "/BattleEnter", invalid))
+			invalidRequest := registryCommand(accounts[0], scenario.name+"wrong-monster-deck", "/BattleEnter", invalid)
+			invalidRequest.Identity.SessionID = scenario.name
+			future, err := runtime.Submit(context.Background(), invalidRequest)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := future.Wait(context.Background()); err == nil {
 				t.Fatal("quest battle accepted another monster's authored deck")
 			}
-			if owner.assembly.battleService.Active(command.Context{Identity: command.Identity{SessionID: "registry-client"}}) {
+			if owner.assembly.battleService.Active(command.Context{Identity: command.Identity{SessionID: scenario.name}}) {
 				t.Fatal("rejected deck installed an active battle")
 			}
 			if owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold || !maps.Equal(appItemTotals(run("items-rejected", "/ItemInfo", appScalar(1, 100))), beforeItems) {
@@ -106,7 +112,26 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			if appValue(response, 2) != scenario.selected {
 				t.Fatalf("client receives wrong enemy deck: %d, want %d", appValue(response, 2), scenario.selected)
 			}
-			run("start", "/BattleStart", append(appScalar(1, 3), appScalar(2, scenario.selected)...))
+			blue := appScalar(3, 300)
+			common := append(appScalar(1, 1), appScalar(2, scenario.selected)...)
+			checkpoint := appMessage(1, common)
+			encoded := []byte(base64.StdEncoding.EncodeToString(appMessage(3, blue)))
+			checkpoint = append(checkpoint, appMessage(8, encoded)...)
+			start := append(appScalar(1, 3), appScalar(2, scenario.selected)...)
+			start = append(start, appMessage(100, checkpoint)...)
+			run("start", "/BattleStart", start)
+			if err := owner.Recover(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			resume := run("resume", "/BattleResume", appScalar(1, 101))
+			if appValue(resume, 5) != uint64(scenario.activeQuest) {
+				t.Fatal("story battle recovery lost its actual owning quest")
+			}
+			resumedStart, _, err := wire.ReplaceVarint(start, 1, 102)
+			if err != nil {
+				t.Fatal(err)
+			}
+			run("resumed-start", "/BattleStart", resumedStart)
 			end := append(appScalar(1, 4), appScalar(2, 1)...)
 			response = run("end", "/BattleEnd", end)
 			bundles := appRows(response, 5)

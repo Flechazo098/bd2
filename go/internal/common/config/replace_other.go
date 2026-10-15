@@ -4,6 +4,7 @@ package config
 
 import "os"
 
-func replaceFile(source, destination string) error {
+// ReplaceFile atomically renames source over destination, replacing it if present.
+func ReplaceFile(source, destination string) error {
 	return os.Rename(source, destination)
 }

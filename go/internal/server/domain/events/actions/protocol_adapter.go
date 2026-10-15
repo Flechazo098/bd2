@@ -390,6 +390,9 @@ func (s *Service) validateTacticsDeck(request []byte) error {
 func val(p []byte, n int) uint64 { v, _, _ := wire.Varint(p, n); return v }
 
 func (s *Service) Handle(ctx command.Context, path string, b []byte) (int, []byte, bool, error) {
+	if code, out, handled, err := s.handleSquare(ctx, path, b); handled {
+		return code, out, handled, err
+	}
 	codes := map[string]int{"/FieldEventSpawnInfo": 551, "/FieldEventSpawnStart": 552, "/FieldEventSpawnReward": 553, "/FireWorksInfo": 554, "/FireWorksReward": 555, "/CharVoteInfo": 581, "/CharVoteSave": 582, "/CharVoteRanking": 583, "/CharVoteSeasonRanking": 584, "/CharVoteFavoriteAdd": 585, "/CharVoteFavoriteDelete": 586, "/CharVoteTotalRanking": 587, "/FriendshipSpecialEpisodeInfo": 623, "/FriendshipSpecialEpisodeClear": 624, "/ChargeCostInfo": 123, "/NpcQuizInfo": 535, "/NpcQuizClear": 536, "/TacticsBingoInfo": 546, "/TacticsBingoDeckSave": 550}
 	code, ok := codes[path]
 	if path == "/CafeteriaEventNpcInteractionReward" {

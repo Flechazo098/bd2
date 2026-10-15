@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bd2server/internal/common/i18n"
 	"context"
 	"fmt"
 	"io/fs"
@@ -75,6 +76,8 @@ func Run(runOptions Options) error {
 	return nil
 }
 
+var launcherText = i18n.TextHandler(webFS, "web/lang")
+
 func desktopSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -82,6 +85,14 @@ func desktopSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+		if r.URL.Path == "/text.js" {
+			i18n.ServeBrowserScript(w, r)
+			return
+		}
+		if r.URL.Path == "/text/format" {
+			launcherText(w, r)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

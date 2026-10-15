@@ -1,0 +1,14 @@
+{
+  "name": "stable",
+  "manifest_url": "https://bd2-test.45.76.195.129.sslip.io/releases/stable/release.json",
+  "changelog_urls": [
+    "https://raw.githubusercontent.com/Flechazo098/bd2/main/CHANGELOG.md",
+    "https://git.sighs.cc/Flechazo/bd2/raw/branch/main/CHANGELOG.md"
+  ],
+  "trusted_keys": [
+    {
+      "id": "6ba6c06138973875",
+      "public_key": "BX3YFAFg0VxcJaGA4bR9OFKQrSllIO7p6z+f3LvStmY="
+    }
+  ]
+}

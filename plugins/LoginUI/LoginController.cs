@@ -55,6 +55,7 @@ internal static class LoginController
 
     internal static bool SendMaintenancePrefix(object __instance, bool __0)
     {
+        if (UpdateCompatibility.IsBlocked) return false;
         if (!__0 || ContinueMaintenance)
         {
             return true;
@@ -78,6 +79,13 @@ internal static class LoginController
                 DisposeGameRelay();
                 ServerRoot = currentRoot;
                 EnsureGameRelay();
+            }
+            if (!UpdateCompatibility.ContinuingLogin)
+            {
+                CancelMaintenanceTimeout.Invoke(__instance, null);
+                if (!UpdateCompatibility.LoginCheckInProgress)
+                    StartIntroCoroutine(__instance, UpdateCompatibility.CheckLogin(__instance, __0));
+                return false;
             }
             if (Volatile.Read(ref SessionRecoveryInProgress) != 0 && Authentication != null &&
                 Authentication.mode == "oauth" && AccessTokens.IsUsable(NormalizedServerOrigin()))
@@ -244,6 +252,7 @@ internal static class LoginController
 
     internal static void OpenLogin(object introUI, string provider)
     {
+        if (UpdateCompatibility.IsBlocked) return;
         try
         {
             if (LoginInProgress)

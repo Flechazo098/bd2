@@ -2,9 +2,12 @@ package main
 
 import (
 	"bd2server/internal/server/app"
+	"bd2server/internal/server/platform/updates"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 )
 
 func main() {
@@ -33,14 +36,28 @@ func main() {
 		err = app.Resources(os.Args[2:])
 	case "preflight":
 		err = app.Preflight(os.Args[2:])
+	case "update":
+		err = runUpdate(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
+	var restart *updates.RestartError
+	if errors.As(err, &restart) {
+		if err := restart.Plan.Execute(time.Now()); err != nil {
+			slog.Error("update switch failed; the current version stays installed", "error", err)
+			os.Exit(1)
+		}
+		os.Exit(updates.ExitRestart)
+	}
 	if err != nil {
 		slog.Error("command failed", "command", os.Args[1], "error", err)
+		var exit *updates.ExitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -53,6 +70,7 @@ Usage:
 	bd2server serve [--data-dir DIR] [--version-config FILE] [options]
 	bd2server resources fetch --output DIR [--version-config FILE]
 	bd2server state check [options]
+	bd2server update status|check|apply|cancel [--data-dir DIR] [--in 10m | --now] [--confirm-irreversible] [--json]
 
 The server binds to loopback by default.
 Logging: --log-level trace|debug|info|warn|error; --log-color auto|always|never.

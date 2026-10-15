@@ -16,7 +16,7 @@ import (
 // pack22 FieldMonsterTable id8 has phase group1; PhaseBattleTable group1 rows
 // id1/id2 use decks8/9. BattleEnter/Start/PhaseChange request fields are from
 // the original generated Proto.Net classes, not the server's response writer.
-func TestFailedBatchDiscardsRealBattlePhaseBeforeBattleCanRestart(t *testing.T) {
+func TestFailedBatchRestoresCommittedBattlePhase(t *testing.T) {
 	factory, accounts := newIntegrationFactory(t)
 	owner, err := factory.open(accounts[0])
 	if err != nil {
@@ -63,10 +63,14 @@ func TestFailedBatchDiscardsRealBattlePhaseBeforeBattleCanRestart(t *testing.T) 
 		t.Fatal("invalid next phase start committed its preceding phase transition")
 	}
 	identity := command.Context{Identity: command.Identity{AccountID: accounts[0], SessionID: "registry-client", RequestID: "inspect-recovered-battle"}}
-	if owner.assembly.battleService.Active(identity) {
-		t.Fatal("recovered account retained uncommitted in-battle ownership")
+	if !owner.assembly.battleService.Active(identity) || owner.assembly.battleService.RoundCount(identity) != 1 {
+		t.Fatal("recovery lost the last committed battle turn")
 	}
 	if _, err := run(registryCommand(accounts[0], "invalid-before-enter", "/BattleStart", append(appScalar(1, 5), appScalar(2, 9)...))); err == nil {
-		t.Fatal("post-recovery battle start bypassed required enter")
+		t.Fatal("post-recovery battle start bypassed the rolled-back phase transition")
+	}
+	reply, err := run(registryCommand(accounts[0], "committed-phase-retry", "/BattlePhaseChange", appScalar(1, 6)))
+	if err != nil || len(reply.Responses) != 1 || appValue(reply.Responses[0].Body, 8) != 9 {
+		t.Fatalf("recovery did not preserve the pending authored second phase: %+v %v", reply, err)
 	}
 }

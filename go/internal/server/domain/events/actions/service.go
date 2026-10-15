@@ -61,6 +61,7 @@ type Service struct {
 	voteTotals  func(uint64, uint64) (map[uint64]uint64, error)
 	miniContent MiniContentResolver
 	miniDesign  *gamedata.MiniContentDesign
+	hitTotals   func(command.Context, uint64) (uint64, uint64, error)
 }
 
 func Open(ctx command.Context, store stateio.Store, d *gamedata.EventActionsDesign, r events.Resolver, e Economy) (*Service, error) {

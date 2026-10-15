@@ -77,6 +77,9 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load event action state: %w", err)
 	}
+	if p.shared != nil {
+		p.eventActionsService.AttachStatueHits(p.shared.statueHits)
+	}
 	if err = p.eventActionsService.AttachMiniContent(ctx, p.eventPlayService, p.design.miniContent); err != nil {
 		return fmt.Errorf("attach mini event content: %w", err)
 	}

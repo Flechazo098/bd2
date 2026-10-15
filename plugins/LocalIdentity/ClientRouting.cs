@@ -62,6 +62,23 @@ internal sealed class ClientRouting : IDisposable
     private const string OfficialServerData = "https://bd2-cdn.akamaized.net/ServerData";
     private const string OfficialGameData = "https://bd2-cdn.akamaized.net/GameData";
     private const int MaximumResponseBytes = 16 * 1024;
+    private static readonly string BundleVersion = LauncherResourceVersion("BD2_BUNDLE_VERSION", Bd2Build.Versions.Bundle);
+    private static readonly string GameDataVersion = LauncherResourceVersion("BD2_GAME_DATA_VERSION", Bd2Build.Versions.GameData);
+
+    private static string LauncherResourceVersion(string name, string fallback)
+    {
+        string value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrEmpty(value)) return fallback;
+        string fingerprint = Environment.GetEnvironmentVariable("BD2_UPDATE_FINGERPRINT");
+        if (string.IsNullOrEmpty(fingerprint) || fingerprint.Length != 64 || value.Length != 14)
+            throw new InvalidDataException("Launcher resource versions require a verified update fingerprint");
+        foreach (char digit in value)
+            if (digit < '0' || digit > '9') throw new InvalidDataException("Invalid launcher resource version");
+        foreach (char digit in fingerprint)
+            if (!(digit >= '0' && digit <= '9') && !(digit >= 'a' && digit <= 'f'))
+                throw new InvalidDataException("Invalid launcher update fingerprint");
+        return value;
+    }
 
     private readonly ManualLogSource log;
     private readonly ClientConfig config;
@@ -95,34 +112,48 @@ internal sealed class ClientRouting : IDisposable
 
         ResourcePolicy resources;
         LocalResourceServer localResourceServer = null;
+        string verifiedResources = Environment.GetEnvironmentVariable("BD2_RESOURCE_DIRECTORY");
+        string effectiveMode = config.cdn_mode;
+        if (!string.IsNullOrEmpty(verifiedResources))
+        {
+            string fingerprint = Environment.GetEnvironmentVariable("BD2_RESOURCE_FINGERPRINT");
+            if (string.IsNullOrEmpty(fingerprint) || fingerprint.Length != 64 ||
+                string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_UPDATE_FINGERPRINT")) ||
+                !Path.IsPathRooted(verifiedResources))
+                throw new InvalidDataException("Launcher resource directory requires a verified update fingerprint");
+            foreach (char digit in fingerprint)
+                if (!(digit >= '0' && digit <= '9') && !(digit >= 'a' && digit <= 'f'))
+                    throw new InvalidDataException("Invalid launcher resource fingerprint");
+            effectiveMode = "local";
+        }
         try
         {
-            if (config.cdn_mode == "official")
+            if (effectiveMode == "official")
             {
                 resources = new ResourcePolicy
                 {
                     mode = "official",
                     server_data_url = OfficialServerData,
                     game_data_url = OfficialGameData,
-                    bundle_version = Bd2Build.Versions.Bundle,
-                    game_data_version = Bd2Build.Versions.GameData
+                    bundle_version = BundleVersion,
+                    game_data_version = GameDataVersion
                 };
                 log.LogInfo("Client resource mode official: direct official CDN with release-locked versions");
             }
-            else if (config.cdn_mode == "local")
+            else if (effectiveMode == "local")
             {
                 localResourceServer = LocalResourceServer.Start(
                     log,
-                    config.local_resource_directory,
-                    Bd2Build.Versions.Bundle,
-                    Bd2Build.Versions.GameData);
+                    string.IsNullOrEmpty(verifiedResources) ? config.local_resource_directory : verifiedResources,
+                    BundleVersion,
+                    GameDataVersion);
                 resources = new ResourcePolicy
                 {
                     mode = "local",
                     server_data_url = localResourceServer.Origin + "/ServerData",
                     game_data_url = localResourceServer.Origin + "/GameData",
-                    bundle_version = Bd2Build.Versions.Bundle,
-                    game_data_version = Bd2Build.Versions.GameData
+                    bundle_version = BundleVersion,
+                    game_data_version = GameDataVersion
                 };
                 log.LogInfo("Client resource mode local: serving downloaded resources from " +
                     localResourceServer.RootDirectory);
@@ -131,7 +162,7 @@ internal sealed class ClientRouting : IDisposable
             {
                 resources = RequestResourcePolicy(log, config);
             }
-            ValidatePolicy(config.cdn_mode, resources);
+            ValidatePolicy(effectiveMode, resources);
             Environment.SetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN", config.server_origin);
             return new ClientRouting(log, config, resources, localResourceServer);
         }
@@ -317,11 +348,11 @@ internal sealed class ClientRouting : IDisposable
         }
         ValidateResourceURL(policy.server_data_url, "server_data_url");
         ValidateResourceURL(policy.game_data_url, "game_data_url");
-        if (policy.bundle_version != Bd2Build.Versions.Bundle)
+        if (policy.bundle_version != BundleVersion)
         {
             throw new InvalidDataException("resource policy bundle_version does not match this client release");
         }
-        if (policy.game_data_version != Bd2Build.Versions.GameData)
+        if (policy.game_data_version != GameDataVersion)
         {
             throw new InvalidDataException("resource policy game_data_version does not match this client release");
         }

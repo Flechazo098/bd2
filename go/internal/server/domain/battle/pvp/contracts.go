@@ -124,6 +124,7 @@ type DefensePublished struct {
 	Defense PublishedSnapshot
 }
 type BattleSettled struct {
+	Seeds                                            []uint64
 	Version                                          int
 	ChallengeID                                      string
 	BattleIndex                                      uint64

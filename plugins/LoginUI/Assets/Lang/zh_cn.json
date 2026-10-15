@@ -5,5 +5,8 @@
   "loginui.recovery.reconnecting": "正在重新连接服务器……",
   "loginui.recovery.waiting_server": "等待服务器启动……",
   "loginui.recovery.restoring_session": "正在恢复登录会话……",
-  "loginui.recovery.safe_scene": "正在返回安全场景……"
+  "loginui.recovery.safe_scene": "正在返回安全场景……",
+  "loginui.update.required": "服务器已更新，需要更新客户端。请退出游戏，打开启动器检查更新，完成所有必需的客户端和游戏资源更新后再登录。",
+  "loginui.update.check_failed": "无法验证此服务器的客户端版本要求。请退出游戏，打开启动器检查网络连接并安装可用更新，然后重试。",
+  "loginui.update.exit": "退出游戏"
 }

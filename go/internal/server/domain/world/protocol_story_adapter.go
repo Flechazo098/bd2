@@ -130,6 +130,11 @@ func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, erro
 			out = wire.AppendBytes(out, 9, row)
 		}
 	}
+	statues, err := s.statueInfo(ctx, packID)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, statues...)
 	// The remaining starter-only records were observed in the official
 	// starter-pack response. They represent reputation, hunting-ground, statue,
 	// and reward state, not generic defaults, so a newly entered later pack must
@@ -151,14 +156,6 @@ func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, erro
 	}
 	visit := wire.AppendVarint(nil, 5, uint64(packID))
 	out = wire.AppendBytes(out, 12, visit)
-	for _, state := range s.seed.InitialRankStatues {
-		row := wire.AppendVarint(nil, 1, state.ID)
-		row = wire.AppendVarint(row, 2, state.Season)
-		if state.Error {
-			row = wire.AppendVarint(row, 3, 1)
-		}
-		out = wire.AppendBytes(out, 14, row)
-	}
 	if s.packJamDesign == nil {
 		return out, nil
 	}
@@ -972,6 +969,8 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 	}
 	switch path {
+	case "/StatueObjectReward":
+		return s.handleStatueReward(ctx, request)
 	case "/TimePause":
 		return s.handleTimePause(ctx, request)
 	case "/MonsterInfo":

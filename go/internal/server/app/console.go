@@ -63,7 +63,7 @@ func openConsole(c *configuration, design *designCatalog, seeds *seedCatalog, au
 			Items:     admin.CapacityLimits{Default: slots.Items.Default, Maximum: slots.Items.Maximum},
 			Equipment: admin.CapacityLimits{Default: slots.Equipment.Default, Maximum: slots.Equipment.Maximum},
 		},
-		Configuration: commonconfig.NewRegistry(c.gameFile, c.authFile, c.resourceFile),
+		Configuration: commonconfig.NewRegistry(c.gameFile, c.authFile, c.resourceFile, c.updateFile),
 		Secure:        c.authentication.Mode == "oauth" && c.authRuntime.PublicURLParsed != nil && c.authRuntime.PublicURLParsed.Scheme == "https",
 		Server: func() any {
 			return map[string]any{

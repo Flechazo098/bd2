@@ -94,6 +94,10 @@ func NewPVP(ctx context.Context, store Store, design *gamedata.PvpDesign, season
 				}
 				key := pvpBoardKey(row.Defense.Mode, row.Defense.Season)
 				b := p.boards[key]
+				if b == nil && (row.Defense.Mode == pvp.Mirror || row.Defense.Mode == pvp.Colosseum) && row.Defense.Season != 0 {
+					b = emptyPVPBoard()
+					p.boards[key] = b
+				}
 				if b == nil || row.Defense.Profile.OwnerID == "" {
 					return errors.New("invalid saved PVP standing")
 				}

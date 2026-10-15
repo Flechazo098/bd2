@@ -313,7 +313,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	return code, body, true, nil
 }
 
-var routes = map[string]int{"/FishingFishLock": 631, "/FishingFishInvenSlotAdd": 461, "/FishingShopBuy": 490, "/FishingShopBuyInfo": 491, "/FishingShopSell": 492, "/FishingInfo": 456, "/FishingTrapInfo": 457, "/FishingItemInfo": 459, "/FishingRodSet": 460, "/FishingBoatUpgrade": 462, "/FishingBoatSkinSet": 463, "/FishingMapBuy": 464, "/FishingCollectionInfo": 465, "/FishingBoatSkinBuy": 499, "/FishingVoyageStart": 500, "/FishingCasting": 501, "/FishingBiteStart": 502, "/FishingBiteFishStaminaUpdate": 503, "/FishingBiteEnd": 504, "/FishingBaitUse": 505, "/FishingFishAuto": 507, "/FishingVoyageEnd": 508, "/FishingMultiRoomInfo": 517, "/FishingUserInfo": 519}
+var routes = map[string]int{"/FishingFishLock": 631, "/FishingFishInvenSlotAdd": 461, "/FishingShopBuy": 490, "/FishingShopBuyInfo": 491, "/FishingShopSell": 492, "/FishingInfo": 456, "/FishingTrapInfo": 457, "/FishingTrapCumulativeReward": 458, "/FishingItemInfo": 459, "/FishingRodSet": 460, "/FishingBoatUpgrade": 462, "/FishingBoatSkinSet": 463, "/FishingMapBuy": 464, "/FishingCollectionInfo": 465, "/FishingBoatSkinBuy": 499, "/FishingVoyageStart": 500, "/FishingCasting": 501, "/FishingBiteStart": 502, "/FishingBiteFishStaminaUpdate": 503, "/FishingBiteEnd": 504, "/FishingBaitUse": 505, "/FishingFishAuto": 507, "/FishingVoyageEnd": 508, "/FishingMultiRoomInfo": 517, "/FishingUserInfo": 519}
 
 func fishWire(i Item) []byte {
 	b := wire.AppendVarint(nil, 1, i.Index)
@@ -427,8 +427,9 @@ func (s *Service) apply(ctx command.Context, path string, req []byte, n *snapsho
 			out = wire.AppendBytes(out, 1, collectionWire(id, n.Collection[id]))
 		}
 	case "/FishingTrapInfo":
-		out = wire.AppendVarint(nil, 4, n.Level)
-		out = wire.AppendVarint(out, 5, n.Exp)
+		return s.trap(ctx, path, req, n, key)
+	case "/FishingTrapCumulativeReward":
+		return s.trap(ctx, path, req, n, key)
 	case "/FishingUserInfo":
 		profile := s.Profile()
 		name := ""

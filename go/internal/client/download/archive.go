@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -200,6 +201,20 @@ func extractArchive(path, root string, game bool, digest string) error {
 			if err != nil || info.IsDir() != entry.file.FileInfo().IsDir() || (!info.IsDir() && uint64(info.Size()) != entry.file.UncompressedSize64) {
 				ready = false
 				break
+			}
+			if !info.IsDir() {
+				installed, err := os.Open(entry.target)
+				if err != nil {
+					ready = false
+					break
+				}
+				hash := crc32.NewIEEE()
+				_, readErr := io.Copy(hash, installed)
+				closeErr := installed.Close()
+				if readErr != nil || closeErr != nil || hash.Sum32() != entry.file.CRC32 {
+					ready = false
+					break
+				}
 			}
 		}
 		if ready {

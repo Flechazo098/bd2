@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,12 +49,7 @@ type ResourcePolicy struct {
 	LocalDirectory  string               `json:"local_directory,omitempty"`
 }
 
-type InstallResult struct {
-	LocalIdentity plugin.Result `json:"local_identity"`
-	LoginUI       plugin.Result `json:"login_ui"`
-	CashShop      plugin.Result `json:"cash_shop"`
-	FChat         plugin.Result `json:"fchat"`
-}
+type InstallResult = plugin.SetResult
 
 func Inspect(gameDir string, versions versionconfig.Config) (GameStatus, error) {
 	if strings.TrimSpace(gameDir) == "" {
@@ -90,7 +86,7 @@ func SaveSettings(gameDir string, settings clientconfig.Settings, versions versi
 		return clientconfig.Settings{}, err
 	}
 	if normalized.CDNMode == clientconfig.CDNLocal {
-		if err := installCurrentLocalCatalog(gameDir, normalized.LocalResourceDirectory, versions.BundleVersion); err != nil {
+		if err := InstallLocalCatalog(gameDir, normalized.LocalResourceDirectory, versions.BundleVersion); err != nil {
 			return clientconfig.Settings{}, err
 		}
 	}
@@ -133,39 +129,19 @@ func InstallPlugins(
 	if _, err := SaveSettings(gameDir, settings, versions); err != nil {
 		return InstallResult{}, err
 	}
-	localSource, err := plugin.ResolvePackaged(plugin.LocalIdentity, localIdentitySource)
-	if err != nil {
-		return InstallResult{}, err
+	var sources []string
+	for spec, explicit := range map[plugin.Spec]string{plugin.LocalIdentity: localIdentitySource, plugin.LoginUI: loginUISource, plugin.CashShop: cashShopSource, plugin.FChat: fChatSource} {
+		source, err := plugin.ResolvePackaged(spec, explicit)
+		if err != nil {
+			return InstallResult{}, err
+		}
+		sources = append(sources, source)
 	}
-	loginSource, err := plugin.ResolvePackaged(plugin.LoginUI, loginUISource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	cashSource, err := plugin.ResolvePackaged(plugin.CashShop, cashShopSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	fchatSource, err := plugin.ResolvePackaged(plugin.FChat, fChatSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	local, err := plugin.Install(plugin.LocalIdentity, gameDir, localSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	login, err := plugin.Install(plugin.LoginUI, gameDir, loginSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	cash, err := plugin.Install(plugin.CashShop, gameDir, cashSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	fchat, err := plugin.Install(plugin.FChat, gameDir, fchatSource)
-	if err != nil {
-		return InstallResult{}, err
-	}
-	return InstallResult{LocalIdentity: local, LoginUI: login, CashShop: cash, FChat: fchat}, nil
+	// The shared runtime ships beside the plugins, including development builds.
+	localSource, _ := plugin.ResolvePackaged(plugin.LocalIdentity, localIdentitySource)
+	sources = append(sources, filepath.Join(filepath.Dir(localSource), plugin.GameNames.FileName()))
+	sort.Strings(sources)
+	return plugin.InstallSet(gameDir, sources)
 }
 
 func FetchResourcePolicy(ctx context.Context, client *http.Client, settings clientconfig.Settings, versions versionconfig.Config) (ResourcePolicy, error) {

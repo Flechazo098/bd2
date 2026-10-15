@@ -16,10 +16,11 @@ import (
 	clientconfig "bd2server/internal/client/config"
 	clientlayout "bd2server/internal/client/layout"
 	clientsetup "bd2server/internal/client/setup"
+	clientupdate "bd2server/internal/client/update"
 	"bd2server/internal/common/versionconfig"
 )
 
-//go:embed web/index.html web/icon.svg web/icon.png web/icon.ico
+//go:embed web/index.html web/icon.svg web/icon.png web/icon.ico web/lang/*.json
 var webFS embed.FS
 
 var errGameAlreadyRunning = errors.New("Brown Dust II is already running") //nolint:staticcheck // ST1005
@@ -41,7 +42,8 @@ type Request struct {
 	ServerOrigin           string               `json:"server_origin"`
 	CDNMode                clientconfig.CDNMode `json:"cdn_mode"`
 	LocalResourceDirectory string               `json:"local_resource_directory"`
-	UILanguage             string               `json:"ui_language"`
+	// DialogTitle is the folder picker's title in the UI language.
+	DialogTitle string `json:"dialog_title"`
 }
 
 func (r Request) settings() clientconfig.Settings {
@@ -82,10 +84,24 @@ type Studio struct {
 	quitOnce        sync.Once
 	launch          func(string, string) error
 	savePreferences func(string) error
+	updates         *clientupdate.Manager
 }
 
 func NewStudio(options Options, host NativeHost) *Studio {
-	return &Studio{options: options, host: host, ctx: context.Background(), launch: launchGame, savePreferences: clientconfig.SavePreferences}
+	s := &Studio{options: options, host: host, ctx: context.Background(), launch: launchGame, savePreferences: clientconfig.SavePreferences}
+	if executable, err := os.Executable(); err == nil {
+		s.updates = clientupdate.New(clientupdate.Options{
+			Versions: options.Versions, Directory: filepath.Dir(executable), Logger: options.Logger,
+			Games: func() string {
+				preferences, err := clientconfig.LoadPreferences()
+				if err != nil {
+					return ""
+				}
+				return preferences.GameDirectory
+			},
+		})
+	}
+	return s
 }
 
 func (s *Studio) Startup(ctx context.Context) {
@@ -96,6 +112,9 @@ func (s *Studio) Startup(ctx context.Context) {
 	}
 	s.ctx, s.cancel = owned, cancel
 	s.ctxMu.Unlock()
+	if s.updates != nil {
+		go s.updates.Run(owned)
+	}
 }
 
 func (s *Studio) Shutdown() {
@@ -129,7 +148,7 @@ func (s *Studio) Initialize() InitialState {
 	if state.GameDirectory == "" {
 		return state
 	}
-	if _, err := clientsetup.Inspect(state.GameDirectory, s.options.Versions); err != nil {
+	if _, err := clientsetup.Inspect(state.GameDirectory, s.versions(state.GameDirectory)); err != nil {
 		s.log().Warn("saved game directory is no longer valid", "error", err)
 		return state
 	}
@@ -165,18 +184,15 @@ func success(message string, data any) Response {
 	return Response{OK: true, Message: message, Data: data}
 }
 
-func (s *Studio) chooseDirectory(language, kind string) (string, error) {
+func (s *Studio) chooseDirectory(title, kind string) (string, error) {
 	if s.host.BrowseDirectory == nil {
 		return "", errors.New("native directory picker is unavailable")
 	}
-	prompt := "Select the Brown Dust II installation directory"
-	if kind == "resources" {
-		prompt = "Select the CDN directory containing ServerData and GameData"
-	}
-	if language == "zh-CN" {
-		prompt = "选择 Brown Dust II 安装目录"
+	prompt := title
+	if prompt == "" {
+		prompt = "Select the Brown Dust II installation directory"
 		if kind == "resources" {
-			prompt = "选择包含 ServerData 和 GameData 的 CDN 目录"
+			prompt = "Select the CDN directory containing ServerData and GameData"
 		}
 	}
 	s.log().Info("directory selection opened", "kind", kind)
@@ -189,35 +205,35 @@ func (s *Studio) chooseDirectory(language, kind string) (string, error) {
 
 func (s *Studio) Browse(input Request) (Response, error) {
 	return s.perform("browse game directory", func() (Response, error) {
-		dir, err := s.chooseDirectory(input.UILanguage, "game")
+		dir, err := s.chooseDirectory(input.DialogTitle, "game")
 		if err != nil {
 			return Response{}, err
 		}
 		if dir == "" {
 			return success("Selection cancelled", nil), nil
 		}
-		status, err := clientsetup.Inspect(dir, s.options.Versions)
+		status, err := clientsetup.Inspect(dir, s.versions(dir))
 		return success("Game client found", status), err
 	})
 }
 
 func (s *Studio) BrowseResources(input Request) (Response, error) {
 	return s.perform("browse resource directory", func() (Response, error) {
-		dir, err := s.chooseDirectory(input.UILanguage, "resources")
+		dir, err := s.chooseDirectory(input.DialogTitle, "resources")
 		if err != nil {
 			return Response{}, err
 		}
 		if dir == "" {
 			return success("Selection cancelled", nil), nil
 		}
-		policy, err := clientsetup.FetchResourcePolicy(s.context(), nil, clientconfig.Settings{ServerOrigin: "http://127.0.0.1", CDNMode: clientconfig.CDNLocal, LocalResourceDirectory: dir}, s.options.Versions)
+		policy, err := clientsetup.FetchResourcePolicy(s.context(), nil, clientconfig.Settings{ServerOrigin: "http://127.0.0.1", CDNMode: clientconfig.CDNLocal, LocalResourceDirectory: dir}, s.versions(input.GameDirectory))
 		return success("Local resource directory found", policy), err
 	})
 }
 
 func (s *Studio) Inspect(input Request) (Response, error) {
 	return s.perform("inspect game directory", func() (Response, error) {
-		status, err := clientsetup.Inspect(input.GameDirectory, s.options.Versions)
+		status, err := clientsetup.Inspect(input.GameDirectory, s.versions(input.GameDirectory))
 		return success("Game directory is valid", status), err
 	})
 }
@@ -226,7 +242,7 @@ func (s *Studio) Resources(input Request) (Response, error) {
 	return s.perform("check resource policy", func() (Response, error) {
 		ctx, cancel := context.WithTimeout(s.context(), 12*time.Second)
 		defer cancel()
-		policy, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), s.options.Versions)
+		policy, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), s.versions(input.GameDirectory))
 		message := "The client will use the release-locked official CDN"
 		if policy.Mode == clientconfig.CDNLocal { //nolint:staticcheck // QF1003
 			message = "Local resources verified"
@@ -239,7 +255,7 @@ func (s *Studio) Resources(input Request) (Response, error) {
 
 func (s *Studio) Save(input Request) (Response, error) {
 	return s.perform("save settings", func() (Response, error) {
-		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.options.Versions)
+		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.versions(input.GameDirectory))
 		if err != nil {
 			return Response{}, err
 		}
@@ -252,7 +268,7 @@ func (s *Studio) Save(input Request) (Response, error) {
 
 func (s *Studio) Patch(input Request) (Response, error) {
 	return s.perform("patch client", func() (Response, error) {
-		result, err := clientsetup.Patch(input.GameDirectory, input.settings(), s.options.Versions)
+		result, err := clientsetup.Patch(input.GameDirectory, input.settings(), s.versions(input.GameDirectory))
 		if err != nil {
 			return Response{}, err
 		}
@@ -269,7 +285,7 @@ func (s *Studio) Patch(input Request) (Response, error) {
 
 func (s *Studio) Install(input Request) (Response, error) {
 	return s.perform("install plugins", func() (Response, error) {
-		result, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), s.options.Versions, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin)
+		result, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), s.versions(input.GameDirectory), s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin)
 		if err != nil {
 			return Response{}, err
 		}
@@ -277,7 +293,7 @@ func (s *Studio) Install(input Request) (Response, error) {
 			return Response{}, err
 		}
 		message := "BD2 client plugins installed or updated"
-		if !result.LocalIdentity.Changed && !result.LoginUI.Changed && !result.CashShop.Changed && !result.FChat.Changed {
+		if !result.Changed {
 			message = "BD2 client plugins are already up to date; no DLL was rewritten"
 		}
 		return success(message, result), nil
@@ -286,7 +302,13 @@ func (s *Studio) Install(input Request) (Response, error) {
 
 func (s *Studio) Launch(input Request) (Response, error) {
 	return s.perform("launch game", func() (Response, error) {
-		status, err := clientsetup.Inspect(input.GameDirectory, s.options.Versions)
+		if s.updates != nil {
+			if err := s.updates.PrepareGame(s.context(), input.GameDirectory, input.ServerOrigin); err != nil {
+				return Response{}, err
+			}
+		}
+		versions := s.versions(input.GameDirectory)
+		status, err := clientsetup.Inspect(input.GameDirectory, versions)
 		if err != nil {
 			return Response{}, err
 		}
@@ -298,38 +320,107 @@ func (s *Studio) Launch(input Request) (Response, error) {
 		}
 		ctx, cancel := context.WithTimeout(s.context(), 12*time.Second)
 		defer cancel()
-		if _, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), s.options.Versions); err != nil {
+		if _, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), versions); err != nil {
 			return Response{}, err
 		}
-		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.options.Versions)
-		if err != nil {
-			return Response{}, err
-		}
-		if err := s.savePreferences(input.GameDirectory); err != nil {
-			return Response{}, err
-		}
-		installation, err := clientlayout.Resolve(status.GameDirectory)
-		if err != nil {
-			return Response{}, err
-		}
-		if !installation.SupportedOnHost() {
-			return Response{}, fmt.Errorf("cannot launch a %s game client from this operating system", installation.Kind)
-		}
-		for _, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll", "BD2CashShop.dll", "BD2FChat.dll"} {
-			info, err := os.Stat(filepath.Join(installation.Plugins, name))
-			if err != nil || !info.Mode().IsRegular() {
-				return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)
+
+		launch := func() (Response, error) {
+			settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), versions)
+			if err != nil {
+				return Response{}, err
 			}
-		}
-		if err := s.launch(installation.LaunchTarget(), settings.ProxyURL); err != nil {
-			if errors.Is(err, errGameAlreadyRunning) {
-				return success("Brown Dust II is already running", nil), nil
+			if err := s.savePreferences(input.GameDirectory); err != nil {
+				return Response{}, err
 			}
-			return Response{}, fmt.Errorf("launch Brown Dust II: %w", err)
+			installation, err := clientlayout.Resolve(status.GameDirectory)
+			if err != nil {
+				return Response{}, err
+			}
+			if !installation.SupportedOnHost() {
+				return Response{}, fmt.Errorf("cannot launch a %s game client from this operating system", installation.Kind)
+			}
+			for _, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll", "BD2CashShop.dll", "BD2FChat.dll"} {
+				info, err := os.Stat(filepath.Join(installation.Plugins, name))
+				if err != nil || !info.Mode().IsRegular() {
+					return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)
+				}
+			}
+			if err := s.launch(installation.LaunchTarget(), settings.ProxyURL); err != nil {
+				if errors.Is(err, errGameAlreadyRunning) {
+					return success("Brown Dust II is already running", nil), nil
+				}
+				return Response{}, fmt.Errorf("launch Brown Dust II: %w", err)
+			}
+			s.log().Info("game launch requested", "platform", installation.Kind, "client_version", s.options.Versions.ClientVersion, "game_version", status.ClientVersion)
+			return success("Brown Dust II started", nil), nil
 		}
-		s.log().Info("game launch requested", "platform", installation.Kind, "client_version", s.options.Versions.ClientVersion, "game_version", status.ClientVersion)
-		return success("Brown Dust II started", nil), nil
+		if s.updates == nil {
+			return launch()
+		}
+		var response Response
+		err = s.updates.WithLaunch(ctx, nil, status.GameDirectory, input.ServerOrigin, func() error {
+			var err error
+			response, err = launch()
+			return err
+		})
+		return response, err
 	})
+}
+
+// UpdateStatus reports launcher and plugin updates for the status panel.
+func (s *Studio) UpdateStatus() clientupdate.Status {
+	if s.updates == nil {
+		return clientupdate.Status{}
+	}
+	return s.updates.Status()
+}
+
+// CheckUpdates checks now, downloads what is newer and installs a ready
+// plugin set into closed game instances.
+func (s *Studio) CheckUpdates() (Response, error) {
+	if s.updates == nil {
+		return Response{}, errors.New("update service is unavailable")
+	}
+	ctx := s.context()
+	if err := s.updates.Check(ctx); err != nil {
+		return Response{}, err
+	}
+	if err := s.updates.Download(ctx); err != nil {
+		return Response{}, err
+	}
+	if err := s.updates.CommitGame(ctx); err != nil {
+		return Response{}, err
+	}
+	if err := s.updates.CommitPlugins(); err != nil {
+		return Response{}, err
+	}
+	return success("Update check completed", s.updates.Status()), nil
+}
+
+func (s *Studio) versions(game string) versionconfig.Config {
+	if s.updates != nil {
+		return s.updates.Versions(game)
+	}
+	return s.options.Versions
+}
+
+// ApplyLauncherUpdate restarts into the downloaded launcher. A running game
+// is not closed; launching is paused until the new launcher is up.
+func (s *Studio) ApplyLauncherUpdate() (Response, error) {
+	if s.updates == nil {
+		return Response{}, errors.New("update service is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.updates.ApplyLauncher(func() {
+		if s.host.Quit != nil {
+			go s.host.Quit(s.context())
+		}
+	})
+	if err != nil {
+		return Response{}, err
+	}
+	return success("Launcher is restarting to finish the update", nil), nil
 }
 
 func (s *Studio) Quit() {

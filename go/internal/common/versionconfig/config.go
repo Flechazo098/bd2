@@ -34,7 +34,10 @@ type Config struct {
 	BundleVersion   string         `json:"bundle_version"`
 	SeedDirectory   string         `json:"seed_directory"`
 	Plugins         PluginVersions `json:"plugins"`
-	SourcePath      string         `json:"-"`
+	// MinimumPlugins is the oldest plugin build this server still works
+	// with; raise an entry only when a server change breaks older plugins.
+	MinimumPlugins PluginVersions `json:"minimum_plugins"`
+	SourcePath     string         `json:"-"`
 }
 
 type PluginVersions struct {
@@ -81,6 +84,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be a numeric three-part version", name)
 		}
 	}
+	for id, pair := range c.Plugins.pairs(c.MinimumPlugins) {
+		if !semanticVersion.MatchString(pair[1]) || compareSemantic(pair[1], pair[0]) > 0 {
+			return fmt.Errorf("minimum_plugins.%s must be a numeric three-part version no newer than plugins.%s", id, id)
+		}
+	}
 	if err := validateReleaseVersion("client_version", c.ClientVersion, c.GameVersion, "client"); err != nil {
 		return err
 	}
@@ -102,6 +110,35 @@ func (c Config) Validate() error {
 		return errors.New("seed_directory must stay below the version file")
 	}
 	return nil
+}
+
+// ByID lists the plugin versions under their versions.json keys.
+func (p PluginVersions) ByID() map[string]string {
+	return map[string]string{"local_identity": p.LocalIdentity, "capture_environment": p.CaptureEnvironment, "login_ui": p.LoginUI, "cash_shop": p.CashShop, "fchat": p.FChat}
+}
+
+func (p PluginVersions) pairs(minimum PluginVersions) map[string][2]string {
+	current, lowest := p.ByID(), minimum.ByID()
+	out := map[string][2]string{}
+	for id, version := range current {
+		out[id] = [2]string{version, lowest[id]}
+	}
+	return out
+}
+
+func compareSemantic(a, b string) int {
+	var x, y [3]int
+	_, _ = fmt.Sscanf(a, "%d.%d.%d", &x[0], &x[1], &x[2])
+	_, _ = fmt.Sscanf(b, "%d.%d.%d", &y[0], &y[1], &y[2])
+	for i := range x {
+		if x[i] != y[i] {
+			if x[i] < y[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 func validateReleaseVersion(name, value, game, component string) error {

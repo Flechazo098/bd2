@@ -13,7 +13,11 @@ import (
 )
 
 func ItemWire(v Item) []byte {
-	return ownership.EncodeItem(ownership.Item{InvenIndex: v.InvenIndex, ID: v.ID, Type: v.Type, Count: v.Count, KeepFlag: v.KeepFlag, TimeValue: v.TimeValue, ExpiryTime: v.ExpiryTime, SortID: v.SortID, UseCount: v.UseCount})
+	item := ownership.Item{InvenIndex: v.InvenIndex, ID: v.ID, Type: v.Type, Count: v.Count, KeepFlag: v.KeepFlag, TimeValue: v.TimeValue, ExpiryTime: v.ExpiryTime, SortID: v.SortID, UseCount: v.UseCount}
+	if v.Pictorialbook != nil {
+		item.Pictorialbook = &ownership.ItemPictorial{ID: v.Pictorialbook.ID, GroupID: v.Pictorialbook.GroupID}
+	}
+	return ownership.EncodeItem(item)
 }
 
 func (s *RecipeService) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
@@ -55,8 +59,11 @@ func (s *RecipeService) Handle(ctx command.Context, path string, request []byte)
 }
 
 func (s *Inventory) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
-	if path != "/ItemInfo" && path != "/UseRandomBox" {
+	if path != "/ItemInfo" && path != "/UseRandomBox" && path != "/ItemDump" && path != "/ItemLock" && path != "/ItemStorageInfo" && path != "/ItemStoragePut" && path != "/ItemStorageOut" {
 		return 0, nil, false, nil
+	}
+	if path != "/ItemInfo" && path != "/UseRandomBox" {
+		return s.handleItemOperations(ctx, path, request)
 	}
 	if path == "/UseRandomBox" {
 		return s.useRandomBox(ctx, request)

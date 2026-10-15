@@ -13,15 +13,38 @@ import (
 	"strings"
 
 	commonconfig "bd2server/internal/common/config"
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/resourcecatalog"
 )
 
 func (d *downloader) resources(ctx context.Context, root string, m manifest, serverPath, dataPath string, serverOrigins, dataOrigins []string, workers int) error {
+	pins := make(map[string]release.ResourceFile, len(m.ResourceFiles))
+	usedPins := make(map[string]bool, len(m.ResourceFiles))
+	for _, pin := range m.ResourceFiles {
+		pins[pin.Path] = pin
+	}
+	receive := func(files []file, origins []string, workers int) error {
+		if len(pins) != 0 {
+			for i := range files {
+				relative, err := filepath.Rel(root, files[i].target)
+				if err != nil {
+					return err
+				}
+				pin, ok := pins[filepath.ToSlash(relative)]
+				if !ok {
+					return fmt.Errorf("signed resource inventory is missing %s", relative)
+				}
+				files[i].digest, files[i].size = pin.SHA256, pin.Size
+				usedPins[pin.Path] = true
+			}
+		}
+		return d.receiveAll(ctx, files, origins, workers)
+	}
 	serverDir := filepath.Join(root, "ServerData", m.Platform, "HD", m.BundleVersion)
 	dataDir := filepath.Join(root, "GameData", m.GameDataVersion)
 	catalog := filepath.Join(serverDir, "catalog_alpha.json")
 	hashPath := filepath.Join(serverDir, "catalog_alpha.hash")
-	if err := d.receiveAll(ctx, []file{{remote: serverPath + "/catalog_alpha.json", target: catalog, digest: m.CatalogSHA256, size: m.CatalogBytes}, {remote: serverPath + "/catalog_alpha.hash", target: hashPath}}, serverOrigins, 2); err != nil {
+	if err := receive([]file{{remote: serverPath + "/catalog_alpha.json", target: catalog, digest: m.CatalogSHA256, size: m.CatalogBytes}, {remote: serverPath + "/catalog_alpha.hash", target: hashPath}}, serverOrigins, 2); err != nil {
 		return err
 	}
 	hash, err := os.ReadFile(hashPath)
@@ -29,7 +52,7 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 		return err
 	}
 	actualHash := strings.TrimSpace(string(hash))
-	if !regexp.MustCompile(`^[a-fA-F0-9]{32}$`).MatchString(actualHash) || (m.CatalogHash != "" && actualHash != m.CatalogHash) {
+	if !regexp.MustCompile(`^[a-fA-F0-9]{32}$`).MatchString(actualHash) || (m.CatalogHash != "" && !strings.EqualFold(actualHash, m.CatalogHash)) {
 		return errors.New("ServerData catalog hash does not match the selected version")
 	}
 	raw, err := os.ReadFile(catalog)
@@ -53,7 +76,7 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 	if err != nil {
 		return err
 	}
-	if err := d.receiveAll(ctx, []file{{remote: dataPath + "/design.version", target: filepath.Join(dataDir, "design.version")}, {remote: dataPath + "/release/common-dbdata.info", target: filepath.Join(dataDir, "release", "common-dbdata.info")}, {remote: dataPath + "/release/common-dbdata.bin", target: filepath.Join(dataDir, "release", "common-dbdata.bin"), digest: m.DataSHA256, size: m.DataBytes}}, dataOrigins, 3); err != nil {
+	if err := receive([]file{{remote: dataPath + "/design.version", target: filepath.Join(dataDir, "design.version")}, {remote: dataPath + "/release/common-dbdata.info", target: filepath.Join(dataDir, "release", "common-dbdata.info")}, {remote: dataPath + "/release/common-dbdata.bin", target: filepath.Join(dataDir, "release", "common-dbdata.bin"), digest: m.DataSHA256, size: m.DataBytes}}, dataOrigins, 3); err != nil {
 		return err
 	}
 	var design struct {
@@ -96,7 +119,21 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 		}
 		files = append(files, file{remote: serverPath + "/" + escapedPath(path), target: target, bundle: true})
 	}
-	if err := d.receiveAll(ctx, files, serverOrigins, workers); err != nil {
+	if err := receive(files, serverOrigins, workers); err != nil {
+		return err
+	}
+	var additional []file
+	for _, pin := range m.ResourceFiles {
+		if usedPins[pin.Path] {
+			continue
+		}
+		target, err := safeTarget(root, pin.Path)
+		if err != nil {
+			return err
+		}
+		additional = append(additional, file{remote: "/" + escapedPath(pin.Path), target: target, digest: pin.SHA256, size: pin.Size})
+	}
+	if err := receive(additional, serverOrigins, workers); err != nil {
 		return err
 	}
 	var total int64

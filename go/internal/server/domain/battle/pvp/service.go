@@ -69,6 +69,7 @@ type progress struct {
 	VP, Attacks, Wins, Losses, DefenseWins, DefenseLosses, AttackReset, DefenseReset, DeckWins, DeckLosses, DeckDefenseWins, DeckDefenseLosses uint64
 }
 type challenge struct {
+	Seeds                                                        []uint64
 	ID                                                           string
 	BattleIndex, Season, Seed, FirstAttack, Multiplier, IssuedAt uint64
 	Attacker                                                     PublishedSnapshot
@@ -100,6 +101,8 @@ type state struct {
 	PresetSlots uint64
 }
 type Service struct {
+	preparation func(command.Context, Mode, string, PublishedSnapshot, []byte) error
+	completion  func(command.Context, Mode, string, bool, [][]byte) ([]byte, error)
 	balance     BalanceFunc
 	readProfile ProfileFunc
 	rules       *Rules
@@ -383,7 +386,7 @@ func (s *Service) validateDeck(mode Mode, season uint64, deck [][]byte) error {
 		position, pErr := scalar(entry, 2)
 		sequence, sErr := scalar(entry, 3)
 		costume, cErr := scalar(entry, 4)
-		if e != nil || pErr != nil || sErr != nil || cErr != nil || index == 0 || index > math.MaxInt64 || costume == 0 || costume > math.MaxInt64 || position >= grids || sequence >= maximum || chars[index] || positions[position] || sequences[sequence] {
+		if e != nil || pErr != nil || sErr != nil || cErr != nil || index == 0 || index > math.MaxInt64 || costume == 0 || costume > math.MaxInt64 || position >= grids || sequence == 0 || sequence > maximum || chars[index] || positions[position] || sequences[sequence] {
 			return fmt.Errorf("pvp: invalid formation entry")
 		}
 		chars[index], positions[position], sequences[sequence] = true, true, true

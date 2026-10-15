@@ -37,7 +37,7 @@ OAuth 联机服使用与游戏相同的 Discord 或 Google 登录。在管理台
 
 ## 服务器配置
 
-“服务器配置”页直接编辑服务端正在使用的 `game.json`、`authentication.json` 和 `resources.json`，字段含义与 [游戏规则配置](GAME_CONFIGURATION.md)、[认证配置](AUTHENTICATION.md)、[资源配置](RESOURCES.md) 一致。
+“服务器配置”页直接编辑服务端正在使用的 `game.json`、`authentication.json`、`resources.json` 和 `updates.json`，字段含义与 [游戏规则配置](GAME_CONFIGURATION.md)、[认证配置](AUTHENTICATION.md)、[资源配置](RESOURCES.md) 一致；`updates.json` 的各项含义在页面中有说明。
 
 - 编辑时实时校验，使用的规则与服务端启动时完全相同；有错误的配置无法保存。
 - 保存是整文件原子替换。如果文件在你编辑期间被其他人或其他程序修改，保存会被拒绝，可以选择载入最新版本。
@@ -46,3 +46,7 @@ OAuth 联机服使用与游戏相同的 Discord 或 Google 登录。在管理台
 - 引用的环境变量（OAuth 密钥、审核接口密钥）在当前服务端进程中未设置，或者引用的文件（词库、TLS 证书）读取不到时，页面会给出提醒。密钥本身只能通过环境变量提供，不会写入配置文件，也不会在页面中显示。
 - 服务端对配置文件没有写权限时（例如部署方以只读方式挂载），页面只能查看，不能修改。需要锁定某份配置时，以只读方式提供即可。
 - 如果文件在管理台之外被改成了服务端无法加载的内容，页面会指出问题。修正后保存，就能避免下次重启失败。
+
+## 版本更新
+
+仅服主可见。“版本更新”页显示当前版本、可用版本、更新说明、迁移标记和预下载状态，可立即检查新版、设定倒计时应用更新或取消尚未开始排空的维护。没有浏览器时可用 `bd2server update status|check|apply|cancel --data-dir <数据目录>` 完成同样的操作。

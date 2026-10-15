@@ -108,6 +108,14 @@ type CharAwakeProgress struct {
 	IsAwake       bool      `json:"is_awake"`
 }
 
+// CharPartnerProgress records directed partner points and the one-time story claim.
+type CharPartnerProgress struct {
+	MainUniqueID uint64 `json:"main_unique_id"`
+	SubUniqueID  uint64 `json:"sub_unique_id"`
+	Point        uint64 `json:"point"`
+	Reward       uint64 `json:"reward"`
+}
+
 // CostumeBurstUpgradeRecord is the durable result of one costume burst level
 // transition. Digest identifies the exact protobuf request whose successful
 // response is stored in Body, allowing a committed request to be replayed
@@ -139,6 +147,8 @@ type collectionSnapshot struct {
 	CostumeBurstLevels    map[string]uint64                    `json:"-"`
 	CostumeBurstUpgrades  map[string]CostumeBurstUpgradeRecord `json:"-"`
 	CharAwake             map[string]CharAwakeProgress         `json:"char_awake,omitempty"`
+	CostumePotentialLocks map[string][]uint64                  `json:"-"`
+	CharPartners          map[string]CharPartnerProgress       `json:"-"`
 	Friendships           map[string]FriendshipEntry           `json:"-"`
 	GachaSelections       map[string][]GachaSelection          `json:"gacha_selections,omitempty"`
 	GachaSelectionChanges map[string]uint64                    `json:"gacha_selection_changes,omitempty"`
@@ -729,6 +739,7 @@ func (s *CollectionStore) costumesLocked() []Costume {
 		if level, found := s.data.CostumeBurstLevels[key]; found {
 			result[i].BurstLevel = level
 		}
+		result[i].PotentialLockIDs = append([]uint64(nil), s.data.CostumePotentialLocks[key]...)
 		result[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[key]...)
 	}
 	collection := append([]Costume(nil), s.data.Costumes...)
@@ -737,6 +748,7 @@ func (s *CollectionStore) costumesLocked() []Costume {
 		if level, found := s.data.CostumeBurstLevels[key]; found {
 			collection[i].BurstLevel = level
 		}
+		collection[i].PotentialLockIDs = append([]uint64(nil), s.data.CostumePotentialLocks[key]...)
 		collection[i].PotentialIDs = append([]uint64(nil), s.data.CostumePotential[key]...)
 	}
 	return append(result, collection...)
@@ -980,6 +992,11 @@ func cloneCollection(in collectionSnapshot) collectionSnapshot {
 	for k, v := range in.CostumeBurstUpgrades {
 		v.Body = append([]byte(nil), v.Body...)
 		out.CostumeBurstUpgrades[k] = v
+	}
+	out.CharPartners = maps.Clone(in.CharPartners)
+	out.CostumePotentialLocks = make(map[string][]uint64, len(in.CostumePotentialLocks))
+	for k, v := range in.CostumePotentialLocks {
+		out.CostumePotentialLocks[k] = append([]uint64(nil), v...)
 	}
 	out.CharAwake = make(map[string]CharAwakeProgress, len(in.CharAwake))
 	maps.Copy(out.CharAwake, in.CharAwake)

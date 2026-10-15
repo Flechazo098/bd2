@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	commonconfig "bd2server/internal/common/config"
 )
 
 type buildManifest struct {
@@ -260,5 +262,5 @@ func saveBuildJSON(path string, raw []byte) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return replaceFile(temporary.Name(), path)
+	return commonconfig.ReplaceFile(temporary.Name(), path)
 }

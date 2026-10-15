@@ -4,6 +4,7 @@
 package admin
 
 import (
+	"bd2server/internal/common/i18n"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -91,6 +92,7 @@ type Console struct {
 	mu      sync.Mutex
 	pending map[string]*pendingLogin
 	links   map[string]time.Time
+	updates Updates
 }
 
 type pendingLogin struct {
@@ -137,6 +139,8 @@ func (c *Console) Handler() http.Handler {
 	mux := http.NewServeMux()
 	static, _ := fs.Sub(webFiles, "web")
 	files := http.FileServerFS(static)
+	mux.HandleFunc("GET /admin/assets/text.js", i18n.ServeBrowserScript)
+	mux.HandleFunc("POST /admin/api/text/format", i18n.TextHandler(webFiles, "web/assets/lang"))
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
@@ -161,6 +165,7 @@ func (c *Console) Handler() http.Handler {
 	mux.HandleFunc("GET /admin/api/server", c.require(owner, func(w http.ResponseWriter, r *http.Request, _ session) {
 		writeJSON(w, http.StatusOK, c.options.Server())
 	}))
+	c.registerUpdates(mux, owner)
 	mux.Handle("/admin/api/config/", c.require(func(s session) bool { return s.canReadConfiguration(c.options.Configuration) }, func(w http.ResponseWriter, r *http.Request, current session) {
 		http.StripPrefix("/admin/api/config", c.config).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, current)))
 	}))

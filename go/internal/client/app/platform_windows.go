@@ -13,6 +13,9 @@ import (
 	"time"
 	"unsafe"
 
+	clientupdate "bd2server/internal/client/update"
+	"bd2server/internal/common/versionconfig"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -73,7 +76,7 @@ func launchGame(target, proxyURL string) error {
 	}
 	command := visibleCommand(target, gameLaunchArguments()...)
 	command.Dir = filepath.Dir(target)
-	command.Env = gameProxyEnvironment(os.Environ(), proxyURL)
+	command.Env = clientupdate.LaunchEnvironment(gameProxyEnvironment(os.Environ(), proxyURL), filepath.Dir(target), versionconfig.Current().ClientVersion)
 	if err := command.Start(); err != nil {
 		return err
 	}

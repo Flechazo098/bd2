@@ -201,6 +201,7 @@ type Service struct {
 	activePack         int
 	transientVersion   uint64
 	prestigeSelections func(ctx command.Context) (map[uint64]uint64, error)
+	statues            func(command.Context) ([]RankStatue, error)
 }
 
 func (s *Service) AttachCollection(ctx command.Context, collection *roster.CollectionStore) error {

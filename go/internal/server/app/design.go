@@ -43,6 +43,8 @@ type designCatalog struct {
 	avatarProfile            *gamedata.AvatarProfileDesign
 	equipmentSlots           map[uint64]uint64
 	equipmentUpgrade         *gamedata.EquipmentUpgradeDesign
+	equipmentRankPurchases   *gamedata.EquipmentRankPurchaseDesign
+	rosterProgress           *gamedata.RosterProgressDesign
 	equipmentCraft           *gamedata.EquipmentCraftDesign
 	talentGrowth             *gamedata.TalentGrowthDesign
 	equipmentSmelting        *gamedata.EquipmentSmeltingDesign
@@ -170,6 +172,14 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	d.equipmentUpgrade, err = gamedata.LoadEquipmentUpgradeDesign(gameData, gameDataVersion)
 	if err != nil {
 		return nil, fmt.Errorf("load equipment upgrade GameData: %w", err)
+	}
+	d.equipmentRankPurchases, err = gamedata.LoadEquipmentRankPurchaseDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load equipment rank purchases: %w", err)
+	}
+	d.rosterProgress, err = gamedata.LoadRosterProgressDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load roster progression: %w", err)
 	}
 	d.equipmentCraft, err = gamedata.LoadEquipmentCraftDesign(gameData, gameDataVersion)
 	if err != nil {

@@ -13,8 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"bd2server/internal/common/i18n"
+	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/gateway/authconfig"
 	"bd2server/internal/server/gateway/bootstrap"
+	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/resources/policy"
 	"bd2server/internal/server/runtime/player"
 	"bd2server/internal/server/storage/stateio"
@@ -61,8 +64,13 @@ type Availability interface {
 }
 
 type Bootstrap struct {
-	Config bootstrap.Config
-	Now    func() time.Time
+	Config  bootstrap.Config
+	Now     func() time.Time
+	Notices *notice.Board
+	// LoginsClosed returns the title-screen message in the client's game
+	// language (Define_LanguageType) while maintenance has closed new
+	// logins, or "".
+	LoginsClosed func(language uint64) string
 }
 
 var ErrNotImplemented = errors.New("packet not implemented")
@@ -81,14 +89,24 @@ var ErrGameSessionExpired = errors.New("game session expired")
 func (b Bootstrap) Dispatch(path string, request []byte) (Reply, error) {
 	switch path {
 	case "/MaintenanceInfo":
-		data, err := bootstrap.Maintenance(b.Config.Version, b.Config.BundleVer, request)
+		closed := ""
+		if b.LoginsClosed != nil {
+			// MaintenanceInfoRequest.language_type=6.
+			language, _, _ := wire.Varint(request, 6)
+			closed = b.LoginsClosed(language)
+		}
+		data, err := bootstrap.Maintenance(b.Config.Version, b.Config.BundleVer, closed, request)
 		return Reply{Data: data}, err
 	case "/ServerInfo":
 		return Reply{Data: bootstrap.ServerInfo(b.Config)}, nil
 	case "/ServerNowTime":
 		return Reply{Data: bootstrap.ServerNowTime(b.now())}, nil
 	case "/NoticeInfo":
-		return Reply{Data: bootstrap.NoticeInfo()}, nil
+		if b.Notices == nil {
+			return Reply{}, nil
+		}
+		data, err := b.Notices.NoticeInfo(request, i18n.Fallback)
+		return Reply{Data: data}, err
 	default:
 		return Reply{}, ErrNotImplemented
 	}
@@ -116,6 +134,14 @@ type HTTP struct {
 	StoryCheckpoints      http.Handler
 	// Console is the built-in administration website below /admin/.
 	Console http.Handler
+	// Compatibility is the launcher's view of what this server requires.
+	Compatibility     func() any
+	ClientAllowed     func(http.Header) bool
+	UpdateFingerprint func() []byte
+	// LoginsClosed refuses new game sessions during update maintenance.
+	LoginsClosed func() bool
+	// Releases serves published release manifests and files below /releases/.
+	Releases http.Handler
 }
 
 func (h HTTP) Handler() http.Handler {
@@ -126,11 +152,30 @@ func (h HTTP) Handler() http.Handler {
 	mux.HandleFunc("/client/resources", h.clientResources)
 	mux.HandleFunc("/client/runtime", h.clientRuntime)
 	mux.HandleFunc("/client/commerce", h.clientCommerce)
+	if h.UpdateFingerprint != nil {
+		mux.HandleFunc("GET /client/update-fingerprint", func(w http.ResponseWriter, r *http.Request) {
+			raw := h.UpdateFingerprint()
+			if len(raw) == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(raw)
+		})
+	}
+	if h.Compatibility != nil {
+		mux.HandleFunc("GET /client/compatibility", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(h.Compatibility())
+		})
+	}
 	if h.StoryCheckpoints != nil {
-		mux.Handle("/client/story-checkpoint", h.withAvailability(h.StoryCheckpoints))
+		mux.Handle("/client/story-checkpoint", h.withCompatibility(h.withAvailability(h.StoryCheckpoints)))
 	}
 	if h.RealtimeTickets != nil {
-		mux.Handle("/client/realtime-ticket", h.withAvailability(h.RealtimeTickets))
+		mux.Handle("/client/realtime-ticket", h.withCompatibility(h.withAvailability(h.RealtimeTickets)))
 	}
 	if h.AuthenticationHandler != nil {
 		mux.Handle("/auth/", h.withAvailability(h.AuthenticationHandler))
@@ -138,6 +183,9 @@ func (h HTTP) Handler() http.Handler {
 	if h.Console != nil {
 		mux.Handle("/admin", h.Console)
 		mux.Handle("/admin/", h.Console)
+	}
+	if h.Releases != nil {
+		mux.Handle("GET /releases/", h.Releases)
 	}
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/game/", h.game)
@@ -291,6 +339,14 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 	}
 	bootstrapPacket := path == "/MaintenanceInfo" || path == "/ServerInfo" || path == "/ServerNowTime" || path == "/NoticeInfo"
 	if !bootstrapPacket {
+		if h.ClientAllowed != nil && !h.ClientAllowed(r.Header) {
+			updateRequired(w)
+			return
+		}
+		if path == "/LoginUser" && h.LoginsClosed != nil && h.LoginsClosed() {
+			h.reconnect(w, "maintenance")
+			return
+		}
 		if h.Raw == nil {
 			h.logger().Info("packet needs session handler", "path", path)
 			http.Error(w, "authenticated packet not yet implemented", http.StatusNotImplemented)

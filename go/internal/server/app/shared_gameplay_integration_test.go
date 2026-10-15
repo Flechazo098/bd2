@@ -569,7 +569,7 @@ func (g *guildGameplay) ownedPVPDeck() ([]byte, uint64) {
 		}
 		for _, costume := range g.owner.assembly.collection.Costumes() {
 			if costume.UseChar == char.InvenIndex {
-				return append(appScalar(1, char.InvenIndex), appScalar(4, costume.InvenIndex)...), char.InvenIndex
+				return append(append(appScalar(1, char.InvenIndex), appScalar(3, 1)...), appScalar(4, costume.InvenIndex)...), char.InvenIndex
 			}
 		}
 	}
@@ -604,12 +604,55 @@ func TestNativePVPGameplayUsesOwnedSnapshotsAndTickets(t *testing.T) {
 	if got := appValue(login[0], 16); got != factory.design.pvp.Design.FreeMirrorTickets {
 		t.Fatalf("free mirror ticket initial grant=%d", got)
 	}
-	attackDeck, character := attacker.ownedPVPDeck()
+	var character, frozenCostume, liveCostume uint64
+	var frozenEquipment assets.Equipment
+	inventorySetup(t, &puzzleGameplay{t: t, factory: factory, account: attacker.account, owner: attacker.owner}, func(ctx command.Context, p *playerAssembly) {
+		if _, err := p.collection.GrantCostumes(ctx, "pvp-recommendation-costumes", []uint64{101, 102}, p.design.regularGacha); err != nil {
+			t.Fatal(err)
+		}
+		for _, costume := range p.collection.Costumes() {
+			if costume.ID == 101 {
+				character, frozenCostume = costume.UseChar, costume.InvenIndex
+			}
+			if costume.ID == 102 {
+				liveCostume = costume.InvenIndex
+			}
+		}
+		design := p.design.equipmentCraft.Equipment[43010]
+		options := func(groups []gamedata.OptionGroup) []assets.EquipmentOption {
+			var result []assets.EquipmentOption
+			for _, group := range groups {
+				if len(group.Choices) == 0 {
+					t.Fatal("PVP weapon option missing")
+				}
+				result = append(result, assets.EquipmentOption{GroupID: group.ID, ID: group.Choices[0].ID})
+			}
+			return result
+		}
+		equipment := assets.Equipment{ID: 43010, Level: 1, UseChar: character, Rank: []uint64{1, 1, 1}, MainOption: options(design.Main), SubOption: options(design.Sub)}
+		if private := options(design.Private); len(private) != 0 {
+			equipment.PrivateOption = &private[0]
+		}
+		var err error
+		frozenEquipment, err = p.ownedEquipment.GrantGeneratedOnce(ctx, "pvp-recommendation-weapon", equipment)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	attacker.close()
+	attacker.open()
+	attackDeck := append(append(appScalar(1, character), appScalar(3, 1)...), appScalar(4, frozenCostume)...)
 	defenseDeck, _ := defender.ownedPVPDeck()
 	attacker.pvpCall("/PvpBattleDeckSave", append(appScalar(2, 0), appMessage(3, attackDeck)...))
 	defender.pvpCall("/PvpBattleDeckSave", append(appScalar(2, 1), appMessage(3, defenseDeck)...))
 	defender.drainPVP()
-	mirror := attacker.pvpCall("/PvpBattleMatching", appScalar(2, 1))
+	attacker.pvpCall("/CostumeUse", appMessage(2, append(appScalar(1, liveCostume), appScalar(2, character)...)))
+	attacker.pvpCall("/EquipClear", append(appScalar(2, frozenEquipment.InvenIndex), appScalar(3, character)...))
+	recommendationQuery := append(append(appScalar(2, 6), appScalar(3, 1)...), appScalar(4, 37)...)
+	mirror := attacker.pvpCall("/PvpBattleMatching", append(appScalar(2, 1), appMessage(103, recommendationQuery)...))
+	if len(appRows(defender.pvpCall("/RecommendDeckInfo", recommendationQuery), 1)) != 0 {
+		t.Fatal("PVP matching published before a win")
+	}
 	opponent, err := factory.profiles.GameIdentity(context.Background(), defender.account)
 	if err != nil {
 		t.Fatal(err)
@@ -617,8 +660,26 @@ func TestNativePVPGameplayUsesOwnedSnapshotsAndTickets(t *testing.T) {
 	if appValue(mirror, 4) != uint64(opponent.OwnerIndex) {
 		t.Fatal("matching did not use the other account's published defense")
 	}
+	attacker.pvpCall("/PvpBattleStart", nil)
 	attacker.pvpCall("/PvpBattleEnd", append(appScalar(2, 1), appScalar(3, character)...))
 	attacker.drainPVP()
+	recommendationResponse := defender.pvpCall("/RecommendDeckInfo", recommendationQuery)
+	recommendationRows := appRows(recommendationResponse, 1)
+	if len(recommendationRows) != 1 {
+		t.Fatalf("PVP winner missing from exact ready recommendation context: %x", recommendationRows)
+	}
+	_, recommendation := recommendationBaseFromResponse(t, recommendationResponse)
+	frozenCharacters, frozenEquips := appRows(recommendation, 4), appRows(recommendation, 6)
+	if len(frozenCharacters) != 1 || appValue(frozenCharacters[0], 7) != frozenCostume || appValue(frozenCharacters[0], 7) == liveCostume {
+		t.Fatal("PVP recommendation used live outfit instead of saved attack outfit")
+	}
+	if len(frozenEquips) != 1 || appValue(frozenEquips[0], 1) != frozenEquipment.InvenIndex || appValue(frozenEquips[0], 2) != character {
+		t.Fatal("PVP recommendation lost saved equipment after live unequip")
+	}
+	// EquipmentGrowth43/1=569 plus rank43 first values 34,67,101; two +0 costumes and one level1 character add 510.
+	if appValue(recommendation, 1) != 1281 {
+		t.Fatalf("PVP frozen power=%d want1281", appValue(recommendation, 1))
+	}
 	login = appRows(attacker.pvpCall("/LoginUser", nil), 1)
 	if got, want := appValue(login[0], 16), factory.design.pvp.Design.FreeMirrorTickets-factory.design.pvp.Design.Mirror.TicketCost; got != want {
 		t.Fatalf("mirror battle ticket debit=%d want %d", got, want)

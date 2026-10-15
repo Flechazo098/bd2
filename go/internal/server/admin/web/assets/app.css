@@ -6,6 +6,10 @@
   --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,monospace;
   color-scheme:light dark;
 }
+:root:lang(ja){--sans:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic UI","Meiryo UI","Noto Sans JP",sans-serif}
+:root:lang(ko){--sans:system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif}
+:root:lang(zh-TW){--sans:system-ui,-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei UI","Microsoft JhengHei","Noto Sans TC",sans-serif}
+:lang(en) .send{letter-spacing:.08em}
 @media (prefers-color-scheme:dark){:root{
   --paper:#1a1916;--sheet:#22211d;--ink:#ebe6da;--ink-2:#bcb5a5;--muted:#8a8475;--line:#312f29;--line-2:#45413a;
   --seal:#d26a50;--seal-ink:#1a1916;--seal-soft:#3b2620;--moss:#93b48a;--moss-soft:#24301f;--air:#7d9cbb;--amber:#d9b263;--amber-soft:#332a17;
@@ -36,6 +40,7 @@ h2{font-size:16px;font-weight:600;margin:0;letter-spacing:.06em}
 .account .user::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--moss);margin-right:8px;vertical-align:2px}
 .account button{border:0;background:none;padding:0;color:var(--muted);cursor:pointer}
 .account button:hover{color:var(--seal)}
+.locale{margin-left:auto;font-size:13px;padding:4px 8px;color:var(--ink-2);background:transparent;border-color:var(--line)}
 
 .desk{max-width:1200px;margin:0 auto;padding:12px 28px 96px}
 .card{background:var(--sheet);border:1px solid var(--line);border-radius:14px}
@@ -152,8 +157,8 @@ mark{background:color-mix(in srgb,var(--seal) 22%,transparent);color:inherit;bor
 .letter{margin-top:16px;border-top:1px solid var(--line);padding-top:10px}
 .letter summary{cursor:pointer;list-style:none;display:flex;gap:10px;align-items:baseline;font-size:12.5px;color:var(--ink-2)}
 .letter summary::-webkit-details-marker{display:none}
-.letter summary::after{content:"展开";margin-left:auto;color:var(--muted);font-size:12px}
-.letter[open] summary::after{content:"收起"}
+.letter summary::after{content:attr(data-expand);margin-left:auto;color:var(--muted);font-size:12px}
+.letter[open] summary::after{content:attr(data-collapse)}
 #letter-peek{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px}
 .letter[open] #letter-peek{visibility:hidden}
 .letter label{display:block;font-size:12px;color:var(--muted);margin-top:10px}
@@ -360,3 +365,9 @@ dialog.ask p{margin:0;color:var(--ink-2);font-size:13.5px}
 .perm-table td{padding:5px 8px;border-bottom:1px solid var(--line)}
 .perm-table .linkish{font-weight:400}
 dialog.ask:has(.perm-editor){width:min(560px,calc(100vw - 32px))}
+
+/* 版本更新 */
+.updates .update-facts { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.2rem; margin: 1rem 0; }
+.updates pre.notes { white-space: pre-wrap; font: inherit; background: rgba(0, 0, 0, .03); padding: .8rem 1rem; border-radius: 6px; max-height: 22rem; overflow: auto; }
+.updates .update-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; margin-top: 1rem; }
+.updates .update-actions input[type=number] { width: 5.5rem; }

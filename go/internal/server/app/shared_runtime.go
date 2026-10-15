@@ -82,6 +82,12 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 	if event.Envelope.Event.Topic == "monster_hunt.ranking" {
 		return s.consumeHuntRanking(ctx, event)
 	}
+	if event.Envelope.Event.Topic == "square.statue_hits" {
+		return s.consumeStatueHits(ctx, event)
+	}
+	if event.Envelope.Event.Topic == "deck.recommendation" {
+		return s.consumeRecommendation(ctx, event)
+	}
 	if event.Envelope.Event.Topic == "arcade.ranking" {
 		return s.consumeArcadeRanking(ctx, event)
 	}

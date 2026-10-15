@@ -168,3 +168,42 @@ func TestUnsafeArchiveDoesNotAlterAnExistingInstallation(t *testing.T) {
 		t.Fatal("archive escaped game directory")
 	}
 }
+
+func TestOfficialGameRepairDoesNotTrustMarkerAndUnchangedFileSize(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "game.zip")
+	out, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := zip.NewWriter(out)
+	for _, name := range requiredGameFiles {
+		entry, err := archive.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(entry, "official"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	game := filepath.Join(root, "game")
+	if err := extractArchive(path, game, true, "archive-digest"); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(game, "UnityPlayer.dll")
+	if err := os.WriteFile(target, []byte("tampered"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractArchive(path, game, true, "archive-digest"); err != nil {
+		t.Fatal(err)
+	}
+	if actual, err := os.ReadFile(target); err != nil || string(actual) != "official" {
+		t.Fatalf("same-size corruption survived repair: %q, %v", actual, err)
+	}
+}

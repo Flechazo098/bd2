@@ -39,7 +39,8 @@ internal sealed class SecureGameRelay : IDisposable
         {
             response = await PlatformControlHttp.Send(new Uri(server, "/client/story-checkpoint"), "POST", body,
                 null, 10, cancellation, lifetime.Token, 16 * 1024,
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Cookie"] = cookie, ["Content-Type"] = "application/json" }).ConfigureAwait(false);
+                SessionHeaders(cookie)).ConfigureAwait(false);
+            if (UpdateCompatibility.Observe(response)) return new StoryCheckpoint.Response { RejectedStatus = response.StatusCode };
             if (response.StatusCode == 409) return new StoryCheckpoint.Response { Conflict = true };
             if (response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != 401)
                 return new StoryCheckpoint.Response { RejectedStatus = response.StatusCode };
@@ -64,7 +65,8 @@ internal sealed class SecureGameRelay : IDisposable
         {
             response = await PlatformControlHttp.Send(new Uri(server, "/client/realtime-ticket"), "POST", body,
                 null, 10, cancellation, lifetime.Token, 16 * 1024,
-                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Cookie"] = cookie, ["Content-Type"] = "application/json" }).ConfigureAwait(false);
+                SessionHeaders(cookie)).ConfigureAwait(false);
+            UpdateCompatibility.Observe(response);
             if (response.StatusCode == 401)
             {
                 Volatile.Write(ref invalidGameCookie, cookie);
@@ -94,6 +96,15 @@ internal sealed class SecureGameRelay : IDisposable
                 return;
             }
         }
+    }
+
+    private static Dictionary<string, string> SessionHeaders(string cookie)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (KeyValuePair<string, string> header in UpdateCompatibility.Headers) result.Add(header.Key, header.Value);
+        result.Add("Cookie", cookie);
+        result.Add("Content-Type", "application/json");
+        return result;
     }
 
     private SecureGameRelay(Uri server, ManualLogSource log)
@@ -199,6 +210,7 @@ internal sealed class SecureGameRelay : IDisposable
             if (name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("b2_app_version", StringComparison.OrdinalIgnoreCase) || name.Equals("b2_bundle_version", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("market_type", StringComparison.OrdinalIgnoreCase)) headers[name] = value;
+            if (name.StartsWith("X-BD2-", StringComparison.OrdinalIgnoreCase)) headers[name] = value;
         }
         if (headers.TryGetValue("Cookie", out string cookie)) CaptureCookie(cookie);
         byte[] body = length == 0 ? null : new byte[length];
@@ -214,6 +226,7 @@ internal sealed class SecureGameRelay : IDisposable
             // The native hard deadline leaves margin inside Unity's 30s timeout.
             response = await PlatformControlHttp.Send(remote, start[0], body, null, 25, lifetime.Token,
                 lifetime.Token, 64 * 1024 * 1024, headers).ConfigureAwait(false);
+            UpdateCompatibility.Observe(response);
             if (maintenance || response.StatusCode == 0 || response.StatusCode >= 400)
                 log?.LogInfo("Game relay upstream result: request_id=" + response.RequestId + " status=" + response.StatusCode +
                     " path=" + remote.AbsolutePath + " failure=" + (response.FailureKind ?? "none"));

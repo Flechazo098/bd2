@@ -1,0 +1,6 @@
+{
+  "maintenance.title": "Server maintenance",
+  "maintenance.banner": "The server goes down for maintenance at %[2]s to update to %[1]s, for about %[3]d minutes. Please finish your battles before then.",
+  "maintenance.body": "Maintenance starts at %[2]s and updates the server to %[1]s. It should take about %[3]d minutes.\nPlease finish any battle or room before it starts; saved progress is not affected. See the update notes for what changes.",
+  "maintenance.login": "The server is updating to %[1]s and should be back in about %[3]d minutes."
+}

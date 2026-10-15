@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/resources/fetch"
 	"context"
@@ -33,10 +34,19 @@ func Resources(args []string) error {
 	if err != nil {
 		return err
 	}
+	compatibility, err := loadUpdateCompatibility(versions)
+	if err != nil {
+		return err
+	}
+	var pinned *release.GameResources
+	if compatibility.fingerprint != nil {
+		pinned = compatibility.fingerprint.Game
+	}
 	manifest, err := resourcefetch.Fetch(context.Background(), resourcefetch.Options{
 		OutputRoot: *output, Platform: *platform, BundleVersion: versions.BundleVersion,
 		GameDataVersion: versions.GameDataVersion,
 		Progress:        func(message string) { slog.Info(message) },
+		Pinned:          pinned,
 	})
 	if err != nil {
 		return err

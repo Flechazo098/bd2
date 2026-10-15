@@ -1,0 +1,33 @@
+# systemd unit for a native bd2server installation that updates itself.
+# Copy to /etc/systemd/system/bd2server.service, adjust paths and the user,
+# then: systemctl daemon-reload && systemctl enable --now bd2server
+#
+# Exit 75: the server switched its program files to a new version; start it.
+# Exit 78: an update needs the operator (irreversible migration or failed
+#          rollback); systemd must not restart it in a loop.
+
+[Unit]
+Description=BD2 server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=6
+
+[Service]
+Type=simple
+User=bd2
+Group=bd2
+WorkingDirectory=/opt/bd2/server
+ExecStart=/opt/bd2/server/bd2server serve --listen 0.0.0.0:8080 --data-dir /opt/bd2/data
+Restart=always
+RestartSec=3
+RestartPreventExitStatus=78
+KillSignal=SIGTERM
+TimeoutStopSec=90
+NoNewPrivileges=true
+ProtectSystem=strict
+# The program directory must stay writable so an update can replace it.
+ReadWritePaths=/opt/bd2/server /opt/bd2/data
+
+[Install]
+WantedBy=multi-user.target

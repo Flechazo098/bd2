@@ -7,6 +7,7 @@ import (
 	"bd2server/internal/server/domain/progression/missions"
 	"bd2server/internal/server/domain/progression/pictorial"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/roster/deck"
 	"bd2server/internal/server/domain/world"
 	"bd2server/internal/server/protocol/wire"
 	"errors"
@@ -138,6 +139,37 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 		return err
 	}
 	p.pictorialService.PotentialContributions = p.costumePotentialService.Contributions
+	p.rosterProgressService, err = roster.NewRosterProgressService(p.design.rosterProgress, p.design.costumePotentialDesign, p.worldService.CharacterService(), p.collection, p.ownedItems, p.wallet)
+	if err != nil {
+		return fmt.Errorf("load roster progression: %w", err)
+	}
+	p.rosterProgressService.AttachExpiry(p.deckStateStore.ExpireCharacter)
+	p.ownedItems.AttachDiscard(11, p.rosterProgressService.DiscardCostume)
+	if err = p.deckStateStore.AttachRecommendation(func(ctx command.Context) (deck.RecommendIdentity, error) {
+		owner, err := p.ProfileOwner(ctx)
+		if err != nil {
+			return deck.RecommendIdentity{}, err
+		}
+		profile, err := p.PublicProfile(ctx, owner)
+		if err != nil {
+			return deck.RecommendIdentity{}, err
+		}
+		exp, err := p.missionService.AchievementExperience()
+		if err != nil {
+			return deck.RecommendIdentity{}, err
+		}
+		return deck.RecommendIdentity{OwnerIndex: owner, UserID: profile.UserID, UserExp: exp, PortraitCostumeID: profile.PortraitCostumeID, PortraitDesignID: profile.PortraitDesignID, TitleID: profile.TitleID, GuildBase: profile.GuildBase}, nil
+	}, func(ctx command.Context, characters []roster.Character) (uint64, error) {
+		return p.rosterProgressService.TeamBattlePower(ctx, characters, p.ownedEquipment.All(ctx))
+	}); err != nil {
+		return err
+	}
+	if err = p.login.AttachRecommendationOptions(p.deckStateStore); err != nil {
+		return err
+	}
+	if err = p.attachRecommendationCommunity(); err != nil {
+		return err
+	}
 	p.costumeBurstService, err = roster.NewCostumeBurstService(p.design.costumeBurstDesign, p.collection, p.ownedItems, p.wallet)
 	if err != nil {
 		return err

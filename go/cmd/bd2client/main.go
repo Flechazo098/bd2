@@ -10,6 +10,7 @@ import (
 	clientapp "bd2server/internal/client/app"
 	clientconfig "bd2server/internal/client/config"
 	"bd2server/internal/client/download"
+	clientupdate "bd2server/internal/client/update"
 	"bd2server/internal/common/versionconfig"
 )
 
@@ -23,6 +24,13 @@ type clientRunOptions struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == clientupdate.HelperFlag {
+		if err := clientupdate.RunHelper(os.Args[2:]); err != nil {
+			clientapp.ShowFatalError(err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "download-resources" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()

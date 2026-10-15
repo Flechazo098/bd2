@@ -16,7 +16,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -285,6 +284,20 @@ func Open(ctx command.Context, storage stateio.Store, rules *Rules, inventory *a
 			return nil, e
 		}
 	}
+	if ctx.State != nil {
+		entries, e := ctx.State.ListEntries("monsterhunt", "encounters")
+		if e != nil {
+			return nil, e
+		}
+		for key, raw := range entries {
+			var a encounter
+			if json.Unmarshal(raw, &a) != nil || a.Hunt == 0 || a.Season == 0 {
+				return nil, fmt.Errorf("monsterhunt: invalid saved encounter")
+			}
+			s.active[key] = a
+		}
+	}
+
 	return s, nil
 }
 
@@ -498,7 +511,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			found := false
 			team, _ := scalar(d, 1)
 			for receipt, a := range s.active {
-				if !strings.HasPrefix(receipt, commandSession+":") || a.Mode != mode {
+				if a.Mode != mode {
 					continue
 				}
 				found = true
@@ -724,6 +737,9 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		}
 		if updateReceipt != "" {
 			s.active[updateReceipt] = updateEncounter
+			if e := s.saveEncounter(ctx, updateReceipt); e != nil {
+				return code, nil, true, e
+			}
 			s.transientVersion++
 		}
 	}
@@ -858,6 +874,9 @@ func (s *Service) EnterBattle(ctx command.Context, req []byte, receipt string) (
 		hp = u.StartHP
 	}
 	s.active[receipt] = encounter{c.ID, id, level, hp, mode, u.Level, u.StartHP, 1}
+	if e := s.saveEncounter(ctx, receipt); e != nil {
+		return nil, e
+	}
 	s.transientVersion++
 	u.Level, u.StartHP, u.HighestHP = level, hp, maxHP
 	return wire.AppendBytes(nil, 5, s.encodeUser(u, c, level)), nil
@@ -882,6 +901,11 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 	}
 	if a.Mode == PracticeMode {
 		delete(s.active, receipt)
+		if ctx.State != nil {
+			if _, e := ctx.State.DeleteEntry("monsterhunt", "encounters", receipt); e != nil {
+				return nil, e
+			}
+		}
 		s.transientVersion++
 		return nil, nil
 	}
@@ -987,6 +1011,47 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		return nil, e
 	}
 	delete(s.active, receipt)
+	if ctx.State != nil {
+		if _, e := ctx.State.DeleteEntry("monsterhunt", "encounters", receipt); e != nil {
+			return nil, e
+		}
+	}
 	s.transientVersion++
 	return out, nil
+}
+
+func (s *Service) saveEncounter(ctx command.Context, receipt string) error {
+	if ctx.State == nil {
+		return nil
+	}
+	raw, err := json.Marshal(s.active[receipt])
+	if err != nil {
+		return err
+	}
+	return ctx.State.PutEntry("monsterhunt", "encounters", receipt, raw)
+}
+
+func (s *Service) AbandonBattle(ctx command.Context, receipt string) ([]byte, error) {
+	a, exists := s.active[receipt]
+	if !exists {
+		return nil, nil
+	}
+	var current Season
+	for _, season := range s.seasons {
+		if season.ID == a.Season {
+			current = season
+			break
+		}
+	}
+	u, e := s.getUser(current)
+	if e != nil {
+		return nil, e
+	}
+	delete(s.active, receipt)
+	if ctx.State != nil {
+		if _, e = ctx.State.DeleteEntry("monsterhunt", "encounters", receipt); e != nil {
+			return nil, e
+		}
+	}
+	return wire.AppendBytes(nil, 5, s.encodeUser(u, current, u.Level)), nil
 }

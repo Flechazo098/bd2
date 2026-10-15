@@ -5,5 +5,8 @@
   "loginui.recovery.reconnecting": "サーバーに再接続しています…",
   "loginui.recovery.waiting_server": "サーバーの起動を待っています…",
   "loginui.recovery.restoring_session": "ログインセッションを復旧しています…",
-  "loginui.recovery.safe_scene": "安全な場所に戻っています…"
+  "loginui.recovery.safe_scene": "安全な場所に戻っています…",
+  "loginui.update.required": "サーバーが更新されたため、クライアントの更新が必要です。ゲームを終了してランチャーを開き、更新を確認してください。必要なクライアントとゲームリソースの更新をすべて適用してから、再度ログインしてください。",
+  "loginui.update.check_failed": "サーバーが要求するクライアントのバージョンを確認できませんでした。ゲームを終了してランチャーを開き、接続を確認して利用可能な更新を適用してから、もう一度お試しください。",
+  "loginui.update.exit": "ゲームを終了"
 }

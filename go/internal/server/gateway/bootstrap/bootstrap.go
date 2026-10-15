@@ -42,8 +42,11 @@ func (c Config) Validate() error {
 }
 
 // MaintenanceInfoResponse: market_info=1, connect_type=3, user_type=4.
-// MaintenanceInfo: market_type=1, version=2, bundle_version=3.
-func Maintenance(version, bundle string, request []byte) ([]byte, error) {
+// MaintenanceInfo: market_type=1, version=2, bundle_version=3,
+// maintenance_type=5, notice=12. A non-empty closed message sets
+// maintenance_type 1 (ServerMaintanence): the title screen shows the notice
+// instead of logging in, and restarts once maintenance_type is back to 0.
+func Maintenance(version, bundle, closed string, request []byte) ([]byte, error) {
 	_, _, err := wire.Varint(request, 2) // validate MaintenanceInfoRequest.market_type
 	if err != nil {
 		return nil, err
@@ -53,6 +56,10 @@ func Maintenance(version, bundle string, request []byte) ([]byte, error) {
 	market := wire.AppendVarint(nil, 1, 4)
 	market = wire.AppendString(market, 2, version)
 	market = wire.AppendString(market, 3, bundle)
+	if closed != "" {
+		market = wire.AppendVarint(market, 5, 1)
+		market = wire.AppendString(market, 12, closed)
+	}
 	answer := wire.AppendBytes(nil, 1, market)
 	answer = wire.AppendVarint(answer, 3, 1) // normal connection
 	answer = wire.AppendVarint(answer, 4, 1) // nonzero, avoid platform-update branch
@@ -78,6 +85,3 @@ func ServerInfo(c Config) []byte {
 func ServerNowTime(now time.Time) []byte {
 	return wire.AppendVarint(nil, 1, uint64(now.UnixMilli()))
 }
-
-// NoticeInfoResponse has a repeated notice_info=1; no notices is valid.
-func NoticeInfo() []byte { return nil }

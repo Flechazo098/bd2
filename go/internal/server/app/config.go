@@ -2,13 +2,17 @@ package app
 
 import (
 	commonconfig "bd2server/internal/common/config"
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gameconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/events/calendar"
+	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/gateway/authconfig"
 	"bd2server/internal/server/gateway/bootstrap"
 	"bd2server/internal/server/platform/textmoderation"
+	"bd2server/internal/server/platform/updates"
+	resourcefetch "bd2server/internal/server/resources/fetch"
 	"bd2server/internal/server/resources/policy"
 	"context"
 	"errors"
@@ -41,11 +45,16 @@ type configuration struct {
 	worldSeed          string
 	devToolsConfig     string
 	versions           versionconfig.Config
+	compatibility      updateCompatibility
 	calendars          *calendar.Set
 	gameRules          gameconfig.Config
 	gameFile           *commonconfig.File[gameconfig.Config]
 	authFile           *commonconfig.File[authconfig.Config]
 	resourceFile       *commonconfig.File[resourcepolicy.Config]
+	updateFile         *commonconfig.File[updates.Config]
+	updates            updates.Config
+	notices            *notice.Board
+	serveArgs          []string
 	textModerator      *textmoderation.Service
 	authentication     authconfig.Config
 	authRuntime        authconfig.Runtime
@@ -63,6 +72,7 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	authConfigPath := fs.String("authentication-config", "", "authentication.json path (default DATA_DIR/config/authentication.json)")
 	resourceConfigPath := fs.String("resource-config", "", "resources.json path (default DATA_DIR/config/resources.json)")
 	gameConfigPath := fs.String("game-config", "", "game.json path (default DATA_DIR/config/game.json)")
+	updateConfigPath := fs.String("update-config", "", "updates.json path (default DATA_DIR/config/updates.json)")
 	listen := fs.String("listen", "127.0.0.1:8080", "local listen address")
 	dataDir := fs.String("data-dir", "", "server data directory (defaults beside the executable)")
 	gameDataVersion := fs.String("game-data-version", "", "validated GameData version (defaults to versions.json)")
@@ -157,11 +167,32 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		return nil, err
 	}
 	*resourceConfigPath = resourceFile.Path()
+	if *updateConfigPath == "" {
+		*updateConfigPath = updates.Document.Path(configDirectory)
+	}
+	updateFile, updateConfig, err := updates.Document.Open(*updateConfigPath)
+	if err != nil {
+		return nil, err
+	}
 	*devToolsConfig = resolveDevelopmentSettingsPath(*dataDir, *devToolsConfig)
 	if *mailGrantSpool == "" {
 		*mailGrantSpool = filepath.Join(*dataDir, "mail-grants-spool.json")
 	}
 	gameData := filepath.Join(*dataDir, "resources", "GameData")
+	compatibility, err := loadUpdateCompatibility(versions)
+	if err != nil {
+		return nil, err
+	}
+	if compatibility.fingerprint != nil && compatibility.fingerprint.RequireGameUpdate && compatibility.fingerprint.Game != nil {
+		g := compatibility.fingerprint.Game
+		root := updates.ResourceDirectory(*dataDir, *g)
+		if _, ready := resourcefetch.Prepared(root, *g); !ready {
+			if _, err := resourcefetch.Fetch(context.Background(), resourcefetch.Options{OutputRoot: root, Pinned: g}); err != nil {
+				return nil, err
+			}
+		}
+		gameData = filepath.Join(root, "GameData")
+	}
 	if *stateDirectory == "" {
 		*stateDirectory = filepath.Join(*dataDir, "state")
 	}
@@ -199,6 +230,12 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	if downloaded {
 		slog.Info("repaired GameData from official CDN", "archive", verifiedGameData.ArchivePath, "entries", verifiedGameData.EntryCount)
 	}
+	if compatibility.fingerprint != nil && compatibility.fingerprint.RequireGameUpdate && compatibility.fingerprint.Game != nil {
+		g := compatibility.fingerprint.Game
+		if !release.Matches(verifiedGameData.ArchivePath, release.File{Size: g.DataBytes, SHA256: g.DataSHA256}) {
+			return nil, errors.New("installed GameData differs from signed update fingerprint")
+		}
+	}
 	if err := calendars.ValidateDesign(gameData, *gameDataVersion); err != nil {
 		return nil, fmt.Errorf("validate project calendar GameData references: %w", err)
 	}
@@ -222,6 +259,7 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		deckSeed:           *deckSeed,
 		worldSeed:          *worldSeed,
 		devToolsConfig:     *devToolsConfig,
-		versions:           versions, calendars: calendars, gameRules: gameRules, gameFile: gameFile, authFile: authFile, resourceFile: resourceFile, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
+		versions:           versions, calendars: calendars, gameRules: gameRules, gameFile: gameFile, authFile: authFile, resourceFile: resourceFile, updateFile: updateFile, updates: updateConfig, notices: notice.NewBoard(nil), serveArgs: args, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
+		compatibility: compatibility,
 	}, nil
 }

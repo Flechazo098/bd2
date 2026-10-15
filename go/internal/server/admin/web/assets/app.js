@@ -2,15 +2,87 @@
 const $ = id => document.getElementById(id);
 const state = {session: null, players: [], view: ''};
 
-/* ---------- 通用 ---------- */
-const errorText = {
-  unauthorized: '登录已过期，请重新登录。', forbidden: '没有权限执行这个操作。', csrf: '页面已过期，请刷新后重试。',
-  rate_limited: '尝试太频繁，请稍后再试。', expired: '登录已过期，请重新开始。', rejected: '登录被拒绝或已取消。',
-  not_granted: '这个游戏账号不是管理员，不能进入管理台。如需权限请联系服主。', not_found: '玩家不存在或已停用。', invalid_permission: '包含无效的权限。',
-  invalid_item: '这件物品不在可寄送目录中。', invalid_count: '数量需在 1 到 2,147,483,647 之间。', invalid_text: '邮件标题和正文都不能为空。',
-  read_only: '该文件对服务端只读。', unavailable: '服务暂不可用，请稍后再试。', invalid: '请求无效。',
-  unsupported: '这台服务器使用本地认证，请用服务端启动时打印的一次性链接登录。',
+/* ---------- Text ---------- */
+const locales = [
+  {id: 'en_us', tag: 'en-US'}, {id: 'ko_kr', tag: 'ko-KR'}, {id: 'ja_jp', tag: 'ja-JP'}, {id: 'zh_tw', tag: 'zh-TW'}, {id: 'zh_cn', tag: 'zh-CN'},
+];
+const localeStorageKey = 'bd2.console.locale';
+const translations = {};
+let locale = 'en_us';
+function lookup(key) {
+  for (const id of [locale, 'en_us']) {
+    const table = translations[id];
+    if (table && Object.hasOwn(table, key)) return table[key];
+  }
+  return undefined;
+}
+
+const staleRender = Symbol('stale render'), renderPasses = new Map(), renderNodes = new WeakMap();
+function beginRender(id) {
+  const store = typeof id === 'string' ? renderPasses : renderNodes;
+  const pass = {id, locale, store};
+  store.set(id, pass);
+  return pass;
+}
+function rendered(value, pass) {
+  if (locale !== pass.locale || pass.store.get(pass.id) !== pass) throw staleRender;
+  return value;
+}
+const {Component} = window.BD2Text;
+Component.configure({lookup, locale: () => locale, formatURL: '/admin/api/text/format'});
+const t = key => lookup(key) ?? key;
+const dynamicText = async (key, ...args) => await Component.translatable(key, ...args.map(value => value && typeof value.getString === 'function' ? value : value == null ? '' : String(value))).getString();
+// Server-provided text: the translation when one exists, otherwise the server's own text.
+const tr = (key, fallback) => lookup(key) ? t(key) : (fallback ?? '');
+async function rich(key, ...values) {
+  return [await dynamicText(key, ...values.map(value => value && value.nodeType ? value.textContent : value))];
+}
+const tag = () => locales.find(l => l.id === locale).tag;
+const listJoin = items => items.join(t('console.list.separator'));
+function detectLocale() {
+  try { const saved = localStorage.getItem(localeStorageKey); if (locales.some(l => l.id === saved)) return saved; } catch {}
+  for (const raw of navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']) {
+    const name = String(raw).toLowerCase();
+    if (name.startsWith('ko')) return 'ko_kr';
+    if (name.startsWith('ja')) return 'ja_jp';
+    if (/^zh-(tw|hk|mo|hant)(-|$)/.test(name)) return 'zh_tw';
+    if (name.startsWith('zh')) return 'zh_cn';
+    if (name.startsWith('en')) return 'en_us';
+  }
+  return 'en_us';
+}
+async function loadTranslations() {
+  await Promise.all(locales.map(async l => {
+    try {
+      const response = await fetch('assets/lang/' + l.id + '.json', {credentials: 'same-origin'});
+      if (response.ok) translations[l.id] = await response.json();
+    } catch {}
+  }));
+}
+function localize(root = document) {
+  root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+  root.querySelectorAll('[data-i18n-attr]').forEach(node => node.dataset.i18nAttr.split(';').forEach(pair => {
+    const at = pair.indexOf(':');
+    if (at > 0) node.setAttribute(pair.slice(0, at).trim(), t(pair.slice(at + 1).trim()));
+  }));
+}
+async function applyLocale(id) {
+  locale = id;
+  for (const node of noted) if (!node.isConnected) noted.delete(node);
+  document.documentElement.lang = tag();
+  document.title = t('console.title');
+  $('locale').value = id;
+  localize();
+  $('ask-ok').textContent = t('console.dialog.ok');
+  await Promise.all([...noted].map(async node => node._text ? await note(node, node._text) : undefined));
+}
+$('locale').onchange = async () => {
+  const id = $('locale').value;
+  try { localStorage.setItem(localeStorageKey, id); } catch {}
+  await applyLocale(id); await rerender();
 };
+
+/* ---------- Common ---------- */
 async function api(path, {method = 'GET', body, headers = {}} = {}) {
   const h = {...headers};
   if (method !== 'GET') {
@@ -22,14 +94,18 @@ async function api(path, {method = 'GET', body, headers = {}} = {}) {
   const text = await response.text();
   let value = null;
   if (text) { try { value = JSON.parse(text); } catch { value = null; } }
-  if (response.status === 401 && path !== 'session') { boot(); }
+  if (response.status === 401 && path !== 'session') { await boot(); }
   if (!response.ok && response.status !== 202) {
-    const error = new Error((value && errorText[value.code]) || (value && value.error) || '请求失败（' + response.status + '）');
-    error.status = response.status; error.code = value && value.code; error.value = value;
+    const code = value && value.code;
+    const component = code && lookup('console.error.' + code) !== undefined ? Component.translatable('console.error.' + code)
+      : value && value.error ? Component.literal(value.error) : Component.translatable('console.error.http', String(response.status));
+    const error = new Error(await component.getString());
+    error.text = component; error.status = response.status; error.code = code; error.value = value;
     throw error;
   }
   return {status: response.status, value};
 }
+const textOf = value => value instanceof Error ? value.text || Component.literal(value.message) : value instanceof Component ? value : Component.literal(value == null ? '' : String(value));
 function esc(value) { const e = document.createElement('span'); e.textContent = value == null ? '' : String(value); return e.innerHTML.replace(/"/g, '&quot;'); }
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -44,17 +120,32 @@ function el(tag, attrs = {}, ...children) {
   for (const child of children.flat()) if (child != null && child !== false) node.append(child.nodeType ? child : document.createTextNode(child));
   return node;
 }
-function say(node, text, tone = '') { node.textContent = text; node.className = 'status' + (tone ? ' ' + tone : ''); }
+// Dynamic text lines remember their text so a language switch can redraw them.
+const noted = new Set();
+async function note(node, text) {
+  const component = textOf(text), pass = {}; node._text = component; node._textPass = pass; delete node.dataset.i18n; noted.add(node);
+  const value = await component.getString();
+  if (node._textPass === pass) node.textContent = value;
+}
+async function say(node, text, tone = '') { await note(node, text); node.className = 'status' + (tone ? ' ' + tone : ''); }
 let toastTimer;
-function toast(text) { const t = $('toast'); t.textContent = text; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800); }
-async function copy(text, label) { try { await navigator.clipboard.writeText(text); toast(label + '已复制'); } catch { toast('复制失败，请手动选择'); } }
-function ask({title, body, extra = null, ok = '确定', danger = false}) {
+async function toast(text) {
+    const renderPass = beginRender('toast');
+    try { const box = $('toast'); box.textContent = rendered(await textOf(text).getString(), renderPass); box.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => box.classList.remove('show'), 1800);
+    } catch (error) { if (error !== staleRender) throw error; }
+  }
+async function copy(text, label) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { await toast(Component.translatable('console.copy.failed')); return; }
+  await toast(Component.translatable('console.copy.done', label));
+}
+function ask({title, body, extra = null, ok = t('console.dialog.ok'), danger = false}) {
   const dialog = $('ask');
   $('ask-title').textContent = title; $('ask-body').textContent = body;
   $('ask-extra').replaceChildren(...(extra ? [extra] : []));
   $('ask-ok').textContent = ok; $('ask-ok').classList.toggle('seal', true);
   return new Promise(resolve => {
-    const done = answer => { $('ask-ok').onclick = $('ask-cancel').onclick = dialog.oncancel = null; dialog.close(); resolve(answer); };
+    const done = answer => { $('ask-ok').onclick = $('ask-cancel').onclick = dialog.oncancel = null; dialog.close(); $('ask-ok').textContent = t('console.dialog.ok'); resolve(answer); };
     $('ask-ok').onclick = () => done(true); $('ask-cancel').onclick = () => done(false);
     dialog.oncancel = event => { event.preventDefault(); done(false); };
     dialog.showModal(); (danger ? $('ask-cancel') : $('ask-ok')).focus();
@@ -62,27 +153,35 @@ function ask({title, body, extra = null, ok = '确定', danger = false}) {
 }
 const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const fmt = n => Number(n).toLocaleString('zh-CN');
+const fmt = n => Number(n).toLocaleString(tag());
+const dateTime = value => new Date(value).toLocaleString(tag());
 const playerLabel = p => p ? (p.uid ? 'UID ' + p.uid : '') + (p.name ? ' · ' + p.name : '') : '';
 
-/* ---------- 登录与路由 ---------- */
+/* ---------- Sign-in and routing ---------- */
 let loginTimer;
 async function boot() {
   clearTimeout(loginTimer);
   try {
     state.session = (await api('session')).value;
   } catch (error) {
-    showOnly('sign-in'); say($('sign-in-status'), error.message, 'err'); return;
+    showOnly('sign-in'); await say($('sign-in-status'), error, 'err'); return;
   }
-  if (!state.session.signed_in) return showSignIn();
+  if (!state.session.signed_in) return await showSignIn();
   $('tabs').hidden = false; $('account').hidden = false;
   const views = allowedViews();
   document.querySelectorAll('#tabs a').forEach(a => { a.hidden = !views.includes(a.dataset.view); });
-  const player = state.session.player;
-  $('account-name').textContent = player ? playerLabel(player) + (isOwner() ? '（服主）' : '（管理员）') : '服主';
+  await paintAccount();
   if (can('players.view')) await loadPlayers();
-  route();
+  await route();
 }
+async function paintAccount() {
+    const renderPass = beginRender('account');
+    try {
+    const player = state.session && state.session.player;
+    $('account-name').textContent = player ? rendered(await dynamicText(isOwner() ? 'console.account.as_owner' : 'console.account.as_admin', playerLabel(player)), renderPass) : t('console.role.owner');
+
+    } catch (error) { if (error !== staleRender) throw error; }
+  }
 const isOwner = () => state.session && state.session.role === 'owner';
 const can = permission => isOwner() || (state.session && (state.session.permissions || []).includes(permission));
 function allowedViews() {
@@ -90,84 +189,108 @@ function allowedViews() {
   if (can('mail.send')) views.push('mail');
   if (can('players.view')) views.push('players');
   if (state.session.configuration) views.push('config');
+  if (isOwner()) views.push('updates');
   return views;
 }
 function showOnly(view) {
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.id !== 'view-' + view; });
   document.querySelectorAll('#tabs a').forEach(a => { if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
 }
-function showSignIn() {
-  $('tabs').hidden = true; $('account').hidden = true; showOnly('sign-in');
-  const providers = state.session.providers || [];
-  if (state.session.mode !== 'oauth' || !providers.length) {
-    $('sign-in-lead').textContent = '这台服务器使用本地认证。请打开服务端启动时在控制台打印的一次性登录链接。';
-    $('providers').replaceChildren(); return;
+const providerNames = {discord: 'Discord', google: 'Google'};
+async function showSignIn() {
+    const renderPass = beginRender('sign-in');
+    try {
+    $('tabs').hidden = true; $('account').hidden = true; showOnly('sign-in');
+    const providers = state.session.providers || [];
+    if (state.session.mode !== 'oauth' || !providers.length) {
+      rendered(await note($('sign-in-lead'), Component.translatable('console.signin.local')), renderPass);
+      $('providers').replaceChildren(); return;
+    }
+    rendered(await note($('sign-in-lead'), Component.translatable('console.signin.oauth')), renderPass);
+    $('providers').replaceChildren(...rendered(await Promise.all(providers.map(async p => el('button', {type: 'button', class: 'btn' + (p === providers[0] ? ' seal' : ''), onclick: async () => await startLogin(p)}, await dynamicText('console.signin.provider', providerNames[p] || p)))), renderPass));
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  $('sign-in-lead').textContent = '使用你的游戏账号登录。只有服主和服主任命的管理员可以进入。';
-  const names = {discord: 'Discord', google: 'Google'};
-  $('providers').replaceChildren(...providers.map(p => el('button', {type: 'button', class: 'btn' + (p === providers[0] ? ' seal' : ''), onclick: () => startLogin(p)}, '使用 ' + (names[p] || p) + ' 登录')));
-}
 async function startLogin(provider) {
   const popup = window.open('about:blank', 'bd2-console-login');
-  say($('sign-in-status'), '正在打开登录页面……');
+  await say($('sign-in-status'), Component.translatable('console.signin.opening'));
   try {
     const {value} = await api('login/start', {method: 'POST', body: {provider}});
-    if (popup) { popup.opener = null; popup.location.href = value.start_url; say($('sign-in-status'), '请在新窗口完成登录，完成后这里会自动进入。'); }
-    else { $('sign-in-status').replaceChildren('浏览器拦截了新窗口，请点击：', el('a', {href: value.start_url, target: '_blank', rel: 'noopener'}, '打开登录页面')); }
-    pollLogin(value.poll_interval_ms || 2000);
-  } catch (error) { if (popup) popup.close(); say($('sign-in-status'), error.message, 'err'); }
+    if (popup) { popup.opener = null; popup.location.href = value.start_url; await say($('sign-in-status'), Component.translatable('console.signin.continue_in_popup')); }
+    else { $('sign-in-status')._text = null; const link = el('a', {href: value.start_url, target: '_blank', rel: 'noopener'}, t('console.signin.open_page')); $('sign-in-status').replaceChildren(...await rich('console.signin.popup_blocked', link), ' ', link); }
+    await pollLogin(value.poll_interval_ms || 2000);
+  } catch (error) { if (popup) popup.close(); await say($('sign-in-status'), error, 'err'); }
 }
 async function pollLogin(interval) {
   try {
     const result = await api('login/poll', {method: 'POST'});
-    if (result.status === 202) { loginTimer = setTimeout(() => pollLogin(interval), interval); return; }
-    say($('sign-in-status'), '登录成功。', 'ok'); boot();
-  } catch (error) { say($('sign-in-status'), error.message, 'err'); }
+    if (result.status === 202) { loginTimer = setTimeout(async () => await pollLogin(interval), interval); return; }
+    await say($('sign-in-status'), Component.translatable('console.signin.success'), 'ok'); await boot();
+  } catch (error) { await say($('sign-in-status'), error, 'err'); }
 }
 $('logout').onclick = async () => {
-  if (config.dirty() && !await ask({title: '放弃未保存的配置？', body: '退出会丢弃尚未保存的配置改动。', ok: '退出', danger: true})) return;
+  if (config.dirty() && !await ask({title: t('console.logout.confirm.title'), body: t('console.logout.confirm.body'), ok: t('console.logout.confirm.ok'), danger: true})) return;
   config.reset();
   try { await api('logout', {method: 'POST'}); } catch {}
-  state.session = null; boot();
+  state.session = null; await boot();
 };
 let currentView = '';
 async function route() {
   if (!state.session || !state.session.signed_in) return;
   const views = allowedViews();
-  if (!views.length) { showOnly('sign-in'); $('providers').replaceChildren(); $('sign-in-lead').textContent = '服主还没有给你分配任何权限。'; return; }
+  if (!views.length) { showOnly('sign-in'); $('providers').replaceChildren(); await note($('sign-in-lead'), Component.translatable('console.signin.no_permissions')); return; }
   let view = (location.hash || '#' + views[0]).slice(1);
   if (!views.includes(view)) view = views[0];
   if (currentView === 'config' && view !== 'config' && config.dirty()) {
-    if (!await ask({title: '离开前保存配置？', body: '有尚未保存的配置改动。离开后改动会保留在本页，直到刷新或退出。', ok: '仍然离开'})) { history.replaceState(null, '', '#config'); return; }
+    if (!await ask({title: t('console.leave.title'), body: t('console.leave.body'), ok: t('console.leave.ok')})) { history.replaceState(null, '', '#config'); return; }
   }
   currentView = view; showOnly(view);
-  if (view === 'mail') mailTool.open();
-  if (view === 'players') roster.open();
-  if (view === 'config') config.open();
+  if (view === 'updates') await updatesView.open(); else updatesView.close();
+  if (view === 'mail') await mailTool.open();
+  if (view === 'players') await roster.open();
+  if (view === 'config') await config.open();
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('beforeunload', event => { if (config.dirty()) { event.preventDefault(); event.returnValue = ''; } });
-
-async function loadPlayers() {
-  try { state.players = (await api('players')).value.players; } catch (error) { state.players = []; toast(error.message); }
+// Redraws the visible screen in the newly selected language without reloading data.
+async function rerender() {
+  if (!state.session) return;
+  if (!state.session.signed_in) { await showSignIn(); return; }
+  await paintAccount();
+  if (currentView === 'mail') await mailTool.relabel();
+  if (currentView === 'players') await roster.relabel();
+  if (currentView === 'config') await config.relabel();
+  if (currentView === 'updates') await updatesView.relabel();
 }
 
-/* ---------- 邮件发放 ---------- */
-const categoryNames = {currency: '货币（直接入账）', resource: '资源', food: '料理', cooking: '烹饪配方', random_box: '随机箱', quest_item: '任务物品', use_item: '使用物品', collection: '收藏品', my_room: '我的房间物品', instant_use: '即时使用物品'};
+async function loadPlayers() {
+  try { state.players = (await api('players')).value.players; } catch (error) { state.players = []; await toast(error); }
+}
+
+/* ---------- Mail ---------- */
+const categoryName = category => tr('console.mail.category.' + category, category);
 const mailTool = (() => {
-  let all = [], cats = [], category = '', view = [], cursor = -1, chosen = null, byKey = new Map(), target = null, loaded = false, submitting = false, logCount = 0;
+  let all = [], cats = [], category = '', view = [], cursor = -1, chosen = null, byKey = new Map(), target = null, loaded = false, submitting = false, inventory = null, waitingCatalog = false;
+  const log = [];
   const keyOf = x => x.element_type + ':' + x.id;
-  const catName = x => categoryNames[x.category] || x.category;
-  function details(x) {
-    if (x.category === 'currency') return '邮件领取后直接叠加到账户余额，不生成背包物品。';
+  const catName = x => categoryName(x.category);
+  async function details(x) {
+    if (x._detailsLocale === locale) return x._details;
+    const language = locale;
+    const text = await itemDetails(x);
+    if (language !== locale) return await details(x);
+    x._detailsLocale = language; x._details = text; return text;
+  }
+  async function itemDetails(x) {
+    if (x.category === 'currency') return t('console.mail.detail.currency');
     if (!x.source_boxes) return '';
-    const parts = ['直接发放此物品（无需开箱）'];
-    if (x.original_name) parts.push('原始资源名：' + x.original_name);
-    if (x.box_name) parts.push('确定性箱名称：' + x.box_name);
-    if (x.product_name) parts.push('商品名：' + x.product_name);
-    const boxes = x.source_boxes.slice(0, 4).join('、') + (x.source_boxes.length > 4 ? ' 等 ' + x.source_boxes.length + ' 个' : '');
-    parts.push('固定箱映射：' + boxes);
-    return parts.join('；');
+    const parts = [t('console.mail.detail.direct')];
+    if (x.original_name) parts.push(await dynamicText('console.mail.detail.original_name', x.original_name));
+    if (x.box_name) parts.push(await dynamicText('console.mail.detail.box_name', x.box_name));
+    if (x.product_name) parts.push(await dynamicText('console.mail.detail.product_name', x.product_name));
+    const first = listJoin(x.source_boxes.slice(0, 4));
+    parts.push(await dynamicText('console.mail.detail.boxes', x.source_boxes.length > 4 ? await dynamicText('console.mail.detail.boxes_more', first, x.source_boxes.length) : first));
+    return parts.join(t('console.sentence.separator'));
   }
   function highlight(text, term) {
     if (!term) return esc(text);
@@ -175,30 +298,36 @@ const mailTool = (() => {
     if (at < 0) return esc(text);
     return esc(text.slice(0, at)) + '<mark>' + esc(text.slice(at, at + term.length)) + '</mark>' + esc(text.slice(at + term.length));
   }
-  const subline = x => x.aliases && x.aliases.length ? '又名 ' + x.aliases.join('、') : details(x);
+  const subline = async x => x.aliases && x.aliases.length ? await dynamicText('console.mail.aliases', listJoin(x.aliases)) : await details(x);
+  const searchText = x => [x.id, x.element_type, keyOf(x), x.name, catName(x), ...(x.aliases || []), x.original_name, x.box_name, x.product_name, ...(x.source_boxes || []), t(x.category === 'currency' ? 'console.mail.detail.currency' : 'console.mail.detail.direct')].filter(value => value != null).join(' ').toLowerCase();
   function buildCategories() {
     const counts = new Map();
     all.forEach(x => counts.set(x.category, (counts.get(x.category) || 0) + 1));
-    cats = [['', '全部', all.length], ...[...counts].map(([key, n]) => [key, categoryNames[key] || key, n])];
-    $('cats').innerHTML = cats.map(([value, label, n], i) => `<button type="button" class="chip" data-i="${i}" aria-pressed="${value === category}">${esc(label)}<small>${n}</small></button>`).join('');
+    cats = [['', t('console.mail.category_all'), all.length], ...[...counts].map(([key, n]) => [key, categoryName(key), n])];
+    $('cats').innerHTML = cats.map(([value, label, n], i) => `<button type="button" class="chip" data-i="${i}" aria-pressed="${value === category}">${esc(label)}<small>${esc(fmt(n))}</small></button>`).join('');
   }
-  $('cats').onclick = event => {
+  $('cats').onclick = async event => {
     const chip = event.target.closest('.chip'); if (!chip) return;
     category = cats[+chip.dataset.i][0];
     $('cats').querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c === chip));
-    render(); $('q').focus();
+    await render(); $('q').focus();
   };
-  function render() {
-    const terms = $('q').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
-    const matches = all.filter(x => (!category || x.category === category) && terms.every(t => x._h.includes(t)));
-    view = matches.slice(0, 500); cursor = terms.length && view.length ? 0 : -1;
-    $('count').textContent = all.length ? `${matches.length === all.length ? '共' : '匹配 ' + matches.length + ' /'} ${all.length} 项${matches.length > view.length ? ' · 显示前 ' + view.length + ' 项' : ''}` : '';
-    const term = terms.reduce((a, b) => b.length > a.length ? b : a, ''), picked = chosen && keyOf(chosen);
-    $('items').innerHTML = view.map((x, i) => {
-      const sub = subline(x);
-      return `<li role="option" id="opt-${i}" data-i="${i}" class="item${keyOf(x) === picked ? ' chosen' : ''}" aria-selected="${keyOf(x) === picked}"><span class="n">${highlight(x.name, term)}</span><span class="c">${esc(catName(x))}</span><span class="i"><i>${x.element_type}·</i>${highlight(String(x.id), term)}</span>${sub ? `<span class="d" title="${esc(details(x) || sub)}">${highlight(sub, term)}</span>` : ''}</li>`;
-    }).join('') || `<li class="empty">没有匹配的物品${category ? `<br><small>当前只看「${esc(categoryNames[category] || category)}」，可以切回「全部」试试</small>` : ''}</li>`;
-    paintCursor(true); renderRecent(!terms.length);
+  async function render() {
+    const renderPass = beginRender('mail-items');
+    try {
+      const terms = $('q').value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const matches = all.filter(x => (!category || x.category === category) && terms.every(term => x._h.includes(term)));
+      view = matches.slice(0, 500); cursor = terms.length && view.length ? 0 : -1;
+      $('count').textContent = all.length ? [matches.length === all.length ? rendered(await dynamicText('console.mail.count.all', fmt(all.length)), renderPass) : rendered(await dynamicText('console.mail.count.matched', fmt(matches.length), fmt(all.length)), renderPass),
+        matches.length > view.length ? rendered(await dynamicText('console.mail.count.showing', fmt(view.length)), renderPass) : ''].filter(Boolean).join(' · ') : '';
+      const term = terms.reduce((a, b) => b.length > a.length ? b : a, ''), picked = chosen && keyOf(chosen);
+      $('items').innerHTML = rendered(await Promise.all(view.map(async (x, i) => {
+        const sub = await subline(x);
+        return `<li role="option" id="opt-${i}" data-i="${i}" class="item${keyOf(x) === picked ? ' chosen' : ''}" aria-selected="${keyOf(x) === picked}"><span class="n">${highlight(x.name, term)}</span><span class="c">${esc(catName(x))}</span><span class="i"><i>${x.element_type}·</i>${highlight(String(x.id), term)}</span>${sub ? `<span class="d" title="${esc(await details(x) || sub)}">${highlight(sub, term)}</span>` : ''}</li>`;
+      })), renderPass).join('') || `<li class="empty">${esc(t('console.mail.items.none'))}${category ? `<br><small>${esc(rendered(await dynamicText('console.mail.items.none_in_category', categoryName(category)), renderPass))}</small>` : ''}</li>`;
+      paintCursor(true); renderRecent(!terms.length);
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
   function paintCursor(scroll) {
     const old = $('items').querySelector('.active'); if (old) old.classList.remove('active');
@@ -207,12 +336,12 @@ const mailTool = (() => {
     $('q').setAttribute('aria-activedescendant', row ? row.id : '');
   }
   $('items').onmousemove = event => { const row = event.target.closest('[data-i]'); if (row && +row.dataset.i !== cursor) { cursor = +row.dataset.i; paintCursor(false); } };
-  $('items').onclick = event => { const row = event.target.closest('[data-i]'); if (row) pick(view[+row.dataset.i]); };
+  $('items').onclick = async event => { const row = event.target.closest('[data-i]'); if (row) await pick(view[+row.dataset.i]); };
   $('q').oninput = render;
-  $('q').onkeydown = event => {
+  $('q').onkeydown = async event => {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); if (!view.length) return; cursor = (cursor + (event.key === 'ArrowDown' ? 1 : -1) + view.length) % view.length; paintCursor(true); }
-    else if (event.key === 'Enter') { event.preventDefault(); const x = view[Math.max(cursor, 0)]; if (x) pick(x); }
-    else if (event.key === 'Escape') { event.preventDefault(); if ($('q').value) { $('q').value = ''; render(); } else $('q').blur(); }
+    else if (event.key === 'Enter') { event.preventDefault(); const x = view[Math.max(cursor, 0)]; if (x) await pick(x); }
+    else if (event.key === 'Escape') { event.preventDefault(); if ($('q').value) { $('q').value = ''; await render(); } else $('q').blur(); }
   };
   const recentKey = 'bd2-console-recent';
   function recentList() { try { return JSON.parse(localStorage.getItem(recentKey)) || []; } catch { return []; } }
@@ -220,95 +349,122 @@ const mailTool = (() => {
   function renderRecent(visible) {
     const items = recentList().map(k => byKey.get(k)).filter(Boolean), box = $('recent');
     box.hidden = !visible || !items.length; if (box.hidden) return;
-    box.replaceChildren(box.firstElementChild, ...items.map(x => el('button', {type: 'button', title: catName(x) + ' · ' + keyOf(x), onclick: () => pick(x)}, x.name)));
+    box.replaceChildren(box.firstElementChild, ...items.map(x => el('button', {type: 'button', title: catName(x) + ' · ' + keyOf(x), onclick: async () => await pick(x)}, x.name)));
   }
-  function pick(x) {
-    chosen = x; paintParcel();
+  async function pick(x) {
+    chosen = x; await paintParcel();
     $('items').querySelectorAll('.item').forEach(row => { const on = keyOf(view[+row.dataset.i]) === keyOf(x); row.classList.toggle('chosen', on); row.setAttribute('aria-selected', on); });
-    say($('status'), ''); $('quantity').focus(); $('quantity').select();
+    await say($('status'), ''); $('quantity').focus(); $('quantity').select();
   }
-  function unpick() { chosen = null; paintParcel(); $('items').querySelectorAll('.chosen').forEach(row => { row.classList.remove('chosen'); row.setAttribute('aria-selected', false); }); $('q').focus(); }
-  function paintParcel() {
-    const parcel = $('parcel'); parcel.classList.toggle('empty', !chosen);
-    if (!chosen) { parcel.innerHTML = '<p>从目录中挑一件物品放进来<br><span>或按 <kbd>/</kbd> 直接搜索</span></p>'; parcel.onclick = () => $('q').focus(); return; }
-    parcel.onclick = null;
-    const d = details(chosen);
-    parcel.innerHTML = `<div class="p-name">${esc(chosen.name)}</div><div class="p-meta"><span>${esc(catName(chosen))}</span><code>类型 ${chosen.element_type} · ID ${chosen.id}</code></div>${d ? `<p class="p-detail">${esc(d)}</p>` : ''}<button type="button" class="x" aria-label="移出包裹单" title="移出包裹单">×</button>`;
-    parcel.querySelector('.x').onclick = unpick;
+  async function unpick() { chosen = null; await paintParcel(); $('items').querySelectorAll('.chosen').forEach(row => { row.classList.remove('chosen'); row.setAttribute('aria-selected', false); }); $('q').focus(); }
+  async function paintParcel() {
+    const renderPass = beginRender('mail-parcel');
+    try {
+      const parcel = $('parcel'); parcel.classList.toggle('empty', !chosen);
+      if (!chosen) {
+        parcel.replaceChildren(el('p', {}, t('console.mail.parcel.empty'), el('br'), el('span', {}, ...rendered(await rich('console.mail.parcel.search_hint', el('kbd', {}, '/')), renderPass))));
+        parcel.onclick = () => $('q').focus(); return;
+      }
+      parcel.onclick = null;
+      const d = rendered(await details(chosen), renderPass);
+      parcel.replaceChildren(el('div', {class: 'p-name'}, chosen.name),
+        el('div', {class: 'p-meta'}, el('span', {}, catName(chosen)), el('code', {}, rendered(await dynamicText('console.mail.parcel.meta', chosen.element_type, chosen.id), renderPass))),
+        d ? el('p', {class: 'p-detail'}, d) : null,
+        el('button', {type: 'button', class: 'x', 'aria-label': t('console.mail.parcel.remove'), title: t('console.mail.parcel.remove'), onclick: unpick}, '×'));
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  const units = {k: 1e3, '千': 1e3, w: 1e4, '万': 1e4, m: 1e6, '百万': 1e6, '亿': 1e8};
-  function quantity() { const m = $('quantity').value.replace(/[\s,，_]/g, '').toLowerCase().match(/^(\d+(?:\.\d+)?)(k|千|w|万|m|百万|亿)?$/); return m ? Math.round(parseFloat(m[1]) * (units[m[2]] || 1)) : NaN; }
-  function checkQuantity() {
-    const n = quantity(), input = $('quantity'), hint = $('qty-hint'); let problem = '';
-    if (!Number.isInteger(n) || n < 1) problem = '请输入正整数'; else if (n > 2147483647) problem = '不能超过 2,147,483,647';
+  // Quantity suffixes: Latin k/w/m and the CJK numerals for thousand, ten thousand, million and hundred million.
+  const units = {k: 1e3, w: 1e4, m: 1e6, '\u5343': 1e3, '\ucc9c': 1e3, '\u4e07': 1e4, '\u842c': 1e4, '\ub9cc': 1e4, '\u767e\u4e07': 1e6, '\u767e\u842c': 1e6, '\ubc31\ub9cc': 1e6, '\u4ebf': 1e8, '\u5104': 1e8, '\uc5b5': 1e8};
+  const unitPattern = new RegExp('^(\\d+(?:\\.\\d+)?)(' + Object.keys(units).sort((a, b) => b.length - a.length).join('|') + ')?$');
+  function quantity() { const m = $('quantity').value.replace(/[\s,\uff0c_]/g, '').toLowerCase().match(unitPattern); return m ? Math.round(parseFloat(m[1]) * (units[m[2]] || 1)) : NaN; }
+  async function checkQuantity() {
+    const n = quantity(), input = $('quantity'), hint = $('qty-hint'), typedValue = input.value, language = locale; let problem = '';
+    delete hint.dataset.i18n;
+    if (!Number.isInteger(n) || n < 1) problem = t('console.mail.quantity.positive'); else if (n > 2147483647) problem = await dynamicText('console.mail.quantity.too_large', fmt(2147483647));
+    if (input.value !== typedValue || locale !== language) return await checkQuantity();
     input.setCustomValidity(problem);
     const typed = input.value.trim() !== '';
     hint.classList.toggle('err', !!problem && typed);
-    hint.textContent = problem && typed ? problem : !problem && String(n) !== input.value.trim() ? '= ' + fmt(n) : '支持 5k、2w、3万';
+    hint.textContent = problem && typed ? problem : !problem && String(n) !== input.value.trim() ? '= ' + fmt(n) : t('console.mail.quantity.hint');
     return problem ? NaN : n;
   }
   $('quantity').oninput = checkQuantity;
-  $('quantity').onkeydown = event => {
+  $('quantity').onkeydown = async event => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     event.preventDefault(); const n = quantity() || 0, step = event.shiftKey ? 10 : 1;
-    $('quantity').value = Math.max(1, n + (event.key === 'ArrowUp' ? step : -step)); checkQuantity();
+    $('quantity').value = Math.max(1, n + (event.key === 'ArrowUp' ? step : -step)); await checkQuantity();
   };
-  $('presets').onclick = event => { const b = event.target.closest('[data-q]'); if (!b) return; const add = +b.dataset.q; $('quantity').value = event.shiftKey ? (quantity() || 0) + add : add; checkQuantity(); $('quantity').focus(); };
-  $('title').oninput = () => { $('letter-peek').textContent = $('title').value || '（无标题）'; };
+  $('presets').onclick = async event => { const b = event.target.closest('[data-q]'); if (!b) return; const add = +b.dataset.q; $('quantity').value = event.shiftKey ? (quantity() || 0) + add : add; await checkQuantity(); $('quantity').focus(); };
+  const paintPeek = () => { $('letter-peek').textContent = $('title').value || t('console.mail.letter.untitled'); };
+  $('title').oninput = paintPeek;
   document.addEventListener('keydown', event => {
     if ($('ask').open || currentView !== 'mail' || $('tools').disabled) return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
     if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); $('q').focus(); $('q').select(); }
     else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('form').requestSubmit(); }
   });
-  function addLog(entry) {
-    const li = el('li', {},
+  async function logEntry(entry) {
+    return el('li', {},
       el('span', {class: 'what'}, el('b', {}, entry.item.name), ' × ' + fmt(entry.count)),
-      el('span', {class: 'meta'}, entry.time + ' · 寄往 ' + playerLabel(entry.player)),
-      el('button', {type: 'button', class: 'again', title: '把这件物品和数量重新放进包裹单', onclick: () => { pick(entry.item); $('quantity').value = entry.count; checkQuantity(); $('quantity').select(); }}, '再来一份'),
-      el('button', {type: 'button', class: 'ident', title: '点击复制发放标识', onclick: () => copy(entry.identity, '发放标识')}, entry.identity));
-    $('log').prepend(li); $('log-empty').hidden = true; $('log-count').textContent = ++logCount + ' 件';
+      el('span', {class: 'meta'}, await dynamicText('console.mail.log.meta', entry.time.toLocaleTimeString(tag(), {hour: '2-digit', minute: '2-digit'}), playerLabel(entry.player))),
+      el('button', {type: 'button', class: 'again', title: t('console.mail.log.again_title'), onclick: async () => { await pick(entry.item); $('quantity').value = entry.count; await checkQuantity(); $('quantity').select(); }}, t('console.mail.log.again')),
+      el('button', {type: 'button', class: 'ident', title: t('console.mail.log.identity_title'), onclick: async () => await copy(entry.identity, t('console.mail.log.identity'))}, entry.identity));
+  }
+  async function paintLog() {
+    const renderPass = beginRender('mail-log');
+    try {
+      $('log').replaceChildren(...rendered(await Promise.all(log.map(logEntry)), renderPass).reverse());
+      $('log-empty').hidden = !!log.length; $('log-count').textContent = log.length ? rendered(await dynamicText('console.mail.log.count', fmt(log.length)), renderPass) : '';
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
   function showRecipient(player) {
     const display = $('uid-display');
     display.textContent = player ? player.uid || '——' : '——'; display.classList.toggle('none', !player);
     $('slip-uid').textContent = player ? player.uid : '—';
-    $('recipient-note').textContent = player ? (player.name || '') : '还没有可以寄件的玩家。玩家首次登录游戏后会出现在这里。';
+    $('recipient-note').textContent = player ? (player.name || '') : t('console.mail.recipient.none');
   }
-  $('uid-display').onclick = () => { if (target && target.uid) copy(target.uid, 'UID '); };
+  $('uid-display').onclick = async () => { if (target && target.uid) await copy(target.uid, 'UID'); };
   function showInventory(value) {
+    inventory = value;
     const on = value.unlimited, l = value.limits;
     $('unlimited-inventory').checked = on;
     $('unlimited-inventory').disabled = !can('players.inventory');
-    $('unlimited-inventory').closest('label').title = can('players.inventory') ? '' : '没有调整背包容量的权限';
-    $('inventory-limits').innerHTML = `<span></span><span class="h">道具</span><span class="h">装备</span><span class="lab${on ? '' : ' on'}">普通容量</span><b>${l.items.default}</b><b>${l.equipment.default}</b><span class="lab${on ? ' on' : ''}">无限模式</span><b>${l.items.maximum}</b><b>${l.equipment.maximum}</b>`;
+    $('unlimited-inventory').closest('label').title = can('players.inventory') ? '' : t('console.mail.inventory.no_permission');
+    $('inventory-limits').replaceChildren(el('span'), el('span', {class: 'h'}, t('console.mail.inventory.items')), el('span', {class: 'h'}, t('console.mail.inventory.equipment')),
+      el('span', {class: 'lab' + (on ? '' : ' on')}, t('console.mail.inventory.normal')), el('b', {}, fmt(l.items.default)), el('b', {}, fmt(l.equipment.default)),
+      el('span', {class: 'lab' + (on ? ' on' : '')}, t('console.mail.inventory.unlimited')), el('b', {}, fmt(l.items.maximum)), el('b', {}, fmt(l.equipment.maximum)));
   }
   async function select(accountID) {
     target = state.players.find(p => p.account_id === accountID) || null;
-    showRecipient(target); $('tools').disabled = true; say($('status'), ''); say($('inventory-status'), '');
-    $('lock-note').textContent = target ? '正在读取玩家设置……' : '没有可以寄件的玩家';
+    showRecipient(target); $('tools').disabled = true; await say($('status'), ''); await say($('inventory-status'), ''); waitingCatalog = false;
+    await note($('lock-note'), Component.translatable(target ? 'console.mail.lock.loading_player' : 'console.mail.lock.no_player'));
     if (!target) return;
     try {
       const requested = target.account_id;
       const {value} = await api('players/' + encodeURIComponent(requested) + '/inventory');
-      if (target && target.account_id === requested) { showInventory(value); $('tools').disabled = !loaded; $('lock-note').textContent = loaded ? '' : '正在读取物品目录……'; }
-    } catch (error) { $('lock-note').textContent = error.message; }
+      if (target && target.account_id === requested) {
+        showInventory(value); $('tools').disabled = !loaded; waitingCatalog = !loaded;
+        await note($('lock-note'), loaded ? '' : Component.translatable('console.mail.catalog_loading'));
+      }
+    } catch (error) { await note($('lock-note'), error); }
   }
-  $('player').onchange = () => select($('player').value);
+  $('player').onchange = async () => await select($('player').value);
   $('form').onsubmit = async event => {
     event.preventDefault(); if (submitting || !target) return;
-    if (!chosen) { say($('status'), '请先在目录中挑选要寄出的物品。', 'err'); const parcel = $('parcel'); parcel.classList.remove('shake'); void parcel.offsetWidth; parcel.classList.add('shake'); $('q').focus(); return; }
-    const count = checkQuantity();
+    if (!chosen) { await say($('status'), Component.translatable('console.mail.pick_first'), 'err'); const parcel = $('parcel'); parcel.classList.remove('shake'); void parcel.offsetWidth; parcel.classList.add('shake'); $('q').focus(); return; }
+    const count = await checkQuantity();
     if (!$('title').checkValidity() || !$('body').checkValidity()) $('letter').open = true;
     if (!$('form').reportValidity()) return;
-    submitting = true; const send = $('grant-submit'), player = target, item = chosen; send.disabled = true; $('player').disabled = true;
+    submitting = true; const send = $('grant-submit'), label = send.firstElementChild, player = target, item = chosen; send.disabled = true; $('player').disabled = true;
     try {
       const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/mail', {method: 'POST', body: {element_type: item.element_type, id: item.id, count, title: $('title').value, body: $('body').value}});
-      say($('status'), `已寄往 UID ${player.uid}。玩家刷新游戏邮箱即可领取，无需重启服务端。`, 'ok');
-      addLog({item, count, player, identity: value.identity, time: new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}); remember(item);
-      send.classList.add('done'); send.firstChild.textContent = '已寄出';
-      setTimeout(() => { send.classList.remove('done'); send.firstChild.textContent = '寄出'; }, 1400);
-    } catch (error) { say($('status'), error.message, 'err'); }
+      await say($('status'), Component.translatable('console.mail.sent', String(player.uid)), 'ok');
+      log.push({item, count, player, identity: value.identity, time: new Date()}); await paintLog(); remember(item);
+      send.classList.add('done'); label.textContent = t('console.mail.send.done');
+      setTimeout(() => { send.classList.remove('done'); label.textContent = t('console.mail.send'); }, 1400);
+    } catch (error) { await say($('status'), error, 'err'); }
     finally { submitting = false; send.disabled = false; $('player').disabled = false; }
   };
   $('unlimited-inventory').onchange = async event => {
@@ -316,133 +472,171 @@ const mailTool = (() => {
     try {
       const {value} = await api('players/' + encodeURIComponent(target.account_id) + '/inventory', {method: 'PUT', body: {unlimited: box.checked}});
       showInventory(value); target.unlimited_inventory = value.unlimited;
-      say($('inventory-status'), `已保存 UID ${target.uid} 的设置。玩家重新登录游戏后生效。`, 'ok');
-    } catch (error) { box.checked = old; say($('inventory-status'), error.message, 'err'); }
+      await say($('inventory-status'), Component.translatable('console.mail.inventory.saved', String(target.uid)), 'ok');
+    } catch (error) { box.checked = old; await say($('inventory-status'), error, 'err'); }
     finally { box.disabled = !can('players.inventory'); $('player').disabled = false; }
   };
   async function loadCatalog() {
     try {
       all = (await api('catalog')).value.items;
-      all.forEach(x => { x._h = [x.id, x.element_type, keyOf(x), x.name, catName(x), ...(x.aliases || []), details(x)].join(' ').toLowerCase(); });
-      byKey = new Map(all.map(x => [keyOf(x), x])); buildCategories(); render(); loaded = true;
-      if (target && $('lock-note').textContent === '正在读取物品目录……') { $('tools').disabled = false; }
-    } catch (error) { $('items').innerHTML = `<li class="empty">${esc(error.message)}</li>`; }
+      all.forEach(x => { x._h = searchText(x); });
+      byKey = new Map(all.map(x => [keyOf(x), x])); buildCategories(); await render(); loaded = true;
+      if (target && waitingCatalog) { waitingCatalog = false; await note($('lock-note'), ''); $('tools').disabled = false; }
+    } catch (error) { $('items').replaceChildren(el('li', {class: 'empty'}, error.message)); }
+  }
+  async function relabelCatalog() {
+    const renderPass = beginRender('mail-catalog');
+    try { all.forEach(x => { x._h = searchText(x); }); buildCategories(); rendered(await render(), renderPass);
+    } catch (error) { if (error !== staleRender) throw error; }
+  }
+  async function playerOptions() {
+    const usable = state.players.filter(p => p.active);
+    $('player-selector').hidden = usable.length < 2;
+    const selected = $('player').value, language = locale;
+    const options = await Promise.all(usable.map(async p => new Option(p.owner ? await dynamicText('console.account.as_owner', playerLabel(p)) : playerLabel(p), p.account_id)));
+    if (locale !== language) return await playerOptions();
+    $('player').replaceChildren(...options);
+    if (selected) $('player').value = selected;
+    return usable;
   }
   return {
-    open(accountID) {
-      paintParcel();
-      const usable = state.players.filter(p => p.active);
-      $('player-selector').hidden = usable.length < 2;
-      $('player').replaceChildren(...usable.map(p => new Option(playerLabel(p) + (p.owner ? '（服主）' : ''), p.account_id)));
+    async open(accountID) {
+      await paintParcel(); paintPeek(); await paintLog();
+      const usable = await playerOptions();
       const self = state.session.player && state.session.player.account_id;
       const initial = accountID || (target && usable.some(p => p.account_id === target.account_id) ? target.account_id : null) || (usable.some(p => p.account_id === self) ? self : usable[0] && usable[0].account_id);
       if (initial) $('player').value = initial;
-      if (!loaded && !all.length) loadCatalog();
-      select(initial || '');
+      if (loaded) await relabelCatalog(); else if (!all.length) await loadCatalog();
+      await checkQuantity(); await select(initial || '');
+    },
+    async relabel() {
+      await playerOptions(); showRecipient(target); await paintParcel(); paintPeek(); await paintLog(); await checkQuantity();
+      if (inventory) showInventory(inventory);
+      if (loaded) await relabelCatalog();
     },
   };
 })();
 
-/* ---------- 玩家 ---------- */
+/* ---------- Players ---------- */
+const permissionLabel = (key, fallback) => tr('console.permission.' + key + '.label', fallback ?? key);
 const roster = (() => {
   let catalog = null;
   const toggle = (checked, disabled, onchange, label) => el('label', {class: 'switch', title: label}, el('input', {type: 'checkbox', role: 'switch', checked, disabled, 'aria-label': label, onchange}), el('span', {class: 'track', 'aria-hidden': 'true'}));
-  function summary(p) {
+  async function summary(p) {
     if (!p.administrator) return '';
     const keys = p.permissions || [];
-    const names = {'mail.send': '寄件', 'players.view': '查看玩家', 'players.inventory': '背包'};
-    const basic = keys.filter(k => names[k]).map(k => names[k]);
+    const basic = keys.filter(k => !k.startsWith('config.')).map(k => tr('console.permission.' + k + '.short', permissionLabel(k)));
     const sections = keys.filter(k => k.startsWith('config.') && k.endsWith('.read')).length;
     const writes = keys.filter(k => k.startsWith('config.') && k.endsWith('.write')).length;
-    return [...basic, sections ? `配置 ${sections} 组${writes ? '（可改 ' + writes + '）' : '（只读）'}` : ''].filter(Boolean).join(' · ') || '无权限';
+    const configuration = sections ? writes ? await dynamicText('console.roster.summary.config_write', sections, writes) : await dynamicText('console.roster.summary.config_read', sections) : '';
+    return [...basic, configuration].filter(Boolean).join(' · ') || t('console.roster.summary.none');
   }
-  function render() {
-    const owner = isOwner();
-    $('roster-head-row').replaceChildren(...['UID', '名称', '身份', owner ? '管理员' : null, '无限背包', ''].filter(h => h !== null).map((h, i) => el('th', {class: i >= 3 && h ? 'c' : ''}, h)));
-    const q = $('player-q').value.trim().toLowerCase();
-    const rows = state.players.filter(p => !q || (p.uid + ' ' + p.name).toLowerCase().includes(q));
-    $('roster').replaceChildren(...rows.map(p => {
-      const adminCell = owner ? el('td', {class: 'c'}, p.owner ? el('span', {class: 'muted'}, '—') : toggle(p.administrator, !p.active || state.session.mode !== 'oauth', event => setAdministrator(p, event.target), '管理员')) : null;
-      return el('tr', {class: p.active ? '' : 'inactive'},
-        el('td', {class: 'uid-cell'}, p.uid || '—'),
-        el('td', {}, p.name || ''),
-        el('td', {}, p.owner ? el('span', {class: 'pill owner'}, '服主') : null,
-          p.administrator ? el('span', {class: 'pill member', title: owner ? summary(p) : ''}, '管理员') : null,
-          p.active ? null : el('span', {class: 'pill'}, '已停用'),
-          owner && p.administrator ? el('small', {class: 'perm-summary'}, summary(p)) : null),
-        adminCell,
-        el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active || !can('players.inventory'), event => setInventory(p, event.target), '无限背包容量')),
-        el('td', {class: 'act'},
-          owner && p.administrator ? el('button', {type: 'button', class: 'linkish', onclick: () => editPermissions(p)}, '权限…') : null,
-          p.active && can('mail.send') ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(() => mailTool.open(p.account_id)); }}, '寄件 →') : null));
-    }));
-    if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 6, class: 'muted'}, state.players.length ? '没有匹配的玩家' : '还没有玩家。玩家首次登录游戏后会出现在这里。')));
+  async function render() {
+    const renderPass = beginRender('players');
+    try {
+      const owner = isOwner();
+      $('roster-head-row').replaceChildren(...['console.roster.col.uid', 'console.roster.col.name', 'console.roster.col.role', owner ? 'console.roster.col.admin' : null, 'console.roster.col.unlimited', '']
+        .filter(h => h !== null).map((h, i) => el('th', {class: i >= 3 && h ? 'c' : ''}, h ? t(h) : '')));
+      const q = $('player-q').value.trim().toLowerCase();
+      const rows = state.players.filter(p => !q || (p.uid + ' ' + p.name).toLowerCase().includes(q));
+      $('roster').replaceChildren(...rendered(await Promise.all(rows.map(async p => {
+        const adminCell = owner ? el('td', {class: 'c'}, p.owner ? el('span', {class: 'muted'}, '—') : toggle(p.administrator, !p.active || state.session.mode !== 'oauth', async event => await setAdministrator(p, event.target), t('console.role.admin'))) : null;
+        return el('tr', {class: p.active ? '' : 'inactive'},
+          el('td', {class: 'uid-cell'}, p.uid || '—'),
+          el('td', {}, p.name || ''),
+          el('td', {}, p.owner ? el('span', {class: 'pill owner'}, t('console.role.owner')) : null,
+            p.administrator ? el('span', {class: 'pill member', title: owner ? await summary(p) : ''}, t('console.role.admin')) : null,
+            p.active ? null : el('span', {class: 'pill'}, t('console.roster.inactive')),
+            owner && p.administrator ? el('small', {class: 'perm-summary'}, await summary(p)) : null),
+          adminCell,
+          el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active || !can('players.inventory'), async event => await setInventory(p, event.target), t('console.inventory.unlimited'))),
+          el('td', {class: 'act'},
+            owner && p.administrator ? el('button', {type: 'button', class: 'linkish', onclick: async () => await editPermissions(p)}, t('console.roster.permissions')) : null,
+            p.active && can('mail.send') ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(async () => await mailTool.open(p.account_id)); }}, t('console.roster.mail')) : null));
+      })), renderPass));
+      if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 6, class: 'muted'}, t(state.players.length ? 'console.roster.no_match' : 'console.roster.empty'))));
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
   async function setAdministrator(player, box) {
     if (!box.checked) {
-      if (!await ask({title: '撤销管理员？', body: `UID ${player.uid} 将立即退出管理台，之后需要重新任命。`, ok: '撤销', danger: true})) { box.checked = true; return; }
+      if (!await ask({title: t('console.roster.revoke.title'), body: await dynamicText('console.roster.revoke.body', player.uid), ok: t('console.roster.revoke.ok'), danger: true})) { box.checked = true; return; }
     }
     box.disabled = true;
     try {
       const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/administrator', {method: 'PUT', body: {administrator: box.checked}});
       player.administrator = value.administrator; player.permissions = value.permissions || [];
-      render();
-      toast(box.checked ? `已任命 UID ${player.uid} 为管理员（默认可寄件、查看玩家）` : `已撤销 UID ${player.uid} 的管理员身份`);
-      if (box.checked) editPermissions(player);
-    } catch (error) { box.checked = !box.checked; say($('roster-status'), error.message, 'err'); }
+      await render();
+      await toast(Component.translatable(box.checked ? 'console.roster.appointed' : 'console.roster.revoked', String(player.uid)));
+      if (box.checked) await editPermissions(player);
+    } catch (error) { box.checked = !box.checked; await say($('roster-status'), error, 'err'); }
     finally { box.disabled = false; }
   }
   async function editPermissions(player) {
-    try { catalog = catalog || (await api('permissions')).value; } catch (error) { toast(error.message); return; }
+    try { catalog = catalog || (await api('permissions')).value; } catch (error) { await toast(error); return; }
     const granted = new Set(player.permissions || []);
     const editor = el('div', {class: 'perm-editor'});
-    const draw = () => {
-      const check = (key, label, help, onchange) => el('label', {class: 'perm'}, el('input', {type: 'checkbox', checked: granted.has(key), onchange}), el('span', {}, label, help ? el('small', {}, help) : null));
-      const abilities = catalog.abilities.map(a => check(a.key, a.label, a.help, e => {
-        if (e.target.checked) { granted.add(a.key); (a.requires || []).forEach(r => granted.add(r)); }
-        else { granted.delete(a.key); catalog.abilities.filter(b => (b.requires || []).includes(a.key)).forEach(b => granted.delete(b.key)); }
-        draw();
-      }));
-      const documents = catalog.configuration.map(doc => {
-        const key = (section, mode) => `config.${doc.document}.${section}.${mode}`;
-        const all = mode => doc.sections.every(s => granted.has(key(s.id, mode)));
-        const setAll = mode => { const on = !all(mode); doc.sections.forEach(s => { if (on) { granted.add(key(s.id, mode)); if (mode === 'write') granted.add(key(s.id, 'read')); } else { granted.delete(key(s.id, mode)); if (mode === 'read') granted.delete(key(s.id, 'write')); } }); draw(); };
-        return el('table', {class: 'perm-table'},
-          el('thead', {}, el('tr', {}, el('th', {}, doc.title),
-            el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: '全部切换', onclick: () => setAll('read')}, '查看')),
-            el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: '全部切换', onclick: () => setAll('write')}, '修改')))),
-          el('tbody', {}, doc.sections.map(s => el('tr', {}, el('td', {}, s.title),
-            el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': doc.title + ' ' + s.title + ' 查看', checked: granted.has(key(s.id, 'read')), onchange: e => { if (e.target.checked) granted.add(key(s.id, 'read')); else { granted.delete(key(s.id, 'read')); granted.delete(key(s.id, 'write')); } draw(); }})),
-            el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': doc.title + ' ' + s.title + ' 修改', checked: granted.has(key(s.id, 'write')), onchange: e => { if (e.target.checked) { granted.add(key(s.id, 'write')); granted.add(key(s.id, 'read')); } else granted.delete(key(s.id, 'write')); draw(); }}))))));
-      });
-      editor.replaceChildren(el('h4', {}, '基础能力'), el('div', {class: 'perm-list'}, abilities), el('h4', {}, '服务器配置'), el('p', {class: 'muted'}, '按分组授权。修改包含查看；没有查看权限的分组对该管理员不可见。'), ...documents,
-        el('p', {class: 'muted'}, '任命和撤销管理员、服务器概览仅服主可用，不能授予。'));
-    };
-    draw();
-    if (!await ask({title: `UID ${player.uid} 的权限`, body: player.name || '', extra: editor, ok: '保存权限'})) return;
+    const draw = async () => {
+    const renderPass = beginRender(editor);
+    try {
+        const check = (key, label, help, onchange) => el('label', {class: 'perm'}, el('input', {type: 'checkbox', checked: granted.has(key), onchange}), el('span', {}, label, help ? el('small', {}, help) : null));
+        const abilities = catalog.abilities.map(a => check(a.key, permissionLabel(a.key, a.label), tr('console.permission.' + a.key + '.help', a.help), async e => {
+          if (e.target.checked) { granted.add(a.key); (a.requires || []).forEach(r => granted.add(r)); }
+          else { granted.delete(a.key); catalog.abilities.filter(b => (b.requires || []).includes(a.key)).forEach(b => granted.delete(b.key)); }
+          await draw();
+        }));
+        const documents = rendered(await Promise.all(catalog.configuration.map(async doc => {
+          const key = (section, mode) => `config.${doc.document}.${section}.${mode}`;
+          const docTitle = tr(`config.${doc.document}.title`, doc.title);
+          const sectionTitle = s => tr(`config.${doc.document}.section.${s.id}.title`, s.title);
+          const all = mode => doc.sections.every(s => granted.has(key(s.id, mode)));
+          const setAll = async mode => { const on = !all(mode); doc.sections.forEach(s => { if (on) { granted.add(key(s.id, mode)); if (mode === 'write') granted.add(key(s.id, 'read')); } else { granted.delete(key(s.id, mode)); if (mode === 'read') granted.delete(key(s.id, 'write')); } }); await draw(); };
+          return el('table', {class: 'perm-table'},
+            el('thead', {}, el('tr', {}, el('th', {}, docTitle),
+              el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: t('console.permissions.toggle_all'), onclick: async () => await setAll('read')}, t('console.permissions.read'))),
+              el('th', {class: 'c'}, el('button', {type: 'button', class: 'linkish', title: t('console.permissions.toggle_all'), onclick: async () => await setAll('write')}, t('console.permissions.write'))))),
+            el('tbody', {}, await Promise.all(doc.sections.map(async s => el('tr', {}, el('td', {}, sectionTitle(s)),
+              el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': await dynamicText('console.permissions.read_aria', docTitle, sectionTitle(s)), checked: granted.has(key(s.id, 'read')), onchange: async e => { if (e.target.checked) granted.add(key(s.id, 'read')); else { granted.delete(key(s.id, 'read')); granted.delete(key(s.id, 'write')); } await draw(); }})),
+              el('td', {class: 'c'}, el('input', {type: 'checkbox', 'aria-label': await dynamicText('console.permissions.write_aria', docTitle, sectionTitle(s)), checked: granted.has(key(s.id, 'write')), onchange: async e => { if (e.target.checked) { granted.add(key(s.id, 'write')); granted.add(key(s.id, 'read')); } else granted.delete(key(s.id, 'write')); await draw(); }})))))));
+        })), renderPass);
+        editor.replaceChildren(el('h4', {}, t('console.permissions.abilities')), el('div', {class: 'perm-list'}, abilities), el('h4', {}, t('console.permissions.configuration')), el('p', {class: 'muted'}, t('console.permissions.configuration_help')), ...documents,
+          el('p', {class: 'muted'}, t('console.permissions.owner_only')));
+
+    } catch (error) { if (error !== staleRender) throw error; }
+  };
+    await draw();
+    if (!await ask({title: await dynamicText('console.permissions.title', player.uid), body: player.name || '', extra: editor, ok: t('console.permissions.save')})) return;
     try {
       const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/administrator', {method: 'PUT', body: {administrator: true, permissions: [...granted]}});
-      player.permissions = value.permissions; render(); toast(`已更新 UID ${player.uid} 的权限，立即生效`);
-    } catch (error) { say($('roster-status'), error.message, 'err'); }
+      player.permissions = value.permissions; await render(); await toast(Component.translatable('console.roster.permissions_updated', String(player.uid)));
+    } catch (error) { await say($('roster-status'), error, 'err'); }
   }
   async function setInventory(player, box) {
     box.disabled = true;
     try {
       const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/inventory', {method: 'PUT', body: {unlimited: box.checked}});
-      player.unlimited_inventory = value.unlimited; toast(`UID ${player.uid} ${value.unlimited ? '已开启' : '已关闭'}无限背包，重新登录游戏后生效`);
-    } catch (error) { box.checked = !box.checked; say($('roster-status'), error.message, 'err'); }
+      player.unlimited_inventory = value.unlimited; await toast(Component.translatable(value.unlimited ? 'console.roster.unlimited_on' : 'console.roster.unlimited_off', String(player.uid)));
+    } catch (error) { box.checked = !box.checked; await say($('roster-status'), error, 'err'); }
     finally { box.disabled = false; }
   }
   $('player-q').oninput = render;
-  return {async open() { say($('roster-status'), ''); await loadPlayers(); render(); }};
+  return {async open() { await say($('roster-status'), ''); await loadPlayers(); await render(); }, relabel: render};
 })();
 
-/* ---------- 服务器配置（通用编辑器） ---------- */
+/* ---------- Server configuration (generic editor) ---------- */
 const config = (() => {
   let docs = [], current = '', drafts = {}, checks = {}, checkTimer, server = null;
   const doc = () => docs.find(d => d.name === current);
   const fields = d => d.schema.sections.flatMap(s => s.fields);
   const dirtyDoc = d => drafts[d.name] !== undefined && !same(drafts[d.name], d.view.value);
+  // Schema text comes from the server in one language; translations are keyed by its structure.
+  const valueKey = value => typeof value === 'string' ? value : JSON.stringify(value);
+  const docTitle = d => tr(`config.${d.name}.title`, d.schema.title);
+  const docSummary = d => tr(`config.${d.name}.summary`, d.schema.summary);
+  const sectionText = (d, s, part) => tr(`config.${d.name}.section.${s.id}.${part}`, s[part]);
+  const fieldText = (d, f, part) => tr(`config.${d.name}.field.${f.path}.${part}`, f[part]);
+  const optionText = (d, f, o, part, kind = 'option') => tr(`config.${d.name}.field.${f.path}.${kind}.${valueKey(o.value)}.${part}`, o[part]);
+  const lockReason = (d, lock) => tr(`config.${d.name}.lock.${lock.path}`, lock.reason);
   function getPath(object, path) { return path.split('.').reduce((value, key) => value == null ? undefined : value[key], object); }
   function setPath(object, path, value) {
     const keys = path.split('.'); let node = object;
@@ -454,7 +648,7 @@ const config = (() => {
     const found = getPath(value, when.path);
     return when.in.some(candidate => same(found, candidate)) !== !!when.not;
   }
-  // 把问题路径对应到字段：去掉列表下标，按 * 匹配映射键。
+  // Maps a problem path to its field: list indexes are dropped and * matches map keys.
   function fieldFor(d, path) {
     const bare = path.replace(/\[\d+\]/g, '');
     const parts = bare.split('.');
@@ -463,139 +657,153 @@ const config = (() => {
       return pattern.length === parts.length && pattern.every((p, i) => p === '*' || p === parts[i]);
     }) || fields(d).filter(f => bare.startsWith(f.path + '.') || bare === f.path).sort((a, b) => b.path.length - a.path.length)[0];
   }
-  const phrases = {
-    'must be a bare host name without scheme, path or port': '只填主机名，不带协议、路径或端口',
-    'must be host:port': '格式应为 主机:端口，例如 0.0.0.0:8444',
-    'plaintext realtime listeners must bind loopback': '明文模式只能监听回环地址',
-    'plaintext realtime public host must be loopback': '明文模式的公开地址必须是回环 IP',
-    'is required unless plaintext loopback development is enabled': '未启用本机明文模式时必填',
-    'must be a nonempty path': '路径不能为空',
-    'is required by an active provider': '启用第三方审核时必填',
-    'is required by the Azure provider': 'Azure 需要填写这一项',
-    'must be a lowercase identifier': '只能使用小写字母、数字和下划线，并以字母开头',
-    'local mode must not configure OAuth': '本地模式下不能配置这一项',
-    'is required in oauth mode': 'OAuth 模式下必填',
-    'oauth mode requires at least one provider': '至少启用一个登录提供方',
-    'must be an absolute origin without path, query, fragment, or user info': '应为不带路径的根地址，例如 https://game.example.com',
-    'must use HTTPS except on localhost': '除 localhost 外必须使用 HTTPS',
-    'must be a positive Go duration': '应为正的时长，例如 15m、720h',
-    'official mode must use the versioned official resource origin': '官方模式只能使用官方地址',
-    'is required in server mode': '自建资源源模式下必填',
-    'must be an absolute HTTP(S) URL without credentials, query, or fragment': '应为完整的 HTTP(S) 地址，不带账号、查询参数或锚点',
-    'must not have a trailing slash': '末尾不能带斜杠',
-    'must use HTTPS outside loopback development': '除回环地址外必须使用 HTTPS',
-    'is required': '必填', 'must be present': '文件中必须写明这一项',
-    'no permission to change this section': '你没有修改这个分组的权限',
-    'a section outside your access is invalid': '你无权查看的分组中存在问题，请联系服主处理',
+  // Known server validation messages with a dedicated explanation.
+  const messages = {
+    'must be a bare host name without scheme, path or port': 'bare_host',
+    'must be host:port': 'host_port',
+    'plaintext realtime listeners must bind loopback': 'plaintext_listen_loopback',
+    'plaintext realtime public host must be loopback': 'plaintext_host_loopback',
+    'is required unless plaintext loopback development is enabled': 'tls_required',
+    'must be a nonempty path': 'nonempty_path',
+    'is required by an active provider': 'required_by_provider',
+    'is required by the Azure provider': 'required_by_azure',
+    'must be a lowercase identifier': 'lowercase_identifier',
+    'local mode must not configure OAuth': 'local_no_oauth',
+    'is required in oauth mode': 'required_oauth',
+    'oauth mode requires at least one provider': 'oauth_provider',
+    'must be an absolute origin without path, query, fragment, or user info': 'absolute_origin',
+    'must use HTTPS except on localhost': 'https_origin',
+    'must be a positive Go duration': 'positive_duration',
+    'official mode must use the versioned official resource origin': 'official_origin',
+    'is required in server mode': 'required_server_mode',
+    'must be an absolute HTTP(S) URL without credentials, query, or fragment': 'absolute_url',
+    'must not have a trailing slash': 'no_trailing_slash',
+    'must use HTTPS outside loopback development': 'https_url',
+    'must be a list': 'list',
+    'must be an object': 'object',
+    'must be present': 'present',
+    'a section outside your access is invalid': 'hidden_section',
   };
-  function describe(problem, field, d) {
+  async function describe(problem, field, d) {
     const m = problem.message || '';
     const item = (problem.path.match(/\[(\d+)\]$/) || [])[1];
-    const prefix = item !== undefined ? `第 ${+item + 1} 项：` : '';
     let text;
-    if (problem.rule === 'enum' && field && field.options) text = '只能选择：' + field.options.map(o => o.label).join('、');
-    else if (problem.rule === 'enum' && field && field.keys) text = '不支持这一项';
-    else if (problem.rule === 'range' && field) text = `需为 ${fmt(field.min)} 到 ${fmt(field.max)} 之间的整数`;
-    else if (problem.rule === 'unique') text = '有重复项';
-    else if (problem.rule === 'conflict' && m.startsWith('is fixed to')) { const lock = (d.view.locks || []).find(l => l.path === problem.path); text = '已锁定' + (lock ? '：' + lock.reason : ''); }
-    else if (problem.rule === 'environment') { const env = (m.match(/environment variable (\S+)/) || [])[1]; text = m.includes('32-byte') ? `当前服务端进程中环境变量 ${env} 不是有效的 32 字节 base64 密钥，重启后服务端会拒绝启动。` : `当前服务端进程没有设置环境变量 ${env}。保存后重启前，请先在服务端环境中设置它。`; }
-    else if (problem.rule === 'missing_file') text = '服务端当前读不到这个文件：' + m.replace(/ is not readable by this server process$/, '');
-    else if (problem.rule === 'decode') text = '格式错误：' + m;
-    else text = phrases[m] || m;
-    return prefix + text;
+    if (messages[m]) text = t('config.problem.message.' + messages[m]);
+    else if (problem.rule === 'enum' && field && field.options) text = await dynamicText('config.problem.enum_options', listJoin(field.options.map(o => optionText(d, field, o, 'label'))));
+    else if (problem.rule === 'enum' && field && field.keys) text = t('config.problem.enum_key');
+    else if (problem.rule === 'range' && field && field.min != null && field.max != null) text = await dynamicText('config.problem.range_between', fmt(field.min), fmt(field.max));
+    else if (problem.rule === 'conflict' && m.startsWith('is fixed to')) { const lock = (d.view.locks || []).find(l => l.path === problem.path); text = lock ? await dynamicText('config.problem.locked_reason', lockReason(d, lock)) : t('config.problem.locked'); }
+    else if (problem.rule === 'environment') { const env = (m.match(/environment variable (\S+)/) || [])[1] || ''; text = await dynamicText(m.includes('32-byte') ? 'config.problem.environment_key' : 'config.problem.environment', env); }
+    else if (problem.rule === 'missing_file') text = await dynamicText('config.problem.missing_file', m.replace(/ is not readable by this server process$/, ''));
+    else if (['decode', 'format', 'custom'].includes(problem.rule)) text = await dynamicText('config.problem.' + problem.rule, m);
+    else if (lookup('config.problem.' + problem.rule) !== undefined) text = t('config.problem.' + problem.rule);
+    else text = m;
+    return item !== undefined ? await dynamicText('config.problem.item', +item + 1, text) : text;
   }
-  function render() {
-    const d = doc(); if (!d) return;
-    const draft = drafts[d.name], readonly = !d.view.writable;
-    renderNav();
-    const form = $('config-form');
-    const box = el('fieldset', {disabled: readonly});
-    box.append(el('section', {class: 'card doc-head'}, el('h2', {}, d.schema.title), d.schema.summary ? el('p', {}, d.schema.summary) : null,
-      el('div', {class: 'path'}, el('span', {}, d.view.path), d.view.modified ? el('span', {}, '修改于 ' + new Date(d.view.modified).toLocaleString('zh-CN')) : null)));
-    for (const section of d.schema.sections) {
-      const own = section.fields.filter(f => !f.path.includes('*'));
-      if (own.every(f => f.advanced && f.path === 'schema_version')) continue;
-      const card = el('fieldset', {class: 'card section', id: 'sec-' + section.id, disabled: section.read_only}, el('h3', {}, section.title, section.read_only ? el('span', {class: 'pill'}, '只读') : null), section.help ? el('p', {class: 'help'}, section.help) : null);
-      const basic = own.filter(f => !f.advanced), advanced = own.filter(f => f.advanced);
-      basic.forEach(f => card.append(renderField(d, f, draft)));
-      if (advanced.length) {
-        const details = el('details', {class: 'advanced'}, el('summary', {}, '高级选项'));
-        advanced.forEach(f => details.append(renderField(d, f, draft)));
-        card.append(details);
+  async function render() {
+    const renderPass = beginRender('config-form');
+    try {
+      const d = doc(); if (!d) return;
+      const draft = drafts[d.name], readonly = !d.view.writable;
+      renderNav();
+      const form = $('config-form');
+      const box = el('fieldset', {disabled: readonly});
+      const summary = docSummary(d);
+      box.append(el('section', {class: 'card doc-head'}, el('h2', {}, docTitle(d)), summary ? el('p', {}, summary) : null,
+        el('div', {class: 'path'}, el('span', {}, d.view.path), d.view.modified ? el('span', {}, rendered(await dynamicText('console.config.modified', dateTime(d.view.modified)), renderPass)) : null)));
+      for (const section of d.schema.sections) {
+        const own = section.fields.filter(f => !f.path.includes('*'));
+        if (own.every(f => f.advanced && f.path === 'schema_version')) continue;
+        const help = sectionText(d, section, 'help');
+        const card = el('fieldset', {class: 'card section', id: 'sec-' + section.id, disabled: section.read_only}, el('h3', {}, sectionText(d, section, 'title'), section.read_only ? el('span', {class: 'pill'}, t('console.config.read_only')) : null), help ? el('p', {class: 'help'}, help) : null);
+        const basic = own.filter(f => !f.advanced), advanced = own.filter(f => f.advanced);
+        card.append(...rendered(await Promise.all(basic.map(async f => await renderField(d, f, draft))), renderPass));
+        if (advanced.length) {
+          const details = el('details', {class: 'advanced'}, el('summary', {}, t('console.config.advanced')));
+          details.append(...rendered(await Promise.all(advanced.map(async f => await renderField(d, f, draft))), renderPass));
+          card.append(details);
+        }
+        box.append(card);
       }
-      box.append(card);
-    }
-    form.replaceChildren(box);
-    refresh();
+      form.replaceChildren(box);
+      rendered(await refresh(), renderPass);
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  function renderField(d, field, draft) {
+  async function renderField(d, field, draft) {
     const value = getPath(draft, field.path);
     const lock = (d.view.locks || []).find(l => l.path === field.path);
     const wrap = el('div', {class: 'cfield', 'data-path': field.path});
-    wrap.append(el('div', {class: 'label'}, field.label, el('small', {}, field.path)));
+    wrap.append(el('div', {class: 'label'}, fieldText(d, field, 'label'), el('small', {}, field.path)));
     const control = el('div', {class: 'control'});
-    const update = next => { setPath(drafts[d.name], field.path, next); refresh(); };
-    control.append(widget(field, value, update, lock, d));
-    if (field.help) control.append(el('p', {class: 'help'}, field.help));
+    const update = async next => { setPath(drafts[d.name], field.path, next); await refresh(); };
+    control.append(await widget(field, value, update, lock, d));
+    const help = fieldText(d, field, 'help');
+    if (help) control.append(el('p', {class: 'help'}, help));
     control.append(el('div', {class: 'msgs'}));
-    if (lock) control.append(el('p', {class: 'msg lock'}, '🔒 已锁定：' + lock.reason));
+    if (lock) control.append(el('p', {class: 'msg lock'}, await dynamicText('console.config.locked', lockReason(d, lock))));
     wrap.append(control);
     return wrap;
   }
-  function widget(field, value, update, lock, d) {
+  async function widget(field, value, update, lock, d) {
     const disabled = !!lock;
+    const placeholder = fieldText(d, field, 'placeholder');
     if (field.kind === 'bool') {
-      return el('label', {class: 'switch'}, el('input', {type: 'checkbox', role: 'switch', checked: !!value, disabled, onchange: e => update(e.target.checked)}), el('span', {class: 'track', 'aria-hidden': 'true'}), value ? '已开启' : '已关闭');
+      return el('label', {class: 'switch'}, el('input', {type: 'checkbox', role: 'switch', checked: !!value, disabled, onchange: async e => await update(e.target.checked)}), el('span', {class: 'track', 'aria-hidden': 'true'}), el('span', {class: 'switch-state'}, t(value ? 'console.config.on' : 'console.config.off')));
     }
     if (field.options && field.kind !== 'list' && !field.open_options) {
       const options = field.options.filter(o => o.value !== '' || value === '');
       const name = 'opt-' + field.path;
       const help = el('p', {class: 'option-help'});
-      const showHelp = v => { const o = field.options.find(x => same(x.value, v)); help.textContent = o && o.help ? o.help : ''; };
+      const showHelp = v => { const o = field.options.find(x => same(x.value, v)); help.textContent = o ? optionText(d, field, o, 'help') : ''; };
       showHelp(value);
-      const group = el('div', {class: 'segmented', role: 'radiogroup', 'aria-label': field.label}, options.map(o => el('label', {},
-        el('input', {type: 'radio', name, checked: same(o.value, value), disabled, onchange: () => { update(clone(o.value)); showHelp(o.value); }}), el('span', {}, o.label))));
+      const group = el('div', {class: 'segmented', role: 'radiogroup', 'aria-label': fieldText(d, field, 'label')}, options.map(o => el('label', {},
+        el('input', {type: 'radio', name, checked: same(o.value, value), disabled, onchange: async () => { await update(clone(o.value)); showHelp(o.value); }}), el('span', {}, optionText(d, field, o, 'label')))));
       const holder = el('div', {}, group, help);
       const extra = extras[field.path]; if (extra) holder.append(extra(d));
       return holder;
     }
     if (field.kind === 'integer') {
-      const input = el('input', {inputmode: 'numeric', value: value ?? '', disabled, placeholder: field.placeholder || '',
-        oninput: e => { const raw = e.target.value.trim().replace(/[,，_\s]/g, ''); update(/^-?\d+$/.test(raw) ? Number(raw) : raw); }});
+      const input = el('input', {inputmode: 'numeric', value: value ?? '', disabled, placeholder,
+        oninput: async e => { const raw = e.target.value.trim().replace(/[,\uff0c_\s]/g, ''); await update(/^-?\d+$/.test(raw) ? Number(raw) : raw); }});
       return el('div', {class: 'unit-input'}, input, field.min != null ? el('span', {}, `${fmt(field.min)} – ${fmt(field.max)}`) : null);
     }
     if (field.kind === 'string') {
       const mono = ['path', 'env', 'url', 'listen', 'host', 'origin', 'duration', 'identifier'].includes(field.format);
-      return el('div', {class: 'text-input' + (mono ? ' mono' : '')}, el('input', {value: value ?? '', disabled, placeholder: field.placeholder || '', spellcheck: 'false', autocomplete: 'off', oninput: e => update(e.target.value)}));
+      return el('div', {class: 'text-input' + (mono ? ' mono' : '')}, el('input', {value: value ?? '', disabled, placeholder, spellcheck: 'false', autocomplete: 'off', oninput: async e => await update(e.target.value)}));
     }
-    if (field.kind === 'list' && field.options) return chipList(field, value || [], update, disabled);
-    if (field.kind === 'list') return rowList(field, value || [], update, disabled);
+    if (field.kind === 'list' && field.options) return await chipList(field, value || [], update, disabled, d);
+    if (field.kind === 'list') return rowList(field, value || [], update, disabled, placeholder);
     if (field.kind === 'map') return mapEditor(field, value || {}, update, disabled, d);
     return el('code', {}, JSON.stringify(value));
   }
-  function chipList(field, list, update, disabled) {
+  async function chipList(field, list, update, disabled, d) {
     const holder = el('div', {class: 'chips'});
-    const draw = () => {
-      const custom = list.filter(v => !field.options.some(o => o.value === v));
-      holder.replaceChildren(...field.options.map(o => el('button', {type: 'button', class: 'chip', 'aria-pressed': String(list.includes(o.value)), disabled, title: o.value,
-        onclick: () => { list = list.includes(o.value) ? list.filter(v => v !== o.value) : [...list, o.value]; update(list); draw(); }}, o.label)),
-        ...custom.map(v => el('button', {type: 'button', class: 'chip', 'aria-pressed': 'true', disabled, title: '点击移除', onclick: () => { list = list.filter(x => x !== v); update(list); draw(); }}, v + ' ×')),
-        field.open_options && !disabled ? el('input', {class: 'chip-add', placeholder: '其他范围，回车添加', spellcheck: 'false',
-          onkeydown: e => { if (e.key !== 'Enter') return; e.preventDefault(); const v = e.target.value.trim(); if (v && !list.includes(v)) { list = [...list, v]; update(list); draw(); } }}) : null,
-        el('span', {class: 'muted'}, `已选 ${list.length} 项`),
-        !disabled ? el('button', {type: 'button', class: 'linkish', onclick: () => { list = field.options.map(o => o.value); update(list); draw(); }}, '全选') : null);
-    };
-    draw();
+    const draw = async () => {
+    const renderPass = beginRender(holder);
+    try {
+        const custom = list.filter(v => !field.options.some(o => o.value === v));
+        holder.replaceChildren(...field.options.map(o => el('button', {type: 'button', class: 'chip', 'aria-pressed': String(list.includes(o.value)), disabled, title: o.value,
+          onclick: async () => { list = list.includes(o.value) ? list.filter(v => v !== o.value) : [...list, o.value]; await update(list); await draw(); }}, optionText(d, field, o, 'label'))),
+          ...custom.map(v => el('button', {type: 'button', class: 'chip', 'aria-pressed': 'true', disabled, title: t('console.config.click_remove'), onclick: async () => { list = list.filter(x => x !== v); await update(list); await draw(); }}, v + ' ×')),
+          field.open_options && !disabled ? el('input', {class: 'chip-add', placeholder: t('console.config.add_other'), spellcheck: 'false',
+            onkeydown: async e => { if (e.key !== 'Enter') return; e.preventDefault(); const v = e.target.value.trim(); if (v && !list.includes(v)) { list = [...list, v]; await update(list); await draw(); } }}) : null,
+          el('span', {class: 'muted'}, rendered(await dynamicText('console.config.selected', fmt(list.length)), renderPass)),
+          !disabled ? el('button', {type: 'button', class: 'linkish', onclick: async () => { list = field.options.map(o => o.value); await update(list); await draw(); }}, t('console.config.select_all')) : null);
+
+    } catch (error) { if (error !== staleRender) throw error; }
+  };
+    await draw();
     return holder;
   }
-  function rowList(field, list, update, disabled) {
+  function rowList(field, list, update, disabled, placeholder) {
     const holder = el('div', {class: 'rows'});
     const draw = () => {
       holder.replaceChildren(...list.map((v, i) => el('div', {class: 'row', 'data-item': i},
-        el('input', {value: v, disabled, spellcheck: 'false', placeholder: field.placeholder || '', oninput: e => { list[i] = e.target.value; update([...list]); }}),
-        disabled ? null : el('button', {type: 'button', class: 'icon-btn', title: '移除', 'aria-label': '移除', onclick: () => { list.splice(i, 1); update([...list]); draw(); }}, '×'))),
-        disabled ? null : el('button', {type: 'button', class: 'add', onclick: () => { list.push(''); update([...list]); draw(); holder.querySelector('.row:last-of-type input').focus(); }}, '+ 添加'),
-        !list.length ? el('span', {class: 'muted'}, '（空）') : null);
+        el('input', {value: v, disabled, spellcheck: 'false', placeholder, oninput: async e => { list[i] = e.target.value; await update([...list]); }}),
+        disabled ? null : el('button', {type: 'button', class: 'icon-btn', title: t('console.config.remove'), 'aria-label': t('console.config.remove'), onclick: async () => { list.splice(i, 1); await update([...list]); draw(); }}, '×'))),
+        disabled ? null : el('button', {type: 'button', class: 'add', onclick: async () => { list.push(''); await update([...list]); draw(); holder.querySelector('.row:last-of-type input').focus(); }}, t('console.config.add')),
+        !list.length ? el('span', {class: 'muted'}, t('console.config.empty')) : null);
     };
     draw();
     return holder;
@@ -607,17 +815,17 @@ const config = (() => {
       holder.replaceChildren(...(field.keys || Object.keys(map).map(k => ({value: k, label: k}))).map(k => {
         const enabled = Object.hasOwn(map, k.value);
         const entry = el('div', {class: 'map-entry', 'data-key': k.value},
-          el('label', {class: 'switch'}, el('input', {type: 'checkbox', role: 'switch', checked: enabled, disabled, onchange: e => {
-            // 重新启用时恢复文件中已保存的值，避免误关后要重新填写。
+          el('label', {class: 'switch'}, el('input', {type: 'checkbox', role: 'switch', checked: enabled, disabled, onchange: async e => {
+            // Re-enabling restores the value saved in the file so an accidental toggle loses nothing.
             if (e.target.checked) map[k.value] = clone(getPath(d.view.value, field.path + '.' + k.value)) || Object.fromEntries(children.map(c => [c.path.split('.').at(-1), '']));
             else delete map[k.value];
-            update({...map}); draw(); }}), el('span', {class: 'track', 'aria-hidden': 'true'}), k.label));
+            await update({...map}); draw(); }}), el('span', {class: 'track', 'aria-hidden': 'true'}), field.keys ? optionText(d, field, k, 'label', 'key') : k.label));
         if (enabled) {
           const sub = el('div', {class: 'sub'});
           children.forEach(c => {
             const name = c.path.split('.').at(-1), path = field.path + '.' + k.value + '.' + name;
-            sub.append(el('label', {}, c.label), el('div', {class: 'text-input mono', 'data-path': path}, el('input', {value: map[k.value][name] ?? '', disabled, spellcheck: 'false', autocomplete: 'off',
-              oninput: e => { map[k.value][name] = e.target.value; update({...map}); }})), el('div', {class: 'msgs', 'data-msgs': path}));
+            sub.append(el('label', {}, fieldText(d, c, 'label')), el('div', {class: 'text-input mono', 'data-path': path}, el('input', {value: map[k.value][name] ?? '', disabled, spellcheck: 'false', autocomplete: 'off', placeholder: fieldText(d, c, 'placeholder'),
+              oninput: async e => { map[k.value][name] = e.target.value; await update({...map}); }})), el('div', {class: 'msgs', 'data-msgs': path}));
           });
           entry.append(sub);
         }
@@ -627,25 +835,29 @@ const config = (() => {
     draw();
     return holder;
   }
-  // 字段专属的小提示：根据当前草稿实时给出例子。
+  // Field-specific hints that show a worked example from the current draft.
   const extras = {
-    'purchases.diamond_recharge.currency': d => {
+    'purchases.diamond_recharge.currency': () => {
       const box = el('div', {class: 'example'});
       box.dataset.example = 'recharge';
       return box;
     },
   };
-  function paintExamples() {
-    const box = document.querySelector('[data-example=recharge]'); if (!box) return;
-    const r = (drafts.game || {}).purchases?.diamond_recharge || {};
-    const n = 100;
-    const text = r.currency === 'gold' ? ['充值 100 付费钻石档位：消耗 ', fmt(n * (r.gold_per_paid_diamond || 0)), ' 金币']
-      : r.currency === 'diamonds' ? ['充值 100 付费钻石档位：消耗 ', fmt(n * (r.diamonds_per_paid_diamond || 0)), ' 普通钻石']
-      : r.currency === 'free' ? ['充值 100 付费钻石档位：', '免费', '']
-      : ['付费钻石充值：', '已禁止', ''];
-    box.replaceChildren(text[0], el('b', {}, text[1]), text[2]);
+  async function paintExamples() {
+    const renderPass = beginRender('config-example');
+    try {
+      const box = document.querySelector('[data-example=recharge]'); if (!box) return;
+      const r = (drafts.game || {}).purchases?.diamond_recharge || {};
+      const n = 100;
+      const parts = r.currency === 'gold' ? rendered(await rich('console.config.example.gold', fmt(n), el('b', {}, fmt(n * (r.gold_per_paid_diamond || 0)))), renderPass)
+        : r.currency === 'diamonds' ? rendered(await rich('console.config.example.diamonds', fmt(n), el('b', {}, fmt(n * (r.diamonds_per_paid_diamond || 0)))), renderPass)
+        : r.currency === 'free' ? rendered(await rich('console.config.example.free', fmt(n), el('b', {}, t('console.config.example.free_value'))), renderPass)
+        : rendered(await rich('console.config.example.ban', el('b', {}, t('console.config.example.ban_value'))), renderPass);
+      box.replaceChildren(...parts);
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  function refresh() {
+  async function refresh() {
     const d = doc(); if (!d) return;
     const draft = drafts[d.name];
     document.querySelectorAll('#config-form .cfield').forEach(node => {
@@ -654,8 +866,8 @@ const config = (() => {
       node.classList.toggle('changed', !same(getPath(draft, field.path), getPath(d.view.value, field.path)));
     });
     document.querySelectorAll('#config-form .section').forEach(card => { card.hidden = [...card.querySelectorAll('.cfield')].every(n => n.hidden); });
-    document.querySelectorAll('#config-form .switch').forEach(s => { const input = s.querySelector('input'); const last = s.lastChild; if (last && last.nodeType === 3 && (last.textContent === '已开启' || last.textContent === '已关闭')) last.textContent = input.checked ? '已开启' : '已关闭'; });
-    paintExamples(); renderBar(); renderNav();
+    document.querySelectorAll('#config-form .switch-state').forEach(s => { s.textContent = t(s.parentNode.querySelector('input').checked ? 'console.config.on' : 'console.config.off'); });
+    await paintExamples(); await renderBar(); renderNav();
     clearTimeout(checkTimer);
     checkTimer = setTimeout(check, 300);
   }
@@ -665,54 +877,62 @@ const config = (() => {
     try {
       const {value} = await api('config/' + encodeURIComponent(name) + '/check', {method: 'POST', body: draft});
       if (!same(drafts[name], draft)) return;
-      checks[name] = value; paintMessages(); renderBar(); renderNav(); renderBanners();
-    } catch (error) { toast(error.message); }
+      checks[name] = value; await paintMessages(); await renderBar(); renderNav(); await renderBanners();
+    } catch (error) { await toast(error); }
   }
-  function paintMessages() {
-    const d = doc(); if (!d) return;
-    document.querySelectorAll('#config-form .msgs').forEach(n => n.replaceChildren());
-    document.querySelectorAll('#config-form .cfield').forEach(n => n.classList.remove('invalid'));
-    const result = checks[d.name] || {problems: [], advice: []};
-    const place = (problem, tone) => {
-      const field = fieldFor(d, problem.path);
-      const target = document.querySelector(`#config-form [data-msgs="${CSS.escape(problem.path)}"]`) || (field && document.querySelector(`#config-form .cfield[data-path="${CSS.escape(field.path)}"] .msgs`));
-      if (!target) return false;
-      target.append(el('p', {class: 'msg ' + tone}, describe(problem, field, d)));
-      if (tone === 'err') target.closest('.cfield')?.classList.add('invalid');
-      const advanced = target.closest('details.advanced'); if (advanced && tone === 'err') advanced.open = true;
-      return true;
-    };
-    result.problems.forEach(p => place(p, 'err'));
-    result.advice.forEach(p => place(p, 'warn'));
+  async function paintMessages() {
+    const renderPass = beginRender('config-messages');
+    try {
+      const d = doc(); if (!d) return;
+      document.querySelectorAll('#config-form .msgs').forEach(n => n.replaceChildren());
+      document.querySelectorAll('#config-form .cfield').forEach(n => n.classList.remove('invalid'));
+      const result = checks[d.name] || {problems: [], advice: []};
+      const place = async (problem, tone) => {
+        const field = fieldFor(d, problem.path);
+        const target = document.querySelector(`#config-form [data-msgs="${CSS.escape(problem.path)}"]`) || (field && document.querySelector(`#config-form .cfield[data-path="${CSS.escape(field.path)}"] .msgs`));
+        if (!target) return false;
+        target.append(el('p', {class: 'msg ' + tone}, rendered(await describe(problem, field, d), renderPass)));
+        if (tone === 'err') target.closest('.cfield')?.classList.add('invalid');
+        const advanced = target.closest('details.advanced'); if (advanced && tone === 'err') advanced.open = true;
+        return true;
+      };
+      rendered(await Promise.all(result.problems || [].map(async p => await place(p, 'err'))), renderPass);
+      rendered(await Promise.all(result.advice || [].map(async p => await place(p, 'warn'))), renderPass);
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  function renderBanners() {
-    const d = doc(); if (!d) return;
-    const banners = [];
-    const pending = docs.filter(x => x.view.pending);
-    if (pending.length) banners.push(el('div', {class: 'banner pending'}, el('div', {}, el('b', {}, '已保存，等待重启生效'),
-      el('p', {}, pending.map(x => x.schema.title).join('、') + ' 的改动已经写入文件，但当前运行的服务端还在使用旧配置。重启服务端进程后生效。'))));
-    if (!d.view.writable) banners.push(el('div', {class: 'banner readonly'}, el('div', {}, el('b', {}, '只读'), el('p', {}, '服务端没有这个文件的写权限（例如部署方以只读方式挂载），这里只能查看。'))));
-    if (d.view.problems && d.view.problems.length) banners.push(el('div', {class: 'banner broken'}, el('div', {}, el('b', {}, '磁盘上的文件当前无效'),
-      el('p', {}, '文件在管理台之外被改成了服务端无法加载的内容，下次重启会失败。修正下面的问题后保存即可。'),
-      el('ul', {}, d.view.problems.map(p => el('li', {}, (p.path ? p.path + '：' : '') + describe(p, fieldFor(d, p.path || ''), d)))))));
-    const docProblems = ((checks[d.name] || {}).problems || []).filter(p => !p.path);
-    if (docProblems.length) banners.push(el('div', {class: 'banner broken'}, el('div', {}, el('b', {}, '无法校验'), el('ul', {}, docProblems.map(p => el('li', {}, describe(p, null, d)))))));
-    $('config-banners').replaceChildren(...banners);
+  async function renderBanners() {
+    const renderPass = beginRender('config-banners');
+    try {
+      const d = doc(); if (!d) return;
+      const banners = [];
+      const pending = docs.filter(x => x.view.pending);
+      if (pending.length) banners.push(el('div', {class: 'banner pending'}, el('div', {}, el('b', {}, t('console.config.banner.pending.title')),
+        el('p', {}, rendered(await dynamicText('console.config.banner.pending.body', listJoin(pending.map(docTitle))), renderPass)))));
+      if (!d.view.writable) banners.push(el('div', {class: 'banner readonly'}, el('div', {}, el('b', {}, t('console.config.read_only')), el('p', {}, t('console.config.banner.readonly.body')))));
+      if (d.view.problems && d.view.problems.length) banners.push(el('div', {class: 'banner broken'}, el('div', {}, el('b', {}, t('console.config.banner.broken.title')),
+        el('p', {}, t('console.config.banner.broken.body')),
+        el('ul', {}, rendered(await Promise.all(d.view.problems.map(async p => { const text = await describe(p, fieldFor(d, p.path || ''), d); return el('li', {}, p.path ? await dynamicText('console.config.problem.at', p.path, text) : text); })), renderPass)))));
+      const docProblems = ((checks[d.name] || {}).problems || []).filter(p => !p.path);
+      if (docProblems.length) banners.push(el('div', {class: 'banner broken'}, el('div', {}, el('b', {}, t('console.config.banner.unchecked')), el('ul', {}, rendered(await Promise.all(docProblems.map(async p => el('li', {}, await describe(p, null, d)))), renderPass)))));
+      $('config-banners').replaceChildren(...banners);
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
   function renderNav() {
     const nav = $('doc-nav');
     const items = [];
     docs.forEach(d => {
       const changed = dirtyDoc(d);
-      items.push(el('button', {type: 'button', class: 'doc', 'aria-current': String(d.name === current), onclick: () => { current = d.name; render(); renderBanners(); window.scrollTo({top: 0}); }},
-        d.schema.title, changed ? el('span', {class: 'badge'}, '未保存') : d.view.pending ? el('span', {class: 'badge'}, '待重启') : !d.view.writable ? el('span', {class: 'badge'}, '只读') : null));
+      items.push(el('button', {type: 'button', class: 'doc', 'aria-current': String(d.name === current), onclick: async () => { current = d.name; await render(); await renderBanners(); window.scrollTo({top: 0}); }},
+        docTitle(d), changed ? el('span', {class: 'badge'}, t('console.config.badge.unsaved')) : d.view.pending ? el('span', {class: 'badge'}, t('console.config.badge.pending')) : !d.view.writable ? el('span', {class: 'badge'}, t('console.config.read_only')) : null));
       if (d.name === current) {
         const bad = new Set(((checks[d.name] || {}).problems || []).map(p => { const f = fieldFor(d, p.path); return f && d.schema.sections.find(s => s.fields.includes(f))?.id; }));
         items.push(el('ul', {class: 'toc'}, d.schema.sections.filter(s => document.getElementById('sec-' + s.id) && !document.getElementById('sec-' + s.id).hidden).map(s =>
-          el('li', {}, el('a', {href: '#config', class: bad.has(s.id) ? 'bad' : '', onclick: e => { e.preventDefault(); document.getElementById('sec-' + s.id).scrollIntoView({behavior: 'smooth', block: 'start'}); }}, s.title)))));
+          el('li', {}, el('a', {href: '#config', class: bad.has(s.id) ? 'bad' : '', onclick: e => { e.preventDefault(); document.getElementById('sec-' + s.id).scrollIntoView({behavior: 'smooth', block: 'start'}); }}, sectionText(d, s, 'title'))))));
       }
     });
-    if (isOwner()) items.push(el('div', {class: 'sep'}), el('button', {type: 'button', class: 'doc', onclick: () => $('overview').scrollIntoView({behavior: 'smooth'})}, '服务器概览'));
+    if (isOwner()) items.push(el('div', {class: 'sep'}), el('button', {type: 'button', class: 'doc', onclick: () => $('overview').scrollIntoView({behavior: 'smooth'})}, t('console.overview.title')));
     nav.replaceChildren(...items);
   }
   function changes(d) {
@@ -726,65 +946,72 @@ const config = (() => {
     walk(d.view.value, drafts[d.name], '');
     return out;
   }
-  function renderBar() {
-    const dirty = docs.filter(dirtyDoc);
-    $('savebar').hidden = currentView !== 'config' || !dirty.length;
-    if (!dirty.length) return;
-    const problems = dirty.reduce((n, d) => n + ((checks[d.name] || {}).problems || []).length, 0);
-    const count = dirty.reduce((n, d) => n + changes(d).length, 0);
-    const text = $('savebar-text');
-    text.textContent = problems ? `${problems} 处需要修正` : `${count} 处改动未保存` + (dirty.length > 1 ? `（${dirty.length} 个文件）` : '');
-    text.classList.toggle('bad', !!problems);
-    $('save').disabled = !!problems;
+  async function renderBar() {
+    const renderPass = beginRender('config-savebar');
+    try {
+      const dirty = docs.filter(dirtyDoc);
+      $('savebar').hidden = currentView !== 'config' || !dirty.length;
+      if (!dirty.length) return;
+      const problems = dirty.reduce((n, d) => n + ((checks[d.name] || {}).problems || []).length, 0);
+      const count = dirty.reduce((n, d) => n + changes(d).length, 0);
+      const text = $('savebar-text');
+      text.textContent = problems ? rendered(await dynamicText('console.config.bar.problems', fmt(problems)), renderPass) : dirty.length > 1 ? rendered(await dynamicText('console.config.bar.changes_files', fmt(count), fmt(dirty.length)), renderPass) : rendered(await dynamicText('console.config.bar.changes', fmt(count)), renderPass);
+      text.classList.toggle('bad', !!problems);
+      $('save').disabled = !!problems;
+
+    } catch (error) { if (error !== staleRender) throw error; }
   }
-  const show = v => v === undefined ? '（未设置）' : JSON.stringify(v);
+  const show = v => v === undefined ? t('console.config.unset') : JSON.stringify(v);
   $('show-diff').onclick = () => {
     const list = el('ul', {class: 'diff'});
     docs.filter(dirtyDoc).forEach(d => changes(d).forEach(c => {
       const f = fieldFor(d, c.path);
-      list.append(el('li', {}, d.schema.title + ' · ' + (f ? f.label : c.path), el('small', {}, c.path), el('div', {}, el('span', {class: 'from'}, show(c.from)), ' → ', el('span', {class: 'to'}, show(c.to)))));
+      list.append(el('li', {}, docTitle(d) + ' · ' + (f ? fieldText(d, f, 'label') : c.path), el('small', {}, c.path), el('div', {}, el('span', {class: 'from'}, show(c.from)), ' → ', el('span', {class: 'to'}, show(c.to)))));
     }));
-    ask({title: '尚未保存的改动', body: '保存后需要重启服务端才会生效。', extra: list, ok: '知道了'});
+    ask({title: t('console.config.diff.title'), body: t('console.config.diff.body'), extra: list, ok: t('console.config.diff.ok')});
   };
   $('discard').onclick = async () => {
-    if (!await ask({title: '放弃全部改动？', body: '未保存的配置改动会被丢弃。', ok: '放弃', danger: true})) return;
-    docs.forEach(d => { drafts[d.name] = clone(d.view.value); }); checks = {}; render(); renderBanners();
+    if (!await ask({title: t('console.config.discard.title'), body: t('console.config.discard.body'), ok: t('console.config.discard.ok'), danger: true})) return;
+    docs.forEach(d => { drafts[d.name] = clone(d.view.value); }); checks = {}; await render(); await renderBanners();
   };
   async function save() {
     const dirty = docs.filter(dirtyDoc);
     if (!dirty.length || $('save').disabled) return;
-    const ok = await ask({title: '保存配置？', body: `将写入 ${dirty.map(d => d.file_name).join('、')}。改动在服务端重启后生效，重启前请确认配置无误。`, ok: '保存'});
+    const ok = await ask({title: t('console.config.save.title'), body: await dynamicText('console.config.save.body', listJoin(dirty.map(d => d.file_name))), ok: t('console.config.save.ok')});
     if (!ok) return;
     $('save').disabled = true;
     for (const d of dirty) {
       try {
         const {value} = await api('config/' + encodeURIComponent(d.name), {method: 'PUT', headers: {'If-Match': d.view.revision}, body: JSON.stringify(drafts[d.name], null, 2)});
         d.view = value; drafts[d.name] = clone(value.value); checks[d.name] = {problems: [], advice: value.advice || []};
-        toast(d.schema.title + ' 已保存，重启服务端后生效');
+        await toast(Component.translatable('console.config.saved', docTitle(d)));
       } catch (error) {
         if (error.status === 409) {
-          const reload = await ask({title: '文件已被修改', body: `${d.file_name} 在你编辑期间被其他人或其他程序修改了。载入最新版本会丢弃你在这个文件上的改动。`, ok: '载入最新版本', danger: true});
+          const reload = await ask({title: t('console.config.conflict.title'), body: await dynamicText('console.config.conflict.body', d.file_name), ok: t('console.config.conflict.ok'), danger: true});
           if (reload) { d.view = error.value.view; drafts[d.name] = clone(d.view.value); }
         } else if (error.status === 422) {
-          checks[d.name] = {problems: error.value.problems || [], advice: []}; current = d.name; toast('有需要修正的地方');
-        } else toast(d.schema.title + '：' + error.message);
+          checks[d.name] = {problems: error.value.problems || [], advice: []}; current = d.name; await toast(Component.translatable('console.config.fix_needed'));
+        } else await toast(Component.translatable('console.config.save_failed', docTitle(d), error.text));
       }
     }
-    render(); renderBanners(); renderOverview();
+    await render(); await renderBanners(); await renderOverview();
   }
   $('save').onclick = save;
-  document.addEventListener('keydown', event => {
-    if (currentView === 'config' && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); save(); }
+  document.addEventListener('keydown', async event => {
+    if (currentView === 'config' && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); await save(); }
   });
+  function paintOverview() {
+    $('overview').hidden = !server;
+    if (!server) { $('overview').replaceChildren(); return; }
+    const rows = [['server_version', server.server_version], ['game_version', server.game_version], ['game_data_version', server.game_data_version], ['bundle_version', server.bundle_version],
+      ['auth_mode', server.auth_mode && tr('console.overview.auth.' + server.auth_mode, server.auth_mode)], ['listen', server.listen], ['started_at', server.started_at && dateTime(server.started_at)],
+      ['data_dir', server.data_dir], ['mail_spool', server.mail_spool], ['dev_tools', server.dev_tools]];
+    $('overview').replaceChildren(el('h3', {}, t('console.overview.title')), el('dl', {}, rows.filter(r => r[1]).flatMap(([k, v]) => [el('dt', {}, t('console.overview.' + k)), el('dd', {}, /[\\/]/.test(v) ? el('code', {}, v) : v)])));
+  }
   async function renderOverview() {
     server = null;
     if (isOwner()) { try { server = (await api('server')).value; } catch { server = null; } }
-    $('overview').hidden = !server;
-    if (!server) { $('overview').replaceChildren(); return; }
-    const rows = [['服务端版本', server.server_version], ['游戏版本', server.game_version], ['GameData', server.game_data_version], ['资源包', server.bundle_version],
-      ['认证模式', server.auth_mode === 'oauth' ? 'OAuth 联机' : '本地单人'], ['监听地址', server.listen], ['启动时间', server.started_at && new Date(server.started_at).toLocaleString('zh-CN')],
-      ['数据目录', server.data_dir], ['邮件队列', server.mail_spool], ['开发覆盖', server.dev_tools]];
-    $('overview').replaceChildren(el('h3', {}, '服务器概览'), el('dl', {}, rows.filter(r => r[1]).flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, /[\\/]/.test(v) ? el('code', {}, v) : v)])));
+    paintOverview();
   }
   return {
     async open() {
@@ -794,12 +1021,96 @@ const config = (() => {
           docs.forEach(d => { if (drafts[d.name] === undefined) drafts[d.name] = clone(d.view.value); });
           current = current || (docs[0] && docs[0].name);
         }
-        render(); renderBanners(); renderOverview();
+        await render(); await renderBanners(); await renderOverview();
       } catch (error) { $('config-form').replaceChildren(el('p', {class: 'status err'}, error.message)); }
     },
+    async relabel() { if (!docs.length) return; await render(); await paintMessages(); await renderBanners(); paintOverview(); },
     dirty: () => docs.some(dirtyDoc),
     reset() { docs = []; drafts = {}; checks = {}; current = ''; },
   };
 })();
 
-boot();
+/* ---------- Updates ---------- */
+const updatesView = (() => {
+  let timer = null, status = null;
+  const when = value => value ? dateTime(value) : '';
+  const named = (group, value) => tr(`console.updates.${group}.${value}`, value);
+  // Release notes arrive as {locale: text}; older servers send one string.
+  const localized = value => value == null || typeof value === 'string' ? value || '' : value[locale] || value.en_us || Object.values(value).find(Boolean) || '';
+  async function render() {
+    const renderPass = beginRender('server-updates');
+    try {
+      const s = status;
+      if (!s) return;
+      const facts = [['current_version', s.current_version], ['method', named('method', s.method)], ['auto_check', t(s.check_enabled ? 'console.updates.enabled' : 'console.updates.disabled')],
+        ['last_check', when(s.last_check) || t('console.updates.never_checked')], ['check_error', s.last_error]];
+      if (s.last_result) {
+        const r = s.last_result, outcome = named('outcome', r.outcome);
+        facts.push(['last_switch', r.message ? rendered(await dynamicText('console.updates.last_switch_message', r.from, r.to, outcome, r.message), renderPass) : rendered(await dynamicText('console.updates.last_switch_value', r.from, r.to, outcome), renderPass)]);
+      }
+      $('update-facts').replaceChildren(...facts.filter(f => f[1]).flatMap(([k, v]) => [el('dt', {}, t('console.updates.fact.' + k)), el('dd', {}, v)]));
+      const a = s.available;
+      if (!a) {
+        $('update-available').replaceChildren(el('p', {class: 'muted'}, s.last_error ? '' : t('console.updates.up_to_date')));
+      } else {
+        const download = a.downloaded ? t('console.updates.downloaded') : a.download_error ? rendered(await dynamicText('console.updates.download_failed', a.download_error), renderPass) : t('console.updates.not_downloaded');
+        const migration = a.migration || {}, migrationNote = localized(migration.note), notes = localized(a.notes);
+        $('update-available').replaceChildren(...[
+          el('h3', {}, rendered(await dynamicText('console.updates.available', a.version), renderPass)),
+          el('p', {class: 'muted'}, [a.published_at && rendered(await dynamicText('console.updates.published', when(a.published_at)), renderPass), migration.kind && named('migration', migration.kind), download].filter(Boolean).join(' · ')),
+          migrationNote ? el('p', {class: migration.kind === 'irreversible' ? 'status err' : 'status'}, migrationNote) : null,
+          notes ? el('pre', {class: 'notes'}, notes) : null].filter(Boolean));
+      }
+      const actions = [];
+      const m = s.maintenance;
+      const delayInput = $('update-delay'), confirmInput = $('update-confirm');
+      if (m) {
+        const phase = named('phase', m.phase);
+        actions.push(el('p', {}, m.at ? rendered(await dynamicText('console.updates.maintenance_at', phase, m.version, when(m.at), m.requested_by), renderPass) : rendered(await dynamicText('console.updates.maintenance', phase, m.version, m.requested_by), renderPass)));
+        if (m.phase !== 'closing') actions.push(el('button', {type: 'button', class: 'btn', onclick: cancel}, t('console.updates.cancel')));
+      } else if (a && s.method !== 'none') {
+        const delay = el('input', {type: 'number', id: 'update-delay', min: '0', max: '1440', value: delayInput ? delayInput.value : String(s.countdown_minutes ?? 10)});
+        const confirm = a.migration && a.migration.kind === 'irreversible' ? el('label', {}, el('input', {type: 'checkbox', id: 'update-confirm', checked: !!(confirmInput && confirmInput.checked)}), ' ' + t('console.updates.confirm_irreversible')) : null;
+        actions.push(el('label', {}, t('console.updates.delay') + ' ', delay), confirm, el('button', {type: 'button', class: 'btn seal', onclick: apply}, t('console.updates.apply')));
+      }
+      $('update-actions').replaceChildren(...actions.filter(Boolean));
+
+    } catch (error) { if (error !== staleRender) throw error; }
+  }
+  async function load() {
+    try { status = (await api('updates')).value; await render(); }
+    catch (error) { await say($('update-status'), error, 'err'); }
+  }
+  async function apply() {
+    const minutes = Number($('update-delay').value || 0);
+    const confirmIrreversible = !!($('update-confirm') && $('update-confirm').checked);
+    const target = status.available.version;
+    const body = minutes ? await dynamicText('console.updates.apply.body_countdown', fmt(minutes), target) : await dynamicText('console.updates.apply.body_now', target);
+    if (!await ask({title: t('console.updates.apply.title'), body, ok: t('console.updates.apply')})) return;
+    try {
+      status = (await api('updates/apply', {method: 'POST', body: {delay_minutes: minutes, confirm_irreversible: confirmIrreversible}})).value;
+      await render(); await say($('update-status'), Component.translatable('console.updates.scheduled'), 'ok');
+    } catch (error) { await say($('update-status'), error, 'err'); }
+  }
+  async function cancel() {
+    try { status = (await api('updates/cancel', {method: 'POST'})).value; await render(); await say($('update-status'), Component.translatable('console.updates.cancelled'), 'ok'); }
+    catch (error) { await say($('update-status'), error, 'err'); }
+  }
+  $('update-check').onclick = async () => {
+    try { await api('updates/check', {method: 'POST'}); await say($('update-status'), Component.translatable('console.updates.checking')); setTimeout(load, 3000); }
+    catch (error) { await say($('update-status'), error, 'err'); }
+  };
+  return {
+    async open() { await load(); clearInterval(timer); timer = setInterval(load, 5000); },
+    close() { clearInterval(timer); timer = null; },
+    relabel: render,
+  };
+})();
+
+loadTranslations().then(async () => { await applyLocale(detectLocale()); await boot(); });
+
+window.addEventListener('unhandledrejection', event => {
+  console.error(event.reason);
+  const box = $('toast'); box.textContent = String(event.reason && event.reason.message || event.reason);
+  box.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => box.classList.remove('show'), 5200);
+});

@@ -48,8 +48,21 @@ type LoginSeed struct {
 	additionalCurrencies interface {
 		AdditionalCurrencies(command.Context) (map[int]uint64, error)
 	}
-	newbieStep interface{ NewbieStep() uint64 }
-	community  func(command.Context) ([]byte, error)
+	newbieStep     interface{ NewbieStep() uint64 }
+	community      func(command.Context) ([]byte, error)
+	recommendation interface {
+		RecommendationOptionWire(command.Context) ([]byte, error)
+	}
+}
+
+func (s *LoginSeed) AttachRecommendationOptions(provider interface {
+	RecommendationOptionWire(command.Context) ([]byte, error)
+}) error {
+	if provider == nil {
+		return errors.New("account: missing recommendation options provider")
+	}
+	s.recommendation = provider
+	return nil
 }
 
 func (s *LoginSeed) AttachCommunity(read func(command.Context) ([]byte, error)) error {

@@ -24,7 +24,7 @@ func (p *playerAssembly) multiplayerPVP(ctx command.Context) error {
 	if err != nil {
 		return err
 	}
-	public := pvp.Profile{OwnerID: ctx.AccountID, OwnerIndex: owner, Name: profile.UserID, XP: exp, PortraitCostume: profile.PortraitCostumeID, PortraitDesign: profile.PortraitDesignID, Title: profile.TitleID}
+	public := pvp.Profile{OwnerID: ctx.AccountID, OwnerIndex: owner, Name: profile.UserID, XP: exp, PortraitCostume: profile.PortraitCostumeID, PortraitDesign: profile.PortraitDesignID, Title: profile.TitleID, Guild: profile.GuildBase}
 	builder := &pvp.OwnedSnapshotBuilder{Design: p.design.pvp.Design, Characters: p.worldService.CharacterService(), Collection: p.collection, Equipment: p.ownedEquipment, OwnerIndex: owner,
 		Buffs: func(ctx command.Context) ([]gamedata.PictorialBuffStat, error) {
 			_, buffs, err := p.pictorialService.Snapshot(ctx)
@@ -56,13 +56,15 @@ func (p *playerAssembly) multiplayerPVP(ctx command.Context) error {
 		if err != nil {
 			return pvp.Profile{}, err
 		}
-		return pvp.Profile{OwnerID: ctx.AccountID, OwnerIndex: owner, Name: current.UserID, XP: xp, PortraitCostume: current.PortraitCostumeID, PortraitDesign: current.PortraitDesignID, Title: current.TitleID}, nil
+		return pvp.Profile{OwnerID: ctx.AccountID, OwnerIndex: owner, Name: current.UserID, XP: xp, PortraitCostume: current.PortraitCostumeID, PortraitDesign: current.PortraitDesignID, Title: current.TitleID, Guild: current.GuildBase}, nil
 	}); err != nil {
 		return err
 	}
 	if err = p.login.AttachColosseumSlots(p.pvpService); err != nil {
 		return err
 	}
+	p.pvpService.AttachCompletion(p.completePVP)
+	p.pvpService.AttachPreparation(p.preparePVPRecommendation)
 	return p.login.AttachAdditionalCurrencies(pvpLoginCurrencies{p})
 }
 

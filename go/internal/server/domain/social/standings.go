@@ -122,6 +122,37 @@ func (o *Owner) Standings(ctx context.Context, season uint64) ([]GuildStanding, 
 	})
 	return out, e
 }
+
+func (o *Owner) StatueRanking(ctx context.Context) (uint64, []GuildStanding, error) {
+	var latest []byte
+	err := o.store.View(ctx, func(tx Tx) error {
+		for cursor := ""; ; {
+			page, e := tx.Scan(boardBucket, "", cursor, 256)
+			if e != nil {
+				return e
+			}
+			if len(page) == 0 {
+				return nil
+			}
+			latest = append(latest[:0], page[len(page)-1].Value...)
+			cursor = page[len(page)-1].Key
+			if len(page) < 256 {
+				return nil
+			}
+		}
+	})
+	if err != nil || len(latest) == 0 {
+		return 0, nil, err
+	}
+	var rows []GuildStanding
+	if err = json.Unmarshal(latest, &rows); err != nil {
+		return 0, nil, err
+	}
+	if len(rows) == 0 {
+		return 0, nil, nil
+	}
+	return rows[0].Season, rows[:min(3, len(rows))], nil
+}
 func (o *Owner) MemberStandings(ctx context.Context, guild, season uint64) ([]MemberBest, error) {
 	var out []MemberBest
 	e := o.store.View(ctx, func(tx Tx) error { var e error; out, e = memberBests(tx, guild, season); return e })

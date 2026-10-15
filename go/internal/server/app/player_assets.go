@@ -88,6 +88,7 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 		return fmt.Errorf("load inventory slot state: %w", err)
 	}
 	p.inventorySlots.AttachDevelopmentSettings(p.options.devToolsConfig)
+	p.ownedItems.AttachCapacity(p.inventorySlots)
 	if err := p.login.AttachInventorySlots(p.inventorySlots); err != nil {
 		return fmt.Errorf("attach inventory slots to login: %w", err)
 	}
@@ -129,6 +130,8 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err := p.ownedEquipment.AttachSlots(ctx, p.design.equipmentSlots); err != nil {
 		return fmt.Errorf("attach equipment slot GameData: %w", err)
 	}
+	p.ownedEquipment.AttachCapacity(p.inventorySlots)
+	p.ownedItems.AttachDiscard(10, p.ownedEquipment.Discard)
 	if err := p.ownedEquipment.AttachUpgrade(ctx, p.design.equipmentUpgrade, p.wallet, p.ownedItems); err != nil {
 		return fmt.Errorf("attach equipment upgrade GameData: %w", err)
 	}

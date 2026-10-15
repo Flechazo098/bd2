@@ -101,6 +101,22 @@ func (p *PVP) Ranking(query pvp.RankQuery) ([]pvp.RankEntry, error) {
 	return out, nil
 }
 
+func (p *PVP) StatueRanking(mode pvp.Mode) (uint64, []pvp.RankEntry, error) {
+	p.mu.RLock()
+	var season uint64
+	for _, configured := range p.seasons {
+		if configured.Mode == mode && p.board(mode, configured.ID).Frozen && configured.ID > season {
+			season = configured.ID
+		}
+	}
+	p.mu.RUnlock()
+	if season == 0 {
+		return 0, nil, nil
+	}
+	rows, err := p.Ranking(pvp.RankQuery{Mode: mode, Season: season, Limit: 3})
+	return season, rows, err
+}
+
 func (p *PVP) Personal(query pvp.ProgressQuery) (pvp.PersonalProgress, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -128,9 +144,11 @@ func (p *PVP) History(query pvp.HistoryQuery) ([]pvp.BattleSettled, error) {
 	if query.Season != 0 {
 		rows = p.board(query.Mode, query.Season).Members[query.Owner].History
 	} else {
-		for _, season := range p.seasons {
-			if season.Mode == query.Mode {
-				rows = append(rows, p.board(query.Mode, season.ID).Members[query.Owner].History...)
+		for _, board := range p.boards {
+			for _, row := range board.Members[query.Owner].History {
+				if row.Mode == query.Mode {
+					rows = append(rows, row)
+				}
 			}
 		}
 	}
@@ -146,6 +164,7 @@ func (p *PVP) History(query pvp.HistoryQuery) ([]pvp.BattleSettled, error) {
 		}
 		row.Attacker = copyPublished(row.Attacker)
 		row.Defender = copyPublished(row.Defender)
+		row.Seeds = slices.Clone(row.Seeds)
 		out = append(out, row)
 		if len(out) == query.Limit {
 			break

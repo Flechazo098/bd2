@@ -44,6 +44,7 @@ type Source struct {
 	fieldMonsters    designIndex[int, []FieldMonsterDesign]
 	fieldMonsterMaps designIndex[int, map[int][]int]
 	fieldTraps       designIndex[int, FieldTrapDesign]
+	fieldStatues     designIndex[int, map[uint64]Reward]
 	nPCReputation    designIndex[int, NPCReputationDesign]
 	inns             designIndex[int, []InnRule]
 	waypoint         designIndex[uint64, WaypointPack]
@@ -75,6 +76,10 @@ func (s *Source) FieldMonsterMaps(key int) (map[int][]int, error) {
 }
 func (s *Source) FieldTraps(key int) (FieldTrapDesign, error) {
 	return s.fieldTraps.get(key, func() (FieldTrapDesign, error) { return LoadFieldTraps(s.root, s.version, key) })
+}
+
+func (s *Source) FieldStatues(pack int) (map[uint64]Reward, error) {
+	return s.fieldStatues.get(pack, func() (map[uint64]Reward, error) { return loadFieldStatues(s.root, s.version, pack) })
 }
 func (s *Source) NPCReputation(key int) (NPCReputationDesign, error) {
 	return s.nPCReputation.get(key, func() (NPCReputationDesign, error) { return LoadNPCReputation(s.root, s.version, key) })

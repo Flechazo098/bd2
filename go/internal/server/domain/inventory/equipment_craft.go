@@ -131,6 +131,9 @@ func (s *EquipmentInventory) grantGeneratedBatch(ctx command.Context, identityPr
 			return existing, nil
 		}
 	}
+	if uint64(len(entries)) > math.MaxUint64-s.owned.NextIndex {
+		return nil, errors.New("inventory: equipment batch indices exhausted")
+	}
 	next := cloneEquipmentSnapshot(s.owned)
 	created := make([]Equipment, 0, len(entries))
 	for i, source := range entries {

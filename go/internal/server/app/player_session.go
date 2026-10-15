@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/domain/commerce"
 	"bd2server/internal/server/domain/commerce/gacha"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/domain/profile"
 	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/gateway/session"
@@ -41,6 +42,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 	if err := p.multiplayerPVP(ctx); err != nil {
 		return err
 	}
+	p.worldService.AttachRankStatues(p.rankStatues)
 	if err := p.achievementObserver.SyncRecordedHistory(ctx); err != nil {
 		return fmt.Errorf("restore recorded achievement history: %w", err)
 	}
@@ -84,6 +86,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		p.ownedEquipment,
 		p.inventorySlots,
 		p.charAwakeService,
+		p.rosterProgressService,
 		p.costumePotentialService,
 		p.costumeBurstService,
 		p.friendshipService,
@@ -105,6 +108,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		&scheduleadapter.Service{Schedule: p.options.calendars.RegularService},
 		readonly.Service{Seed: p.seeds.defaults},
 		feature.Service{},
+		notice.Handler{Board: p.options.notices},
 	}
 	if p.pvpService != nil {
 		p.handlers = append([]session.Handler{p.pvpService}, p.handlers...)

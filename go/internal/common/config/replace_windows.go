@@ -10,7 +10,8 @@ import (
 
 var moveFileEx = syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 
-func replaceFile(source, destination string) error {
+// ReplaceFile atomically renames source over destination, replacing it if present.
+func ReplaceFile(source, destination string) error {
 	sourcePtr, err := syscall.UTF16PtrFromString(source)
 	if err != nil {
 		return err

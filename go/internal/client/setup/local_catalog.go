@@ -18,10 +18,11 @@ import (
 const (
 	localCatalogPrefix  = "{UnityEngine.AddressableAssets.Addressables.RuntimePath}\\"
 	localCatalogBackup  = "catalog.json.bd2-before-local-sync"
+	localBundleManifest = ".bd2-local-bundles.json"
 	maximumCatalogBytes = 128 << 20
 )
 
-func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error {
+func InstallLocalCatalog(gameDir, localRoot, bundleVersion string) error {
 	installation, err := clientlayout.Resolve(gameDir)
 	if err != nil {
 		return err
@@ -34,7 +35,15 @@ func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error 
 		return err
 	}
 	aa := filepath.Join(installation.Data, "StreamingAssets", "aa")
-	raw, err = localizeCatalog(raw, release, aa)
+	managed, err := managedCatalogBundles(aa)
+	if err != nil {
+		return err
+	}
+	paths, err := resourcecatalog.BundlePaths(raw)
+	if err != nil {
+		return err
+	}
+	raw, err = localizeCatalog(raw, release, aa, managed)
 	if err != nil {
 		return err
 	}
@@ -55,6 +64,25 @@ func installCurrentLocalCatalog(gameDir, localRoot, bundleVersion string) error 
 		if err := replaceCatalog(target, raw); err != nil {
 			return fmt.Errorf("install current local Addressables catalog: %w", err)
 		}
+	}
+	var records []managedBundle
+	for _, relative := range paths {
+		sourceInfo, err := os.Stat(filepath.Join(release, filepath.FromSlash(relative)))
+		if err != nil {
+			return err
+		}
+		targetInfo, err := os.Stat(filepath.Join(aa, filepath.FromSlash(relative)))
+		if err != nil {
+			return err
+		}
+		records = append(records, managedBundle{Path: relative, SourceSize: sourceInfo.Size(), SourceModified: sourceInfo.ModTime().UnixNano(), TargetSize: targetInfo.Size(), TargetModified: targetInfo.ModTime().UnixNano()})
+	}
+	managedRaw, err := json.Marshal(records)
+	if err != nil {
+		return err
+	}
+	if err := replaceCatalog(filepath.Join(aa, localBundleManifest), managedRaw); err != nil {
+		return fmt.Errorf("record managed Addressables bundles: %w", err)
 	}
 	hash, err := os.ReadFile(sourceHash)
 	if err != nil {
@@ -158,7 +186,37 @@ func readCatalog(path string) ([]byte, error) {
 	return raw, nil
 }
 
-func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
+type managedBundle struct {
+	Path           string `json:"path"`
+	SourceSize     int64  `json:"source_size"`
+	SourceModified int64  `json:"source_modified"`
+	TargetSize     int64  `json:"target_size"`
+	TargetModified int64  `json:"target_modified"`
+}
+
+func managedCatalogBundles(aa string) (map[string]managedBundle, error) {
+	managed := map[string]managedBundle{}
+	raw, err := os.ReadFile(filepath.Join(aa, localBundleManifest))
+	if errors.Is(err, os.ErrNotExist) {
+		return managed, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var records []managedBundle
+	if err := json.Unmarshal(raw, &records); err != nil {
+		return nil, fmt.Errorf("read managed Addressables bundles: %w", err)
+	}
+	for _, record := range records {
+		if _, err := resourcecatalog.BundlePath(resourcecatalog.RemotePrefix + "/platform/HD/version/" + record.Path); err != nil {
+			return nil, err
+		}
+		managed[record.Path] = record
+	}
+	return managed, nil
+}
+
+func localizeCatalog(raw []byte, release, aa string, managed map[string]managedBundle) ([]byte, error) {
 	document, ids, err := resourcecatalog.Decode(raw)
 	if err != nil {
 		return nil, err
@@ -172,7 +230,7 @@ func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 			}
 			source := filepath.Join(release, filepath.FromSlash(relative))
 			destination := filepath.Join(aa, filepath.FromSlash(relative))
-			if err := ensureCatalogBundleLink(source, destination); err != nil {
+			if err := ensureCatalogBundleLink(source, destination, managed[relative]); err != nil {
 				return nil, err
 			}
 			ids[index] = localCatalogPrefix + strings.ReplaceAll(filepath.ToSlash(relative), "/", "\\")
@@ -201,26 +259,62 @@ func localizeCatalog(raw []byte, release, aa string) ([]byte, error) {
 	return localized, nil
 }
 
-func ensureCatalogBundleLink(source, destination string) error {
+func ensureCatalogBundleLink(source, destination string, managed managedBundle) error {
 	sourceInfo, err := os.Stat(source)
 	if err != nil || !sourceInfo.Mode().IsRegular() {
 		return fmt.Errorf("local ServerData catalog references a missing bundle: %s", source)
 	}
 	if destinationInfo, err := os.Stat(destination); err == nil {
-		if !destinationInfo.Mode().IsRegular() || !os.SameFile(sourceInfo, destinationInfo) {
+		if !destinationInfo.Mode().IsRegular() {
 			return fmt.Errorf("game Addressables bundle conflicts with the selected local release: %s", destination)
 		}
-		return nil
+		if os.SameFile(sourceInfo, destinationInfo) {
+			return nil
+		}
+		if managed.Path == "" {
+			return fmt.Errorf("game Addressables bundle conflicts with the selected local release: %s", destination)
+		}
+		if sourceInfo.Size() == managed.SourceSize && sourceInfo.ModTime().UnixNano() == managed.SourceModified && destinationInfo.Size() == managed.TargetSize && destinationInfo.ModTime().UnixNano() == managed.TargetModified {
+			return nil
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect game Addressables bundle: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return fmt.Errorf("create game Addressables bundle directory: %w", err)
 	}
-	if err := os.Link(source, destination); err != nil {
-		return fmt.Errorf("hard-link local bundle without duplicating it (keep the game and local resources on the same filesystem): %w", err)
+	staged, err := os.CreateTemp(filepath.Dir(destination), ".bundle-local-*")
+	if err != nil {
+		return err
 	}
-	return nil
+	path := staged.Name()
+	defer func() { _ = staged.Close(); _ = os.Remove(path) }()
+	if err := staged.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if err := os.Link(source, path); err != nil {
+		in, err := os.Open(source)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = in.Close() }()
+		out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		written, copyErr := io.Copy(out, in)
+		syncErr, closeErr := out.Sync(), out.Close()
+		if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
+			return err
+		}
+		if written != sourceInfo.Size() {
+			return errors.New("incomplete local Addressables bundle copy")
+		}
+	}
+	return os.Rename(path, destination)
 }
 
 func writeExclusiveFile(path string, data []byte, mode os.FileMode) error {
