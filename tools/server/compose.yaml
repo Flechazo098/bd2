@@ -1,0 +1,27 @@
+# Default Compose file for bd2-host.sh. `bd2-host.sh install` copies it to
+# /opt/bd2/compose.yaml once; edit that copy for your host. bd2-host.sh owns
+# BD2_SERVER_IMAGE in /opt/bd2/.env, so keep the image line as it is.
+services:
+  server:
+    image: ${BD2_SERVER_IMAGE:?bd2-host.sh deploy selects the image}
+    command: [serve, --listen, 0.0.0.0:8080, --data-dir, /app/data]
+    restart: unless-stopped
+    env_file:
+      - /opt/bd2/.env
+    ports:
+      # Publish behind an HTTPS reverse proxy; OAuth needs a public HTTPS origin.
+      - "127.0.0.1:8080:8080"
+      # Realtime multiplayer, when enabled in game.json:
+      # - "8444:8444/tcp"
+      # - "8444:8444/udp"
+    volumes:
+      - /opt/bd2/data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 90s

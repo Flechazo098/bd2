@@ -213,7 +213,7 @@ func (r *release) stageAssets() error {
 			return err
 		}
 	}
-	for _, name := range []string{"bd2server.service", "bd2-docker-update.sh", "bd2-docker-update.service", "bd2-docker-update.path"} {
+	for _, name := range []string{"bd2server.service", "bd2-host.sh", "compose.yaml"} {
 		source := filepath.Join(root, "tools", "server", name)
 		if err := copyFile(source, filepath.Join(r.server, name)); err != nil {
 			return fmt.Errorf("stage server installation file %s: %w", name, err)
