@@ -71,6 +71,10 @@ type Bootstrap struct {
 	// language (Define_LanguageType) while maintenance has closed new
 	// logins, or "".
 	LoginsClosed func(language uint64) string
+	// Broadcast returns the server-wide Notify fields. An idle game client
+	// only polls the plaintext /ServerNowTime, so maintenance warnings and
+	// notice changes must ride on that reply too.
+	Broadcast func() []byte
 }
 
 var ErrNotImplemented = errors.New("packet not implemented")
@@ -100,7 +104,13 @@ func (b Bootstrap) Dispatch(path string, request []byte) (Reply, error) {
 	case "/ServerInfo":
 		return Reply{Data: bootstrap.ServerInfo(b.Config)}, nil
 	case "/ServerNowTime":
-		return Reply{Data: bootstrap.ServerNowTime(b.now())}, nil
+		reply := Reply{Data: bootstrap.ServerNowTime(b.now())}
+		if b.Broadcast != nil {
+			if notify := b.Broadcast(); len(notify) != 0 {
+				reply.Notify = base64.StdEncoding.EncodeToString(notify)
+			}
+		}
+		return reply, nil
 	case "/NoticeInfo":
 		if b.Notices == nil {
 			return Reply{}, nil

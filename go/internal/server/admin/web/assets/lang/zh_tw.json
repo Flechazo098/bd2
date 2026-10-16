@@ -503,5 +503,6 @@
   "console.error.incompatible_schedules": "此排期集與目前遊戲及 GameData 版本不相容。",
   "console.error.confirming_update": "上次更新仍在進行健康檢查，請等待確認完成。",
   "console.updates.component": "更新內容",
-  "console.updates.component.server": "伺服器程式"
+  "console.updates.component.server": "伺服器程式",
+  "console.updates.restarting": "伺服器正在重新啟動以套用更新，本頁面會自動重新連線。"
 }

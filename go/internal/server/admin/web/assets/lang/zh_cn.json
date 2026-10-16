@@ -503,5 +503,6 @@
   "console.error.incompatible_schedules": "此排期集与当前游戏及 GameData 版本不兼容。",
   "console.error.confirming_update": "上一次更新仍在进行健康检查，请等待确认完成。",
   "console.updates.component": "更新内容",
-  "console.updates.component.server": "服务端程序"
+  "console.updates.component.server": "服务端程序",
+  "console.updates.restarting": "服务器正在重启以应用更新，本页面会自动重新连接。"
 }

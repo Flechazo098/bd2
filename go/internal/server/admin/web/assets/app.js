@@ -1100,7 +1100,11 @@ const updatesView = (() => {
   }
   async function load() {
     try { status = (await api('updates')).value; await render(); }
-    catch (error) { await say($('update-status'), error, 'err'); }
+    catch (error) {
+      // Applying an update stops this server; keep polling until the new one answers.
+      const restarting = status && status.maintenance && (!error.status || error.status >= 502);
+      await say($('update-status'), restarting ? Component.translatable('console.updates.restarting') : error, restarting ? '' : 'err');
+    }
   }
   async function apply() {
     const selectedComponent = status.available ? 'server' : status.schedules && status.schedules.available ? 'schedules' : 'server';

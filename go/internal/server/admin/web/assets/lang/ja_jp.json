@@ -503,5 +503,6 @@
   "console.error.incompatible_schedules": "このセットは現在のゲームおよび GameData バージョンと互換性がありません。",
   "console.error.confirming_update": "前回の更新の動作確認中です。正常動作の確認が完了するまでお待ちください。",
   "console.updates.component": "更新内容",
-  "console.updates.component.server": "サーバープログラム"
+  "console.updates.component.server": "サーバープログラム",
+  "console.updates.restarting": "更新を適用するためにサーバーを再起動しています。このページは自動的に再接続します。"
 }

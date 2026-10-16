@@ -48,6 +48,15 @@
     if (!scheduled) { scheduled = true; queueMicrotask(flush); }
     return request.promise;
   }
+  // formatLocally supports the verbs translations use: %[n]s, %s and %%.
+  function formatLocally(template, args) {
+    let next = 0;
+    return String(template).replace(/%(?:\[(\d+)\])?([sdv%])/g, (match, index, verb) => {
+      if (verb === '%') return '%';
+      const position = index ? Number(index) - 1 : next++;
+      return position >= 0 && position < args.length ? String(args[position]) : match;
+    });
+  }
   class Component {
     #content; #args;
     constructor(content, args) { this.#content = content; this.#args = args; }
@@ -60,7 +69,10 @@
       for (;;) {
         const language = locale();
         const args = await Promise.all(this.#args.map(value => value && typeof value.getString === 'function' ? value.getString() : value));
-        const text = await requestFormattedText(language, this.#content, args);
+        let text;
+        // The server formats with Go's fmt; while it is unreachable (for example
+        // restarting for an update) render the same %[n]s templates locally.
+        try { text = await requestFormattedText(language, this.#content, args); } catch { text = formatLocally(lookup(this.#content) ?? this.#content, args); }
         if (language === locale()) return text;
       }
     }

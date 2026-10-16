@@ -164,7 +164,7 @@ func Serve(args []string) (serveErr error) {
 		_, message := updater.LoginsClosed(i18n.FromGameLanguage(language))
 		return message
 	}
-	dispatcher := transport.Bootstrap{Config: c.bootstrap, Notices: c.notices, LoginsClosed: loginsClosed}
+	dispatcher := transport.Bootstrap{Config: c.bootstrap, Notices: c.notices, LoginsClosed: loginsClosed, Broadcast: game.Broadcast}
 	handler := transport.HTTP{
 		Dispatcher: dispatcher, Raw: game, Authentication: c.authentication,
 		AuthenticationHandler: authHandler, ResourcePolicy: c.publicResources,

@@ -503,5 +503,6 @@
   "console.error.incompatible_schedules": "This schedule set does not match the running game and GameData versions.",
   "console.error.confirming_update": "The previous update is still being checked. Wait until it is confirmed healthy.",
   "console.updates.component": "Update content",
-  "console.updates.component.server": "Server program"
+  "console.updates.component.server": "Server program",
+  "console.updates.restarting": "The server is restarting to apply the update. This page reconnects automatically."
 }
