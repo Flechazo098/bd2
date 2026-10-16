@@ -2,7 +2,7 @@
   "game_version": "2.36.7",
   "client_version": "2.36.7+client.0.2.0",
   "server_version": "2.36.7+server.0.2.0",
-  "game_data_version": "20261012190548",
+  "game_data_version": "20261008155037",
   "bundle_version": "20261007175947",
   "seed_directory": "go/seed/v2_36_7",
   "plugins": {
