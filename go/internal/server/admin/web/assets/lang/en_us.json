@@ -29,7 +29,7 @@
   "console.error.no_update": "No newer server release is available.",
   "console.error.already_scheduled": "A maintenance is already scheduled.",
   "console.error.irreversible_unconfirmed": "This release contains a save migration that cannot be rolled back. Read the migration note and confirm it first.",
-  "console.error.invalid_delay": "The countdown must be between 0 and 1,440 minutes (24 hours).",
+  "console.error.invalid_delay": "The countdown must be 0 (start now) or between 5 and 1,440 minutes (24 hours), so idle players still see the warning.",
   "console.error.install_not_writable": "The server can't write to its install directory, so the update can't be applied.",
   "console.error.no_maintenance": "No maintenance is scheduled.",
   "console.error.maintenance_closing": "The maintenance is already draining and can no longer be cancelled.",

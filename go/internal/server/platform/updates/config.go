@@ -77,7 +77,8 @@ var Document = commonconfig.Document[Config]{
 					{Value: MethodDocker, Label: "Docker", Help: "排空并保存后退出，由宿主机脚本切换到清单指定的镜像。"},
 					{Value: MethodNone, Label: "仅通知", Help: "只检查和展示，不提供应用更新。"},
 				}},
-				{Path: "countdown_minutes", Kind: commonconfig.KindInteger, Label: "默认倒计时（分钟）", Min: countdownMin, Max: countdownMax},
+				{Path: "countdown_minutes", Kind: commonconfig.KindInteger, Label: "默认倒计时（分钟）", Min: countdownMin, Max: countdownMax,
+					Help: "0 表示立即维护；否则至少 5 分钟，挂机玩家的客户端每 3 分钟才查询一次服务器。"},
 				{Path: "maintenance_minutes", Kind: commonconfig.KindInteger, Label: "预计维护时长（分钟）", Min: downtimeMin, Max: downtimeMax},
 				{Path: "webhook_url", Kind: commonconfig.KindString, Label: "Webhook 地址", Format: "url", Advanced: true, Help: "发现新版时向此地址 POST 一次 JSON；留空不发送。"},
 			}},
@@ -87,6 +88,9 @@ var Document = commonconfig.Document[Config]{
 		var problems commonconfig.Problems
 		if interval, err := time.ParseDuration(c.CheckInterval); err != nil || interval < 10*time.Minute {
 			problems = append(problems, commonconfig.Problem{Path: "check_interval", Rule: commonconfig.RuleFormat, Message: "检查间隔至少 10m，例如 6h"})
+		}
+		if c.CountdownMinutes > 0 && time.Duration(c.CountdownMinutes)*time.Minute < MinimumCountdown {
+			problems = append(problems, commonconfig.Problem{Path: "countdown_minutes", Rule: commonconfig.RuleRange, Message: "倒计时为 0（立即维护）或至少 5 分钟"})
 		}
 		switch c.Method {
 		case MethodNative, MethodDocker, MethodNone:

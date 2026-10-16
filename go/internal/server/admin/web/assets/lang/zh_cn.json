@@ -29,7 +29,7 @@
   "console.error.no_update": "没有可用的新版本。",
   "console.error.already_scheduled": "已经安排了一次维护。",
   "console.error.irreversible_unconfirmed": "该版本包含不可回滚的存档迁移，请先阅读迁移说明并勾选确认。",
-  "console.error.invalid_delay": "倒计时需在 0 到 1,440 分钟（24 小时）之间。",
+  "console.error.invalid_delay": "倒计时需为 0（立即开始）或 5 到 1,440 分钟（24 小时），让挂机的玩家也能收到提醒。",
   "console.error.install_not_writable": "服务端对安装目录没有写权限，无法应用更新。",
   "console.error.no_maintenance": "当前没有安排维护。",
   "console.error.maintenance_closing": "维护已进入排空阶段，不能再取消。",

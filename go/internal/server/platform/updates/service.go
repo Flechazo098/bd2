@@ -464,8 +464,8 @@ func (s *Service) schedule(component string, delay time.Duration, confirmIrrever
 		return reject("incompatible_schedules", "%s", schedule.Incompatible)
 	case component == ComponentServer && available.Migration.Kind == release.MigrationIrreversible && !confirmIrreversible:
 		return reject(RejectIrreversible, "%s contains a save migration that cannot be rolled back: %s; confirm it explicitly", available.Version, available.Migration.Note.In(i18n.Fallback))
-	case delay < 0 || delay > 24*time.Hour:
-		return reject(RejectInvalidDelay, "the countdown must be between 0 and 24 hours")
+	case delay < 0 || delay > 24*time.Hour || (delay > 0 && delay < MinimumCountdown):
+		return reject(RejectInvalidDelay, "the countdown must be 0 (now) or between 5 minutes and 24 hours")
 	}
 	for _, file := range []string{pendingFile, schedulePendingFile} {
 		if _, err := os.Stat(filepath.Join(directory(s.options.DataDir), file)); err == nil {
@@ -738,6 +738,11 @@ func (s *Service) serveControl(ctx context.Context) {
 	s.persistLocked()
 	s.mu.Unlock()
 }
+
+// MinimumCountdown is the shortest countdown other than an immediate
+// maintenance. An idle game client only polls the server every three minutes,
+// so a shorter warning can reach players after maintenance has begun.
+const MinimumCountdown = 5 * time.Minute
 
 // Rejection codes let the console translate why an update request failed.
 const (

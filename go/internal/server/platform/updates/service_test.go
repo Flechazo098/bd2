@@ -3,6 +3,7 @@ package updates
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -124,5 +125,33 @@ func TestRestartDoesNotTrustAnUnsignedOfferSavedInStatus(t *testing.T) {
 	service := New(Options{Config: Default(), DataDir: dataDir, ServerVersion: "2.36.7+server.0.1.0"})
 	if service.Status().Available != nil {
 		t.Fatal("a status-file edit bypassed the required signed manifest check after restart")
+	}
+}
+
+// Idle clients poll every three minutes, so a countdown shorter than five
+// minutes is refused; five minutes is the shortest one accepted.
+func TestScheduleRefusesCountdownsTooShortForIdlePlayers(t *testing.T) {
+	config := Default()
+	config.Method = MethodDocker
+	service := New(Options{Config: config, DataDir: t.TempDir(), ServerVersion: "2.36.7+server.0.1.0", Board: notice.NewBoard(nil)})
+	service.status.Available = &Available{Version: "2.36.7+server.0.2.0", Commit: strings.Repeat("a", 40), Migration: release.Migration{Kind: release.MigrationNone}}
+	t.Cleanup(func() { _ = service.Cancel("test cleanup") })
+	for _, delay := range []time.Duration{time.Minute, 4*time.Minute + 59*time.Second} {
+		var rejection *Rejection
+		if err := service.Schedule(delay, false, "owner"); !errors.As(err, &rejection) || rejection.Code != RejectInvalidDelay {
+			t.Fatalf("Schedule(%v) = %v; want an invalid_delay rejection", delay, err)
+		}
+	}
+	if err := service.Schedule(5*time.Minute, false, "owner"); err != nil {
+		t.Fatalf("Schedule(5m) = %v; five minutes must be allowed", err)
+	}
+	// Wait until the countdown starts, which also lets maintenance finish
+	// writing its state before the data directory is removed.
+	deadline := time.Now().Add(3 * time.Second)
+	for state := service.Status(); state.Maintenance == nil || state.Maintenance.Phase != PhaseCountdown; state = service.Status() {
+		if time.Now().After(deadline) {
+			t.Fatalf("a five-minute countdown did not start: %+v", state.Maintenance)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

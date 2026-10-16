@@ -29,7 +29,7 @@
   "console.error.no_update": "새 서버 릴리스가 없습니다.",
   "console.error.already_scheduled": "이미 점검이 예약되어 있습니다.",
   "console.error.irreversible_unconfirmed": "이 릴리스에는 되돌릴 수 없는 저장 데이터 마이그레이션이 포함되어 있습니다. 먼저 마이그레이션 안내를 읽고 확인하세요.",
-  "console.error.invalid_delay": "카운트다운은 0~1,440분(24시간) 사이여야 합니다.",
+  "console.error.invalid_delay": "카운트다운은 0(즉시 시작) 또는 5~1,440분(24시간)이어야 합니다. 그래야 대기 중인 플레이어도 안내를 받을 수 있습니다.",
   "console.error.install_not_writable": "서버 설치 폴더에 쓸 수 없어 업데이트를 적용할 수 없습니다.",
   "console.error.no_maintenance": "예약된 점검이 없습니다.",
   "console.error.maintenance_closing": "이미 진행 중인 요청을 마무리하고 있어 점검을 취소할 수 없습니다.",

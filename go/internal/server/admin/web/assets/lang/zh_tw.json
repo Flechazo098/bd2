@@ -29,7 +29,7 @@
   "console.error.no_update": "沒有可用的新版本。",
   "console.error.already_scheduled": "已經安排了一次維護。",
   "console.error.irreversible_unconfirmed": "該版本包含不可還原的存檔遷移，請先閱讀遷移說明並勾選確認。",
-  "console.error.invalid_delay": "倒數計時需在 0 到 1,440 分鐘（24 小時）之間。",
+  "console.error.invalid_delay": "倒數計時需為 0（立即開始）或 5 到 1,440 分鐘（24 小時），讓掛機的玩家也能收到提醒。",
   "console.error.install_not_writable": "伺服器沒有安裝目錄的寫入權限，無法套用更新。",
   "console.error.no_maintenance": "目前沒有安排維護。",
   "console.error.maintenance_closing": "維護已開始等待進行中的請求完成，無法再取消。",

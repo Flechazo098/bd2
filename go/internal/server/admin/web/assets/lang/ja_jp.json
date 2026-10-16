@@ -29,7 +29,7 @@
   "console.error.no_update": "新しいサーバーリリースはありません。",
   "console.error.already_scheduled": "すでにメンテナンスが予定されています。",
   "console.error.irreversible_unconfirmed": "このリリースには元に戻せないセーブデータの移行が含まれています。先に移行に関する注意事項を読み、確認してください。",
-  "console.error.invalid_delay": "カウントダウンは 0～1,440 分（24 時間）の範囲で指定してください。",
+  "console.error.invalid_delay": "カウントダウンは 0（すぐに開始）または 5～1,440 分（24 時間）で指定してください。放置中のプレイヤーにも予告が届くようにするためです。",
   "console.error.install_not_writable": "サーバーのインストール先に書き込めないため、アップデートを適用できません。",
   "console.error.no_maintenance": "予定されているメンテナンスはありません。",
   "console.error.maintenance_closing": "すでに処理の終了待ちに入っているため、メンテナンスをキャンセルできません。",
