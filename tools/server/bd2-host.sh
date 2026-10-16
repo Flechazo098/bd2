@@ -106,7 +106,9 @@ resolve_commit() {
 # worktree, so ignored local files never enter the build context.
 build_image() {
     build_dir=$(mktemp -d) || die 'cannot create a build directory'
-    if ! git -C "$SOURCE_DIR" -c core.hooksPath=/dev/null worktree add --quiet --detach "$build_dir/source" "$1"; then
+    # COPY keeps file modes and the image runs as an unprivileged user, so
+    # check out with a normal umask instead of this script's private 077.
+    if ! (umask 022 && git -C "$SOURCE_DIR" -c core.hooksPath=/dev/null worktree add --quiet --detach "$build_dir/source" "$1"); then
         rmdir "$build_dir"
         die "cannot check out $1"
     fi
