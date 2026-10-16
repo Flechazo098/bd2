@@ -15,6 +15,9 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		if errors.Is(err, context.Canceled) {
+			os.Exit(130)
+		}
 		fmt.Fprintln(os.Stderr, "bd2w:", err)
 		var child *exec.ExitError
 		if errors.As(err, &child) && child.ExitCode() > 0 {
@@ -27,7 +30,7 @@ func main() {
 func usage() {
 	fmt.Println(`Usage:
   bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
-  bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement]
+  bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement] [--component all|schedules]
   bd2w runClient [client options]
   bd2w runClient2 [--instance player2] [--game-dir directory]
   bd2w plugins [--game-dir directory]

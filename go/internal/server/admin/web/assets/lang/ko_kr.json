@@ -486,5 +486,21 @@
   "console.updates.apply.body_now": "준비가 완료되면 즉시 신규 로그인을 차단하고 진행 중인 요청을 마무리한 뒤 저장하여 %[1]s(으)로 전환합니다.",
   "console.updates.scheduled": "점검을 예약했습니다.",
   "console.updates.cancelled": "점검을 취소했습니다.",
-  "console.updates.checking": "확인 중…"
+  "console.updates.checking": "확인 중…",
+  "console.updates.schedules.title": "일정 업데이트",
+  "console.updates.schedules.bundled": "기본 제공 일정",
+  "console.updates.schedules.game": "게임 버전",
+  "console.updates.schedules.gamedata": "GameData 버전",
+  "console.updates.schedules.up_to_date": "일정 업데이트가 없습니다.",
+  "console.updates.schedules.confirm": "준비 후 %[1]s분 동안 대기하고 요청 처리와 저장을 마친 다음 일정 세트 %[2]s로 현재 서버를 다시 시작합니다.",
+  "console.updates.schedule_outcome.succeeded": "성공",
+  "console.updates.schedule_outcome.rolled_back": "이전 일정 복원됨",
+  "console.updates.schedule_outcome.needs_operator": "수동 조치 필요",
+  "console.updates.schedule_outcome.switch_failed": "전환 실패",
+  "console.updates.schedule_outcome.cancelled": "취소됨",
+  "console.updates.schedule_outcome.restarting": "다시 시작 중",
+  "console.error.incompatible_schedules": "현재 게임 및 GameData 버전과 호환되지 않는 일정입니다.",
+  "console.error.confirming_update": "이전 업데이트의 정상 작동을 확인하는 중입니다. 확인이 완료될 때까지 기다려 주세요.",
+  "console.updates.component": "업데이트 내용",
+  "console.updates.component.server": "서버 프로그램"
 }

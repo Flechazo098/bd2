@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,6 +49,9 @@ func main() {
 		return
 	}
 	relaunched, err := relaunchDevelopmentIfNeeded(os.Args[1:])
+	if errors.Is(err, context.Canceled) {
+		return
+	}
 	if err != nil {
 		clientapp.ShowFatalError(err)
 		fmt.Fprintln(os.Stderr, "bd2client:", err)
@@ -59,6 +63,9 @@ func main() {
 	handled, err := runClientDevelopmentCommand(os.Args[1:])
 	if !handled && err == nil {
 		err = runClient(os.Args[1:], clientRunOptions{})
+	}
+	if errors.Is(err, context.Canceled) {
+		return
 	}
 	if err != nil {
 		clientapp.ShowFatalError(err)
@@ -108,6 +115,7 @@ func runClient(args []string, options clientRunOptions) error {
 		Logger:              logger,
 		LogPath:             logPath,
 		Versions:            versions,
+		Development:         options.versionConfigPath != "",
 		LocalIdentityPlugin: options.localIdentityPlugin,
 		LoginUIPlugin:       options.loginUIPlugin,
 		CashShopPlugin:      options.cashShopPlugin,

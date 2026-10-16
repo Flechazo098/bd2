@@ -47,6 +47,7 @@ type configuration struct {
 	versions           versionconfig.Config
 	compatibility      updateCompatibility
 	calendars          *calendar.Set
+	scheduleID         string
 	gameRules          gameconfig.Config
 	gameFile           *commonconfig.File[gameconfig.Config]
 	authFile           *commonconfig.File[authconfig.Config]
@@ -113,15 +114,6 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		}
 	}
 	versionconfig.Use(versions)
-	calendarDirectory := versions.Resolve("schedules")
-	calendars, err := calendar.LoadDirectory(calendarDirectory, versions.GameVersion, versions.GameDataVersion)
-	if err != nil {
-		return nil, fmt.Errorf("load project calendars: %w", err)
-	}
-	if calendars.RegularService == nil || calendars.MonsterHunt == nil || len(calendars.MonsterHunt.Seasons) == 0 {
-		return nil, errors.New("project calendars require regular content and monster hunt schedules")
-	}
-	slog.Info("project calendars loaded", "directory", calendarDirectory, "revisions", calendars.Revisions, "events", len(calendars.Events))
 	if *dataDir == "" {
 		executable, executableErr := os.Executable()
 		if executableErr != nil {
@@ -133,6 +125,18 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve server data directory: %w", err)
 	}
+	calendarDirectory, scheduleID, err := updates.ScheduleDirectory(*dataDir, versions.Resolve("schedules"), versions.GameVersion, versions.GameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("select project calendars: %w", err)
+	}
+	calendars, err := calendar.LoadDirectory(calendarDirectory, versions.GameVersion, versions.GameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load project calendars: %w", err)
+	}
+	if calendars.RegularService == nil || calendars.MonsterHunt == nil || len(calendars.MonsterHunt.Seasons) == 0 {
+		return nil, errors.New("project calendars require regular content and monster hunt schedules")
+	}
+	slog.Info("project calendars loaded", "directory", calendarDirectory, "revisions", calendars.Revisions, "events", len(calendars.Events))
 	configDirectory := filepath.Join(*dataDir, "config")
 	if *gameConfigPath == "" {
 		*gameConfigPath = gameconfig.Document.Path(configDirectory)
@@ -259,7 +263,7 @@ func loadConfiguration(args []string) (result *configuration, loadErr error) {
 		deckSeed:           *deckSeed,
 		worldSeed:          *worldSeed,
 		devToolsConfig:     *devToolsConfig,
-		versions:           versions, calendars: calendars, gameRules: gameRules, gameFile: gameFile, authFile: authFile, resourceFile: resourceFile, updateFile: updateFile, updates: updateConfig, notices: notice.NewBoard(nil), serveArgs: args, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
+		versions:           versions, calendars: calendars, scheduleID: scheduleID, gameRules: gameRules, gameFile: gameFile, authFile: authFile, resourceFile: resourceFile, updateFile: updateFile, updates: updateConfig, notices: notice.NewBoard(nil), serveArgs: args, authentication: authentication, authRuntime: authRuntime, publicResources: publicResources, bootstrap: cfg, gameData: gameData, verifiedGameData: verifiedGameData,
 		compatibility: compatibility,
 	}, nil
 }

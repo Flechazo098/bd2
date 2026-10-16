@@ -40,13 +40,16 @@ const hostWait = 10 * time.Minute
 // Plan is a switch decided by the running server and performed after it has
 // drained, saved and closed every store.
 type Plan struct {
-	DataDir   string
-	From, To  string
-	Method    string
-	Staged    string
-	Migration release.Migration
-	Image     string
-	Commit    string
+	FromFingerprintID string
+	FingerprintID     string
+	Schedules         *SchedulePlan
+	DataDir           string
+	From, To          string
+	Method            string
+	Staged            string
+	Migration         release.Migration
+	Image             string
+	Commit            string
 	// StateDirs are backed up first when the release requires a backup.
 	StateDirs []string
 }
@@ -57,23 +60,26 @@ type RestartError struct{ Plan *Plan }
 func (e *RestartError) Error() string { return "server stopped to update to " + e.Plan.To }
 
 type pending struct {
-	Install   string            `json:"install"`
-	From      string            `json:"from"`
-	To        string            `json:"to"`
-	Names     []string          `json:"names"`
-	Rollback  string            `json:"rollback"`
-	Migration release.Migration `json:"migration"`
-	Attempts  int               `json:"attempts"`
-	At        time.Time         `json:"at"`
+	FingerprintID string            `json:"fingerprint_id,omitempty"`
+	Install       string            `json:"install"`
+	From          string            `json:"from"`
+	To            string            `json:"to"`
+	Names         []string          `json:"names"`
+	Rollback      string            `json:"rollback"`
+	Migration     release.Migration `json:"migration"`
+	Attempts      int               `json:"attempts"`
+	At            time.Time         `json:"at"`
 }
 
 type dockerRequest struct {
-	From      string            `json:"from"`
-	To        string            `json:"to"`
-	Image     string            `json:"image,omitempty"`
-	Commit    string            `json:"commit"`
-	Migration release.Migration `json:"migration"`
-	At        time.Time         `json:"at"`
+	FromFingerprintID string            `json:"from_fingerprint_id,omitempty"`
+	FingerprintID     string            `json:"fingerprint_id,omitempty"`
+	From              string            `json:"from"`
+	To                string            `json:"to"`
+	Image             string            `json:"image,omitempty"`
+	Commit            string            `json:"commit"`
+	Migration         release.Migration `json:"migration"`
+	At                time.Time         `json:"at"`
 }
 
 func executableName() string {
@@ -115,12 +121,20 @@ func checkWritable() error {
 func (p *Plan) Execute(now time.Time) error {
 	err := p.execute(now)
 	if err != nil {
-		recordResult(p.DataDir, Result{From: p.From, To: p.To, Outcome: OutcomeSwitchFailed, Message: err.Error(), At: now.UTC()})
+		result := Result{From: p.From, To: p.To, Outcome: OutcomeSwitchFailed, Message: err.Error(), At: now.UTC()}
+		if p.Schedules != nil {
+			recordScheduleResult(p.DataDir, result)
+		} else {
+			recordResult(p.DataDir, result)
+		}
 	}
 	return err
 }
 
 func (p *Plan) execute(now time.Time) error {
+	if p.Schedules != nil {
+		return p.switchSchedules(now)
+	}
 	if p.Migration.Backup {
 		target := filepath.Join(p.DataDir, "backups", fmt.Sprintf("update-%s-%s-to-%s", now.UTC().Format("20060102T150405Z"), p.From, p.To))
 		if err := backup(p.StateDirs, target); err != nil {
@@ -129,7 +143,7 @@ func (p *Plan) execute(now time.Time) error {
 		slog.Info("state backed up before update", "path", target)
 	}
 	if p.Method == MethodDocker {
-		request := dockerRequest{From: p.From, To: p.To, Image: p.Image, Commit: p.Commit, Migration: p.Migration, At: now.UTC()}
+		request := dockerRequest{FromFingerprintID: p.FromFingerprintID, FingerprintID: p.FingerprintID, From: p.From, To: p.To, Image: p.Image, Commit: p.Commit, Migration: p.Migration, At: now.UTC()}
 		if err := writeJSON(filepath.Join(directory(p.DataDir), dockerFile), request); err != nil {
 			return err
 		}
@@ -140,12 +154,16 @@ func (p *Plan) execute(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	rollback := filepath.Join(install, ".update-rollback", p.From)
+	rollbackID := p.From
+	if p.FromFingerprintID != "" {
+		rollbackID += "-" + p.FromFingerprintID
+	}
+	rollback := filepath.Join(install, ".update-rollback", rollbackID)
 	names, err := swap(install, p.Staged, rollback)
 	if err != nil {
 		return err
 	}
-	record := pending{Install: install, From: p.From, To: p.To, Names: names, Rollback: rollback, Migration: p.Migration, At: now.UTC()}
+	record := pending{FingerprintID: p.FingerprintID, Install: install, From: p.From, To: p.To, Names: names, Rollback: rollback, Migration: p.Migration, At: now.UTC()}
 	if err := writeJSON(filepath.Join(directory(p.DataDir), pendingFile), record); err != nil {
 		if restoreErr := restore(install, rollback, names); restoreErr != nil {
 			return errors.Join(err, restoreErr)
@@ -221,6 +239,9 @@ func restore(install, rollback string, names []string) error {
 // of a freshly switched version and, for Docker, waits for a requested host
 // switch. A returned error must stop the process with the returned exit code.
 func Startup(ctx context.Context, dataDir, version string) (*Confirmation, int, error) {
+	if confirmation, code, err := scheduleStartup(dataDir); confirmation != nil || err != nil {
+		return confirmation, code, err
+	}
 	if hold, err := awaitHost(ctx, dataDir, version); hold || err != nil {
 		var exit *ExitError
 		if errors.As(err, &exit) {
@@ -240,6 +261,13 @@ func Startup(ctx context.Context, dataDir, version string) (*Confirmation, int, 
 		_ = os.Remove(path)
 		return nil, 0, nil
 	}
+	if record.FingerprintID != "" {
+		fingerprint, err := release.LoadFingerprint(filepath.Join(record.Install, release.FingerprintFileName), release.BuiltinChannel().TrustedKeys)
+		if err != nil || fingerprint == nil || fingerprint.ID != record.FingerprintID {
+			code, rollbackErr := rollBack(dataDir, record, "installed update fingerprint differs from the selected release")
+			return nil, code, errors.Join(err, rollbackErr)
+		}
+	}
 	record.Attempts++
 	if record.Attempts > maxStartAttempts {
 		code, err := rollBack(dataDir, record, fmt.Sprintf("it failed to start %d times in a row", maxStartAttempts))
@@ -253,10 +281,11 @@ func Startup(ctx context.Context, dataDir, version string) (*Confirmation, int, 
 
 // Confirmation finishes a switch once the new version has been healthy.
 type Confirmation struct {
-	dataDir string
-	record  pending
-	mu      sync.Mutex
-	settled bool
+	schedules *schedulePending
+	dataDir   string
+	record    pending
+	mu        sync.Mutex
+	settled   bool
 }
 
 // AfterHealthy marks the switch successful once ready has stayed true for a
@@ -296,6 +325,11 @@ healthy:
 		return
 	}
 	c.settled = true
+	if c.schedules != nil {
+		recordScheduleResult(c.dataDir, Result{From: c.schedules.From, To: c.schedules.To, Outcome: OutcomeSucceeded, At: time.Now().UTC()})
+		_ = os.Remove(filepath.Join(directory(c.dataDir), schedulePendingFile))
+		return
+	}
 	recordResult(c.dataDir, Result{From: c.record.From, To: c.record.To, Outcome: OutcomeSucceeded, At: time.Now().UTC()})
 	_ = os.Remove(filepath.Join(directory(c.dataDir), pendingFile))
 	parent := filepath.Dir(c.record.Rollback)
@@ -321,6 +355,9 @@ func (c *Confirmation) Failed(cause error) (int, error) {
 		return 1, cause
 	}
 	c.settled = true
+	if c.schedules != nil {
+		return rollbackSchedules(c.dataDir, *c.schedules, cause.Error())
+	}
 	return rollBack(c.dataDir, c.record, cause.Error())
 }
 
@@ -368,7 +405,26 @@ func awaitHost(ctx context.Context, dataDir, version string) (bool, error) {
 		return true, err
 	}
 	if request.To == version {
-		return false, nil
+		if request.From != request.To {
+			return false, nil
+		}
+		install, err := InstallDirectory()
+		if err != nil {
+			return true, err
+		}
+		fingerprint, err := release.LoadFingerprint(filepath.Join(install, release.FingerprintFileName), release.BuiltinChannel().TrustedKeys)
+		if err != nil {
+			return true, err
+		}
+		if request.FingerprintID == "" {
+			return true, errors.New("same-version Docker update has no target fingerprint")
+		}
+		if fingerprint != nil && fingerprint.ID == request.FingerprintID {
+			return false, nil
+		}
+		if fingerprint == nil || fingerprint.ID != request.FromFingerprintID {
+			return true, errors.New("the running resource fingerprint matches neither side of the Docker update")
+		}
 	}
 	if version != request.From {
 		return true, errors.New("the running program does not match either version of the Docker update request")

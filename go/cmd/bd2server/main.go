@@ -70,7 +70,7 @@ Usage:
 	bd2server serve [--data-dir DIR] [--version-config FILE] [options]
 	bd2server resources fetch --output DIR [--version-config FILE]
 	bd2server state check [options]
-	bd2server update status|check|apply|cancel [--data-dir DIR] [--in 10m | --now] [--confirm-irreversible] [--json]
+	bd2server update status|check|apply|cancel [--component server|schedules] [--data-dir DIR] [--in 10m | --now] [--confirm-irreversible] [--json]
 
 The server binds to loopback by default.
 Logging: --log-level trace|debug|info|warn|error; --log-color auto|always|never.

@@ -25,8 +25,12 @@ func runUpdate(args []string) error {
 	delay := fs.Duration("in", -1, "apply: start maintenance after this countdown, e.g. 10m (default from updates.json)")
 	now := fs.Bool("now", false, "apply: start maintenance as soon as the release is ready")
 	confirm := fs.Bool("confirm-irreversible", false, "apply: accept a release whose save migration cannot be rolled back")
+	component := fs.String("component", updates.ComponentServer, "apply: server or schedules")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
+	}
+	if *component != updates.ComponentServer && *component != updates.ComponentSchedules {
+		return errors.New("--component must be server or schedules")
 	}
 	if *dataDir == "" {
 		executable, err := os.Executable()
@@ -53,7 +57,7 @@ func runUpdate(args []string) error {
 		printStatus(status)
 		return nil
 	case "check", "apply", "cancel":
-		control := updates.Control{ID: requestID(), Action: args[0], ConfirmIrreversible: *confirm, RequestedAt: time.Now().UTC()}
+		control := updates.Control{ID: requestID(), Action: args[0], Component: *component, ConfirmIrreversible: *confirm, RequestedAt: time.Now().UTC()}
 		if args[0] == updates.ActionApply {
 			config, err := updates.Document.Load(updates.Document.Path(filepath.Join(directory, "config")))
 			if err != nil {
@@ -94,6 +98,32 @@ func printStatus(s updates.Status) {
 	if s.LastError != "" {
 		fmt.Printf("Check error %s\n", s.LastError)
 	}
+	if schedules := s.Schedules; schedules != nil {
+		current := schedules.CurrentID
+		if current == "" {
+			current = "bundled"
+		}
+		fmt.Printf("Schedules   %s (game %s / GameData %s)\n", current, schedules.GameVersion, schedules.GameDataVersion)
+		if a := schedules.Available; a != nil {
+			state := "not downloaded"
+			if a.Downloaded {
+				state = "downloaded and verified"
+			}
+			if a.DownloadError != "" {
+				state = "download failed: " + a.DownloadError
+			}
+			if a.Incompatible != "" {
+				state = "incompatible: " + a.Incompatible
+			}
+			fmt.Printf("Schedule update %s (%s)\n", a.Component.ID, state)
+			if notes := a.Component.Notes.In(i18n.Fallback); notes != "" {
+				fmt.Println(notes)
+			}
+		}
+		if r := schedules.LastResult; r != nil {
+			fmt.Printf("Last schedules %s -> %s: %s %s\n", r.From, r.To, r.Outcome, r.Message)
+		}
+	}
 	if a := s.Available; a != nil {
 		state := "not downloaded"
 		if a.Downloaded {
@@ -116,7 +146,7 @@ func printStatus(s updates.Status) {
 		if !m.At.IsZero() {
 			at = m.At.Local().Format(time.DateTime)
 		}
-		fmt.Printf("Maintenance %s -> %s (%s, %s)\n", m.Phase, m.Version, at, m.RequestedBy)
+		fmt.Printf("Maintenance %s %s -> %s (%s, %s)\n", m.Component, m.Phase, m.Version, at, m.RequestedBy)
 	}
 	if r := s.LastResult; r != nil {
 		fmt.Printf("Last switch %s -> %s: %s %s\n", r.From, r.To, r.Outcome, r.Message)

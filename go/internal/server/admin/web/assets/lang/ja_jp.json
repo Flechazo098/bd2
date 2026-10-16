@@ -486,5 +486,21 @@
   "console.updates.apply.body_now": "準備が完了すると、直ちに新規ログインを停止し、処理の終了を待って保存してから %[1]s に切り替えます。",
   "console.updates.scheduled": "メンテナンスを予定しました。",
   "console.updates.cancelled": "メンテナンスをキャンセルしました。",
-  "console.updates.checking": "確認中…"
+  "console.updates.checking": "確認中…",
+  "console.updates.schedules.title": "スケジュール更新",
+  "console.updates.schedules.bundled": "同梱スケジュール",
+  "console.updates.schedules.game": "ゲームバージョン",
+  "console.updates.schedules.gamedata": "GameData バージョン",
+  "console.updates.schedules.up_to_date": "スケジュール更新はありません。",
+  "console.updates.schedules.confirm": "準備完了後 %[1]s 分待ち、処理を完了して保存し、スケジュールセット %[2]s で現在のサーバーを再起動します。",
+  "console.updates.schedule_outcome.succeeded": "成功",
+  "console.updates.schedule_outcome.rolled_back": "以前のスケジュールを復元",
+  "console.updates.schedule_outcome.needs_operator": "手動対応が必要",
+  "console.updates.schedule_outcome.switch_failed": "切り替え失敗",
+  "console.updates.schedule_outcome.cancelled": "キャンセル済み",
+  "console.updates.schedule_outcome.restarting": "再起動中",
+  "console.error.incompatible_schedules": "このセットは現在のゲームおよび GameData バージョンと互換性がありません。",
+  "console.error.confirming_update": "前回の更新の動作確認中です。正常動作の確認が完了するまでお待ちください。",
+  "console.updates.component": "更新内容",
+  "console.updates.component.server": "サーバープログラム"
 }

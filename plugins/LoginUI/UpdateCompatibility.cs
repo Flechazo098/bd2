@@ -51,7 +51,7 @@ internal static class UpdateCompatibility
             if (headers != null) return headers;
             plugins = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, string> id in PluginIds)
-                if (Chainloader.PluginInfos.TryGetValue(id.Value, out BepInEx.PluginInfo info) && info.Instance != null)
+                if (Chainloader.PluginInfos.TryGetValue(id.Value, out BepInEx.PluginInfo info))
                     plugins.Add(id.Key, info.Metadata.Version.ToString());
             using var stream = new MemoryStream();
             Serializer(typeof(Dictionary<string, string>)).WriteObject(stream, plugins);
@@ -138,8 +138,15 @@ internal static class UpdateCompatibility
                 MatchesResource(policy.BundleVersion, BundleVersion) && MatchesResource(policy.GameDataVersion, GameDataVersion) &&
                 MatchesPlugins(policy.MinimumPlugins);
         if (string.IsNullOrWhiteSpace(update.ID)) throw new InvalidDataException("Missing update fingerprint identity");
-        if (update.RequireClientUpdate &&
-            (!AtLeast(ClientVersion, update.ClientVersion, "+client.") || !MatchesPlugins(update.MinimumPlugins))) return false;
+        if (update.RequireClientUpdate)
+        {
+            if (!AtLeast(ClientVersion, update.ClientVersion, "+client."))
+            {
+                Log?.LogWarning($"Client update required: launcher={ClientVersion}, minimum={update.ClientVersion}");
+                return false;
+            }
+            if (!MatchesPlugins(update.MinimumPlugins)) return false;
+        }
         if (update.RequireGameUpdate)
         {
             if (update.Game == null || string.IsNullOrEmpty(update.Game.GameVersion) ||
@@ -161,7 +168,11 @@ internal static class UpdateCompatibility
         {
             // CaptureEnvironment is an official-client evidence tool, never a player plugin.
             if (item.Key == "capture_environment") continue;
-            if (!plugins.TryGetValue(item.Key, out string current) || !AtLeast(current, item.Value, null)) return false;
+            if (!plugins.TryGetValue(item.Key, out string current) || !AtLeast(current, item.Value, null))
+            {
+                Log?.LogWarning($"Client update required: plugin={item.Key}, loaded={current ?? "missing"}, minimum={item.Value}");
+                return false;
+            }
         }
         return true;
     }
@@ -199,7 +210,8 @@ internal static class UpdateCompatibility
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     internal static void ShowPendingPopup()
     {
-        if (!IsBlocked || Interlocked.CompareExchange(ref popupShown, 1, 0) != 0 || ApplicationQuitting) return;
+        if (!IsBlocked || ApplicationQuitting || UIManager.IsShowingNetworkErrorPopup ||
+            Interlocked.CompareExchange(ref popupShown, 1, 0) != 0) return;
         FinishRecovery(false, verificationFailed ? "client compatibility could not be verified" : "server requires a client update");
         LoginController.LoginInProgress = false;
         LoginController.AccessTokens.Clear();
@@ -210,9 +222,9 @@ internal static class UpdateCompatibility
         if (network != null) network.Refresh();
         DisposeGameRelay();
         string key = verificationFailed ? "loginui.update.check_failed" : "loginui.update.required";
-        UIManager.IsShowingNetworkErrorPopup = true;
         UIManager.OpenErrorMessagePopupUI(TextComponent.Translatable(key).GetString(), LocalTextInfo.GetIntroText(-9998),
             TextComponent.Translatable("loginui.update.exit").GetString(), null, true, Application.Quit);
+        UIManager.IsShowingNetworkErrorPopup = true;
     }
 
     private static DataContractJsonSerializer Serializer(Type type) =>

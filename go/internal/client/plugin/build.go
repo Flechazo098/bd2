@@ -85,7 +85,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 	}
 	sdkKey := digestInputs(sdkInputsKey)
 	sdkManifestPath := filepath.Join(work, "sdk-build.json")
-	sdkTool := filepath.Join(root, "plugins", "GameSdk", "bin", "Release", "net8.0", "GameSdk.dll")
+	sdkTool := filepath.Join(work, "sdk-tool", "GameSdk.dll")
 	var sdkReused bool
 	var shared string
 	prepareStarted := time.Now()
@@ -106,7 +106,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 				return nil
 			}
 			_, _ = fmt.Fprintln(progress, "Client plugins: preparing the shared game SDK...")
-			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "GameSdk", "GameSdk.csproj"), "-c", "Release", "--nologo", "-v:quiet", "-clp:NoSummary", "-p:BD2SdkCompileInputsFile="+sdkInputs); err != nil {
+			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "GameSdk", "GameSdk.csproj"), "-c", "Release", "-o", filepath.Dir(sdkTool), "--nologo", "-v:quiet", "-clp:NoSummary", "-p:BD2SdkCompileInputsFile="+sdkInputs); err != nil {
 				return err
 			}
 
@@ -155,6 +155,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "ClientPlugins.proj"), "-m", "-c", "Release", "--nologo",
 				"-p:GameDir="+installation.Root, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+installation.BepInEx,
 				"-p:BD2SdkPrepared=true", "-p:BD2SdkDir="+sdkDir, "-p:BD2SharedSdkDir="+shared,
+				"-p:BD2SdkTool="+sdkTool,
 				"-p:BD2PreparedVersionDir="+versionDir, "-p:BD2CompileInputsDir="+compileInputsDir, "-p:BD2NamesCompileInputsFile="+namesInputs, "-v:quiet", "-clp:NoSummary"); err != nil {
 				return err
 			}
@@ -163,7 +164,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 			return nil
 		}},
 		taskgraph.Task{Name: "cacheCommit", DependsOn: []string{"pluginsCompile"}, Run: func(context.Context) error {
-			outputs := []string{sdkTool, sdkInputs, namesInputs, strings.TrimSuffix(sdkTool, ".dll") + ".deps.json", strings.TrimSuffix(sdkTool, ".dll") + ".runtimeconfig.json",
+			outputs := []string{sdkTool, sdkInputs, strings.TrimSuffix(sdkTool, ".dll") + ".deps.json", strings.TrimSuffix(sdkTool, ".dll") + ".runtimeconfig.json",
 				filepath.Join(sdkDir, "GameSdkIdentity.g.cs"), filepath.Join(sdkDir, "shared-sdk.txt"), filepath.Join(sdkDir, "GameSourceNavigation.props"),
 				filepath.Join(shared, "ref", "Assembly-CSharp.Readable.dll"), filepath.Join(shared, "names.json"), filepath.Join(shared, "names.json.gz")}
 			for _, name := range []string{"ready.txt", "navigation.json", "GameSourceNavigation.props", "Assembly-CSharp.Readable.dll", "Assembly-CSharp.Readable.xml",
@@ -176,6 +177,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 			}
 			outputs = append(outputs, toolDependencies...)
 			sdkOutputs := append([]string(nil), outputs...)
+			outputs = append(outputs, namesInputs)
 			for _, project := range developmentProjects {
 				output := filepath.Join(root, "plugins", project.name, "bin", "Release", "netstandard2.1")
 				outputs = append(outputs, filepath.Join(output, "BD2"+project.name+".dll"), filepath.Join(output, GameNames.fileName), filepath.Join(versionDir, project.key+".g.cs"), filepath.Join(compileInputsDir, project.key+".g.cs"))

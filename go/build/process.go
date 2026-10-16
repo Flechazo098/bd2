@@ -60,7 +60,7 @@ func (t task) command(program string, args ...string) error {
 	cmd.Stderr = os.Stderr
 	cmd.Env = replaceEnvironment(os.Environ(), map[string]string{"GOCACHE": filepath.Join(t.root, "go", ".cache", "go-build"), "GOOS": t.target.goos, "GOARCH": t.target.goarch, "GOARM": t.target.goarm})
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s %s: %w", program, strings.Join(args, " "), err)
+		return fmt.Errorf("%s %s: %w", program, strings.Join(args, " "), errors.Join(err, t.ctx.Err()))
 	}
 	return nil
 }

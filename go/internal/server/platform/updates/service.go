@@ -33,8 +33,14 @@ type Options struct {
 	Config  Config
 	DataDir string
 	// StateDirs are copied before a release that requires a backup.
-	StateDirs     []string
-	ServerVersion string
+	StateDirs         []string
+	FingerprintID     string
+	ServerVersion     string
+	GameVersion       string
+	BundleVersion     string
+	GameDataVersion   string
+	CurrentSchedules  string
+	ValidateSchedules func(string) error
 	// ServeArgs are the running serve flags, reused to preflight a staged package.
 	ServeArgs []string
 	Board     *notice.Board
@@ -66,11 +72,15 @@ func New(options Options) *Service {
 	}
 	s := &Service{options: options, keys: release.BuiltinChannel().TrustedKeys, wake: make(chan struct{}, 1)}
 	s.status = Status{CurrentVersion: options.ServerVersion, Method: options.Config.Method, CheckEnabled: options.Config.Check, Countdown: options.Config.CountdownMinutes, ManifestURL: options.Config.manifestURL()}
+	s.status.Schedules = &ScheduleStatus{CurrentID: options.CurrentSchedules, GameVersion: options.GameVersion, GameDataVersion: options.GameDataVersion}
 	var previous Status
 	if err := readJSON(filepath.Join(directory(options.DataDir), stateFile), &previous); err == nil {
 		s.status.Notified = previous.Notified
 		s.status.LastResult = previous.LastResult
 		s.status.LastCheck = previous.LastCheck
+		if previous.Schedules != nil {
+			s.status.Schedules.LastResult = previous.Schedules.LastResult
+		}
 	}
 	return s
 }
@@ -85,6 +95,14 @@ func (s *Service) Status() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.status
+	if out.Schedules != nil {
+		copy := *out.Schedules
+		if copy.Available != nil {
+			a := *copy.Available
+			copy.Available = &a
+		}
+		out.Schedules = &copy
+	}
 	if out.Available != nil {
 		copy := *out.Available
 		out.Available = &copy
@@ -94,10 +112,12 @@ func (s *Service) Status() Status {
 		out.Maintenance = &copy
 	}
 	mergeHostResult(s.options.DataDir, &out)
+	mergeScheduleResult(s.options.DataDir, &out)
 	return out
 }
 
 func (s *Service) persistLocked() {
+	mergeScheduleResult(s.options.DataDir, &s.status)
 	s.status.UpdatedAt = s.options.Now().UTC()
 	if err := writeJSON(filepath.Join(directory(s.options.DataDir), stateFile), s.status); err != nil {
 		slog.Warn("update status could not be saved", "error", err)
@@ -208,7 +228,7 @@ func (s *Service) check(ctx context.Context) {
 	}
 	address := s.options.Config.manifestURL()
 	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	manifest, _, err := release.FetchManifest(fetchCtx, s.options.Client, address, s.keys)
+	manifest, signed, err := release.FetchManifest(fetchCtx, s.options.Client, address, s.keys)
 	cancel()
 	s.mu.Lock()
 	s.status.LastCheck = s.options.Now().UTC()
@@ -228,27 +248,43 @@ func (s *Service) check(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
+	schedule := s.updateSchedulesLocked(manifest, signed, address)
 	server := manifest.Server
-	if server == nil || !newer(s.options.ServerVersion, server.Version) {
+	resourceRevision := server != nil && server.Version == s.options.ServerVersion && manifest.Fingerprint != nil &&
+		s.options.FingerprintID != "" && manifest.Fingerprint.ID != s.options.FingerprintID && manifest.Fingerprint.RequireGameUpdate && manifest.Fingerprint.Game != nil &&
+		manifest.Fingerprint.Game.GameVersion == s.options.GameVersion &&
+		manifest.Fingerprint.Game.GameDataVersion >= s.options.GameDataVersion && manifest.Fingerprint.Game.BundleVersion >= s.options.BundleVersion &&
+		(manifest.Fingerprint.Game.GameDataVersion > s.options.GameDataVersion || manifest.Fingerprint.Game.BundleVersion > s.options.BundleVersion)
+	if server == nil || !newer(s.options.ServerVersion, server.Version) && !resourceRevision {
 		s.status.Available = nil
 		s.persistLocked()
 		s.mu.Unlock()
+		s.preDownloadSchedules(ctx, schedule)
 		return
 	}
-	if s.status.Available == nil || s.status.Available.Version != server.Version {
+	if s.status.Available == nil || s.status.Available.Version != server.Version ||
+		manifest.Fingerprint != nil && (s.status.Available.Fingerprint == nil || s.status.Available.Fingerprint.ID != manifest.Fingerprint.ID) {
 		s.status.Available = &Available{Version: server.Version, Date: server.Date, Notes: server.Notes, PublishedAt: manifest.PublishedAt, Commit: manifest.Commit, Image: server.Image, Migration: *server.Migration, Component: server, ManifestURL: address, Fingerprint: manifest.Fingerprint}
 	}
-	announce := s.logged != server.Version
-	s.logged = server.Version
-	notify := s.status.Notified != server.Version
+	identity := server.Version
+	if manifest.Fingerprint != nil {
+		identity += ":" + manifest.Fingerprint.ID
+	}
+	if s.status.Available.Fingerprint != nil && s.status.Available.Fingerprint.Game != nil {
+		s.status.Available.GameDataVersion = s.status.Available.Fingerprint.Game.GameDataVersion
+	}
+	announce := s.logged != identity
+	s.logged = identity
+	notify := s.status.Notified != identity
 	s.persistLocked()
 	s.mu.Unlock()
+	s.preDownloadSchedules(ctx, schedule)
 	if announce {
 		slog.Info("server update available", "current", s.options.ServerVersion, "available", server.Version, "published_at", manifest.PublishedAt, "migration", server.Migration.Kind,
 			"apply", "admin console or `bd2server update apply`")
 	}
 	if notify {
-		s.sendWebhook(ctx, server, manifest.PublishedAt)
+		s.sendWebhook(ctx, server, manifest.PublishedAt, identity)
 	}
 	if s.options.Config.Download && s.options.Config.Method != MethodNone {
 		if _, err := s.prepareFiles(ctx, s.Status().Available); err != nil {
@@ -257,7 +293,7 @@ func (s *Service) check(ctx context.Context) {
 	}
 }
 
-func (s *Service) sendWebhook(ctx context.Context, server *release.Component, published time.Time) {
+func (s *Service) sendWebhook(ctx context.Context, server *release.Component, published time.Time, identity string) {
 	address := s.options.Config.webhook()
 	if address != "" {
 		body, _ := json.Marshal(map[string]any{
@@ -282,7 +318,7 @@ func (s *Service) sendWebhook(ctx context.Context, server *release.Component, pu
 		}
 	}
 	s.mu.Lock()
-	s.status.Notified = server.Version
+	s.status.Notified = identity
 	s.persistLocked()
 	s.mu.Unlock()
 }
@@ -309,7 +345,7 @@ func (s *Service) prepareFiles(ctx context.Context, available *Available) (strin
 		_, err = resourcefetch.Fetch(ctx, resourcefetch.Options{OutputRoot: ResourceDirectory(s.options.DataDir, *g), Client: s.options.Client, Pinned: g})
 	}
 	s.mu.Lock()
-	if s.status.Available != nil && s.status.Available.Version == available.Version {
+	if s.status.Available != nil && candidateIdentity(s.status.Available) == candidateIdentity(available) {
 		s.status.Available.Downloaded = err == nil
 		s.status.Available.DownloadError = ""
 		if err != nil {
@@ -319,6 +355,13 @@ func (s *Service) prepareFiles(ctx context.Context, available *Available) (strin
 	}
 	s.mu.Unlock()
 	return staged, err
+}
+
+func candidateIdentity(a *Available) string {
+	if a.Fingerprint != nil {
+		return a.Version + "-" + a.Fingerprint.ID
+	}
+	return a.Version
 }
 
 func stage(ctx context.Context, client *http.Client, available *Available, dataDir string) (string, error) {
@@ -332,7 +375,7 @@ func stage(ctx context.Context, client *http.Client, available *Available, dataD
 	if archive == nil {
 		return "", fmt.Errorf("the release has no server package for %s", release.Platform())
 	}
-	downloads := filepath.Join(directory(dataDir), "downloads", available.Version)
+	downloads := filepath.Join(directory(dataDir), "downloads", candidateIdentity(available))
 	path, err := release.Download(ctx, client, available.ManifestURL, *archive, downloads, nil)
 	if err != nil {
 		return "", err
@@ -341,7 +384,7 @@ func stage(ctx context.Context, client *http.Client, available *Available, dataD
 	if err != nil {
 		return "", err
 	}
-	target := filepath.Join(install, ".update-staged", available.Version)
+	target := filepath.Join(install, ".update-staged", candidateIdentity(available))
 	temporary := target + ".tmp"
 	if err := os.RemoveAll(temporary); err != nil {
 		return "", err
@@ -378,43 +421,86 @@ func stage(ctx context.Context, client *http.Client, available *Available, dataD
 // Schedule prepares the available release and, once it is ready, warns
 // players and starts maintenance after delay.
 func (s *Service) Schedule(delay time.Duration, confirmIrreversible bool, by string) error {
+	return s.schedule(ComponentServer, delay, confirmIrreversible, by)
+}
+
+func (s *Service) ScheduleSchedules(delay time.Duration, by string) error {
+	return s.schedule(ComponentSchedules, delay, false, by)
+}
+
+func (s *Service) schedule(component string, delay time.Duration, confirmIrreversible bool, by string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	available := s.status.Available
+	var schedule *ScheduleAvailable
+	if component == ComponentSchedules {
+		schedule = s.status.Schedules.Available
+	}
 	switch {
 	case s.options.Config.Method == MethodNone:
 		return reject(RejectNotifyOnly, "the install method is notify-only")
-	case available == nil:
+	case component == ComponentServer && available == nil, component == ComponentSchedules && schedule == nil:
 		return reject(RejectNoUpdate, "no newer server release is available")
 	case s.status.Maintenance != nil:
 		return reject(RejectAlreadyScheduled, "a maintenance is already scheduled")
-	case available.Migration.Kind == release.MigrationIrreversible && !confirmIrreversible:
+	case component == ComponentSchedules && schedule.Incompatible != "":
+		return reject("incompatible_schedules", "%s", schedule.Incompatible)
+	case component == ComponentServer && available.Migration.Kind == release.MigrationIrreversible && !confirmIrreversible:
 		return reject(RejectIrreversible, "%s contains a save migration that cannot be rolled back: %s; confirm it explicitly", available.Version, available.Migration.Note.In(i18n.Fallback))
 	case delay < 0 || delay > 24*time.Hour:
 		return reject(RejectInvalidDelay, "the countdown must be between 0 and 24 hours")
 	}
-	if s.options.Config.Method == MethodNative {
+	for _, file := range []string{pendingFile, schedulePendingFile} {
+		if _, err := os.Stat(filepath.Join(directory(s.options.DataDir), file)); err == nil {
+			return reject("confirming_update", "the previous update is still being confirmed; retry once it is healthy")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if component == ComponentServer && s.options.Config.Method == MethodNative {
 		if err := checkWritable(); err != nil {
 			return err
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancelMaint = cancel
-	s.status.Maintenance = &Maintenance{Version: available.Version, Phase: PhasePreparing, RequestedBy: by, Delay: int(delay / time.Minute)}
+	version := ""
+	if component == ComponentSchedules {
+		version = schedule.Component.ID
+	} else {
+		version = available.Version
+	}
+	s.status.Maintenance = &Maintenance{Component: component, Version: version, Phase: PhasePreparing, RequestedBy: by, Delay: int(delay / time.Minute)}
 	s.persistLocked()
-	slog.Info("server update scheduled", "version", available.Version, "delay", delay, "by", by)
-	go s.runMaintenance(ctx, available, delay)
+	slog.Info("update scheduled", "component", component, "version", version, "delay", delay, "by", by)
+	go s.runMaintenance(ctx, available, schedule, delay)
 	return nil
 }
 
-func (s *Service) runMaintenance(ctx context.Context, available *Available, delay time.Duration) {
-	staged, err := s.prepareFiles(ctx, available)
-	if err == nil && s.options.Config.Method == MethodNative {
-		err = s.preflight(ctx, staged)
+func (s *Service) runMaintenance(ctx context.Context, available *Available, schedule *ScheduleAvailable, delay time.Duration) {
+	var staged, version string
+	var plan *Plan
+	var err error
+	if schedule != nil {
+		version = schedule.Component.ID
+		_, err = s.prepareSchedules(ctx, schedule)
+		plan = &Plan{DataDir: s.options.DataDir, From: s.options.CurrentSchedules, To: version, Method: s.options.Config.Method,
+			Schedules: &SchedulePlan{ID: version, GameVersion: s.options.GameVersion, GameDataVersion: s.options.GameDataVersion}}
+	} else {
+		version = available.Version
+		staged, err = s.prepareFiles(ctx, available)
+		if err == nil && s.options.Config.Method == MethodNative {
+			err = s.preflight(ctx, staged)
+		}
+		plan = &Plan{DataDir: s.options.DataDir, From: s.options.ServerVersion, To: version, Method: s.options.Config.Method, Staged: staged, Migration: available.Migration, Image: available.Image, Commit: available.Commit, StateDirs: s.options.StateDirs}
+		if available.Fingerprint != nil {
+			plan.FingerprintID = available.Fingerprint.ID
+			plan.FromFingerprintID = s.options.FingerprintID
+		}
 	}
 	if err != nil {
 		if ctx.Err() == nil {
-			slog.Error("server update preparation failed; maintenance cancelled", "version", available.Version, "error", err)
+			slog.Error("update preparation failed; maintenance cancelled", "version", version, "error", err)
 			s.finishMaintenance(ctx, fmt.Sprintf("preparation failed: %v", err))
 		}
 		return
@@ -428,9 +514,9 @@ func (s *Service) runMaintenance(ctx context.Context, available *Available, dela
 	s.status.Maintenance.Phase = PhaseCountdown
 	s.status.Maintenance.At = at.UTC()
 	s.persistLocked()
-	s.publishMaintenance(available.Version, at)
+	s.publishMaintenance(version, at)
 	s.mu.Unlock()
-	slog.Info("maintenance countdown started", "version", available.Version, "at", at.UTC())
+	slog.Info("maintenance countdown started", "version", version, "at", at.UTC())
 	timer := time.NewTimer(time.Until(at))
 	defer timer.Stop()
 	select {
@@ -444,10 +530,10 @@ func (s *Service) runMaintenance(ctx context.Context, available *Available, dela
 		return
 	}
 	s.status.Maintenance.Phase = PhaseClosing
-	s.plan = &Plan{DataDir: s.options.DataDir, From: s.options.ServerVersion, To: available.Version, Method: s.options.Config.Method, Staged: staged, Migration: available.Migration, Image: available.Image, Commit: available.Commit, StateDirs: s.options.StateDirs}
+	s.plan = plan
 	s.persistLocked()
 	s.mu.Unlock()
-	slog.Info("maintenance started; draining for update", "version", available.Version)
+	slog.Info("maintenance started; draining for update", "version", version)
 	s.options.Shutdown()
 }
 
@@ -490,8 +576,12 @@ func (s *Service) publishMaintenance(version string, at time.Time) {
 	detail := notice.Notice{ID: id + 1, Type: notice.TypeNotice, Start: now, End: at.Add(time.Duration(minutes) * time.Minute), Pinned: true, Text: map[string]notice.Content{}}
 	for _, locale := range i18n.Locales {
 		title := texts.Translate(locale, "maintenance.title")
-		banner.Text[locale] = notice.Content{Title: title, Blocks: []notice.Block{{Value: maintenanceText(locale, "maintenance.banner", version, at, minutes)}}}
-		detail.Text[locale] = notice.Content{Title: title, Blocks: []notice.Block{{Value: maintenanceText(locale, "maintenance.body", version, at, minutes)}}}
+		prefix, target := "maintenance.", version
+		if s.status.Maintenance != nil && s.status.Maintenance.Component == ComponentSchedules {
+			prefix, target = "maintenance.schedules.", version[:12]
+		}
+		banner.Text[locale] = notice.Content{Title: title, Blocks: []notice.Block{{Value: maintenanceText(locale, prefix+"banner", target, at, minutes)}}}
+		detail.Text[locale] = notice.Content{Title: title, Blocks: []notice.Block{{Value: maintenanceText(locale, prefix+"body", target, at, minutes)}}}
 	}
 	s.options.Board.Replace(SourceMaintenance, []notice.Notice{banner, detail})
 }
@@ -526,7 +616,13 @@ func (s *Service) finishMaintenanceLocked(failure string) {
 		s.cancelMaint = nil
 	}
 	if s.status.Maintenance != nil && failure != "" {
-		s.status.LastResult = &Result{From: s.options.ServerVersion, To: s.status.Maintenance.Version, Outcome: "cancelled", Message: failure, At: s.options.Now().UTC()}
+		result := &Result{From: s.options.ServerVersion, To: s.status.Maintenance.Version, Outcome: "cancelled", Message: failure, At: s.options.Now().UTC()}
+		if s.status.Maintenance.Component == ComponentSchedules {
+			result.From = s.options.CurrentSchedules
+			s.status.Schedules.LastResult = result
+		} else {
+			s.status.LastResult = result
+		}
 	}
 	s.status.Maintenance = nil
 	s.persistLocked()
@@ -552,7 +648,11 @@ func (s *Service) LoginsClosed(locale string) (bool, string) {
 	if m == nil || m.At.IsZero() || s.options.Now().Before(m.At.Add(-loginCloseLead)) {
 		return false, ""
 	}
-	return true, maintenanceText(locale, "maintenance.login", m.Version, m.At, s.options.Config.MaintenanceMinutes)
+	key, target := "maintenance.login", m.Version
+	if m.Component == ComponentSchedules {
+		key, target = "maintenance.schedules.login", m.Version[:12]
+	}
+	return true, maintenanceText(locale, key, target, m.At, s.options.Config.MaintenanceMinutes)
 }
 
 // TakePlan returns the switch to perform after the drained server stopped.
@@ -584,11 +684,25 @@ func (s *Service) serveControl(ctx context.Context) {
 			ack.OK, ack.Message = false, status.LastError
 		} else if status.Available != nil {
 			ack.Message = "new version available: " + status.Available.Version
+		} else if status.Schedules != nil && status.Schedules.Available != nil {
+			ack.Message = "schedule update available: " + status.Schedules.Available.Component.ID
+			if message := status.Schedules.Available.Incompatible; message != "" {
+				ack.Message += " (incompatible: " + message + ")"
+			}
 		} else {
 			ack.Message = "already up to date"
 		}
 	case ActionApply:
-		if err := s.Schedule(time.Duration(control.DelayMinutes)*time.Minute, control.ConfirmIrreversible, "cli"); err != nil {
+		var err error
+		switch control.Component {
+		case "", ComponentServer:
+			err = s.Schedule(time.Duration(control.DelayMinutes)*time.Minute, control.ConfirmIrreversible, "cli")
+		case ComponentSchedules:
+			err = s.ScheduleSchedules(time.Duration(control.DelayMinutes)*time.Minute, "cli")
+		default:
+			err = errors.New("unknown update component")
+		}
+		if err != nil {
 			ack.OK, ack.Message = false, err.Error()
 		} else {
 			ack.Message = fmt.Sprintf("maintenance scheduled; it starts %d minutes after the release is prepared", control.DelayMinutes)

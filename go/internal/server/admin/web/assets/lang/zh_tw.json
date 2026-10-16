@@ -486,5 +486,21 @@
   "console.updates.apply.body_now": "準備完成後會立即停止接受新登入，等待進行中的請求完成、儲存並切換至 %[1]s。",
   "console.updates.scheduled": "已安排維護。",
   "console.updates.cancelled": "已取消維護。",
-  "console.updates.checking": "正在檢查……"
+  "console.updates.checking": "正在檢查……",
+  "console.updates.schedules.title": "排期更新",
+  "console.updates.schedules.bundled": "程式隨附的排期",
+  "console.updates.schedules.game": "遊戲版本",
+  "console.updates.schedules.gamedata": "GameData 版本",
+  "console.updates.schedules.up_to_date": "暫無排期更新。",
+  "console.updates.schedules.confirm": "準備完成後倒數 %[1]s 分鐘，排空及儲存，再使用排期集 %[2]s 重新啟動目前伺服器。",
+  "console.updates.schedule_outcome.succeeded": "成功",
+  "console.updates.schedule_outcome.rolled_back": "已還原先前排期",
+  "console.updates.schedule_outcome.needs_operator": "需要人工處理",
+  "console.updates.schedule_outcome.switch_failed": "切換失敗",
+  "console.updates.schedule_outcome.cancelled": "已取消",
+  "console.updates.schedule_outcome.restarting": "正在重新啟動",
+  "console.error.incompatible_schedules": "此排期集與目前遊戲及 GameData 版本不相容。",
+  "console.error.confirming_update": "上次更新仍在進行健康檢查，請等待確認完成。",
+  "console.updates.component": "更新內容",
+  "console.updates.component.server": "伺服器程式"
 }

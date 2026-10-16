@@ -5,6 +5,7 @@ import (
 	"bd2server/internal/common/i18n"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/events/calendar"
 	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/gateway/auth"
 	"bd2server/internal/server/gateway/session"
@@ -134,9 +135,21 @@ func Serve(args []string) (serveErr error) {
 	defer func() { serveErr = errors.Join(serveErr, consoleStore.Close()) }()
 	var stopOnce sync.Once
 	stopForUpdate := make(chan struct{})
-	updater := updates.New(updates.Options{
+	fingerprintID := ""
+	if c.compatibility.fingerprint != nil {
+		fingerprintID = c.compatibility.fingerprint.ID
+	}
+	updater := updates.New(updates.Options{FingerprintID: fingerprintID,
 		Config: c.updates, DataDir: c.dataDir, StateDirs: []string{c.stateDirectory, filepath.Join(c.dataDir, "config")},
 		ServerVersion: c.versions.ServerVersion, ServeArgs: c.serveArgs, Board: c.notices, BundledChangelog: c.versions.Resolve("CHANGELOG.md"),
+		GameVersion: c.versions.GameVersion, BundleVersion: c.versions.BundleVersion, GameDataVersion: c.versions.GameDataVersion, CurrentSchedules: c.scheduleID,
+		ValidateSchedules: func(directory string) error {
+			set, err := calendar.LoadDirectory(directory, c.versions.GameVersion, c.versions.GameDataVersion)
+			if err != nil {
+				return err
+			}
+			return set.ValidateDesign(c.gameData, c.gameDataVersion)
+		},
 		Shutdown: func() { stopOnce.Do(func() { close(stopForUpdate) }) },
 	})
 	console.AttachUpdates(updater)

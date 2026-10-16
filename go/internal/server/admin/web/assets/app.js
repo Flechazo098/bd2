@@ -1032,7 +1032,7 @@ const config = (() => {
 
 /* ---------- Updates ---------- */
 const updatesView = (() => {
-  let timer = null, status = null;
+  let timer = null, status = null, component = null;
   const when = value => value ? dateTime(value) : '';
   const named = (group, value) => tr(`console.updates.${group}.${value}`, value);
   // Release notes arrive as {locale: text}; older servers send one string.
@@ -1042,16 +1042,27 @@ const updatesView = (() => {
     try {
       const s = status;
       if (!s) return;
-      const facts = [['current_version', s.current_version], ['method', named('method', s.method)], ['auto_check', t(s.check_enabled ? 'console.updates.enabled' : 'console.updates.disabled')],
+      if (component == null) component = !s.available && s.schedules && s.schedules.available ? 'schedules' : 'server';
+      const scheduleBranch = component === 'schedules';
+      const schedules = s.schedules;
+      const selected = $('update-component');
+      selected.value = component;
+      const source = scheduleBranch ? schedules && schedules.available : s.available;
+      const a = scheduleBranch && source ? {...source, version: source.component.id, notes: source.component.notes} : source;
+      const current = scheduleBranch ? schedules && schedules.current_id || t('console.updates.schedules.bundled') : s.current_version;
+      const lastResult = scheduleBranch ? schedules && schedules.last_result : s.last_result;
+      const facts = [['current_version', current], ['method', named('method', s.method)], ['auto_check', t(s.check_enabled ? 'console.updates.enabled' : 'console.updates.disabled')],
         ['last_check', when(s.last_check) || t('console.updates.never_checked')], ['check_error', s.last_error]];
-      if (s.last_result) {
-        const r = s.last_result, outcome = named('outcome', r.outcome);
+      if (scheduleBranch && schedules) {
+        facts.push(['game_version', schedules.game_version], ['game_data_version', schedules.game_data_version]);
+      }
+      if (lastResult) {
+        const r = lastResult, outcome = named(scheduleBranch ? 'schedule_outcome' : 'outcome', r.outcome);
         facts.push(['last_switch', r.message ? rendered(await dynamicText('console.updates.last_switch_message', r.from, r.to, outcome, r.message), renderPass) : rendered(await dynamicText('console.updates.last_switch_value', r.from, r.to, outcome), renderPass)]);
       }
-      $('update-facts').replaceChildren(...facts.filter(f => f[1]).flatMap(([k, v]) => [el('dt', {}, t('console.updates.fact.' + k)), el('dd', {}, v)]));
-      const a = s.available;
+      $('update-facts').replaceChildren(...facts.filter(f => f[1]).flatMap(([k, v]) => [el('dt', {}, t(k === 'game_version' ? 'console.updates.schedules.game' : k === 'game_data_version' ? 'console.updates.schedules.gamedata' : 'console.updates.fact.' + k)), el('dd', {}, v)]));
       if (!a) {
-        $('update-available').replaceChildren(el('p', {class: 'muted'}, s.last_error ? '' : t('console.updates.up_to_date')));
+        $('update-available').replaceChildren(el('p', {class: 'muted'}, s.last_error ? '' : t(scheduleBranch ? 'console.updates.schedules.up_to_date' : 'console.updates.up_to_date')));
       } else {
         const download = a.downloaded ? t('console.updates.downloaded') : a.download_error ? rendered(await dynamicText('console.updates.download_failed', a.download_error), renderPass) : t('console.updates.not_downloaded');
         const migration = a.migration || {}, migrationNote = localized(migration.note), notes = localized(a.notes);
@@ -1059,7 +1070,9 @@ const updatesView = (() => {
           el('h3', {}, rendered(await dynamicText('console.updates.available', a.version), renderPass)),
           el('p', {class: 'muted'}, [a.published_at && rendered(await dynamicText('console.updates.published', when(a.published_at)), renderPass), migration.kind && named('migration', migration.kind), download].filter(Boolean).join(' · ')),
           migrationNote ? el('p', {class: migration.kind === 'irreversible' ? 'status err' : 'status'}, migrationNote) : null,
-          notes ? el('pre', {class: 'notes'}, notes) : null].filter(Boolean));
+          a.game_data_version ? el('p', {class: 'muted'}, t('console.updates.schedules.gamedata') + ': ' + a.game_data_version) : null,
+          notes ? el('pre', {class: 'notes'}, notes) : null,
+          a.incompatible ? el('p', {class: 'status err'}, a.incompatible) : null].filter(Boolean));
       }
       const actions = [];
       const m = s.maintenance;
@@ -1068,7 +1081,7 @@ const updatesView = (() => {
         const phase = named('phase', m.phase);
         actions.push(el('p', {}, m.at ? rendered(await dynamicText('console.updates.maintenance_at', phase, m.version, when(m.at), m.requested_by), renderPass) : rendered(await dynamicText('console.updates.maintenance', phase, m.version, m.requested_by), renderPass)));
         if (m.phase !== 'closing') actions.push(el('button', {type: 'button', class: 'btn', onclick: cancel}, t('console.updates.cancel')));
-      } else if (a && s.method !== 'none') {
+      } else if (a && !a.incompatible && s.method !== 'none') {
         const delay = el('input', {type: 'number', id: 'update-delay', min: '0', max: '1440', value: delayInput ? delayInput.value : String(s.countdown_minutes ?? 10)});
         const confirm = a.migration && a.migration.kind === 'irreversible' ? el('label', {}, el('input', {type: 'checkbox', id: 'update-confirm', checked: !!(confirmInput && confirmInput.checked)}), ' ' + t('console.updates.confirm_irreversible')) : null;
         actions.push(el('label', {}, t('console.updates.delay') + ' ', delay), confirm, el('button', {type: 'button', class: 'btn seal', onclick: apply}, t('console.updates.apply')));
@@ -1082,13 +1095,14 @@ const updatesView = (() => {
     catch (error) { await say($('update-status'), error, 'err'); }
   }
   async function apply() {
+    const selectedComponent = component;
     const minutes = Number($('update-delay').value || 0);
     const confirmIrreversible = !!($('update-confirm') && $('update-confirm').checked);
-    const target = status.available.version;
-    const body = minutes ? await dynamicText('console.updates.apply.body_countdown', fmt(minutes), target) : await dynamicText('console.updates.apply.body_now', target);
+    const target = selectedComponent === 'schedules' ? status.schedules.available.component.id : status.available.version;
+    const body = selectedComponent === 'schedules' ? await dynamicText('console.updates.schedules.confirm', fmt(minutes), target) : minutes ? await dynamicText('console.updates.apply.body_countdown', fmt(minutes), target) : await dynamicText('console.updates.apply.body_now', target);
     if (!await ask({title: t('console.updates.apply.title'), body, ok: t('console.updates.apply')})) return;
     try {
-      status = (await api('updates/apply', {method: 'POST', body: {delay_minutes: minutes, confirm_irreversible: confirmIrreversible}})).value;
+      status = (await api('updates/apply', {method: 'POST', body: {component: selectedComponent, delay_minutes: minutes, confirm_irreversible: confirmIrreversible}})).value;
       await render(); await say($('update-status'), Component.translatable('console.updates.scheduled'), 'ok');
     } catch (error) { await say($('update-status'), error, 'err'); }
   }
@@ -1096,6 +1110,7 @@ const updatesView = (() => {
     try { status = (await api('updates/cancel', {method: 'POST'})).value; await render(); await say($('update-status'), Component.translatable('console.updates.cancelled'), 'ok'); }
     catch (error) { await say($('update-status'), error, 'err'); }
   }
+  $('update-component').onchange = async event => { component = event.target.value; await render(); };
   $('update-check').onclick = async () => {
     try { await api('updates/check', {method: 'POST'}); await say($('update-status'), Component.translatable('console.updates.checking')); setTimeout(load, 3000); }
     catch (error) { await say($('update-status'), error, 'err'); }

@@ -35,6 +35,7 @@ type Manifest struct {
 	Launcher    *Component   `json:"launcher,omitempty"`
 	Plugins     *Component   `json:"plugins,omitempty"`
 	Server      *Component   `json:"server,omitempty"`
+	Schedules   *Schedules   `json:"schedules,omitempty"`
 	Fingerprint *Fingerprint `json:"fingerprint,omitempty"`
 }
 
@@ -93,6 +94,11 @@ func (m Manifest) Validate() error {
 			continue
 		}
 		if err := c.validate(name); err != nil {
+			return err
+		}
+	}
+	if m.Schedules != nil {
+		if err := m.Schedules.Validate(); err != nil {
 			return err
 		}
 	}

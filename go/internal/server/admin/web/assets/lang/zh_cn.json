@@ -9,7 +9,6 @@
   "console.copy.failed": "复制失败，请手动选择",
   "console.dialog.ok": "确定",
   "console.dialog.cancel": "取消",
-
   "console.error.unauthorized": "登录已过期，请重新登录。",
   "console.error.forbidden": "没有权限执行这个操作。",
   "console.error.csrf": "页面已过期，请刷新后重试。",
@@ -35,7 +34,6 @@
   "console.error.no_maintenance": "当前没有安排维护。",
   "console.error.maintenance_closing": "维护已进入排空阶段，不能再取消。",
   "console.error.http": "请求失败（%[1]s）",
-
   "console.nav.mail": "邮件发放",
   "console.nav.players": "玩家",
   "console.nav.config": "服务器配置",
@@ -51,7 +49,6 @@
   "console.leave.title": "离开前保存配置？",
   "console.leave.body": "有尚未保存的配置改动。离开后改动会保留在本页，直到刷新或退出。",
   "console.leave.ok": "仍然离开",
-
   "console.signin.title": "进入管理台",
   "console.signin.loading": "正在读取服务器信息……",
   "console.signin.local": "这台服务器使用本地认证。请打开服务端启动时在控制台打印的一次性登录链接。",
@@ -63,7 +60,6 @@
   "console.signin.open_page": "打开登录页面",
   "console.signin.success": "登录成功。",
   "console.signin.no_permissions": "服主还没有给你分配任何权限。",
-
   "console.mail.recipient": "收件人",
   "console.mail.copy_uid": "点击复制 UID",
   "console.mail.switch_player": "切换玩家",
@@ -146,7 +142,6 @@
   "console.mail.log.again_title": "把这件物品和数量重新放进包裹单",
   "console.mail.log.identity": "发放标识",
   "console.mail.log.identity_title": "点击复制发放标识",
-
   "console.roster.title": "玩家",
   "console.roster.lead": "按游戏账号任命管理员，对方用自己的游戏账号登录管理台。管理员默认可以寄件和查看玩家，其余权限由服主逐项授予。",
   "console.roster.search.placeholder": "UID 或名称",
@@ -192,7 +187,6 @@
   "console.permissions.write": "修改",
   "console.permissions.read_aria": "%[1]s %[2]s 查看",
   "console.permissions.write_aria": "%[1]s %[2]s 修改",
-
   "console.config.documents": "配置文件",
   "console.config.show_diff": "查看改动",
   "console.config.discard": "放弃",
@@ -257,7 +251,6 @@
   "console.overview.data_dir": "数据目录",
   "console.overview.mail_spool": "邮件队列",
   "console.overview.dev_tools": "开发覆盖",
-
   "config.problem.item": "第 %[1]s 项：%[2]s",
   "config.problem.enum": "不支持这个值",
   "config.problem.enum_options": "只能选择：%[1]s",
@@ -300,7 +293,6 @@
   "config.problem.message.object": "必须是对象",
   "config.problem.message.present": "文件中必须写明这一项",
   "config.problem.message.hidden_section": "你无权查看的分组中存在问题，请联系服主处理",
-
   "config.game.title": "游戏规则",
   "config.game.summary": "服务端统一的玩法规则。修改后重启服务端生效。",
   "config.game.section.story.title": "开局章节",
@@ -388,7 +380,6 @@
   "config.game.field.text_moderation.provider.severity_threshold.help": "任一类别达到该严重程度即拒绝；0 表示连严重程度 0 的结果也拒绝。",
   "config.game.section.format.title": "格式",
   "config.game.field.schema_version.label": "格式版本",
-
   "config.authentication.title": "登录与认证",
   "config.authentication.summary": "玩家登录方式。修改后重启服务端生效；密钥只从环境变量读取，不写入此文件。",
   "config.authentication.section.mode.title": "认证模式",
@@ -411,7 +402,6 @@
   "config.authentication.field.session.access_ttl.label": "访问令牌有效期",
   "config.authentication.field.session.refresh_ttl.label": "刷新令牌有效期",
   "config.authentication.field.session.device_transaction_ttl.label": "登录事务有效期",
-
   "config.resources.title": "客户端资源",
   "config.resources.summary": "客户端下载 ServerData 与 GameData 的来源。修改后重启服务端生效；版本号来自 versions.json，不在此配置。",
   "config.resources.section.source.title": "资源来源",
@@ -424,7 +414,6 @@
   "config.resources.field.server_data_url.help": "绝对 HTTP(S) 地址，末尾不带斜杠；除回环地址外必须使用 HTTPS。",
   "config.resources.field.game_data_url.label": "GameData 地址",
   "config.resources.field.game_data_url.help": "绝对 HTTP(S) 地址，末尾不带斜杠；除回环地址外必须使用 HTTPS。",
-
   "config.updates.title": "版本更新",
   "config.updates.summary": "检查新版、预下载与维护更新方式。检查与下载不影响游戏；更新需要在管理台或命令行确认。修改后重启服务端生效。",
   "config.updates.section.check.title": "检查与下载",
@@ -450,7 +439,6 @@
   "config.updates.field.maintenance_minutes.label": "预计维护时长（分钟）",
   "config.updates.field.webhook_url_env.label": "Webhook 环境变量",
   "config.updates.field.webhook_url_env.help": "发现新版时向该环境变量中的地址 POST 一次 JSON；留空不发送。",
-
   "console.updates.title": "版本更新",
   "console.updates.lead": "服务端按间隔检查签名的发布清单，可提前下载并校验。应用更新会先通知在线玩家、关闭新登录、排空请求并保存，再切换到新版。",
   "console.updates.check": "立即检查",
@@ -498,5 +486,21 @@
   "console.updates.apply.body_now": "准备完成后立即关闭新登录、排空、保存并切换到 %[1]s。",
   "console.updates.scheduled": "已安排维护。",
   "console.updates.cancelled": "已取消维护。",
-  "console.updates.checking": "正在检查……"
+  "console.updates.checking": "正在检查……",
+  "console.updates.schedules.title": "排期更新",
+  "console.updates.schedules.bundled": "随程序附带的排期",
+  "console.updates.schedules.game": "游戏版本",
+  "console.updates.schedules.gamedata": "GameData 版本",
+  "console.updates.schedules.up_to_date": "暂无排期更新。",
+  "console.updates.schedules.confirm": "准备完成后倒计时 %[1]s 分钟，排空和保存，然后使用排期集 %[2]s 重启当前服务端。",
+  "console.updates.schedule_outcome.succeeded": "成功",
+  "console.updates.schedule_outcome.rolled_back": "已恢复之前的排期",
+  "console.updates.schedule_outcome.needs_operator": "需要人工处理",
+  "console.updates.schedule_outcome.switch_failed": "切换失败",
+  "console.updates.schedule_outcome.cancelled": "已取消",
+  "console.updates.schedule_outcome.restarting": "正在重启",
+  "console.error.incompatible_schedules": "此排期集与当前游戏及 GameData 版本不兼容。",
+  "console.error.confirming_update": "上一次更新仍在进行健康检查，请等待确认完成。",
+  "console.updates.component": "更新内容",
+  "console.updates.component.server": "服务端程序"
 }

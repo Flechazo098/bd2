@@ -81,10 +81,12 @@ type Message struct {
 func message(key string, args ...string) *Message { return &Message{Key: key, Args: args} }
 
 type Options struct {
-	Versions  versionconfig.Config
-	Directory string
-	Logger    *slog.Logger
-	Client    *http.Client
+	Versions           versionconfig.Config
+	Directory          string
+	Logger             *slog.Logger
+	Client             *http.Client
+	Development        bool
+	DevelopmentPlugins []string
 	// Games returns the main game directory the launcher manages.
 	Games func() string
 }
@@ -114,7 +116,7 @@ func New(options Options) *Manager {
 		address = release.BuiltinChannel().ManifestURL
 	}
 	m := &Manager{options: options, manifestURL: address, keys: release.BuiltinChannel().TrustedKeys, pending: map[string]bool{}, gamePending: map[string]bool{}}
-	m.status.Enabled = address != ""
+	m.status.Enabled = address != "" && !options.Development
 	m.loadPackagedFingerprint()
 	if result := TakeResult(options.Directory); result != nil {
 		if result.OK {
@@ -223,16 +225,20 @@ func (m *Manager) refresh(ctx context.Context) {
 		m.options.Logger.Warn("update download failed", "error", err)
 		return
 	}
-	if err := m.CommitGame(ctx); err != nil {
-		m.options.Logger.Warn("game resources not installed", "error", err)
-	}
 	if err := m.CommitPlugins(); err != nil {
 		m.options.Logger.Warn("plugin update not installed", "error", err)
+		return
+	}
+	if err := m.CommitGame(ctx); err != nil {
+		m.options.Logger.Warn("game resources not installed", "error", err)
 	}
 }
 
 // Check fetches the manifest and works out what this launcher lacks.
 func (m *Manager) Check(ctx context.Context) error {
+	if m.options.Development {
+		return errors.New("development builds use locally compiled updates")
+	}
 	if !m.begin("checking") {
 		return operationBusy()
 	}
@@ -264,7 +270,7 @@ func (m *Manager) Check(ctx context.Context) error {
 	}
 	m.envelope = envelope
 	m.status.Launcher, m.status.Plugins = nil, nil
-	if c := manifest.Launcher; c != nil && newer(m.options.Versions.ClientVersion, c.Version) {
+	if c := manifest.Launcher; c != nil && !newer(c.Version, m.options.Versions.ClientVersion) {
 		if files := m.missing(c.FilesFor(release.Platform()), m.options.Directory); len(files) != 0 {
 			m.status.Launcher = offer(c, files, m.launcherStaging(c.Version))
 		}
@@ -400,6 +406,9 @@ func (m *Manager) Download(ctx context.Context) error {
 // CommitPlugins moves a downloaded plugin set into the launcher's store and
 // installs it into every closed game instance; running ones wait.
 func (m *Manager) CommitPlugins() error {
+	if m.options.Development {
+		return nil
+	}
 	if !m.begin("installing") {
 		return operationBusy()
 	}
@@ -539,14 +548,23 @@ func (m *Manager) EnsurePlugins(game string) error {
 }
 
 func (m *Manager) ensurePlugins(game string) error {
-	sources, err := m.storeSources()
+	var sources []string
+	var err error
+	if m.options.Development {
+		sources = m.options.DevelopmentPlugins
+		if len(sources) == 0 {
+			return errors.New("development plugin sources are missing")
+		}
+	} else {
+		sources, err = m.storeSources()
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		return nil // development builds install plugins explicitly
+		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if versions := m.Versions(game); versions.GameVersion != "" {
+	if versions := m.Versions(game); versions.GameVersion != "" && !m.options.Development {
 		store, err := ReadStore(m.options.Directory)
 		if err != nil {
 			return err
@@ -717,9 +735,18 @@ type Compatibility struct {
 func (m *Manager) CheckServer(ctx context.Context, client *http.Client, origin string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	store, err := ReadStore(m.options.Directory)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	installed := m.options.Versions.Plugins.ByID()
+	if !m.options.Development {
+		installed = map[string]string{}
+		store, err := ReadStore(m.options.Directory)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		for _, f := range store.Files {
+			if f.ID != "" {
+				installed[f.ID] = f.Version
+			}
+		}
 	}
 	address, err := url.JoinPath(origin, "client", "compatibility")
 	if err != nil {
@@ -774,12 +801,6 @@ func (m *Manager) CheckServer(ctx context.Context, client *http.Client, origin s
 	}
 	if compat.GameVersion != "" && versions.GameVersion != "" && compat.GameVersion != versions.GameVersion && (fp == nil || fp.Game == nil || fp.Game.GameVersion != compat.GameVersion) {
 		return fmt.Errorf("Server game version %s does not match client game version %s", compat.GameVersion, versions.GameVersion) //nolint:staticcheck // ST1005: shown to players
-	}
-	installed := map[string]string{}
-	for _, f := range store.Files {
-		if f.ID != "" {
-			installed[f.ID] = f.Version
-		}
 	}
 	var stale []string
 	for id, minimum := range compat.MinimumPlugins {

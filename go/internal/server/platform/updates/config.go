@@ -98,12 +98,14 @@ var Document = commonconfig.Document[Config]{
 		default:
 			problems = append(problems, commonconfig.Problem{Path: "method", Rule: commonconfig.RuleEnum, Message: "部署方式必须是 native、docker 或 none"})
 		}
-		for i, address := range append([]string{c.ManifestURL}, c.ChangelogURLs...) {
-			if address == "" && i == 0 {
-				continue
-			}
-			if _, err := release.Resolve(address, address); err != nil {
-				problems = append(problems, commonconfig.Problem{Path: map[bool]string{true: "manifest_url", false: "changelog_urls"}[i == 0], Rule: commonconfig.RuleFormat, Message: err.Error()})
+		for field, addresses := range map[string][]string{"manifest_url": {c.ManifestURL}, "changelog_urls": c.ChangelogURLs} {
+			for _, address := range addresses {
+				if address == "" && field != "changelog_urls" {
+					continue
+				}
+				if _, err := release.Resolve(address, address); err != nil {
+					problems = append(problems, commonconfig.Problem{Path: field, Rule: commonconfig.RuleFormat, Message: err.Error()})
+				}
 			}
 		}
 		return problems

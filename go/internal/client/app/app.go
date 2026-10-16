@@ -15,6 +15,7 @@ import (
 
 	clientconfig "bd2server/internal/client/config"
 	clientlayout "bd2server/internal/client/layout"
+	clientplugin "bd2server/internal/client/plugin"
 	clientsetup "bd2server/internal/client/setup"
 	clientupdate "bd2server/internal/client/update"
 	"bd2server/internal/common/versionconfig"
@@ -30,6 +31,7 @@ type Options struct {
 	Logger              *slog.Logger
 	LogPath             string
 	Versions            versionconfig.Config
+	Development         bool
 	LocalIdentityPlugin string
 	LoginUIPlugin       string
 	CashShopPlugin      string
@@ -90,8 +92,13 @@ type Studio struct {
 func NewStudio(options Options, host NativeHost) *Studio {
 	s := &Studio{options: options, host: host, ctx: context.Background(), launch: launchGame, savePreferences: clientconfig.SavePreferences}
 	if executable, err := os.Executable(); err == nil {
+		var developmentPlugins []string
+		if options.Development {
+			developmentPlugins = []string{options.LocalIdentityPlugin, options.LoginUIPlugin, options.CashShopPlugin, options.FChatPlugin, filepath.Join(filepath.Dir(options.LocalIdentityPlugin), clientplugin.GameNames.FileName())}
+		}
 		s.updates = clientupdate.New(clientupdate.Options{
-			Versions: options.Versions, Directory: filepath.Dir(executable), Logger: options.Logger,
+			Versions: options.Versions, Directory: filepath.Dir(executable), Logger: options.Logger, Development: options.Development,
+			DevelopmentPlugins: developmentPlugins,
 			Games: func() string {
 				preferences, err := clientconfig.LoadPreferences()
 				if err != nil {
@@ -388,10 +395,10 @@ func (s *Studio) CheckUpdates() (Response, error) {
 	if err := s.updates.Download(ctx); err != nil {
 		return Response{}, err
 	}
-	if err := s.updates.CommitGame(ctx); err != nil {
+	if err := s.updates.CommitPlugins(); err != nil {
 		return Response{}, err
 	}
-	if err := s.updates.CommitPlugins(); err != nil {
+	if err := s.updates.CommitGame(ctx); err != nil {
 		return Response{}, err
 	}
 	return success("Update check completed", s.updates.Status()), nil

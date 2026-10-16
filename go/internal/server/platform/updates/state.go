@@ -25,34 +25,36 @@ const (
 
 // Status is what the console, the CLI and state.json show.
 type Status struct {
-	CurrentVersion string       `json:"current_version"`
-	Method         string       `json:"method"`
-	CheckEnabled   bool         `json:"check_enabled"`
-	Countdown      int          `json:"countdown_minutes"`
-	ManifestURL    string       `json:"manifest_url"`
-	LastCheck      time.Time    `json:"last_check,omitzero"`
-	LastError      string       `json:"last_error,omitempty"`
-	Available      *Available   `json:"available,omitempty"`
-	Maintenance    *Maintenance `json:"maintenance,omitempty"`
-	LastResult     *Result      `json:"last_result,omitempty"`
-	Control        *ControlAck  `json:"control,omitempty"`
-	Notified       string       `json:"notified_version,omitempty"`
-	UpdatedAt      time.Time    `json:"updated_at"`
+	CurrentVersion string          `json:"current_version"`
+	Method         string          `json:"method"`
+	CheckEnabled   bool            `json:"check_enabled"`
+	Countdown      int             `json:"countdown_minutes"`
+	ManifestURL    string          `json:"manifest_url"`
+	LastCheck      time.Time       `json:"last_check,omitzero"`
+	LastError      string          `json:"last_error,omitempty"`
+	Available      *Available      `json:"available,omitempty"`
+	Schedules      *ScheduleStatus `json:"schedules,omitempty"`
+	Maintenance    *Maintenance    `json:"maintenance,omitempty"`
+	LastResult     *Result         `json:"last_result,omitempty"`
+	Control        *ControlAck     `json:"control,omitempty"`
+	Notified       string          `json:"notified_version,omitempty"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type Available struct {
-	Version       string               `json:"version"`
-	Date          string               `json:"date,omitempty"`
-	Notes         i18n.Text            `json:"notes,omitempty"`
-	PublishedAt   time.Time            `json:"published_at"`
-	Commit        string               `json:"commit"`
-	Image         string               `json:"image,omitempty"`
-	Migration     release.Migration    `json:"migration"`
-	Downloaded    bool                 `json:"downloaded"`
-	DownloadError string               `json:"download_error,omitempty"`
-	Component     *release.Component   `json:"component"`
-	ManifestURL   string               `json:"manifest_url"`
-	Fingerprint   *release.Fingerprint `json:"-"`
+	GameDataVersion string               `json:"game_data_version,omitempty"`
+	Version         string               `json:"version"`
+	Date            string               `json:"date,omitempty"`
+	Notes           i18n.Text            `json:"notes,omitempty"`
+	PublishedAt     time.Time            `json:"published_at"`
+	Commit          string               `json:"commit"`
+	Image           string               `json:"image,omitempty"`
+	Migration       release.Migration    `json:"migration"`
+	Downloaded      bool                 `json:"downloaded"`
+	DownloadError   string               `json:"download_error,omitempty"`
+	Component       *release.Component   `json:"component"`
+	ManifestURL     string               `json:"manifest_url"`
+	Fingerprint     *release.Fingerprint `json:"-"`
 }
 
 // Maintenance phases.
@@ -63,6 +65,7 @@ const (
 )
 
 type Maintenance struct {
+	Component   string    `json:"component,omitempty"`
 	Version     string    `json:"version"`
 	Phase       string    `json:"phase"`
 	At          time.Time `json:"at,omitzero"`
@@ -92,6 +95,7 @@ const (
 
 // Control is one CLI request.
 type Control struct {
+	Component           string    `json:"component,omitempty"`
 	ID                  string    `json:"id"`
 	Action              string    `json:"action"`
 	DelayMinutes        int       `json:"delay_minutes"`
@@ -137,6 +141,7 @@ func ReadStatus(dataDir string) (Status, error) {
 		return status, errors.New("no update status yet; start the server at least once with this data directory")
 	}
 	mergeHostResult(dataDir, &status)
+	mergeScheduleResult(dataDir, &status)
 	return status, err
 }
 

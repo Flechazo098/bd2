@@ -2,5 +2,8 @@
   "maintenance.title": "服务器维护公告",
   "maintenance.banner": "服务器将于 %[2]s 维护更新至 %[1]s，预计 %[3]d 分钟，请提前结束战斗。",
   "maintenance.body": "服务器将于 %[2]s 开始维护，更新至 %[1]s，预计持续 %[3]d 分钟。\n维护开始前请结束正在进行的战斗与房间；已保存的进度不受影响。更新内容见更新日志公告。",
-  "maintenance.login": "服务器正在维护更新至 %[1]s，预计 %[3]d 分钟后恢复。"
+  "maintenance.login": "服务器正在维护更新至 %[1]s，预计 %[3]d 分钟后恢复。",
+  "maintenance.schedules.banner": "服务器将于 %[2]s 维护更新排期（%[1]s），预计 %[3]d 分钟，请提前结束战斗。",
+  "maintenance.schedules.body": "排期维护将于 %[2]s 开始，预计持续 %[3]d 分钟。服务器将保存并使用排期集 %[1]s 重启，请提前结束战斗与房间。",
+  "maintenance.schedules.login": "服务器正在维护更新排期（%[1]s），预计 %[3]d 分钟后恢复。"
 }

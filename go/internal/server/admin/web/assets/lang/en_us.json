@@ -9,7 +9,6 @@
   "console.copy.failed": "Couldn't copy. Please select the text manually.",
   "console.dialog.ok": "OK",
   "console.dialog.cancel": "Cancel",
-
   "console.error.unauthorized": "Your session has expired. Please sign in again.",
   "console.error.forbidden": "You don't have permission to do this.",
   "console.error.csrf": "This page has expired. Please reload and try again.",
@@ -35,7 +34,6 @@
   "console.error.no_maintenance": "No maintenance is scheduled.",
   "console.error.maintenance_closing": "The maintenance is already draining and can no longer be cancelled.",
   "console.error.http": "Request failed (%[1]s).",
-
   "console.nav.mail": "Mail",
   "console.nav.players": "Players",
   "console.nav.config": "Server settings",
@@ -51,7 +49,6 @@
   "console.leave.title": "Save settings before leaving?",
   "console.leave.body": "You have unsaved configuration changes. They stay on this page until you reload or sign out.",
   "console.leave.ok": "Leave anyway",
-
   "console.signin.title": "Enter the console",
   "console.signin.loading": "Reading server information…",
   "console.signin.local": "This server uses local authentication. Open the one-time sign-in link printed in the server console at startup.",
@@ -63,7 +60,6 @@
   "console.signin.open_page": "Open the sign-in page",
   "console.signin.success": "Signed in.",
   "console.signin.no_permissions": "The server owner hasn't given you any permissions yet.",
-
   "console.mail.recipient": "Recipient",
   "console.mail.copy_uid": "Click to copy the UID",
   "console.mail.switch_player": "Switch player",
@@ -146,7 +142,6 @@
   "console.mail.log.again_title": "Put this item and quantity back on the slip",
   "console.mail.log.identity": "Grant ID",
   "console.mail.log.identity_title": "Click to copy the grant ID",
-
   "console.roster.title": "Players",
   "console.roster.lead": "Appoint administrators by game account; they sign in to the console with their own game account. Administrators can send mail and view players by default; the owner grants any other permission one by one.",
   "console.roster.search.placeholder": "UID or name",
@@ -192,7 +187,6 @@
   "console.permissions.write": "Edit",
   "console.permissions.read_aria": "View %[1]s %[2]s",
   "console.permissions.write_aria": "Edit %[1]s %[2]s",
-
   "console.config.documents": "Configuration files",
   "console.config.show_diff": "Review changes",
   "console.config.discard": "Discard",
@@ -257,7 +251,6 @@
   "console.overview.data_dir": "Data directory",
   "console.overview.mail_spool": "Mail queue",
   "console.overview.dev_tools": "Development overrides",
-
   "config.problem.item": "Item %[1]s: %[2]s",
   "config.problem.enum": "This value isn't allowed",
   "config.problem.enum_options": "Choose one of: %[1]s",
@@ -300,7 +293,6 @@
   "config.problem.message.object": "Must be an object",
   "config.problem.message.present": "Must be written explicitly in the file",
   "config.problem.message.hidden_section": "A group you can't access has a problem. Ask the server owner to fix it.",
-
   "config.game.title": "Game rules",
   "config.game.summary": "Server-wide gameplay rules. Changes take effect after the server restarts.",
   "config.game.section.story.title": "Opening chapter",
@@ -388,7 +380,6 @@
   "config.game.field.text_moderation.provider.severity_threshold.help": "Text is rejected when any category reaches this severity; 0 rejects even results with severity 0.",
   "config.game.section.format.title": "Format",
   "config.game.field.schema_version.label": "Format version",
-
   "config.authentication.title": "Sign-in and authentication",
   "config.authentication.summary": "How players sign in. Changes take effect after the server restarts; secrets are read only from environment variables and never written to this file.",
   "config.authentication.section.mode.title": "Authentication mode",
@@ -411,7 +402,6 @@
   "config.authentication.field.session.access_ttl.label": "Access token lifetime",
   "config.authentication.field.session.refresh_ttl.label": "Refresh token lifetime",
   "config.authentication.field.session.device_transaction_ttl.label": "Sign-in transaction lifetime",
-
   "config.resources.title": "Client resources",
   "config.resources.summary": "Where the client downloads ServerData and GameData. Changes take effect after the server restarts; version numbers come from versions.json and aren't set here.",
   "config.resources.section.source.title": "Resource source",
@@ -424,7 +414,6 @@
   "config.resources.field.server_data_url.help": "An absolute HTTP(S) address without a trailing slash; must use HTTPS except for loopback addresses.",
   "config.resources.field.game_data_url.label": "GameData URL",
   "config.resources.field.game_data_url.help": "An absolute HTTP(S) address without a trailing slash; must use HTTPS except for loopback addresses.",
-
   "config.updates.title": "Updates",
   "config.updates.summary": "How new releases are checked, pre-downloaded and installed during maintenance. Checking and downloading don't affect the game; applying an update must be confirmed in the console or on the command line. Changes take effect after the server restarts.",
   "config.updates.section.check.title": "Checking and downloading",
@@ -450,7 +439,6 @@
   "config.updates.field.maintenance_minutes.label": "Expected maintenance length (minutes)",
   "config.updates.field.webhook_url_env.label": "Webhook environment variable",
   "config.updates.field.webhook_url_env.help": "When a new release is found, POSTs JSON once to the address held in this environment variable; leave empty to send nothing.",
-
   "console.updates.title": "Updates",
   "console.updates.lead": "The server checks the signed release manifest at an interval and can download and verify releases ahead of time. Applying an update first notifies online players, closes new sign-ins, drains requests and saves, then switches to the new version.",
   "console.updates.check": "Check now",
@@ -498,5 +486,21 @@
   "console.updates.apply.body_now": "Once preparation finishes, the server immediately closes new sign-ins, drains, saves and switches to %[1]s.",
   "console.updates.scheduled": "Maintenance scheduled.",
   "console.updates.cancelled": "Maintenance cancelled.",
-  "console.updates.checking": "Checking…"
+  "console.updates.checking": "Checking…",
+  "console.updates.schedules.title": "Schedules",
+  "console.updates.schedules.bundled": "Bundled schedules",
+  "console.updates.schedules.game": "Game version",
+  "console.updates.schedules.gamedata": "GameData version",
+  "console.updates.schedules.up_to_date": "No schedule update available.",
+  "console.updates.schedules.confirm": "After preparation, wait %[1]s minutes, drain and save, then restart the current server with schedule set %[2]s.",
+  "console.updates.schedule_outcome.succeeded": "Succeeded",
+  "console.updates.schedule_outcome.rolled_back": "Previous schedules restored",
+  "console.updates.schedule_outcome.needs_operator": "Needs manual attention",
+  "console.updates.schedule_outcome.switch_failed": "Switch failed",
+  "console.updates.schedule_outcome.cancelled": "Cancelled",
+  "console.updates.schedule_outcome.restarting": "Restarting",
+  "console.error.incompatible_schedules": "This schedule set does not match the running game and GameData versions.",
+  "console.error.confirming_update": "The previous update is still being checked. Wait until it is confirmed healthy.",
+  "console.updates.component": "Update content",
+  "console.updates.component.server": "Server program"
 }

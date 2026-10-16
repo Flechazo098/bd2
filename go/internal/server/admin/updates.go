@@ -14,6 +14,7 @@ type Updates interface {
 	Status() updates.Status
 	CheckNow()
 	Schedule(delay time.Duration, confirmIrreversible bool, by string) error
+	ScheduleSchedules(delay time.Duration, by string) error
 	Cancel(by string) error
 }
 
@@ -52,14 +53,25 @@ func (c *Console) registerUpdates(mux *http.ServeMux, owner func(session) bool) 
 			return
 		}
 		var request struct {
-			DelayMinutes        int  `json:"delay_minutes"`
-			ConfirmIrreversible bool `json:"confirm_irreversible"`
+			Component           string `json:"component"`
+			DelayMinutes        int    `json:"delay_minutes"`
+			ConfirmIrreversible bool   `json:"confirm_irreversible"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
 		by := "console:" + current.AccountID
-		if err := service.Schedule(time.Duration(request.DelayMinutes)*time.Minute, request.ConfirmIrreversible, by); err != nil {
+		var err error
+		switch request.Component {
+		case "", updates.ComponentServer:
+			err = service.Schedule(time.Duration(request.DelayMinutes)*time.Minute, request.ConfirmIrreversible, by)
+		case updates.ComponentSchedules:
+			err = service.ScheduleSchedules(time.Duration(request.DelayMinutes)*time.Minute, by)
+		default:
+			fail(w, http.StatusBadRequest, "unsupported", "unknown update component")
+			return
+		}
+		if err != nil {
 			rejected(w, err)
 			return
 		}

@@ -34,7 +34,7 @@ func (t task) release(args []string) error {
 	if len(args) == 0 || isHelp(args[0]) {
 		fmt.Println(`Usage:
   bd2w release changelog --component server|client [--bump patch|minor|major|none]
-  bd2w release publish [-GameDir dir] [-SkipTests] [--output dir] [--image ref] [--allow-dirty] [--no-announcement]
+  bd2w release publish [-GameDir dir] [-SkipTests] [--output dir] [--image ref] [--allow-dirty] [--no-announcement] [--component all|schedules]
 
 publish builds unsigned release materials described by versions.json and
 CHANGELOG.md. Signing and uploading are independent publisher operations.`)
@@ -137,6 +137,7 @@ func (t task) releaseChangelog(args []string) error {
 }
 
 type publishOptions struct {
+	component  string
 	build      buildOptions
 	output     string
 	image      string
@@ -145,7 +146,7 @@ type publishOptions struct {
 }
 
 func parsePublish(args []string) (publishOptions, error) {
-	var opts publishOptions
+	opts := publishOptions{component: "all"}
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		name, value, assigned := strings.Cut(args[i], "=")
@@ -161,6 +162,8 @@ func parsePublish(args []string) (publishOptions, error) {
 		}
 		var err error
 		switch name {
+		case "--component":
+			opts.component, err = take()
 		case "--output":
 			opts.output, err = take()
 		case "--image":
@@ -175,6 +178,9 @@ func parsePublish(args []string) (publishOptions, error) {
 		if err != nil {
 			return opts, err
 		}
+	}
+	if opts.component != "all" && opts.component != "schedules" {
+		return opts, errors.New("--component must be all or schedules")
 	}
 	build, err := parseOptions(rest)
 	opts.build = build
@@ -223,6 +229,9 @@ func (t task) releasePublish(args []string) error {
 	opts, err := parsePublish(args)
 	if err != nil {
 		return err
+	}
+	if opts.component == "schedules" {
+		return t.publishSchedules(opts)
 	}
 	commit, err := t.releaseCommit(opts.allowDirty)
 	if err != nil {
@@ -343,8 +352,12 @@ func (t task) releasePublish(args []string) error {
 		plugins.Files = append(plugins.Files, f)
 	}
 
+	schedules, err := t.stageSchedules(site, versions)
+	if err != nil {
+		return err
+	}
 	manifest := releasepkg.Manifest{Schema: releasepkg.SchemaVersion, Channel: releasepkg.BuiltinChannel().Name, PublishedAt: time.Now().UTC().Truncate(time.Second), Commit: commit,
-		Launcher: launcher, Plugins: plugins, Server: server, Fingerprint: fingerprint}
+		Launcher: launcher, Plugins: plugins, Server: server, Schedules: schedules, Fingerprint: fingerprint}
 	if err := manifest.Validate(); err != nil {
 		return err
 	}

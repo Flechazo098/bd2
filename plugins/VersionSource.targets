@@ -6,7 +6,7 @@
   <ItemGroup>
     <Compile Include="$(BD2GeneratedVersionSource)" />
     <Compile Include="$(BD2CompileInputsDir)/$(BD2PluginVersionKey).g.cs" Condition="'$(BD2CompileInputsDir)' != ''" />
-    <BD2VersionGeneratorInput Include="$(BD2RepositoryDir)go/build/**/*.go;$(BD2RepositoryDir)go/internal/buildversion/**/*.go;$(BD2RepositoryDir)go/go.mod;$(BD2RepositoryDir)go/go.sum;$(BD2RepositoryDir)bd2w;$(BD2RepositoryDir)bd2w.cmd;$(MSBuildThisFileFullPath)" />
+    <BD2VersionGeneratorInput Include="$(BD2RepositoryDir)go/build/version_source.go;$(BD2RepositoryDir)go/internal/buildversion/**/*.go;$(BD2RepositoryDir)go/go.mod;$(BD2RepositoryDir)go/go.sum;$(MSBuildThisFileFullPath)" />
   </ItemGroup>
   <Target Name="CheckBD2VersionSource" BeforeTargets="CoreCompile">
     <Error Condition="!Exists('$(BD2VersionConfig)')" Text="Missing repository version config: $(BD2VersionConfig)" />

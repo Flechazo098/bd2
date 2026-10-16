@@ -95,6 +95,10 @@ jq -e '(.from | type == "string" and length > 0) and
     ((.image // "") | type == "string") and
     (.migration.kind == "none" or .migration.kind == "reversible" or .migration.kind == "irreversible")' \
     "$PROCESSING" >/dev/null 2>&1 || fail 'invalid Docker update request (full commit and migration kind required)'
+expected_fingerprint=$(jq -r '.fingerprint_id // ""' "$PROCESSING")
+if [ -n "$expected_fingerprint" ]; then
+    printf '%s\n' "$expected_fingerprint" | jq -Re 'test("^[0-9a-f]{64}$")' >/dev/null || fail 'invalid target fingerprint'
+fi
 image=$(jq -r '.image // ""' "$PROCESSING")
 migration=$(jq -r '.migration.kind' "$PROCESSING")
 for dependency in docker curl nsenter git mktemp stat cp; do
@@ -156,6 +160,7 @@ use_image() {
 ready() {
     expected_image=$1
     replaced_id=$2
+    required_fingerprint=${3:-}
     attempts=0
     while [ "$attempts" -lt 60 ]; do
         candidate=$(compose ps -q "$SERVICE") || candidate=
@@ -168,6 +173,14 @@ ready() {
                 nsenter -t "$pid" -n curl --noproxy '*' -fsS --max-time 3 "$READY_URL" >/dev/null 2>&1 &&
                 [ "$(compose ps -q "$SERVICE")" = "$candidate" ] &&
                 [ "$(docker inspect --format '{{.Image}} {{.State.Running}} {{.State.Pid}}' "$candidate")" = "$identity" ]; then
+                if [ -n "$required_fingerprint" ]; then
+                    actual_fingerprint=$(nsenter -t "$pid" -n curl --noproxy '*' -fsS --max-time 3 "${READY_URL%/readyz}/client/update-fingerprint" | jq -r '.fingerprint.id // ""') || actual_fingerprint=
+                    if [ "$actual_fingerprint" != "$required_fingerprint" ]; then
+                        attempts=$((attempts + 1))
+                        sleep 3
+                        continue
+                    fi
+                fi
                 container=$candidate
                 return 0
             fi
@@ -178,7 +191,7 @@ ready() {
     return 1
 }
 switched=true
-if use_image "$target" && ready "$target" "$old_container"; then
+if use_image "$target" && ready "$target" "$old_container" "$expected_fingerprint"; then
     outcome=succeeded
     message='requested image is ready in the new container'
     exit 0
