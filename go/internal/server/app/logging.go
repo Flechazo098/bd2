@@ -2,15 +2,14 @@ package app
 
 import (
 	"io"
+	"log/slog"
 
 	"bd2server/internal/common/logging"
 )
 
 func ConfigureLogging(writer io.Writer, levelOverride, colorOverride string) error {
-	options, err := logging.OptionsFromEnv()
-	if err != nil {
-		return err
-	}
+	options := logging.Options{Level: slog.LevelInfo, Color: logging.ColorAuto}
+	var err error
 	if levelOverride != "" {
 		options.Level, err = logging.ParseLevel(levelOverride)
 		if err != nil {

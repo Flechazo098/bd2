@@ -36,13 +36,7 @@ func (i Instance) WriteLauncher() (string, error) {
 		body.WriteString(") Then\r\nMsgBox \"This client instance is already running.\", 48, \"BD2\"\r\nWScript.Quit 1\r\nEnd If\r\nEnd If\r\nNext\r\nSet files = CreateObject(\"Scripting.FileSystemObject\")\r\npreviousLog = ")
 		body.WriteString(quote(filepath.Join(i.Root, "logs", "Player.log")))
 		body.WriteString("\r\nIf files.FileExists(previousLog) Then\r\npendingLog = files.BuildPath(files.GetParentFolderName(previousLog), \"bd2-previous.\" & files.GetTempName & \".Player-prev.log\")\r\nfiles.MoveFile previousLog, pendingLog\r\nEnd If\r\n")
-		body.WriteString(`environment("BD2_CLIENT_INSTANCE_ID") = `)
-		body.WriteString(quote(i.ID))
-		body.WriteString("\r\n")
-		body.WriteString(`environment("BD2_CLIENT_INSTANCE_ROOT") = `)
-		body.WriteString(quote(i.Root))
-		body.WriteString("\r\n")
-		for _, key := range []string{"UNITY_PROXYSERVER", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "BD2_CLIENT_PROXY_URL"} {
+		for _, key := range []string{"UNITY_PROXYSERVER", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 			body.WriteString("environment(")
 			body.WriteString(quote(key))
 			body.WriteString(") = \"\"\r\n")
@@ -70,12 +64,7 @@ func (i Instance) WriteLauncher() (string, error) {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 	var body strings.Builder
 	body.WriteString("#!/bin/sh\nset -eu\n")
-	body.WriteString("unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy\nexport UNITY_PROXYSERVER='' BD2_CLIENT_PROXY_URL=''\nexport UNITY_NOPROXY='localhost,127.0.0.1,::1' NO_PROXY='localhost,127.0.0.1,::1' no_proxy='localhost,127.0.0.1,::1'\n")
-	body.WriteString("export BD2_CLIENT_INSTANCE_ID=")
-	body.WriteString(quote(i.ID))
-	body.WriteString("\nexport BD2_CLIENT_INSTANCE_ROOT=")
-	body.WriteString(quote(i.Root))
-	body.WriteByte('\n')
+	body.WriteString("unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy\nexport UNITY_PROXYSERVER=''\nexport UNITY_NOPROXY='localhost,127.0.0.1,::1' NO_PROXY='localhost,127.0.0.1,::1' no_proxy='localhost,127.0.0.1,::1'\n")
 	body.WriteString("cd ")
 	body.WriteString(quote(installation.Root))
 	body.WriteString("\nprevious_log=")

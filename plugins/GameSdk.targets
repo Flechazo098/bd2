@@ -18,7 +18,7 @@
     <Error Condition="'$(GameDir)' == '' and '$(BD2ManagedDir)' == ''" Text="Set BD2LocalGameDir in plugins/Directory.Build.local.props, or pass -p:GameDir=&lt;game-directory&gt;." />
     <Error Condition="!Exists('$(BD2ManagedDir)/Assembly-CSharp.dll')" Text="Assembly-CSharp.dll missing in $(BD2ManagedDir). Set GameDir or BD2ManagedDir." />
     <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(BD2SdkPrepared)' != 'true' and ('$(DesignTimeBuild)' != 'true' or !Exists('$(BD2SdkTool)'))" Command="dotnet build &quot;$(BD2SdkProject)&quot; -c $(BD2SdkConfiguration) --nologo" />
-    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(BD2SdkPrepared)' != 'true'" EnvironmentVariables="BD2_GAME_SDK_CACHE=$(BD2GameSdkCache)" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; --game-version &quot;$(BD2GameVersion)&quot;" />
+    <Exec StdOutEncoding="utf-8" StdErrEncoding="utf-8" Condition="'$(BD2SdkPrepared)' != 'true'" Command="dotnet &quot;$(BD2SdkTool)&quot; prepare-embedded &quot;$(BD2ManagedDir)/Assembly-CSharp.dll&quot; &quot;$(BD2SdkDir)&quot; --game-version &quot;$(BD2GameVersion)&quot; --cache-directory &quot;$(BD2GameSdkCache)&quot;" />
     <Error Condition="!Exists('$(BD2SdkDir)/shared-sdk.txt') or !Exists('$(BD2SdkDir)/GameSdkIdentity.g.cs')" Text="Prepared game SDK is incomplete: $(BD2SdkDir)." />
     <ReadLinesFromFile File="$(BD2SdkDir)/shared-sdk.txt"><Output TaskParameter="Lines" PropertyName="BD2SharedSdkDir" /></ReadLinesFromFile>
     <Error Condition="!Exists('$(BD2SharedSdkDir)/names.json') or !Exists('$(BD2SharedSdkDir)/ref/Assembly-CSharp.Readable.dll')" Text="Prepared shared SDK is incomplete: $(BD2SharedSdkDir)." />

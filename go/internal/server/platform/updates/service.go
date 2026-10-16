@@ -160,6 +160,13 @@ func (s *Service) Run(ctx context.Context) {
 
 // CheckNow asks Run to check as soon as possible.
 func (s *Service) CheckNow() {
+	s.mu.Lock()
+	if s.status.Checking {
+		s.mu.Unlock()
+		return
+	}
+	s.status.Checking = true
+	s.mu.Unlock()
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -213,6 +220,16 @@ func (s *Service) reportChangelogFailure(message string) {
 }
 
 func (s *Service) check(ctx context.Context) {
+	s.mu.Lock()
+	s.status.Checking = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.status.Checking = false
+		s.status.LastCheck = s.options.Now().UTC()
+		s.persistLocked()
+		s.mu.Unlock()
+	}()
 	if s.options.Config.Changelog.Notices {
 		fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		raw, signature, source, err := release.FetchSigned(fetchCtx, s.options.Client, s.options.Config.changelogURLs(), s.keys)

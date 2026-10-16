@@ -155,13 +155,9 @@ func (c Config) Resolve(relative string) string {
 	return filepath.Join(filepath.Dir(c.SourcePath), filepath.FromSlash(relative))
 }
 
-// Find searches an explicit environment override first, then walks upward from
-// the executable and working directory. Release packages put versions.json
+// Find walks upward from the executable and working directory. Release packages put versions.json
 // beside the executable; development commands find the repository root.
 func Find() (Config, error) {
-	if path := os.Getenv("BD2_VERSION_CONFIG"); path != "" {
-		return Load(path)
-	}
 	var starts []string
 	if executable, err := os.Executable(); err == nil {
 		starts = append(starts, filepath.Dir(executable))
@@ -186,7 +182,7 @@ func Find() (Config, error) {
 			}
 		}
 	}
-	return Config{}, fmt.Errorf("versionconfig: %s not found; pass --version-config or set BD2_VERSION_CONFIG", FileName)
+	return Config{}, fmt.Errorf("versionconfig: %s not found; pass --version-config", FileName)
 }
 
 // Use selects an explicitly loaded configuration for all server packages.

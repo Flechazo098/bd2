@@ -73,6 +73,5 @@ Usage:
 	bd2server update status|check|apply|cancel [--component server|schedules] [--data-dir DIR] [--in 10m | --now] [--confirm-irreversible] [--json]
 
 The server binds to loopback by default.
-Logging: --log-level trace|debug|info|warn|error; --log-color auto|always|never.
-BD2_LOG_LEVEL and BD2_LOG_COLOR set defaults for all commands.`+developmentUsage())
+Logging: --log-level trace|debug|info|warn|error; --log-color auto|always|never.`+developmentUsage())
 }

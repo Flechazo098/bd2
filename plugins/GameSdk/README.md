@@ -82,7 +82,7 @@ IDE 项目加载时构建会准备可读引用，CLI 首次构建同样会自动
 
 构建核对声明值、SDK 内嵌表、真实游戏 DLL 指纹。缺少声明或版本不匹配会报错；不会自动选用其他版本。NuGet 项目仍需安装带对应游戏版本的包。
 
-仓库默认缓存根为 `.build/game-sdk`，与源码位于同一盘。第三方 NuGet 项目默认使用 `%LOCALAPPDATA%\BD2\GameSdk\navigation`；可在本机 `Directory.Build.props` 设置 `BD2GameSdkCache`，或设置环境变量 `BD2_GAME_SDK_CACHE`。 `obj` 不影响共享缓存。缺失的共享源码可在下次准备时从 PDB 恢复。真实游戏 DLL、映射表、游戏依赖、生成逻辑或反编译依赖改变时会生成新的缓存。
+仓库默认缓存根为 `.build/game-sdk`，与源码位于同一盘。第三方 NuGet 项目默认使用 `%LOCALAPPDATA%\BD2\GameSdk\navigation`；可在本机 `Directory.Build.props` 设置 `BD2GameSdkCache`。 `obj` 不影响共享缓存。缺失的共享源码可在下次准备时从 PDB 恢复。真实游戏 DLL、映射表、游戏依赖、生成逻辑或反编译依赖改变时会生成新的缓存。
 
 `lib` 中的程序集仅供开发导航，**不要部署或执行**。这里展示的是当前 DLL 的反编译源码，局部变量名和语法可能与原始工程不同。导航 PDB 对应可读程序集，不能用于真实混淆游戏 DLL 的逐行调试。
 
@@ -125,7 +125,7 @@ owner.StartCoroutine(Game.MemberName(owner.GetType(), "ReadableCoroutineName"));
 | `GameDir` | 游戏根目录，本机安装路径（另须在插件 csproj 声明 BD2GameVersion） |
 | `BD2ManagedDir` | 自定义 Managed 路径，默认 `GameDir/BrownDust II_Data/Managed` |
 | `BD2BepInExDir` | 自定义 BepInEx 路径，默认 `GameDir/BepInEx` |
-| `BD2GameSdkCache` | 共享导航缓存目录，可在 `Directory.Build.props` 配置；默认取 `BD2_GAME_SDK_CACHE` 环境变量或用户缓存目录 |
+| `BD2GameSdkCache` | 共享导航缓存目录，可在 `Directory.Build.props` 配置；默认取用户缓存目录 |
 | `BD2AddBepInExReferences=false` | 使用其他宿主或自己提供 BepInEx/Harmony 引用时关闭自动引用 |
 | `BD2AddUnityReferences=false` | 自己提供 Unity 引用时关闭自动引用 |
 | `BD2GameSdkEnabled=false` | 暂时关闭壳生成与 reobf；只适用于不依赖可读游戏 API 的项目 |

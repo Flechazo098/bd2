@@ -67,8 +67,8 @@ type configuration struct {
 
 func loadConfiguration(args []string) (result *configuration, loadErr error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	logLevel := fs.String("log-level", "", "log threshold: trace, debug, info, warn, error (default BD2_LOG_LEVEL or info)")
-	logColor := fs.String("log-color", "", "level colors: auto, always, never (default BD2_LOG_COLOR or auto)")
+	logLevel := fs.String("log-level", "", "log threshold: trace, debug, info, warn, error (default info)")
+	logColor := fs.String("log-color", "", "level colors: auto, always, never (default auto)")
 	versionConfigPath := fs.String("version-config", "", "repository versions.json override")
 	authConfigPath := fs.String("authentication-config", "", "authentication.json path (default DATA_DIR/config/authentication.json)")
 	resourceConfigPath := fs.String("resource-config", "", "resources.json path (default DATA_DIR/config/resources.json)")

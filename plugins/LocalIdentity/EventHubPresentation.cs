@@ -31,7 +31,7 @@ internal static class EventHubPresentation
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     private static void ReceivePostfix(IMessage __0, int __2, bool __result)
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN")) || BDNetwork.CommonPacket.UserInfo == null || !__result || __2 > 0 ||
+        if (!ClientRouting.IsActive || BDNetwork.CommonPacket.UserInfo == null || !__result || __2 > 0 ||
             __0 is not MiniEventHubInfoResponse response || response.MiniEventHubInfo.Count != 0) return;
         try
         {

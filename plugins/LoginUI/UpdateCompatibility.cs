@@ -1,4 +1,5 @@
 using System;
+using Bd2.Client;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -24,11 +25,11 @@ internal static class UpdateCompatibility
         new("local_identity", "bd2.localidentity"), new("login_ui", Plugin.PluginId),
         new("cash_shop", "bd2.cashshop"), new("fchat", "bd2.fchat")
     ];
-    private static readonly string Fingerprint = Environment.GetEnvironmentVariable("BD2_UPDATE_FINGERPRINT") ?? string.Empty;
-    private static readonly string ResourceFingerprint = Environment.GetEnvironmentVariable("BD2_RESOURCE_FINGERPRINT") ?? string.Empty;
-    private static readonly string ClientVersion = LaunchVersion("BD2_CLIENT_VERSION", Bd2Build.Versions.ClientRelease);
-    private static readonly string BundleVersion = LaunchVersion("BD2_BUNDLE_VERSION", Bd2Build.Versions.Bundle);
-    private static readonly string GameDataVersion = LaunchVersion("BD2_GAME_DATA_VERSION", Bd2Build.Versions.GameData);
+    private static readonly string Fingerprint = ClientSettings.Current.runtime.update_fingerprint;
+    private static readonly string ResourceFingerprint = ClientSettings.Current.runtime.resource_fingerprint;
+    private static readonly string ClientVersion = ClientSettings.Current.ClientVersion;
+    private static readonly string BundleVersion = ClientSettings.Current.BundleVersion;
+    private static readonly string GameDataVersion = ClientSettings.Current.GameDataVersion;
     private static IReadOnlyDictionary<string, string> headers;
     private static Dictionary<string, string> plugins;
     private static int blocked;
@@ -37,12 +38,6 @@ internal static class UpdateCompatibility
     internal static bool ContinuingLogin;
     internal static bool LoginCheckInProgress;
     internal static bool IsBlocked => Volatile.Read(ref blocked) != 0;
-
-    private static string LaunchVersion(string name, string fallback)
-    {
-        string value = Environment.GetEnvironmentVariable(name);
-        return string.IsNullOrEmpty(value) ? fallback : value;
-    }
 
     internal static IReadOnlyDictionary<string, string> Headers
     {

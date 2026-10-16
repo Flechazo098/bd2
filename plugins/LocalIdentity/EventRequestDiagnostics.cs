@@ -44,7 +44,7 @@ internal static class EventRequestDiagnostics
         catch (Exception error) { Log?.LogWarning("Event diagnostic binding unavailable: target=" + type.Name + "." + name + " exception=" + error.GetType().Name); }
     }
 
-    private static bool Enabled => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN")) && BDNetwork.CommonPacket.UserInfo != null;
+    private static bool Enabled => ClientRouting.IsActive && BDNetwork.CommonPacket.UserInfo != null;
     private static bool ShouldLog(string key, out string sample)
     {
         sample = "";

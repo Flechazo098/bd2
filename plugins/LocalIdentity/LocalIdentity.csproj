@@ -9,6 +9,7 @@
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Shared/ClientSettings.cs" Link="ClientSettings.cs" />
     <Reference Include="Google.Protobuf">
       <HintPath>$(BD2ManagedDir)/Google.Protobuf.dll</HintPath>
       <Private>false</Private>

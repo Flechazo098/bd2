@@ -58,7 +58,7 @@ internal static class FieldTransitionDiagnostics
             postfix: postfix == null ? null : new HarmonyMethod(typeof(FieldTransitionDiagnostics), postfix));
     }
 
-    private static bool Local => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN"));
+    private static bool Local => ClientRouting.IsActive;
     private static bool Capturing => Local && Time.realtimeSinceStartup <= CaptureUntil && Sequence != 0;
 
     private static void Begin(int questId, bool accept)

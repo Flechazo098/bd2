@@ -34,9 +34,6 @@ import (
 // StoreFile describes the launcher's plugin store, plugins/plugins.json.
 const StoreFile = "plugins.json"
 
-// ManifestEnvironment overrides the built-in manifest URL.
-const ManifestEnvironment = "BD2_UPDATE_MANIFEST_URL"
-
 type Store struct {
 	Version string       `json:"version"`
 	Files   []StoredFile `json:"files"`
@@ -111,10 +108,7 @@ func New(options Options) *Manager {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-	address := strings.TrimSpace(os.Getenv(ManifestEnvironment))
-	if address == "" {
-		address = release.BuiltinChannel().ManifestURL
-	}
+	address := release.BuiltinChannel().ManifestURL
 	m := &Manager{options: options, manifestURL: address, keys: release.BuiltinChannel().TrustedKeys, pending: map[string]bool{}, gamePending: map[string]bool{}}
 	m.status.Enabled = address != "" && !options.Development
 	m.loadPackagedFingerprint()
@@ -255,10 +249,6 @@ func (m *Manager) Check(ctx context.Context) error {
 	}
 	m.status.Error = ""
 	m.manifest = &manifest
-	if manifest.Fingerprint != nil {
-		m.fingerprint = manifest.Fingerprint
-		m.fingerprintErr = nil
-	}
 	m.status.Game = nil
 	if fp := manifest.Fingerprint; fp != nil && fp.RequireGameUpdate && fp.Game != nil {
 		for _, game := range m.instances() {

@@ -35,9 +35,6 @@ public sealed class Plugin : BaseUnityPlugin
         {
             Log = Logger;
             PlatformControlHttp.SetCompletionLogger(message => Logger.LogInfo(message));
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_PROXYSERVER")) &&
-                !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UNITY_NOPROXY")))
-                Logger.LogInfo("Game loopback transport uses launch-time Unity proxy bypass");
             AppDomain.CurrentDomain.ProcessExit += (_, _) =>
             {
                 DisposeGameRelay();

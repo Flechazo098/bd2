@@ -28,26 +28,6 @@ type Options struct {
 	Color ColorMode
 }
 
-// OptionsFromEnv reads process-wide BD2 logging defaults.
-func OptionsFromEnv() (Options, error) {
-	options := Options{Level: slog.LevelInfo, Color: ColorAuto}
-	if value := os.Getenv("BD2_LOG_LEVEL"); value != "" {
-		level, err := ParseLevel(value)
-		if err != nil {
-			return Options{}, err
-		}
-		options.Level = level
-	}
-	if value := os.Getenv("BD2_LOG_COLOR"); value != "" {
-		color, err := ParseColorMode(value)
-		if err != nil {
-			return Options{}, err
-		}
-		options.Color = color
-	}
-	return options, nil
-}
-
 func ParseLevel(value string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "trace":

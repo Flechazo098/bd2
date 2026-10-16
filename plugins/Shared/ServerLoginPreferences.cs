@@ -2,7 +2,7 @@ using System.Globalization;
 using System;
 using System.Security.Cryptography;
 using System.Text;
-using System.IO;
+using Bd2.Client;
 using UnityEngine;
 
 namespace Bd2Login;
@@ -33,9 +33,9 @@ internal static class ServerLoginPreferences
 
     internal static string KeychainService(string origin)
     {
-        string root = Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ROOT");
-        if (string.IsNullOrEmpty(root)) return "BD2 Login UI OAuth: " + origin;
-        string scope = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        ClientInstance instance = ClientSettings.CurrentInstance;
+        if (instance == null) return "BD2 Login UI OAuth: " + origin;
+        string scope = instance.Root;
         return Key("BD2 Login UI OAuth instance " + scope + ": ", origin);
     }
 

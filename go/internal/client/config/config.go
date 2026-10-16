@@ -27,11 +27,21 @@ const (
 type CDNMode string
 
 type Settings struct {
-	ProxyURL               string  `json:"proxy_url,omitempty"`
-	SchemaVersion          int     `json:"schema_version"`
-	ServerOrigin           string  `json:"server_origin"`
-	CDNMode                CDNMode `json:"cdn_mode"`
-	LocalResourceDirectory string  `json:"local_resource_directory,omitempty"`
+	ProxyURL               string   `json:"proxy_url,omitempty"`
+	SchemaVersion          int      `json:"schema_version"`
+	ServerOrigin           string   `json:"server_origin"`
+	CDNMode                CDNMode  `json:"cdn_mode"`
+	LocalResourceDirectory string   `json:"local_resource_directory,omitempty"`
+	Runtime                *Runtime `json:"runtime,omitempty"`
+}
+
+type Runtime struct {
+	ClientVersion       string `json:"client_version"`
+	UpdateFingerprint   string `json:"update_fingerprint"`
+	ResourceFingerprint string `json:"resource_fingerprint"`
+	GameVersion         string `json:"game_version"`
+	BundleVersion       string `json:"bundle_version"`
+	GameDataVersion     string `json:"game_data_version"`
 }
 
 func Path(gameDir string) string {
@@ -73,6 +83,7 @@ func Normalize(in Settings) (Settings, error) {
 		ServerOrigin:           origin,
 		CDNMode:                in.CDNMode,
 		LocalResourceDirectory: localDirectory,
+		Runtime:                in.Runtime,
 	}, nil
 }
 

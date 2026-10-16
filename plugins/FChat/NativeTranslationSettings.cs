@@ -1,6 +1,7 @@
 using Bd2LoginUI;
 using TextComponent = BD2.GameSdk.Component;
 using System;
+using Bd2.Client;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -130,7 +131,7 @@ internal static class NativeTranslationSettings
     private static string Scope()
     {
         Uri server = ClientSession.ServerOrigin ?? throw new InvalidOperationException(TextComponent.Translatable("fchat.error.server_unconfigured").GetString());
-        string root = Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ROOT");
+        string root = ClientSettings.CurrentInstance?.Root;
         root = Path.GetFullPath(string.IsNullOrEmpty(root) ? Paths.GameRootPath : root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (Environment.OSVersion.Platform == PlatformID.Win32NT) root = root.ToUpperInvariant();
         string identity = NormalizeOrigin(server) + "\0" + root;

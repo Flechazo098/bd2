@@ -85,6 +85,13 @@ func SaveSettings(gameDir string, settings clientconfig.Settings, versions versi
 	if err != nil {
 		return clientconfig.Settings{}, err
 	}
+	if normalized.Runtime == nil {
+		if saved, err := clientconfig.Load(gameDir); err == nil {
+			normalized.Runtime = saved.Runtime
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return clientconfig.Settings{}, err
+		}
+	}
 	if normalized.CDNMode == clientconfig.CDNLocal {
 		if err := InstallLocalCatalog(gameDir, normalized.LocalResourceDirectory, versions.BundleVersion); err != nil {
 			return clientconfig.Settings{}, err

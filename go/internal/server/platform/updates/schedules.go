@@ -180,15 +180,41 @@ func loadScheduleSet(dataDir, id, game, gameData string) (string, error) {
 func ScheduleDirectory(dataDir, bundled, game, gameData string) (string, string, error) {
 	var selected scheduleSelection
 	if err := readJSON(filepath.Join(directory(dataDir), scheduleSelectionFile), &selected); errors.Is(err, os.ErrNotExist) {
-		return bundled, "", nil
+		id, err := bundledScheduleID(bundled, game, gameData)
+		return bundled, id, err
 	} else if err != nil {
 		return "", "", err
 	}
 	if selected.GameVersion != game || selected.GameDataVersion != gameData {
-		return bundled, "", nil
+		id, err := bundledScheduleID(bundled, game, gameData)
+		return bundled, id, err
 	}
 	path, err := loadScheduleSet(dataDir, selected.ID, game, gameData)
 	return path, selected.ID, err
+}
+
+func bundledScheduleID(root, game, gameData string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+	set := release.Schedules{GameVersion: game, GameDataVersion: gameData}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".bd2schedule") {
+			return "", fmt.Errorf("unexpected bundled schedule entry %s", entry.Name())
+		}
+		path := filepath.Join(root, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return "", err
+		}
+		digest, err := release.HashFile(path)
+		if err != nil {
+			return "", err
+		}
+		set.Files = append(set.Files, release.File{Name: entry.Name(), Size: info.Size(), SHA256: digest})
+	}
+	return set.ContentID(), nil
 }
 
 func (s *Service) prepareSchedules(ctx context.Context, a *ScheduleAvailable) (string, error) {

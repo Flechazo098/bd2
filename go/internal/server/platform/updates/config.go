@@ -8,7 +8,6 @@ package updates
 
 import (
 	"embed"
-	"os"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ type Config struct {
 	MaintenanceMinutes int            `json:"maintenance_minutes"`
 	ManifestURL        string         `json:"manifest_url,omitempty"`
 	ChangelogURLs      []string       `json:"changelog_urls,omitempty"`
-	WebhookURLEnv      string         `json:"webhook_url_env,omitempty"`
+	WebhookURL         string         `json:"webhook_url,omitempty"`
 	Changelog          ChangelogFlags `json:"changelog"`
 }
 
@@ -44,12 +43,8 @@ type ChangelogFlags struct {
 }
 
 func Default() Config {
-	method := os.Getenv("BD2_UPDATE_METHOD")
-	if method == "" {
-		method = MethodNative
-	}
 	return Config{
-		Check: true, CheckInterval: "6h", Download: true, Method: method,
+		Check: true, CheckInterval: "6h", Download: true, Method: MethodNative,
 		CountdownMinutes: 10, MaintenanceMinutes: 5,
 
 		Changelog: ChangelogFlags{Notices: true},
@@ -84,7 +79,7 @@ var Document = commonconfig.Document[Config]{
 				}},
 				{Path: "countdown_minutes", Kind: commonconfig.KindInteger, Label: "默认倒计时（分钟）", Min: countdownMin, Max: countdownMax},
 				{Path: "maintenance_minutes", Kind: commonconfig.KindInteger, Label: "预计维护时长（分钟）", Min: downtimeMin, Max: downtimeMax},
-				{Path: "webhook_url_env", Kind: commonconfig.KindString, Label: "Webhook 环境变量", Format: "env", Advanced: true, Help: "发现新版时向该环境变量中的地址 POST 一次 JSON；留空不发送。"},
+				{Path: "webhook_url", Kind: commonconfig.KindString, Label: "Webhook 地址", Format: "url", Advanced: true, Help: "发现新版时向此地址 POST 一次 JSON；留空不发送。"},
 			}},
 		},
 	},
@@ -98,7 +93,7 @@ var Document = commonconfig.Document[Config]{
 		default:
 			problems = append(problems, commonconfig.Problem{Path: "method", Rule: commonconfig.RuleEnum, Message: "部署方式必须是 native、docker 或 none"})
 		}
-		for field, addresses := range map[string][]string{"manifest_url": {c.ManifestURL}, "changelog_urls": c.ChangelogURLs} {
+		for field, addresses := range map[string][]string{"manifest_url": {c.ManifestURL}, "changelog_urls": c.ChangelogURLs, "webhook_url": {c.WebhookURL}} {
 			for _, address := range addresses {
 				if address == "" && field != "changelog_urls" {
 					continue
@@ -132,10 +127,7 @@ func (c Config) changelogURLs() []string {
 }
 
 func (c Config) webhook() string {
-	if c.WebhookURLEnv == "" {
-		return ""
-	}
-	return strings.TrimSpace(os.Getenv(c.WebhookURLEnv))
+	return strings.TrimSpace(c.WebhookURL)
 }
 
 //go:embed lang/*.json

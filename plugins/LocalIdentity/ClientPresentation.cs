@@ -1,4 +1,5 @@
 using System;
+using Bd2.Client;
 using BD2.GameNames;
 using static BD2.GameNames.Game;
 using System.Reflection;
@@ -16,7 +17,7 @@ internal static class ClientPresentation
 
     internal static void InstallStartupFullscreen(Harmony harmony, Type appManager)
     {
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ID")))
+        if (ClientSettings.CurrentInstance != null)
         {
             Log?.LogInfo("Client instance startup respects launcher window parameters");
             return;

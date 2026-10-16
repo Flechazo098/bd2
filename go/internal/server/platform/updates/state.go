@@ -31,6 +31,7 @@ type Status struct {
 	Countdown      int             `json:"countdown_minutes"`
 	ManifestURL    string          `json:"manifest_url"`
 	LastCheck      time.Time       `json:"last_check,omitzero"`
+	Checking       bool            `json:"checking"`
 	LastError      string          `json:"last_error,omitempty"`
 	Available      *Available      `json:"available,omitempty"`
 	Schedules      *ScheduleStatus `json:"schedules,omitempty"`

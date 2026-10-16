@@ -5,7 +5,7 @@ using HarmonyLib;
 using System.IO;
 using System.Net;
 using System.Text;
-using BepInEx;
+using Bd2.Client;
 using BepInEx.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -14,7 +14,6 @@ namespace Bd2LocalIdentity;
 
 internal sealed class ClientRouting : IDisposable
 {
-    private static readonly char[] InvalidOriginCharacters = ['?', '#', '@', '%'];
     private static ClientRouting installedRouting;
     private static ManualLogSource routingLog;
 
@@ -58,30 +57,15 @@ internal sealed class ClientRouting : IDisposable
     }
 
 
-    private const string ConfigFileName = "bd2.client.json";
     private const string OfficialServerData = "https://bd2-cdn.akamaized.net/ServerData";
     private const string OfficialGameData = "https://bd2-cdn.akamaized.net/GameData";
     private const int MaximumResponseBytes = 16 * 1024;
-    private static readonly string BundleVersion = LauncherResourceVersion("BD2_BUNDLE_VERSION", Bd2Build.Versions.Bundle);
-    private static readonly string GameDataVersion = LauncherResourceVersion("BD2_GAME_DATA_VERSION", Bd2Build.Versions.GameData);
-
-    private static string LauncherResourceVersion(string name, string fallback)
-    {
-        string value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrEmpty(value)) return fallback;
-        string fingerprint = Environment.GetEnvironmentVariable("BD2_UPDATE_FINGERPRINT");
-        if (string.IsNullOrEmpty(fingerprint) || fingerprint.Length != 64 || value.Length != 14)
-            throw new InvalidDataException("Launcher resource versions require a verified update fingerprint");
-        foreach (char digit in value)
-            if (digit < '0' || digit > '9') throw new InvalidDataException("Invalid launcher resource version");
-        foreach (char digit in fingerprint)
-            if (!(digit >= '0' && digit <= '9') && !(digit >= 'a' && digit <= 'f'))
-                throw new InvalidDataException("Invalid launcher update fingerprint");
-        return value;
-    }
+    private static string BundleVersion => ClientSettings.Current.BundleVersion;
+    private static string GameDataVersion => ClientSettings.Current.GameDataVersion;
+    internal static bool IsActive => installedRouting != null;
 
     private readonly ManualLogSource log;
-    private readonly ClientConfig config;
+    private readonly ClientSettings config;
     internal string ServerOrigin => config.server_origin;
     internal Uri ServerRoot => new(config.server_origin + "/");
     private readonly ResourcePolicy resources;
@@ -89,7 +73,7 @@ internal sealed class ClientRouting : IDisposable
 
     private ClientRouting(
         ManualLogSource log,
-        ClientConfig config,
+        ClientSettings config,
         ResourcePolicy resources,
         LocalResourceServer localResourceServer)
     {
@@ -101,31 +85,10 @@ internal sealed class ClientRouting : IDisposable
 
     internal static ClientRouting Load(ManualLogSource log)
     {
-        Environment.SetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN", null);
-        string path = Path.Combine(Paths.ConfigPath, ConfigFileName);
-        ClientConfig config = ParseConfig(ReadBoundedFile(path, MaximumResponseBytes));
-        // Set only our process-local choice. Login UI also uses this value when
-        // the game is launched directly; it never imports a system proxy.
-        Environment.SetEnvironmentVariable("BD2_CLIENT_PROXY_URL", config.proxy_url);
-        ValidateOrigin(config.server_origin, "server_origin");
-        config.server_origin = config.server_origin.TrimEnd('/');
-
+        ClientSettings config = ClientSettings.Current;
         ResourcePolicy resources;
         LocalResourceServer localResourceServer = null;
-        string verifiedResources = Environment.GetEnvironmentVariable("BD2_RESOURCE_DIRECTORY");
         string effectiveMode = config.cdn_mode;
-        if (!string.IsNullOrEmpty(verifiedResources))
-        {
-            string fingerprint = Environment.GetEnvironmentVariable("BD2_RESOURCE_FINGERPRINT");
-            if (string.IsNullOrEmpty(fingerprint) || fingerprint.Length != 64 ||
-                string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BD2_UPDATE_FINGERPRINT")) ||
-                !Path.IsPathRooted(verifiedResources))
-                throw new InvalidDataException("Launcher resource directory requires a verified update fingerprint");
-            foreach (char digit in fingerprint)
-                if (!(digit >= '0' && digit <= '9') && !(digit >= 'a' && digit <= 'f'))
-                    throw new InvalidDataException("Invalid launcher resource fingerprint");
-            effectiveMode = "local";
-        }
         try
         {
             if (effectiveMode == "official")
@@ -144,7 +107,7 @@ internal sealed class ClientRouting : IDisposable
             {
                 localResourceServer = LocalResourceServer.Start(
                     log,
-                    string.IsNullOrEmpty(verifiedResources) ? config.local_resource_directory : verifiedResources,
+                    config.local_resource_directory,
                     BundleVersion,
                     GameDataVersion);
                 resources = new ResourcePolicy
@@ -163,7 +126,6 @@ internal sealed class ClientRouting : IDisposable
                 resources = RequestResourcePolicy(log, config);
             }
             ValidatePolicy(effectiveMode, resources);
-            Environment.SetEnvironmentVariable("BD2_CLIENT_SERVER_ORIGIN", config.server_origin);
             return new ClientRouting(log, config, resources, localResourceServer);
         }
         catch
@@ -200,7 +162,7 @@ internal sealed class ClientRouting : IDisposable
             " game_data_version=" + resources.game_data_version);
     }
 
-    private static ResourcePolicy RequestResourcePolicy(ManualLogSource log, ClientConfig config)
+    private static ResourcePolicy RequestResourcePolicy(ManualLogSource log, ClientSettings config)
     {
         var endpoint = new Uri(new Uri(config.server_origin + "/"), "client/resources");
         byte[] body = Encoding.UTF8.GetBytes("{\"cdn_mode\":\"" + config.cdn_mode + "\"}");
@@ -243,61 +205,6 @@ internal sealed class ClientRouting : IDisposable
                 "Could not load " + config.cdn_mode + " resource policy from " + endpoint.AbsoluteUri,
                 ex);
         }
-    }
-
-    private static ClientConfig ParseConfig(string json)
-    {
-        JObject value = ParseObject(json, "client configuration");
-        RequireOnly(value, "schema_version", "server_origin", "cdn_mode", "local_resource_directory", "proxy_url");
-        var config = new ClientConfig
-        {
-            schema_version = RequiredInteger(value, "schema_version"),
-            server_origin = RequiredString(value, "server_origin"),
-            cdn_mode = RequiredString(value, "cdn_mode"),
-            local_resource_directory = OptionalString(value, "local_resource_directory"),
-            proxy_url = NormalizeClientProxy(OptionalString(value, "proxy_url"))
-        };
-        if (config.schema_version != 2)
-        {
-            throw new InvalidDataException("bd2.client.json schema_version must be 2");
-        }
-        if (config.cdn_mode != "official" && config.cdn_mode != "local" && config.cdn_mode != "server")
-        {
-            throw new InvalidDataException("bd2.client.json cdn_mode must be official, local, or server");
-        }
-        if (config.cdn_mode == "local" && string.IsNullOrWhiteSpace(config.local_resource_directory))
-        {
-            throw new InvalidDataException("local_resource_directory is required when cdn_mode is local");
-        }
-        if (config.cdn_mode != "local" && !string.IsNullOrWhiteSpace(config.local_resource_directory))
-        {
-            throw new InvalidDataException("local_resource_directory is only valid when cdn_mode is local");
-        }
-        return config;
-    }
-
-    private static string NormalizeClientProxy(string raw)
-    {
-        raw = raw.Trim();
-        if (raw.Length == 0) return string.Empty;
-        const string error = "proxy_url must be an HTTP proxy address with an explicit port and no credentials or path";
-        if (raw.IndexOfAny(InvalidOriginCharacters) >= 0) throw new InvalidDataException(error);
-        foreach (char character in raw)
-            if (char.IsWhiteSpace(character) || char.IsControl(character)) throw new InvalidDataException(error);
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri proxy) || proxy.Scheme != "http" ||
-            string.IsNullOrEmpty(proxy.Host) || !string.IsNullOrEmpty(proxy.UserInfo) ||
-            !string.IsNullOrEmpty(proxy.Query) || !string.IsNullOrEmpty(proxy.Fragment) || proxy.AbsolutePath != "/")
-            throw new InvalidDataException(error);
-        string authority = raw[(raw.IndexOf("://", StringComparison.Ordinal) + 3)..].TrimEnd('/');
-        int separator = authority.LastIndexOf(':');
-        if (separator <= 0) throw new InvalidDataException(error);
-        string portText = authority[(separator + 1)..];
-        foreach (char character in portText) if (character < '0' || character > '9') throw new InvalidDataException(error);
-        if (!int.TryParse(portText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
-            out int port) || port < 1 || port > 65535) throw new InvalidDataException(error);
-        string host = proxy.IdnHost.Trim('[', ']');
-        if (proxy.HostNameType == UriHostNameType.IPv6) host = "[" + host + "]";
-        return "http://" + host + ":" + port.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static ResourcePolicy ParsePolicy(string json)
@@ -360,17 +267,6 @@ internal sealed class ClientRouting : IDisposable
         policy.game_data_url = policy.game_data_url.TrimEnd('/');
     }
 
-    private static void ValidateOrigin(string raw, string name)
-    {
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri uri) ||
-            !string.IsNullOrEmpty(uri.UserInfo) || uri.AbsolutePath != "/" ||
-            !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment) ||
-            (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
-        {
-            throw new InvalidDataException(name + " must be an HTTPS origin, except that loopback may use HTTP");
-        }
-    }
-
     private static void ValidateResourceURL(string raw, string name)
     {
         if (!Uri.TryCreate(raw, UriKind.Absolute, out Uri uri) ||
@@ -379,16 +275,6 @@ internal sealed class ClientRouting : IDisposable
         {
             throw new InvalidDataException(name + " must be HTTPS, except that loopback may use HTTP");
         }
-    }
-
-    private static string ReadBoundedFile(string path, int maximumBytes)
-    {
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException("Client routing configuration is missing", path);
-        }
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return ReadBoundedStream(stream, maximumBytes);
     }
 
     private static string ReadBoundedStream(Stream stream, int maximumBytes)
@@ -430,39 +316,6 @@ internal sealed class ClientRouting : IDisposable
             throw new InvalidDataException(name + " must be a non-empty string");
         }
         return (string)token;
-    }
-
-    private static int RequiredInteger(JObject value, string name)
-    {
-        JToken token = value[name];
-        if (token == null || token.Type != JTokenType.Integer)
-        {
-            throw new InvalidDataException(name + " must be an integer");
-        }
-        return (int)token;
-    }
-
-    private static string OptionalString(JObject value, string name)
-    {
-        JToken token = value[name];
-        if (token == null || token.Type == JTokenType.Null)
-        {
-            return string.Empty;
-        }
-        if (token.Type != JTokenType.String)
-        {
-            throw new InvalidDataException(name + " must be a string when present");
-        }
-        return (string)token;
-    }
-
-    private sealed class ClientConfig
-    {
-        public int schema_version;
-        public string server_origin;
-        public string cdn_mode;
-        public string local_resource_directory;
-        public string proxy_url;
     }
 
     private sealed class ResourcePolicy

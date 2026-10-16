@@ -8,6 +8,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using BD2.GameNames;
+using Bd2.Client;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -29,29 +30,13 @@ internal static class ClientInstanceIsolation
 
     internal static void Install(Harmony harmony, ManualLogSource log)
     {
-        string id = Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ID");
-        string root = Environment.GetEnvironmentVariable("BD2_CLIENT_INSTANCE_ROOT");
         Log = log;
         try
         {
-            if (string.IsNullOrEmpty(id) && string.IsNullOrEmpty(root))
-            {
-                string instanceRoot = Directory.GetParent(Paths.GameRootPath)?.FullName;
-                if (instanceRoot != null && File.Exists(Path.Combine(instanceRoot, "instance.json")))
-                    throw new InvalidOperationException("This client belongs to an isolated instance. Start it using the instance .vbs launcher so Unity logs and credentials remain isolated");
-                return;
-            }
-            if (string.IsNullOrEmpty(id) || id.Length > 64 || id == "." || id == "..")
-                throw new InvalidDataException("BD2_CLIENT_INSTANCE_ID must be a safe instance name");
-            foreach (char character in id)
-                if (!(character >= 'a' && character <= 'z') && !(character >= 'A' && character <= 'Z') &&
-                    !(character >= '0' && character <= '9') && character != '-' && character != '_')
-                    throw new InvalidDataException("BD2_CLIENT_INSTANCE_ID contains an unsupported character");
-            if (string.IsNullOrEmpty(root) || !Path.IsPathFullyQualified(root))
-                throw new InvalidDataException("BD2_CLIENT_INSTANCE_ROOT must be an absolute directory");
-            root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (root.Length <= Path.GetPathRoot(root).Length)
-                throw new InvalidDataException("BD2_CLIENT_INSTANCE_ROOT cannot be a filesystem root");
+            ClientInstance instance = ClientSettings.CurrentInstance;
+            if (instance == null) return;
+            string id = instance.ID;
+            string root = instance.Root;
 
             using (var sha = SHA256.Create())
             {

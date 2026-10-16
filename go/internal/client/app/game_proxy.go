@@ -4,7 +4,7 @@ import "strings"
 
 func isGameProxyEnvironmentKey(key string) bool {
 	switch strings.ToLower(key) {
-	case "unity_proxyserver", "unity_noproxy", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "bd2_client_proxy_url":
+	case "unity_proxyserver", "unity_noproxy", "http_proxy", "https_proxy", "all_proxy", "no_proxy":
 		return true
 	default:
 		return false
@@ -20,7 +20,7 @@ func gameProxyEnvironment(environment []string, proxyURL string) []string {
 			result = append(result, entry)
 		}
 	}
-	for _, key := range []string{"UNITY_PROXYSERVER", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "BD2_CLIENT_PROXY_URL"} {
+	for _, key := range []string{"UNITY_PROXYSERVER", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 		result = append(result, key+"="+proxyURL)
 	}
 	for _, key := range []string{"UNITY_NOPROXY", "NO_PROXY", "no_proxy"} {

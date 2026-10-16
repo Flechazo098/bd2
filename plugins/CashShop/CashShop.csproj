@@ -9,6 +9,7 @@
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Shared/ClientSettings.cs" Link="ClientSettings.cs" />
 
     <Reference Include="BepInEx">
       <HintPath>$(BD2BepInExDir)\core\BepInEx.dll</HintPath>

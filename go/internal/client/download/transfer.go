@@ -89,12 +89,9 @@ func (d *downloader) verified(item file) bool {
 	if item.bundle && !validBundle(item.target, info.Size()) {
 		return false
 	}
-	key, err := filepath.Rel(d.root, item.target)
-	if err != nil {
-		return false
-	}
+	key := d.receiptKey(item.target)
 	d.mu.Lock()
-	previous := d.records[filepath.ToSlash(key)]
+	previous := d.records[key]
 	d.mu.Unlock()
 	expected := item.digest
 	if expected == "" && previous.Bytes == info.Size() {
@@ -174,17 +171,21 @@ func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) 
 	if err := os.Rename(temporary.Name(), item.target); err != nil {
 		return err
 	}
-	key, err := filepath.Rel(d.root, item.target)
-	if err != nil {
-		return err
-	}
+	key := d.receiptKey(item.target)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.records[filepath.ToSlash(key)] = receipt{Bytes: written, SHA256: actual}
+	d.records[key] = receipt{Bytes: written, SHA256: actual}
 	return commonconfig.Save(d.checkpoint, struct {
 		SchemaVersion int                `json:"schema_version"`
 		Files         map[string]receipt `json:"files"`
 	}{1, d.records}, commonconfig.WriteOptions{FileMode: 0644})
+}
+
+func (d *downloader) receiptKey(target string) string {
+	if relative, err := filepath.Rel(d.root, target); err == nil {
+		return filepath.ToSlash(relative)
+	}
+	return filepath.ToSlash(filepath.Clean(target))
 }
 
 func (d *downloader) receiveAll(ctx context.Context, files []file, origins []string, workers int) error {

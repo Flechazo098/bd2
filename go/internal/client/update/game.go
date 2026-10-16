@@ -61,10 +61,35 @@ func gameReceiptMatches(game, id string) bool {
 
 func (m *Manager) Versions(game string) versionconfig.Config {
 	v := m.options.Versions
-	if receipt, err := readGameReceipt(game); err == nil {
+	if receipt, err := readGameReceipt(game); err == nil && len(receipt.Files) > 0 && gameReceiptMatches(game, receipt.Fingerprint) {
 		v.GameVersion, v.BundleVersion, v.GameDataVersion = receipt.GameVersion, receipt.BundleVersion, receipt.GameDataVersion
 	}
 	return v
+}
+
+func (m *Manager) Runtime(game string) *clientconfig.Runtime {
+	v := m.Versions(game)
+	runtime := &clientconfig.Runtime{ClientVersion: v.ClientVersion, GameVersion: v.GameVersion, BundleVersion: v.BundleVersion, GameDataVersion: v.GameDataVersion}
+	m.mu.Lock()
+	fp := m.fingerprint
+	m.mu.Unlock()
+	if receipt, err := readGameReceipt(game); err == nil && fp != nil && gameReceiptMatches(game, fp.ID) {
+		runtime.UpdateFingerprint = fp.ID
+		if receipt.ResourceFingerprint == fp.GameFingerprint && len(receipt.Files) > 0 {
+			runtime.ResourceFingerprint = receipt.ResourceFingerprint
+		}
+	}
+	return runtime
+}
+
+func (m *Manager) configureGame(game string) error {
+	settings, err := clientconfig.Load(game)
+	if err != nil {
+		return err
+	}
+	settings.Runtime = m.Runtime(game)
+	_, err = clientconfig.Save(game, settings)
+	return err
 }
 
 func (m *Manager) ensureGame(ctx context.Context, game string) error {
@@ -213,7 +238,11 @@ func (m *Manager) CommitGame(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := m.ensureGame(ctx, game); err != nil && first == nil {
+		err = m.ensureGame(ctx, game)
+		if err == nil {
+			err = m.configureGame(game)
+		}
+		if err != nil && first == nil {
 			first = err
 		}
 	}
@@ -246,30 +275,10 @@ func (m *Manager) PrepareGame(ctx context.Context, game, origin string) error {
 	if err := m.CheckServer(ctx, m.options.Client, origin); err != nil {
 		return err
 	}
-	return m.ensureGame(ctx, game)
-}
-
-func LaunchEnvironment(environment []string, game, clientVersion string) []string {
-	values := map[string]string{"BD2_CLIENT_VERSION": clientVersion, "BD2_UPDATE_FINGERPRINT": "", "BD2_RESOURCE_FINGERPRINT": "", "BD2_RESOURCE_DIRECTORY": "", "BD2_GAME_VERSION": "", "BD2_BUNDLE_VERSION": "", "BD2_GAME_DATA_VERSION": ""}
-	if receipt, err := readGameReceipt(game); err == nil && gameReceiptMatches(game, receipt.Fingerprint) {
-		values["BD2_UPDATE_FINGERPRINT"] = receipt.Fingerprint
-		values["BD2_RESOURCE_FINGERPRINT"] = receipt.ResourceFingerprint
-		if receipt.ResourceFingerprint != "" && len(receipt.Files) > 0 {
-			values["BD2_RESOURCE_DIRECTORY"] = receipt.Resources
-		}
-		values["BD2_GAME_VERSION"], values["BD2_BUNDLE_VERSION"], values["BD2_GAME_DATA_VERSION"] = receipt.GameVersion, receipt.BundleVersion, receipt.GameDataVersion
+	if err := m.ensureGame(ctx, game); err != nil {
+		return err
 	}
-	result := make([]string, 0, len(environment)+len(values))
-	for _, entry := range environment {
-		key, _, _ := strings.Cut(entry, "=")
-		if _, replace := values[strings.ToUpper(key)]; !replace {
-			result = append(result, entry)
-		}
-	}
-	for key, value := range values {
-		result = append(result, key+"="+value)
-	}
-	return result
+	return m.configureGame(game)
 }
 
 func (m *Manager) loadPackagedFingerprint() {

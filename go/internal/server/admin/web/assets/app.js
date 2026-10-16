@@ -1032,7 +1032,7 @@ const config = (() => {
 
 /* ---------- Updates ---------- */
 const updatesView = (() => {
-  let timer = null, status = null;
+  let timer = null, status = null, checkRequested = false;
   const when = value => value ? dateTime(value) : '';
   const named = (group, value) => tr(`console.updates.${group}.${value}`, value);
   // Release notes arrive as {locale: text}; older servers send one string.
@@ -1085,7 +1085,17 @@ const updatesView = (() => {
         actions.push(el('label', {}, t('console.updates.delay') + ' ', delay), confirm, el('button', {type: 'button', class: 'btn seal', onclick: apply}, t('console.updates.apply')));
       }
       $('update-actions').replaceChildren(...actions.filter(Boolean));
-
+      $('update-check').disabled = !!s.checking;
+      if (s.checking) {
+        checkRequested = true;
+        await say($('update-status'), Component.translatable('console.updates.checking'));
+      } else if (s.last_error) {
+        checkRequested = false;
+        await say($('update-status'), s.last_error, 'err');
+      } else if (checkRequested) {
+        checkRequested = false;
+        await say($('update-status'), Component.translatable('console.updates.checked'), 'ok');
+      }
     } catch (error) { if (error !== staleRender) throw error; }
   }
   async function load() {
@@ -1109,8 +1119,8 @@ const updatesView = (() => {
     catch (error) { await say($('update-status'), error, 'err'); }
   }
   $('update-check').onclick = async () => {
-    try { await api('updates/check', {method: 'POST'}); await say($('update-status'), Component.translatable('console.updates.checking')); setTimeout(load, 3000); }
-    catch (error) { await say($('update-status'), error, 'err'); }
+    try { checkRequested = true; await api('updates/check', {method: 'POST'}); await load(); }
+    catch (error) { checkRequested = false; await say($('update-status'), error, 'err'); }
   };
   return {
     async open() { await load(); clearInterval(timer); timer = setInterval(load, 5000); },

@@ -4,13 +4,31 @@
 set -eu
 umask 077
 
-DATA_DIR=${BD2_DATA_DIR:-/opt/bd2/data}
-SOURCE_DIR=${BD2_SOURCE_DIR:-/opt/bd2/src}
-COMPOSE_DIR=${BD2_COMPOSE_DIR:-/opt/server-infra/bd2}
-SERVICE=${BD2_COMPOSE_SERVICE:-server}
-REMOTE_URL=${BD2_GIT_REMOTE_URL:-https://git.sighs.cc/Flechazo/bd2}
-READY_URL=${BD2_READY_URL:-http://127.0.0.1:8080/readyz}
-ENV_FILE=${BD2_ENV_FILE:-$COMPOSE_DIR/.env}
+DATA_DIR=/opt/bd2/data
+SOURCE_DIR=/opt/bd2/src
+COMPOSE_DIR=/opt/server-infra/bd2
+SERVICE=server
+REMOTE_URL=https://git.sighs.cc/Flechazo/bd2
+READY_URL=http://127.0.0.1:8080/readyz
+ENV_FILE=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --data-dir|--source-dir|--compose-dir|--service|--remote-url|--ready-url|--env-file)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || { printf '%s\n' "Missing value for $1" >&2; exit 2; }
+            case "$1" in
+                --data-dir) DATA_DIR=$2 ;;
+                --source-dir) SOURCE_DIR=$2 ;;
+                --compose-dir) COMPOSE_DIR=$2 ;;
+                --service) SERVICE=$2 ;;
+                --remote-url) REMOTE_URL=$2 ;;
+                --ready-url) READY_URL=$2 ;;
+                --env-file) ENV_FILE=$2 ;;
+            esac
+            shift 2 ;;
+        *) printf '%s\n' "Unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+[ -n "$ENV_FILE" ] || ENV_FILE=$COMPOSE_DIR/.env
 UPDATES="$DATA_DIR/updates"
 REQUEST="$UPDATES/docker-request.json"
 PROCESSING="$UPDATES/docker-request.processing.json"
@@ -105,7 +123,7 @@ for dependency in docker curl nsenter git mktemp stat cp; do
     command -v "$dependency" >/dev/null || fail "$dependency is required"
 done
 # This URL is resolved inside the new container's network namespace.
-case "$READY_URL" in http://127.0.0.1:*/readyz) ;; *) fail 'BD2_READY_URL must use http://127.0.0.1:PORT/readyz' ;; esac
+case "$READY_URL" in http://127.0.0.1:*/readyz) ;; *) fail '--ready-url must use http://127.0.0.1:PORT/readyz' ;; esac
 ready_port=${READY_URL#http://127.0.0.1:}
 ready_port=${ready_port%/readyz}
 case "$ready_port" in ''|*[!0-9]*) fail 'invalid readiness port' ;; esac
@@ -123,7 +141,7 @@ case "$previous" in sha256:*) ;; *) fail 'previous container has no immutable im
 actual_url=$(git -C "$SOURCE_DIR" remote get-url --all origin) || fail 'cannot read source origin'
 actual_url=${actual_url%/}
 expected_url=${REMOTE_URL%/}
-[ "${actual_url%.git}" = "${expected_url%.git}" ] || fail 'source origin does not match BD2_GIT_REMOTE_URL'
+[ "${actual_url%.git}" = "${expected_url%.git}" ] || fail 'source origin does not match --remote-url'
 source_status=$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all) || fail 'cannot inspect source checkout'
 [ -z "$source_status" ] || fail 'source checkout has local changes'
 git -C "$SOURCE_DIR" fetch --quiet --no-tags --prune origin '+refs/heads/*:refs/bd2-update/*' || fail 'cannot fetch source origin'

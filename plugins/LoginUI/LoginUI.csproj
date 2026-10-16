@@ -9,6 +9,11 @@
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(BD2ManagedDir)/Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Compile Include="../Shared/ClientSettings.cs" Link="ClientSettings.cs" />
     <Reference Include="Unity.TextMeshPro">
       <HintPath>$(BD2ManagedDir)/Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>

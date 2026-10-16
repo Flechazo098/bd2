@@ -114,7 +114,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 		}},
 		taskgraph.Task{Name: "sdkPrepare", DependsOn: []string{"sdkCompile"}, Run: func(context.Context) error {
 			if !sdkReused {
-				if err := runPluginBuild(ctx, root, progress, sdkTool, "prepare-embedded", filepath.Join(managed, "Assembly-CSharp.dll"), sdkDir, "--game-version", gameVersion); err != nil {
+				if err := runPluginBuild(ctx, root, progress, sdkTool, "prepare-embedded", filepath.Join(managed, "Assembly-CSharp.dll"), sdkDir, "--game-version", gameVersion, "--cache-directory", filepath.Join(root, ".build", "game-sdk")); err != nil {
 					return err
 				}
 
@@ -269,13 +269,6 @@ func acquireBuildLock(ctx context.Context, work string, progress io.Writer) (fun
 func runPluginBuild(ctx context.Context, root string, progress io.Writer, args ...string) error {
 	command := exec.CommandContext(ctx, "dotnet", args...)
 	command.Dir = root
-	for _, entry := range os.Environ() {
-		key, _, _ := strings.Cut(entry, "=")
-		if !strings.EqualFold(key, "BD2_GAME_SDK_CACHE") {
-			command.Env = append(command.Env, entry)
-		}
-	}
-	command.Env = append(command.Env, "BD2_GAME_SDK_CACHE="+filepath.Join(root, ".build", "game-sdk"))
 	var output bytes.Buffer
 	command.Stdout = io.MultiWriter(progress, &output)
 	command.Stderr = command.Stdout

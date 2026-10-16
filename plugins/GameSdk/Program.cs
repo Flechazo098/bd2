@@ -20,9 +20,8 @@ internal static class Program
             switch (args.FirstOrDefault())
             {
                 case "prepare" when args.Length == 5: Prepare(args[1], args[2], args[3], args[4]); break;
-                case "prepare-embedded" when args.Length is 3 or 5:
-                    if (args.Length == 5 && args[3] != "--game-version") throw new ArgumentException("Invalid prepare-embedded options");
-                    PrepareEmbedded(args[1], args[2], args.Length == 5 ? args[4] : null); break;
+                case "prepare-embedded" when args.Length >= 3:
+                    PrepareEmbeddedCommand(args); break;
                 case "export-names" when args.Length == 2: ExportNames(args[1]); break;
                 case "names" when args.Length == 5: NameGenerator.Generate(args[1], args[2], args[3], args[4]); break;
                 case "shell" when args.Length == 4: ShellGenerator.Generate(args[1], args[2], args[3]); break;
@@ -32,7 +31,7 @@ internal static class Program
                 case "verify" when args.Length is 3 or 4: Verify(args[1], args[2], args.Length == 4 ? args[3] : null); break;
                 case "validate-lang" when args.Length == 2: LanguageAssets.Validate(args[1]); break;
 
-                default: throw new ArgumentException("Usage: prepare-embedded <Assembly-CSharp.dll> <output-dir> [--game-version version] | export-names <names.json> | names <Assembly-CSharp.dll> <mapping.obfuscate> <versions.json> <names.json> | shell <names.json> <Assembly-CSharp.dll> <output.dll> | source-navigation <readable-implementation.dll> <dependency-directory> | verify-navigation <sdk-directory> | reobf <names.json> <input.dll> <output.dll> [Assembly-CSharp.dll] [dependency-directory] | verify <names.json> <plugin.dll> [Assembly-CSharp.dll]");
+                default: throw new ArgumentException("Usage: prepare-embedded <Assembly-CSharp.dll> <output-dir> [--game-version version] [--cache-directory directory] | export-names <names.json> | names <Assembly-CSharp.dll> <mapping.obfuscate> <versions.json> <names.json> | shell <names.json> <Assembly-CSharp.dll> <output.dll> | source-navigation <readable-implementation.dll> <dependency-directory> | verify-navigation <sdk-directory> | reobf <names.json> <input.dll> <output.dll> [Assembly-CSharp.dll] [dependency-directory] | verify <names.json> <plugin.dll> [Assembly-CSharp.dll]");
             }
             return 0;
         }
@@ -69,13 +68,30 @@ internal static class Program
         return File.Exists(pointer) ? File.ReadAllText(pointer).Trim() : Path.GetFullPath(directory);
     }
 
-    internal static void PrepareEmbedded(string assembly, string output, string expectedGameVersion = null) =>
-        PrepareShared(EmbeddedNames(), assembly, output, expectedGameVersion);
+    private static void PrepareEmbeddedCommand(string[] args)
+    {
+        string gameVersion = null, cacheDirectory = null;
+        for (int index = 3; index < args.Length; index += 2)
+        {
+            if (index + 1 >= args.Length || string.IsNullOrWhiteSpace(args[index + 1]))
+                throw new ArgumentException("Invalid prepare-embedded options");
+            switch (args[index])
+            {
+                case "--game-version" when gameVersion == null: gameVersion = args[index + 1]; break;
+                case "--cache-directory" when cacheDirectory == null: cacheDirectory = args[index + 1]; break;
+                default: throw new ArgumentException("Invalid prepare-embedded options");
+            }
+        }
+        PrepareEmbedded(args[1], args[2], gameVersion, cacheDirectory);
+    }
+
+    internal static void PrepareEmbedded(string assembly, string output, string expectedGameVersion = null, string cacheDirectory = null) =>
+        PrepareShared(EmbeddedNames(), assembly, output, expectedGameVersion, cacheDirectory);
 
     internal static void PreparePackage(string compressedTable, string assembly, string output) =>
-        PrepareShared(File.ReadAllBytes(compressedTable), assembly, output, null);
+        PrepareShared(File.ReadAllBytes(compressedTable), assembly, output, null, null);
 
-    private static void PrepareShared(byte[] compressed, string assembly, string output, string expectedGameVersion)
+    private static void PrepareShared(byte[] compressed, string assembly, string output, string expectedGameVersion, string cacheDirectory)
     {
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(output);
@@ -90,8 +106,7 @@ internal static class Program
             throw new InvalidDataException($"Plugin requires game {expectedGameVersion}, but SDK names target game {gameVersion}. Install the matching SDK package.");
         if (Hash(assembly) != table.assembly_sha256)
             throw new InvalidDataException("Game DLL does not match SDK names for game " + gameVersion);
-        string cacheRoot = Environment.GetEnvironmentVariable("BD2_GAME_SDK_CACHE");
-        if (string.IsNullOrEmpty(cacheRoot)) cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BD2", "GameSdk", "navigation");
+        string cacheRoot = cacheDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BD2", "GameSdk", "navigation");
         string tableHash = Convert.ToHexString(SHA256.HashData(compressed)).ToLowerInvariant();
         string inputs = tableHash + "|" + GenerationInputs.Stamp() + "|" + DependencyStamp(assembly);
         // Game version is the public grouping; the fingerprint prevents incompatible

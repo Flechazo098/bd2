@@ -57,11 +57,8 @@ func (p *sdkPackage) tasks() []taskgraph.Task {
 			return err
 		}},
 		{Name: "sdk:prepare", DependsOn: []string{"sdk:tool"}, Run: func(context.Context) error {
-			cache := os.Getenv("BD2_GAME_SDK_CACHE")
-			if cache == "" {
-				cache = filepath.Join(t.root, ".build", "game-sdk")
-			}
-			if _, err := t.sdkCommand(t.root, map[string]string{"BD2_GAME_SDK_CACHE": cache}, false, filepath.Join(p.tool, "GameSdk.dll"), "prepare-embedded", filepath.Join(p.managed, "Assembly-CSharp.dll"), p.sdk, "--game-version", p.gameVersion); err != nil {
+			cache := filepath.Join(t.root, ".build", "game-sdk")
+			if _, err := t.sdkCommand(t.root, nil, false, filepath.Join(p.tool, "GameSdk.dll"), "prepare-embedded", filepath.Join(p.managed, "Assembly-CSharp.dll"), p.sdk, "--game-version", p.gameVersion, "--cache-directory", cache); err != nil {
 				return err
 			}
 			var err error

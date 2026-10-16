@@ -1,4 +1,5 @@
 using System;
+using Bd2.Client;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -191,14 +192,8 @@ public sealed class Plugin : BaseUnityPlugin
         request.Timeout = 10000;
         request.ReadWriteTimeout = 10000;
         request.AllowAutoRedirect = false;
-        string proxy = Environment.GetEnvironmentVariable("BD2_CLIENT_PROXY_URL");
-        if (new Uri(origin).IsLoopback || string.IsNullOrWhiteSpace(proxy)) request.Proxy = null;
-        else
-        {
-            if (!Uri.TryCreate(proxy, UriKind.Absolute, out Uri proxyUri) || proxyUri.Scheme != "http" || proxyUri.UserInfo.Length != 0 || proxyUri.AbsolutePath != "/" || proxyUri.Query.Length != 0 || proxyUri.Fragment.Length != 0)
-                throw new InvalidOperationException("Unsupported client commerce proxy");
-            request.Proxy = new WebProxy(proxyUri);
-        }
+        string proxy = ClientSettings.Current.proxy_url;
+        request.Proxy = new Uri(origin).IsLoopback || string.IsNullOrEmpty(proxy) ? null : new WebProxy(proxy);
         using var response = (HttpWebResponse)request.GetResponse();
         using Stream stream = response.GetResponseStream();
         using var reader = new StreamReader(stream);
