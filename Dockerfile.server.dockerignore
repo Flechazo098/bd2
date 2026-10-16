@@ -6,3 +6,6 @@
 !UPDATE_FINGERPRINT.json
 !schedules/
 !schedules/**
+!tools/
+!tools/server/
+!tools/server/bd2-docker-entrypoint.sh
