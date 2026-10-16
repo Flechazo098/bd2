@@ -1032,7 +1032,7 @@ const config = (() => {
 
 /* ---------- Updates ---------- */
 const updatesView = (() => {
-  let timer = null, status = null, component = null;
+  let timer = null, status = null;
   const when = value => value ? dateTime(value) : '';
   const named = (group, value) => tr(`console.updates.${group}.${value}`, value);
   // Release notes arrive as {locale: text}; older servers send one string.
@@ -1042,19 +1042,17 @@ const updatesView = (() => {
     try {
       const s = status;
       if (!s) return;
-      if (component == null) component = !s.available && s.schedules && s.schedules.available ? 'schedules' : 'server';
-      const scheduleBranch = component === 'schedules';
       const schedules = s.schedules;
-      const selected = $('update-component');
-      selected.value = component;
-      const source = scheduleBranch ? schedules && schedules.available : s.available;
-      const a = scheduleBranch && source ? {...source, version: source.component.id, notes: source.component.notes} : source;
-      const current = scheduleBranch ? schedules && schedules.current_id || t('console.updates.schedules.bundled') : s.current_version;
+      const component = s.available ? 'server' : schedules && schedules.available ? 'schedules' : 'server';
+      const scheduleBranch = component === 'schedules';
+      const source = scheduleBranch ? schedules.available : s.available;
+      const a = scheduleBranch ? {...source, version: source.component.id, notes: source.component.notes} : source;
+      const current = scheduleBranch ? schedules.current_id || t('console.updates.schedules.bundled') : s.current_version;
       const lastResult = scheduleBranch ? schedules && schedules.last_result : s.last_result;
       const facts = [['current_version', current], ['method', named('method', s.method)], ['auto_check', t(s.check_enabled ? 'console.updates.enabled' : 'console.updates.disabled')],
         ['last_check', when(s.last_check) || t('console.updates.never_checked')], ['check_error', s.last_error]];
-      if (scheduleBranch && schedules) {
-        facts.push(['game_version', schedules.game_version], ['game_data_version', schedules.game_data_version]);
+      if (schedules) {
+        facts.push(['game_version', schedules.game_version], ['game_data_version', a && a.game_data_version || schedules.game_data_version]);
       }
       if (lastResult) {
         const r = lastResult, outcome = named(scheduleBranch ? 'schedule_outcome' : 'outcome', r.outcome);
@@ -1095,7 +1093,7 @@ const updatesView = (() => {
     catch (error) { await say($('update-status'), error, 'err'); }
   }
   async function apply() {
-    const selectedComponent = component;
+    const selectedComponent = status.available ? 'server' : status.schedules && status.schedules.available ? 'schedules' : 'server';
     const minutes = Number($('update-delay').value || 0);
     const confirmIrreversible = !!($('update-confirm') && $('update-confirm').checked);
     const target = selectedComponent === 'schedules' ? status.schedules.available.component.id : status.available.version;
@@ -1110,7 +1108,6 @@ const updatesView = (() => {
     try { status = (await api('updates/cancel', {method: 'POST'})).value; await render(); await say($('update-status'), Component.translatable('console.updates.cancelled'), 'ok'); }
     catch (error) { await say($('update-status'), error, 'err'); }
   }
-  $('update-component').onchange = async event => { component = event.target.value; await render(); };
   $('update-check').onclick = async () => {
     try { await api('updates/check', {method: 'POST'}); await say($('update-status'), Component.translatable('console.updates.checking')); setTimeout(load, 3000); }
     catch (error) { await say($('update-status'), error, 'err'); }
