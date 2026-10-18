@@ -60,6 +60,45 @@
 - 광장 일일 보상, 개인 및 서버 전체 조각상 타격 횟수, 정산된 시즌의 순위 조각상 표시와 일일 보상을 추가했습니다.
 - 통발의 오프라인 어획 누적, 보상 미리보기, 물고기 수령 또는 자동 판매와 낚시 경험치 정산을 추가하고 판매 가격 반올림을 수정했습니다.
 
+## client 2.36.7+client.0.2.1 · 2026-10-18
+
+> type: update
+
+### en_us: Launcher and checkpoints
+
+- Added one-click Prepare to the launcher: it downloads required game files, installs BepInEx from the package, applies the patch and installs plugins.
+- Fixed the launcher showing "Updating" while it was only checking before launch.
+- Fixed battle and story checkpoints reporting the wrong battle mode and talk state.
+- Bundled third-party notices for BepInEx, HarmonyX, Harmony, MonoMod and Mono.Cecil.
+
+### zh_cn: 启动器与检查点
+
+- 启动器新增“一键准备”：按需下载游戏文件、从自带包安装 BepInEx、打补丁并安装插件。
+- 修复启动游戏前仅在检查时误显示“正在更新”的问题。
+- 修复战斗与剧情检查点上报的战斗模式和对话状态不正确的问题。
+- 随包附带 BepInEx、HarmonyX、Harmony、MonoMod 与 Mono.Cecil 的第三方许可声明。
+
+### zh_tw: 啟動器與檢查點
+
+- 啟動器新增「一鍵準備」：視需要下載遊戲檔案、從內建包安裝 BepInEx、套用修補並安裝插件。
+- 修正啟動遊戲前僅在檢查時誤顯示「正在更新」的問題。
+- 修正戰鬥與劇情檢查點回報的戰鬥模式和對話狀態不正確的問題。
+- 隨包附上 BepInEx、HarmonyX、Harmony、MonoMod 與 Mono.Cecil 的第三方授權聲明。
+
+### ja_jp: ランチャーとチェックポイント
+
+- ランチャーに「まとめて準備」を追加しました。必要なゲームファイルのダウンロード、同梱パッケージからの BepInEx のインストール、パッチ適用、プラグインのインストールを行います。
+- 起動前の確認中に「更新中」と表示される問題を修正しました。
+- 戦闘とストーリーのチェックポイントが誤った戦闘モードと会話状態を送信する問題を修正しました。
+- BepInEx、HarmonyX、Harmony、MonoMod、Mono.Cecil のサードパーティ通知を同梱しました。
+
+### ko_kr: 런처 및 체크포인트
+
+- 런처에 '한 번에 준비'를 추가했습니다. 필요한 게임 파일 다운로드, 패키지의 BepInEx 설치, 패치 적용, 플러그인 설치를 수행합니다.
+- 실행 전 확인 중에 '업데이트 중'으로 표시되던 문제를 수정했습니다.
+- 전투 및 스토리 체크포인트가 잘못된 전투 모드와 대화 상태를 보내던 문제를 수정했습니다.
+- BepInEx, HarmonyX, Harmony, MonoMod, Mono.Cecil의 서드파티 고지문을 포함했습니다.
+
 ## client 2.36.7+client.0.2.0 · 2026-10-15
 
 > type: update
