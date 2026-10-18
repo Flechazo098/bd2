@@ -58,7 +58,7 @@ internal static class StoryCheckpoint
         internal Checkpoint Checkpoint;
         internal FieldQuestObjectController Controller;
         internal Action Completed;
-        internal bool TalkStarted;
+        internal SimpleBalloonUI TalkUI;
         internal bool TalkFinished;
         internal bool CompletionScheduled;
         internal bool UpdateDeferred;
@@ -90,14 +90,9 @@ internal static class StoryCheckpoint
         harmony.Patch(typeof(FieldQuestObjectController).GetGameMethod("QuestUpdate", InstanceFlags, null, Type.EmptyTypes, null),
             prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(QuestUpdatePrefix)));
         harmony.Patch(typeof(SimpleBalloonUI).GetGameMethod("SetTalk", InstanceFlags),
-            postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(TalkStartedPostfix)));
-        harmony.Patch(typeof(SimpleBalloonUI).GetGameMethod("NextSpeaker", InstanceFlags),
-            prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(NextSpeakerPrefix)));
-        foreach (Type nested in typeof(SimpleBalloonUI).GetNestedTypes(BindingFlags.NonPublic))
-        {
-            MethodInfo skip = nested.GetGameMethod("OnClickSkipTalk_b__1", InstanceFlags);
-            if (skip != null) harmony.Patch(skip, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(SkipTalkPrefix)));
-        }
+            prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(TalkStartedPrefix)));
+        harmony.Patch(typeof(SimpleBalloonUI).GetGameMethod("CloseProcess", InstanceFlags | BindingFlags.DeclaredOnly),
+            postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(TalkClosedPostfix)));
         harmony.Patch(typeof(TimelineSignalManager).GetGameMethod("Initialize", InstanceFlags),
             postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(InitializeTimelinePostfix)));
         harmony.Patch(typeof(AppManager).GetGameMethod("AppReStart", InstanceFlags, null, Type.EmptyTypes, null),
@@ -356,7 +351,6 @@ internal static class StoryCheckpoint
         yield return Send("begin", checkpoint, session, value => response = value);
         if (session != Session || controller == null || response?.Pending == null) yield break;
         interaction.Checkpoint = response.Pending;
-        if (string.IsNullOrEmpty(interaction.Checkpoint.Timeline)) FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = true;
         Invoke(Interact, controller, null);
     }
 
@@ -369,30 +363,17 @@ internal static class StoryCheckpoint
         return false;
     }
 
-    private static void TalkStartedPostfix(int __0)
+    private static void TalkStartedPrefix(SimpleBalloonUI __instance, int __0)
     {
         Interaction active = ActiveInteraction;
-        if (active != null && active.Checkpoint.TalkGroupID == __0) active.TalkStarted = true;
+        if (active != null && active.Session == Session && active.Checkpoint.TalkGroupID == __0)
+            active.TalkUI = __instance;
     }
 
-    private static void NextSpeakerPrefix(SimpleBalloonUI __instance)
-    {
-        object queue = __instance.GetType().GetGameField("talkDTOQueue", InstanceFlags)?.GetValue(__instance);
-        if (queue is ICollection collection && collection.Count == 0) FinishTalk(__instance);
-    }
-
-    private static void SkipTalkPrefix(object __instance, bool __0)
-    {
-        if (!__0) return;
-        var ui = __instance.GetType().GetGameField("<>4__this", InstanceFlags)?.GetValue(__instance) as SimpleBalloonUI;
-        if (ui != null) FinishTalk(ui);
-    }
-
-    private static void FinishTalk(SimpleBalloonUI ui)
+    private static void TalkClosedPostfix(SimpleBalloonUI __instance)
     {
         Interaction active = ActiveInteraction;
-        object group = ui.GetType().GetGameField("groupId", InstanceFlags)?.GetValue(ui);
-        if (active == null || !active.TalkStarted || group is not int id || id != active.Checkpoint.TalkGroupID) return;
+        if (active == null || active.Session != Session || !ReferenceEquals(active.TalkUI, __instance)) return;
         active.TalkFinished = true;
         if (active.UpdateDeferred) FinishInteraction(active);
     }
@@ -403,9 +384,13 @@ internal static class StoryCheckpoint
         active.CompletionScheduled = true;
         StartStoryCoroutine(Complete(active.Checkpoint, active.Session, () =>
         {
-            if (ActiveInteraction != active || active.Controller == null) return;
+            if (ActiveInteraction != active) return;
             ActiveInteraction = null;
-            if (string.IsNullOrEmpty(active.Checkpoint.Timeline)) FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = false;
+            if (active.Controller == null)
+            {
+                BeginSessionRecovery("story interaction target unloaded before quest update");
+                return;
+            }
             Invoke(typeof(FieldQuestObjectController).GetGameMethod("QuestUpdate", InstanceFlags, null, Type.EmptyTypes, null), active.Controller, null);
             active.Completed?.Invoke();
         }));

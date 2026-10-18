@@ -64,6 +64,8 @@ internal static class BattleCheckpoint
             BattlePlayManager manager = BattlePlayManager.Instance;
             BattleProcessor processor = manager?.BattleProcessor;
             if (processor == null) return;
+            Define_BattleModeType battleMode = manager.BattleEnterBattleMode;
+            if (battleMode == Define_BattleModeType.None) battleMode = manager.GetBattleMode();
             var result = new BattleResultDBInfo();
             foreach (BattleCharData character in manager.GetTeamBattleCharList(ETeamType.TT_RED).OrderBy(character => character.CharSequence))
                 if (character.CharID > 0) result.RedCharInfo.Add(processor.CreateCharBuffProtoData(character));
@@ -86,7 +88,7 @@ internal static class BattleCheckpoint
             if (request.GolemInfo != null) result.GolemInfo = request.GolemInfo.Clone();
             var checkpoint = new BattleResumeResponse
             {
-                ModeInfo = new BattleResumeCommonInfo { BattleMode = manager.GetBattleMode(), BattleIndex = request.BattleIndex, RoundCount = manager.GetBattleTurn() - 1 },
+                ModeInfo = new BattleResumeCommonInfo { BattleMode = battleMode, BattleIndex = request.BattleIndex, RoundCount = manager.GetBattleTurn() - 1 },
                 MonsterId = manager.BattleEnterMonsterId,
                 Level = processor.BattleLevel,
                 BlueTeamSkillBubbleCount = manager.GetPlayData(ETeamType.TT_BLUE).SkillBubbleCount,
@@ -171,7 +173,7 @@ internal static class BattleCheckpoint
             }
             if (manager.BorrowedSupporterDeckInfo != null) checkpoint.SupporterInfo.Add(manager.BorrowedSupporterDeckInfo.Clone());
             checkpoint.CanRequestFriend = manager.CanRequestFriend;
-            var recommendation = new RecommendDeckInfoRequest { BattleMode = (int)manager.GetBattleMode(), PackId = Singleton<PackManager>.Instance.PlayingPackID, BattleIndex = manager.CurrentBattleDeckInfo?.Id ?? 0 };
+            var recommendation = new RecommendDeckInfoRequest { BattleMode = (int)battleMode, PackId = Singleton<PackManager>.Instance.PlayingPackID, BattleIndex = manager.CurrentBattleDeckInfo?.Id ?? 0 };
             var packType = (Define_PackType)Singleton<PackManager>.Instance.EnterPackDTO.PackType;
             if (packType == Define_PackType.PackGuildRaid || packType == Define_PackType.PackHidden) recommendation.PackId = 0;
             if (manager.IsMonsterHunt) { recommendation.Level = manager.MonsterHuntLevel; recommendation.TeamCountType = manager.MonsterHuntTeamCount; }
