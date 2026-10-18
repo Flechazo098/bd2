@@ -150,6 +150,9 @@ func (r *release) stageAssets() error {
 		if err := r.task.packageBepInEx(r.game, r.bepinex, r.client); err != nil {
 			return err
 		}
+		if err := copyFile(filepath.Join(root, "tools", "client", "THIRD-PARTY-NOTICES.txt"), filepath.Join(r.client, "THIRD-PARTY-NOTICES.txt")); err != nil {
+			return err
+		}
 	}
 	var shared []byte
 	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {

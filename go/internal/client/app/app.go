@@ -14,6 +14,7 @@ import (
 	"time"
 
 	clientconfig "bd2server/internal/client/config"
+	clientdownload "bd2server/internal/client/download"
 	clientlayout "bd2server/internal/client/layout"
 	clientplugin "bd2server/internal/client/plugin"
 	clientsetup "bd2server/internal/client/setup"
@@ -440,5 +441,41 @@ func (s *Studio) Quit() {
 		if s.host.Quit != nil {
 			s.host.Quit(s.context())
 		}
+	})
+}
+
+// Prepare readies an installation in one step: the required game and resource
+// update, BepInEx from the launcher package, the client patch and the plugins.
+func (s *Studio) Prepare(input Request) (Response, error) {
+	return s.perform("prepare client", func() (Response, error) {
+		if s.updates != nil {
+			if err := s.updates.PrepareGame(s.context(), input.GameDirectory, input.ServerOrigin); err != nil {
+				return Response{}, err
+			}
+		}
+		versions := s.versions(input.GameDirectory)
+		status, err := clientsetup.Inspect(input.GameDirectory, versions)
+		if err != nil {
+			return Response{}, err
+		}
+		if !status.BepInEx {
+			executable, err := os.Executable()
+			if err != nil {
+				return Response{}, err
+			}
+			if err := clientdownload.InstallBepInEx(filepath.Dir(executable), status.GameDirectory); err != nil {
+				return Response{}, err
+			}
+		}
+		if _, err := clientsetup.Patch(input.GameDirectory, input.settings(), versions); err != nil {
+			return Response{}, err
+		}
+		if _, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), versions, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin); err != nil {
+			return Response{}, err
+		}
+		if err := s.savePreferences(input.GameDirectory); err != nil {
+			return Response{}, err
+		}
+		return success("Client prepared", nil), nil
 	})
 }

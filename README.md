@@ -104,7 +104,7 @@ sudo /opt/bd2/bd2-host.sh rollback   # 换回上次切换前的镜像；存档�
 
 ### 启动客户端
 
-先手动安装 [BepInEx](https://github.com/BepInEx/BepInEx/releases)。然后打开我们的客户端工具 `bd2client.exe`。
+打开我们的客户端工具 `bd2client.exe`。
 
 进入客户端工具后首先要求你选择游戏根目录，也就是有 `BrownDust II.exe` 文件的目录，然后要填写服务端 url，如果是单人本地服则填写 `127.0.0.1:<服务端实际监听的端口>`，默认为 `8080`。如果为联机服则需要填写服主要求的 url。
 
