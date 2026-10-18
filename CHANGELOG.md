@@ -1,5 +1,83 @@
 # 更新日志
 
+## client 2.36.7+client.0.2.3 · 2026-10-18
+
+> type: update
+
+### en_us: Launch reliability
+
+- Launching and preparing the game now wait for a background update check or download to finish instead of failing with "Another update operation is in progress".
+- Checking for updates waits for a running background check.
+- Game and resource downloads started from Launch are no longer cut off after 12 seconds.
+- The launcher log now records what each update check found, every file it downloads, the server's requirement and what was installed.
+
+### zh_cn: 启动稳定性
+
+- 启动和准备游戏时会等待后台的更新检查或下载完成，不再报“另一项更新操作正在进行”。
+- 手动检查更新会等待正在进行的后台检查。
+- 从“启动”触发的游戏与资源下载不再在 12 秒后被中断。
+- 启动器日志会记录每次检查更新发现了什么、下载的每个文件、服务器的要求以及安装了什么。
+
+### zh_tw: 啟動穩定性
+
+- 啟動與準備遊戲時會等待背景的更新檢查或下載完成，不再出現「另一項更新操作正在進行」。
+- 手動檢查更新會等待進行中的背景檢查。
+- 從「啟動」觸發的遊戲與資源下載不再於 12 秒後中斷。
+- 啟動器記錄會寫明每次檢查更新發現了什麼、下載的每個檔案、伺服器的要求以及安裝了什麼。
+
+### ja_jp: 起動の安定性
+
+- ゲームの起動と準備は、バックグラウンドの更新確認やダウンロードの完了を待つようになり、「別の更新操作が実行中です」で失敗しなくなりました。
+- 手動の更新確認は、実行中のバックグラウンド確認の完了を待ちます。
+- 起動から始まったゲームとリソースのダウンロードが 12 秒で中断されなくなりました。
+- ランチャーのログに、更新確認で見つかった内容、ダウンロードした各ファイル、サーバーの要件、インストールした内容を記録します。
+
+### ko_kr: 실행 안정성
+
+- 게임 실행과 준비가 백그라운드 업데이트 확인이나 다운로드가 끝날 때까지 기다리며, 더 이상 '다른 업데이트 작업이 진행 중입니다'로 실패하지 않습니다.
+- 수동 업데이트 확인은 진행 중인 백그라운드 확인을 기다립니다.
+- 실행에서 시작된 게임 및 리소스 다운로드가 12초 후에 중단되지 않습니다.
+- 런처 로그에 업데이트 확인 결과, 다운로드한 각 파일, 서버 요구 사항, 설치한 내용을 기록합니다.
+
+## client 2.36.7+client.0.2.2 · 2026-10-18
+
+> type: update
+
+### en_us: Installation and compatibility diagnostics
+
+- Allow a new installation location during first-time setup, then download and prepare the game directly from the launcher.
+- Reuse verified downloads and installed files, repair missing or changed files individually, and avoid repeated catalog processing and unchanged configuration writes.
+- Preserve launcher patches when preparing again and reuse complete BepInEx installations.
+- Add detailed compatibility diagnostics for connection failures, invalid responses, plugin versions and game resource requirements.
+
+### zh_cn: 安装准备与兼容性诊断
+
+- 首次设置支持选择新的安装位置，无需提前安装游戏，进入启动器即可下载并准备。
+- 复用已校验的下载与安装文件，按文件修复缺失或变化，避免重复处理资源目录及改写相同配置。
+- 重复准备保留启动器补丁，并复用完整的 BepInEx 安装。
+- 补全兼容性检查日志，区分连接失败、响应无效、插件版本及游戏资源要求。
+
+### zh_tw: 安裝準備與相容性診斷
+
+- 首次設定支援選擇新的安裝位置，無需預先安裝遊戲，進入啟動器即可下載並準備。
+- 重用已驗證的下載與安裝檔案，逐檔修復缺少或變動的內容，避免重複處理資源目錄及寫入相同設定。
+- 重複準備會保留啟動器修補，並重用完整的 BepInEx 安裝。
+- 補全相容性檢查記錄，區分連線失敗、回應無效、插件版本及遊戲資源要求。
+
+### ja_jp: インストールと互換性の診断
+
+- 初回設定で新しいインストール先を選択し、ゲームがなくてもランチャーからダウンロードと準備を行えるようにしました。
+- 検証済みのダウンロードとファイルを再利用し、欠落・変更されたファイルのみを修復します。カタログの重複処理と同一設定の書き直しを削減しました。
+- 再準備時もランチャーのパッチを保持し、導入済みの BepInEx を再利用します。
+- 接続失敗、不正な応答、プラグインのバージョン、ゲームリソースの要件を区別する診断ログを追加しました。
+
+### ko_kr: 설치 준비 및 호환성 진단
+
+- 처음 설정할 때 새 설치 위치를 선택하고, 게임이 없어도 런처에서 다운로드와 준비를 진행할 수 있습니다.
+- 검증된 다운로드와 설치 파일을 재사용하고 누락되거나 변경된 파일만 복구합니다. 카탈로그 중복 처리와 동일한 설정 쓰기를 줄였습니다.
+- 다시 준비할 때 런처 패치를 유지하고 완전히 설치된 BepInEx를 재사용합니다.
+- 연결 실패, 잘못된 응답, 플러그인 버전 및 게임 리소스 요구 사항을 구분하는 진단 로그를 추가했습니다.
+
 ## server 2.36.7+server.0.2.0 · 2026-10-15
 
 > type: update
