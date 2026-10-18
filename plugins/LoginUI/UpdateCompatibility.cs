@@ -95,20 +95,28 @@ internal static class UpdateCompatibility
             if (lifetime.IsCancellationRequested || generation != Volatile.Read(ref RecoveryGeneration) ||
                 ServerRoot == null || !SameOrigin(origin, ServerRoot) || IsBlocked) yield break;
             if (result == null) yield break;
-            if (result.UpdateRequired) { ReportRequired(); completed(false); yield break; }
+            if (result.UpdateRequired)
+            {
+                Log?.LogWarning($"Client compatibility check rejected by server: request_id={result.RequestId} status={result.StatusCode}");
+                ReportRequired(); completed(false); yield break;
+            }
             if (result.Success)
             {
                 bool? compatible = null;
                 try
                 {
                     using var stream = new MemoryStream(Encoding.UTF8.GetBytes(result.Body));
-                    var policy = (Compatibility)Serializer(typeof(Compatibility)).ReadObject(stream);
-                    if (policy == null || string.IsNullOrWhiteSpace(policy.GameVersion) || policy.MinimumPlugins == null)
-                        throw new InvalidDataException("Incomplete compatibility policy");
+                    Compatibility policy = (Compatibility)Serializer(typeof(Compatibility)).ReadObject(stream) ??
+                        throw new InvalidDataException("Missing compatibility policy");
+                    if (string.IsNullOrWhiteSpace(policy.GameVersion)) throw new InvalidDataException("Missing game_version");
+                    if (policy.MinimumPlugins == null) throw new InvalidDataException("Missing minimum_plugins");
                     compatible = Matches(policy);
                 }
                 catch (Exception ex) when (ex is SerializationException || ex is InvalidDataException || ex is ArgumentException)
-                { Log?.LogWarning("Invalid client compatibility policy: " + ex.GetType().Name); }
+                {
+                    string detail = ex is InvalidDataException ? DiagnosticValue(ex.Message) : ex.GetType().Name;
+                    Log?.LogWarning($"Client compatibility check failed: phase=decode attempt={attempt + 1}/3 request_id={result.RequestId} status={result.StatusCode} response_bytes={result.ResponseBytes} reason={detail}");
+                }
                 finally { result.Body = null; }
                 if (compatible == null) break;
                 if (!compatible.Value) ReportRequired();
@@ -116,6 +124,7 @@ internal static class UpdateCompatibility
                 yield break;
             }
             bool transient = result.StatusCode == 0 || result.StatusCode == 429 || result.StatusCode >= 500;
+            Log?.LogWarning($"Client compatibility check failed: phase=request attempt={attempt + 1}/3 request_id={result.RequestId} status={result.StatusCode} failure={result.FailureKind ?? "HttpStatus"} native_error={result.NativeErrorCode} elapsed_ms={result.ElapsedMilliseconds} response_bytes={result.ResponseBytes} error={DiagnosticValue(result.Error)} retry={transient && attempt < 2}");
             if (!transient || attempt == 2) break;
             yield return new WaitForSecondsRealtime(attempt + 1);
         }
@@ -129,18 +138,19 @@ internal static class UpdateCompatibility
         _ = Headers;
         FingerprintPolicy update = policy.Fingerprint;
         if (update == null)
-            return policy.GameVersion == headers["X-BD2-Game-Version"] &&
-                MatchesResource(policy.BundleVersion, BundleVersion) && MatchesResource(policy.GameDataVersion, GameDataVersion) &&
+            return MatchesValue("game_version", headers["X-BD2-Game-Version"], policy.GameVersion) &
+                MatchesResource("bundle_version", policy.BundleVersion, BundleVersion) & MatchesResource("game_data_version", policy.GameDataVersion, GameDataVersion) &
                 MatchesPlugins(policy.MinimumPlugins);
         if (string.IsNullOrWhiteSpace(update.ID)) throw new InvalidDataException("Missing update fingerprint identity");
+        bool compatible = true;
         if (update.RequireClientUpdate)
         {
             if (!AtLeast(ClientVersion, update.ClientVersion, "+client."))
             {
-                Log?.LogWarning($"Client update required: launcher={ClientVersion}, minimum={update.ClientVersion}");
-                return false;
+                Log?.LogWarning($"Client update required: launcher={DiagnosticValue(ClientVersion)}, minimum={DiagnosticValue(update.ClientVersion)}");
+                compatible = false;
             }
-            if (!MatchesPlugins(update.MinimumPlugins)) return false;
+            compatible &= MatchesPlugins(update.MinimumPlugins);
         }
         if (update.RequireGameUpdate)
         {
@@ -148,28 +158,42 @@ internal static class UpdateCompatibility
                 string.IsNullOrEmpty(update.Game.BundleVersion) || string.IsNullOrEmpty(update.Game.GameDataVersion) ||
                 string.IsNullOrEmpty(update.GameFingerprint))
                 throw new InvalidDataException("Missing required game resource versions");
-            if (ResourceFingerprint != update.GameFingerprint || update.Game.GameVersion != headers["X-BD2-Game-Version"] ||
-                update.Game.BundleVersion != BundleVersion || update.Game.GameDataVersion != GameDataVersion) return false;
+            compatible &= MatchesValue("resource_fingerprint", ResourceFingerprint, update.GameFingerprint);
+            compatible &= MatchesValue("game_version", headers["X-BD2-Game-Version"], update.Game.GameVersion);
+            compatible &= MatchesValue("bundle_version", BundleVersion, update.Game.BundleVersion);
+            compatible &= MatchesValue("game_data_version", GameDataVersion, update.Game.GameDataVersion);
         }
-        return true;
+        return compatible;
     }
 
-    private static bool MatchesResource(string required, string actual) => string.IsNullOrEmpty(required) || required == actual;
+    private static bool MatchesResource(string name, string required, string actual) =>
+        string.IsNullOrEmpty(required) || MatchesValue(name, actual, required);
+
+    private static bool MatchesValue(string name, string actual, string required)
+    {
+        if (actual == required) return true;
+        Log?.LogWarning($"Client update required: field={name} actual={DiagnosticValue(actual)} required={DiagnosticValue(required)}");
+        return false;
+    }
+
+    private static string DiagnosticValue(string value) => string.IsNullOrEmpty(value) ? "missing" :
+        value[..Math.Min(value.Length, 96)].Replace('\r', ' ').Replace('\n', ' ');
 
     private static bool MatchesPlugins(Dictionary<string, string> required)
     {
         if (required == null) return true;
+        bool compatible = true;
         foreach (KeyValuePair<string, string> item in required)
         {
             // CaptureEnvironment is an official-client evidence tool, never a player plugin.
             if (item.Key == "capture_environment") continue;
             if (!plugins.TryGetValue(item.Key, out string current) || !AtLeast(current, item.Value, null))
             {
-                Log?.LogWarning($"Client update required: plugin={item.Key}, loaded={current ?? "missing"}, minimum={item.Value}");
-                return false;
+                Log?.LogWarning($"Client update required: plugin={DiagnosticValue(item.Key)}, loaded={DiagnosticValue(current)}, minimum={DiagnosticValue(item.Value)}");
+                compatible = false;
             }
         }
-        return true;
+        return compatible;
     }
 
     private static bool AtLeast(string current, string required, string component)

@@ -19,6 +19,11 @@ internal static class ControlRequests
         public int StatusCode;
         public bool RefreshInvalid;
         public bool UpdateRequired;
+        public long RequestId;
+        public long ElapsedMilliseconds;
+        public long ResponseBytes;
+        public string FailureKind;
+        public int NativeErrorCode;
     }
 
     // Native HTTP avoids UnityTls for owned auth/control endpoints. The coroutine
@@ -56,7 +61,11 @@ internal static class ControlRequests
             if (cancel.IsCancellationRequested) yield break;
             if (task.IsFaulted || task.IsCanceled)
             {
-                completed(new ControlProbeResult { Error = task.IsCanceled ? "Cancelled" : "NativeTransportFailure" });
+                completed(new ControlProbeResult
+                {
+                    Error = task.IsCanceled ? "Cancelled" : "NativeTransportFailure",
+                    FailureKind = task.IsCanceled ? "Cancelled" : task.Exception?.GetBaseException().GetType().Name
+                });
                 yield break;
             }
             PlatformControlHttp.Response result = task.GetAwaiter().GetResult();
@@ -69,7 +78,12 @@ internal static class ControlRequests
                     Body = result.Body,
                     RefreshInvalid = result.RefreshInvalid,
                     UpdateRequired = UpdateCompatibility.Observe(result),
-                    Error = result.Error
+                    Error = result.Error,
+                    RequestId = result.RequestId,
+                    ElapsedMilliseconds = result.ElapsedMilliseconds,
+                    ResponseBytes = result.Data?.LongLength ?? 0,
+                    FailureKind = result.FailureKind,
+                    NativeErrorCode = result.NativeErrorCode
                 });
             }
             finally

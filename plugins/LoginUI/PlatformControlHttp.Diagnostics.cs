@@ -38,6 +38,8 @@ public static partial class PlatformControlHttp
             case "/auth/session/revoke":
             case "/client/runtime":
             case "/client/resources":
+            case "/client/compatibility":
+            case "/client/update-fingerprint":
             case "/readyz":
             case "/livez":
             case "/healthz":
