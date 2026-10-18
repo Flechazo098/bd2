@@ -362,6 +362,19 @@ func (s *Service) saveFormation(ctx command.Context, mode Mode, side uint64, dec
 			return e
 		}
 	}
+	if mode == Mirror {
+		progress, e := s.progress(mode, season.ID)
+		if e != nil {
+			return e
+		}
+		own, e := s.own(mode, season.ID, next, progress)
+		if e != nil {
+			return e
+		}
+		if e = publish(ctx, fmt.Sprintf("pvp:%s:%d:popularity:%d:%d", s.profile.OwnerID, season.ID, side, next.Version), "pvp.popularity", PopularityPublished{Timestamp: uint64(s.now().UnixMilli()), Side: side, Snapshot: own}); e != nil {
+			return e
+		}
+	}
 	return s.save(ctx)
 }
 func (s *Service) validateDeck(mode Mode, season uint64, deck [][]byte) error {

@@ -1,10 +1,9 @@
 package delivery
 
 import (
+	"bd2server/internal/common/util"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,12 +48,12 @@ func New(router Router, consumer Consumer, discovery Discovery) (*Dispatcher, er
 	if router == nil || consumer == nil || discovery == nil {
 		return nil, errors.New("delivery requires player routing, consumer and discovery")
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
+	nonce, err := util.RandomHex(16)
+	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &Dispatcher{router: router, consumer: consumer, discovery: discovery, queue: make(chan string, 128), scheduled: map[string]bool{}, ctx: ctx, cancel: cancel, done: make(chan struct{}), session: "delivery:" + hex.EncodeToString(nonce[:])}
+	d := &Dispatcher{router: router, consumer: consumer, discovery: discovery, queue: make(chan string, 128), scheduled: map[string]bool{}, ctx: ctx, cancel: cancel, done: make(chan struct{}), session: "delivery:" + nonce}
 	var workers sync.WaitGroup
 	workers.Go(d.scan)
 	for range 4 {

@@ -1,9 +1,31 @@
 package world
 
 import (
+	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/roster"
 	"fmt"
 )
+
+func (s *Service) ApplyTalentWaypoint(ctx command.Context, _ string, _ roster.Character, rule gamedata.TalentUseRule, targets []uint64) ([]byte, error) {
+	pack, _, _, err := s.TalentFieldContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if rule.Class != 15 || len(targets) != 1 {
+		return nil, fmt.Errorf("world: waypoint talent requires one destination map")
+	}
+	design, err := s.presentationSource.Waypoint(uint64(pack))
+	if err != nil {
+		return nil, err
+	}
+	for _, point := range design.Points {
+		if point.MapID == targets[0] && s.decks.ActivatedWaypoint(uint64(pack), point.ID) && (len(rule.Values) > 0 && rule.Values[0] != 0 || point.SafeArea) {
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("world: waypoint talent destination unavailable pack=%d map=%d level=%d", pack, targets[0], rule.Level)
+}
 
 func (s *Service) AttachTalentPackInfo(source func(ctx command.Context, _ int) ([]byte, error)) {
 	s.talentPackInfo = source

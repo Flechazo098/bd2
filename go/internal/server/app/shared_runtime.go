@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/ranking"
 	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/runtime/delivery"
@@ -20,11 +21,14 @@ import (
 )
 
 type sharedRuntime struct {
+	statistics  *gamedata.CollectionStatisticsDesign
 	directory   *publicDirectory
 	rooms       *roomResults
 	store       *shared.Store
 	pvp         *ranking.PVP
 	huntRanks   *ranking.MonsterHunt
+	castleRanks *ranking.Castle
+	rogueRanks  *ranking.RogueLike
 	arcadeRanks *ranking.Arcade
 	guild       *social.Owner
 	friends     *social.Friends
@@ -43,6 +47,14 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 		return nil, errors.Join(err, store.Close())
 	}
 	huntRanks, err := ranking.NewMonsterHunt(ctx, rankingStore{store})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	castleRanks, err := ranking.NewCastle(ctx, rankingStore{store})
+	if err != nil {
+		return nil, errors.Join(err, store.Close())
+	}
+	rogueRanks, err := ranking.NewRogueLike(ctx, rankingStore{store})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
@@ -66,7 +78,7 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	return &sharedRuntime{store: store, pvp: pvp, huntRanks: huntRanks, arcadeRanks: arcadeRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
+	return &sharedRuntime{statistics: design.collectionStatistics, store: store, pvp: pvp, huntRanks: huntRanks, castleRanks: castleRanks, rogueRanks: rogueRanks, arcadeRanks: arcadeRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
 }
 
 func (s *sharedRuntime) wake(account string) {
@@ -79,6 +91,12 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 	if _, _, err := outbox.Validate(event); err != nil {
 		return err
 	}
+	if event.Envelope.Event.Topic == "roguelike.ranking" {
+		return s.consumeRogueRanking(ctx, event)
+	}
+	if event.Envelope.Event.Topic == "castle.ranking" {
+		return s.consumeCastleRanking(ctx, event)
+	}
 	if event.Envelope.Event.Topic == "monster_hunt.ranking" {
 		return s.consumeHuntRanking(ctx, event)
 	}
@@ -87,6 +105,9 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 	}
 	if event.Envelope.Event.Topic == "deck.recommendation" {
 		return s.consumeRecommendation(ctx, event)
+	}
+	if event.Envelope.Event.Topic == "deck.popularity" {
+		return s.consumePopularity(ctx, event)
 	}
 	if event.Envelope.Event.Topic == "arcade.ranking" {
 		return s.consumeArcadeRanking(ctx, event)
@@ -114,7 +135,7 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 		return s.rooms.Consume(ctx, event)
 	}
 	if strings.HasPrefix(event.Envelope.Event.Topic, "pvp.") {
-		return s.pvp.Consume(ctx, event.Envelope.Source, event.Envelope.Event)
+		return s.consumePVP(ctx, event)
 	}
 	if event.Envelope.Event.Topic == "social.confirm" {
 		var proof social.CommitProof
@@ -179,6 +200,9 @@ func (s *sharedRuntime) stop() error {
 }
 
 func (s *sharedRuntime) settle(ctx context.Context, registry *playerRegistry, discovery outboxDiscovery) error {
+	if err := s.refreshPopularity(ctx, time.Now()); err != nil {
+		return err
+	}
 	if err := s.closeExpiredRaids(ctx, registry); err != nil {
 		return err
 	}

@@ -18,6 +18,7 @@ func (s *Service) infiniteGrant() string {
 }
 
 type Service struct {
+	statistics         *gamedata.CollectionStatisticsDesign
 	design             *gamedata.InfiniteGachaDesign
 	first              *gamedata.FirstGachaDesign
 	regular            *gamedata.RegularGachaCatalog

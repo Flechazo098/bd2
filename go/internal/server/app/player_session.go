@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/domain/events"
 	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/domain/profile"
+	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/gateway/session"
 	"bd2server/internal/server/protocol/defaults"
@@ -26,6 +27,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 			return err
 		}
 		p.monsterHuntService.AttachRanking(owner, p.shared.huntRanks)
+		p.castleService.AttachRanking(owner, p.shared.castleRanks)
 	}
 	if err := p.nickname(ctx); err != nil {
 		return err
@@ -47,6 +49,17 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		return fmt.Errorf("restore recorded achievement history: %w", err)
 	}
 	p.handlers = []session.Handler{
+		p.lifeService,
+		p.cafeteriaService,
+		p.datingService,
+		p.castleService,
+		p.ibService,
+		p.rogueLikeService,
+		notice.CommunityService{Store: p.gameplayStore, Design: p.design.community, Board: p.options.notices, Economy: p.eventEconomy},
+		roster.InteractionService{Store: p.gameplayStore, Design: p.design.interaction, Authorize: p.interactionAvailable, Grant: func(ctx command.Context, key string, rewards []gamedata.Reward) ([]byte, error) {
+			return p.eventEconomy.Apply(ctx, key, nil, rewards)
+		}},
+		p.interactionRecords(),
 		p.chatService,
 		p.nicknameService,
 		p.avatarService,

@@ -1,11 +1,10 @@
 package gamedata
 
 import (
-	"crypto/rand"
+	"bd2server/internal/common/util"
 	"database/sql"
 	"fmt"
 	"math"
-	"math/big"
 	"sort"
 	"sync"
 )
@@ -36,11 +35,7 @@ func loadRewardGraph(db *sql.DB) (*RewardGraph, error) {
 		if n == 0 {
 			return 0, fmt.Errorf("gamedata: empty reward pool")
 		}
-		v, e := rand.Int(rand.Reader, new(big.Int).SetUint64(n))
-		if e != nil {
-			return 0, e
-		}
-		return v.Uint64(), nil
+		return util.RandomUint64N(n)
 	}
 	rows, e := db.Query("SELECT id,ProtoBuf FROM RandomBoxTable")
 	if e != nil {

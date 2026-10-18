@@ -261,14 +261,35 @@ func TestUnfinishedQuestPresentationSurvivesReloadWithoutRewindingRewards(t *tes
 	})
 	s.protocol(t, "/PackInGameInfo", trapRequest(1, 5))
 	s.position(t, 5, 51)
+	assertHighestQuest := func(want uint64) {
+		t.Helper()
+		preview := s.protocol(t, "/PackPreviewInfo", trapRequest(uint64(s.commands+1), 5))
+		story := appRows(preview, 2)
+		if len(story) != 1 || appValue(story[0], 1) != 1 || appValue(story[0], 2) != want {
+			t.Fatalf("story replay frontier did not follow the completed dialogue: %v, want %d", story, want)
+		}
+		rows := appRows(s.protocol(t, "/QuestMaxClearInfo", appScalar(1, uint64(s.commands+1))), 1)
+		for _, row := range rows {
+			if appValue(row, 1) == 5 {
+				if got := appValue(row, 2); got != want {
+					t.Fatalf("client mission unlock frontier=%d, want completed quest %d", got, want)
+				}
+				return
+			}
+		}
+		t.Fatal("client cannot update its quest unlock frontier without a pack row")
+	}
+	assertHighestQuest(25)
 	beforeGold := s.owner.assembly.wallet.Snapshot(command.Context{}).Gold
 	clear := wire.AppendVarint(trapRequest(2, 26), 3, 5)
 	s.protocol(t, "/QuestClear", clear)
+	assertHighestQuest(26)
 	if gold := s.owner.assembly.wallet.Snapshot(command.Context{}).Gold; gold != beforeGold+700 {
 		t.Fatalf("quest gold=%d want%d", gold, beforeGold+700)
 	}
 	closeNicknamePlayer(t, s.owner)
 	s.owner = openNicknamePlayer(t, factory, s.account)
+	assertHighestQuest(26)
 	pending := storyCheckpointCall(t, s.owner, "read", world.StoryCheckpoint{}).Checkpoint
 	if pending == nil || pending.PackID != 5 || pending.QuestID != 26 || pending.Phase != "complete" || pending.Timeline != "Quest_Main_26" || pending.MapID != 51 {
 		t.Fatalf("unfinished cinema was not restored: %+v", pending)

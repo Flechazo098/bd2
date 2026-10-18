@@ -54,6 +54,9 @@ func SavePreferences(gameDirectory string) error {
 		return err
 	}
 	preferences := Preferences{SchemaVersion: preferencesSchemaVersion, GameDirectory: abs}
+	if current, err := LoadPreferences(); err == nil && current == preferences {
+		return nil
+	}
 	if err := commonconfig.Save(path, preferences, commonconfig.WriteOptions{DirectoryMode: 0o700}); err != nil {
 		return fmt.Errorf("save client preferences: %w", err)
 	}

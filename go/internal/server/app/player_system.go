@@ -40,6 +40,13 @@ func executePlayerSystem(ctx context.Context, registry *playerRegistry, account 
 
 func (instance *playerInstance) executeSystem(ctx command.Context, tx *accountstate.CommandStore, request *player.SystemRequest) ([]byte, error) {
 	p := instance.assembly
+	if request.Kind == player.ReadSpineRecording {
+		var input spineRecordingDownload
+		if err := json.Unmarshal(request.Body, &input); err != nil {
+			return nil, err
+		}
+		return p.interactionRecords().LoadRecordData(ctx, input.ID, input.Token)
+	}
 	if request.Kind == player.StoryCheckpoint {
 		var input world.StoryCheckpointRequest
 		if err := json.Unmarshal(request.Body, &input); err != nil {

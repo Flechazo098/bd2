@@ -1,12 +1,11 @@
 package gamedata
 
 import (
-	"crypto/rand"
+	"bd2server/internal/common/util"
 	"database/sql"
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"sort"
 )
 
@@ -469,7 +468,7 @@ func (c *EquipmentGachaCatalog) RollOptions(id uint64) (main, sub []EquipmentOpt
 			for _, choice := range g.Choices {
 				options = append(options, WeightedEquipment{ID: choice.ID, Weight: choice.Weight})
 			}
-			picked, e := rollEquipmentChoiceWith(options, cryptoDraw)
+			picked, e := rollEquipmentChoiceWith(options, util.RandomUint64N)
 			if e != nil {
 				return nil, e
 			}
@@ -503,7 +502,7 @@ func (g EquipmentGacha) Roll(previousSR, previousUR uint64, fixed EquipmentFixed
 		}
 		out := make([]uint64, g.Count)
 		for i := range out {
-			id, err := rollEquipmentChoiceWith(g.Pool, cryptoDraw)
+			id, err := rollEquipmentChoiceWith(g.Pool, util.RandomUint64N)
 			if err != nil {
 				return nil, state, err
 			}
@@ -511,7 +510,7 @@ func (g EquipmentGacha) Roll(previousSR, previousUR uint64, fixed EquipmentFixed
 		}
 		return out, state, nil
 	}
-	return g.rollWith(previousSR, previousUR, fixed, cryptoDraw)
+	return g.rollWith(previousSR, previousUR, fixed, util.RandomUint64N)
 }
 
 type EquipmentRoll struct {
@@ -594,11 +593,4 @@ func rollEquipmentChoiceWith(pool []WeightedEquipment, draw func(uint64) (uint64
 		value -= item.Weight
 	}
 	return 0, errors.New("gamedata: equipment selection failed")
-}
-func cryptoDraw(limit uint64) (uint64, error) {
-	n, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-	if err != nil {
-		return 0, err
-	}
-	return n.Uint64(), nil
 }

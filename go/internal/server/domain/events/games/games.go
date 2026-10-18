@@ -2,15 +2,14 @@
 package eventgames
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/storage/stateio"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"slices"
 
 	"time"
@@ -58,11 +57,7 @@ func Open(ctx command.Context, store stateio.Store, load RuleLoader, resolver Re
 		if max == 0 {
 			return 0, fmt.Errorf("eventgames: empty sample")
 		}
-		n, e := rand.Int(rand.Reader, new(big.Int).SetUint64(max))
-		if e != nil {
-			return 0, e
-		}
-		return n.Uint64(), nil
+		return util.RandomUint64N(max)
 	}
 	raw, e := store.Load(ctx.State, "eventgames")
 	if e != nil {

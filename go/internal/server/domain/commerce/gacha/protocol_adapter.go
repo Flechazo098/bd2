@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Service) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
-	if path != "/GachaInfo" && path != "/GachaBuy" && path != "/GachaMultiBuy" && path != "/GachaPointExchange" && path != "/GachaPointManualExchange" && path != "/GachaBuyPreview" && path != "/GachaBuyPreviewLock" && path != "/GachaSelectionSave" && path != "/CashShopPurchaseCountInfo" && path != "/CashShopBuy" {
+	if path != "/GachaLog" && path != "/GachaInfo" && path != "/GachaBuy" && path != "/GachaMultiBuy" && path != "/GachaPointExchange" && path != "/GachaPointManualExchange" && path != "/GachaBuyPreview" && path != "/GachaBuyPreviewLock" && path != "/GachaSelectionSave" && path != "/CashShopPurchaseCountInfo" && path != "/CashShopBuy" {
 		return 0, nil, false, nil
 	}
 	if ctx.SessionID == "" && path != "/GachaInfo" && path != "/CashShopPurchaseCountInfo" {
@@ -25,6 +25,8 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		return 0, nil, true, fmt.Errorf("gacha: %s invalid sequence", path)
 	}
 	switch path {
+	case "/GachaLog":
+		return s.gachaHistory(ctx, request)
 	case "/GachaInfo":
 		return 145, s.gachaInfo(), true, nil
 	case "/GachaBuyPreview":
@@ -109,9 +111,9 @@ func (s *Service) saveSelection(ctx command.Context, request []byte) (int, []byt
 		if err != nil {
 			return err
 		}
-		itemID, itemFound, err := wire.Varint(field.Value, 3)
-		if err != nil || !itemFound {
-			return errors.New("gacha: selection item missing")
+		itemID, _, err := wire.Varint(field.Value, 3)
+		if err != nil {
+			return err
 		}
 		selections = append(selections, roster.GachaSelection{GroupID: groupID, Slot: slot, ItemID: itemID})
 		return nil
@@ -122,29 +124,26 @@ func (s *Service) saveSelection(ctx command.Context, request []byte) (int, []byt
 		return 198, nil, true, errors.New("gacha: empty selection")
 	}
 	groupID := selections[0].GroupID
-	expected := 0
-	changeLimit := uint64(0)
-	if group, ok := s.regular.Group(groupID); ok && group.SelectCount != 0 {
-		expected = int(group.SelectCount)
-		changeLimit = group.SelectionChangeCount
+	group, ok := s.regular.Group(groupID)
+	if !ok || group.GachaType != 1 || group.GachaSubType != 1 || group.SelectCount == 0 {
+		return 198, nil, true, fmt.Errorf("gacha: group %d does not support costume selection", groupID)
 	}
-	if expected == 0 || len(selections) != expected {
+	// The client clears an incomplete set with one GroupId-only message.
+	if len(selections) == 1 && selections[0].Slot == 0 && selections[0].ItemID == 0 {
+		if err := s.collection.SaveGachaSelections(ctx, groupID, nil, group.SelectionChangeCount); err != nil {
+			return 198, nil, true, err
+		}
+		return 198, nil, true, nil
+	}
+	expected := int(group.SelectCount)
+	if len(selections) != expected {
 		return 198, nil, true, fmt.Errorf("gacha: group %d requires %d selections, got %d", groupID, expected, len(selections))
 	}
-	var eligible []uint64
-	if s.design != nil {
-		eligible = s.design.FiveStarIDs
-	}
-	if group, ok := s.regular.Group(groupID); ok && group.GachaSubType == 1 && group.TenTimeGachaID != 0 {
-		if special := s.regular.SpecialSelectionIDs(group.TenTimeGachaID); len(special) != 0 {
-			eligible = special
-		} else if fiveStars := s.regular.FiveStarIDs(group.TenTimeGachaID); group.UseSelectionOnlyFixedApply && len(fiveStars) != 0 {
-			eligible = fiveStars
+	validItems := make(map[uint64]bool)
+	for _, gachaID := range []uint64{group.OneTimeGachaID, group.TenTimeGachaID} {
+		for _, id := range s.regular.FiveStarIDs(gachaID) {
+			validItems[id] = true
 		}
-	}
-	validItems := make(map[uint64]bool, len(eligible))
-	for _, id := range eligible {
-		validItems[id] = true
 	}
 	seenSlots := make(map[uint64]bool, len(selections))
 	seenItems := make(map[uint64]bool, len(selections))
@@ -155,7 +154,7 @@ func (s *Service) saveSelection(ctx command.Context, request []byte) (int, []byt
 		seenSlots[selection.Slot] = true
 		seenItems[selection.ItemID] = true
 	}
-	if err := s.collection.SaveGachaSelections(ctx, groupID, selections, changeLimit); err != nil {
+	if err := s.collection.SaveGachaSelections(ctx, groupID, selections, group.SelectionChangeCount); err != nil {
 		return 198, nil, true, err
 	}
 	return 198, nil, true, nil
@@ -413,6 +412,7 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 			moonriseSelected[i] = selection.ItemID
 		}
 	}
+	var historyCost []byte
 	stepUpGroupID, stepDesign, isStepUp := s.stepForGacha(id)
 	if isStepUp && !already {
 		completed := s.collection.StepUpProgress(stepUpGroupID)
@@ -547,6 +547,14 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 				}
 			}
 		}
+		historyCost = append(historyConsumedTickets(tickets), historyConsumedTickets(moonriseCost)...)
+		if charge != 0 {
+			kind := uint64(3)
+			if chargePaid {
+				kind = 2
+			}
+			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: kind, Count: charge}})...)
+		}
 		purchase := roster.GachaPurchase{Group: group, BuyType: buyType, Fixed: fixedStates, SelectionApplySortIDs: selectionApplySortIDs}
 		if isMoonrise {
 			purchase.CompletionGrant = completionGrant
@@ -574,6 +582,11 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 	}
 	for _, sortID := range grant.SelectionApplySortIDs {
 		response = wire.AppendVarint(response, 4, sortID)
+	}
+	if !already {
+		if err := s.recordHistory(ctx, identity, group.ID, id, buyType, uint64(design.Count), group.GachaType, group.PickUpCostumeID, response, grant, historyCost); err != nil {
+			return 146, nil, true, err
+		}
 	}
 	if !already && s.onDraw != nil {
 		if err := s.onDraw(ctx, uint64(design.Count)); err != nil {
@@ -625,6 +638,7 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 	if identity == "" {
 		identity = s.requestIdentity(ctx, design.ID, seq)
 	}
+	historyCost := historyConsumedTickets(tickets)
 	grant, already := s.collection.Grant(identity)
 	var entries []assets.Equipment
 	if already {
@@ -661,6 +675,7 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 			if _, err := s.wallet.SpendFreeJewelryOnce(ctx, identity, design.Price/uint64(design.Count)*remain); err != nil {
 				return 146, nil, true, err
 			}
+			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 3, Count: design.Price / uint64(design.Count) * remain}})...)
 		}
 		var fixed gamedata.EquipmentFixedDesign
 		var priorSR, priorUR uint64
@@ -727,6 +742,11 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 	response = wire.AppendVarint(response, 2, grant.GachaPoint)
 	for _, fixed := range grant.GachaFixed {
 		response = wire.AppendBytes(response, 3, gachaFixedWire(fixed))
+	}
+	if !already {
+		if err := s.recordHistory(ctx, identity, group.ID, design.ID, buyType, uint64(design.Count), 2, group.PickUpItemID, response, grant, historyCost); err != nil {
+			return 146, nil, true, err
+		}
 	}
 	if !already && s.onDraw != nil {
 		if err := s.onDraw(ctx, uint64(design.Count)); err != nil {
@@ -991,7 +1011,11 @@ func (s *Service) confirm(ctx command.Context, request []byte) (int, []byte, boo
 	if err := s.creditOverflow(ctx, s.infiniteGrant(), grant); err != nil {
 		return 61, nil, true, err
 	}
-	return 61, wire.AppendBytes(nil, 1, s.rewardBundle(grant)), true, nil
+	response := wire.AppendBytes(nil, 1, s.rewardBundle(grant))
+	if err := s.recordHistory(ctx, s.infiniteGrant(), s.design.GroupID, s.design.GachaID, 1, uint64(s.design.Count), 1, 0, response, grant, nil); err != nil {
+		return 61, nil, true, err
+	}
+	return 61, response, true, nil
 }
 
 func (s *Service) rewardBundle(grant roster.CollectionGrant) []byte {
@@ -1040,8 +1064,12 @@ func (s *Service) rewardBundle(grant roster.CollectionGrant) []byte {
 		}
 		bundle = wire.AppendBytes(bundle, 9, info)
 	}
-	var repaidMileage uint64
 	for _, exchange := range grant.Exchanges {
+		item := wire.AppendVarint(nil, 2, exchange.ExchangeItemID)
+		item = wire.AppendVarint(item, 3, exchange.ExchangeItemType)
+		item = wire.AppendVarint(item, 4, exchange.ExchangeCount)
+		item = wire.AppendVarint(item, 9, exchange.SortID)
+		bundle = wire.AppendBytes(bundle, 1, item)
 		info := wire.AppendVarint(nil, 1, exchange.OriginalItemType)
 		info = wire.AppendVarint(info, 2, exchange.OriginalItemID)
 		info = wire.AppendVarint(info, 3, exchange.OriginalCount)
@@ -1054,14 +1082,6 @@ func (s *Service) rewardBundle(grant roster.CollectionGrant) []byte {
 			info = wire.AppendVarint(info, 7, exchange.SortID)
 		}
 		bundle = wire.AppendBytes(bundle, 8, info)
-		if exchange.ExchangeItemType == 20 {
-			repaidMileage += exchange.ExchangeCount
-		}
-	}
-	if repaidMileage != 0 {
-		repaid := wire.AppendVarint(nil, 2, 20)
-		repaid = wire.AppendVarint(repaid, 3, repaidMileage)
-		bundle = wire.AppendBytes(bundle, 10, repaid)
 	}
 	return bundle
 }
@@ -1281,6 +1301,9 @@ func (s *Service) confirmFirstGacha(ctx command.Context, _ []byte, seq, buyType 
 		bundle = wire.AppendBytes(bundle, 4, assets.EquipmentWire(entry))
 	}
 	response := wire.AppendBytes(nil, 1, bundle)
+	if err := s.recordHistory(ctx, identity, s.first.Group.ID, s.first.GachaID, buyType, uint64(s.first.Count), s.first.Group.GachaType, s.first.Group.PickUpCostumeID, response, grant, nil); err != nil {
+		return 146, nil, true, err
+	}
 	if err := s.collection.RecordGachaBatch(ctx, responseIdentity, firstGachaResponseDigest, response); err != nil {
 		return 146, nil, true, err
 	}

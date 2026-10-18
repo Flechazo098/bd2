@@ -1,8 +1,4 @@
-// Package feature contains deliberately small, stateless protocol handlers.
-//
-// These endpoints were observed to return an empty protobuf for a new local
-// account. Keeping that fact here (rather than treating every unknown route
-// as successful) lets the session dispatcher remain fail-closed.
+// Package feature handles the three intentionally stateless protocol endpoints.
 package feature
 
 import (
@@ -17,29 +13,10 @@ import (
 // ErrInvalidRequest means a known endpoint was sent a malformed request.
 var ErrInvalidRequest = errors.New("feature: invalid protobuf request")
 
-// emptyResponses is the stateless subset of the new-player batch whose
-// successful response protobuf has zero bytes. Stateful routes leave this map
-// as soon as their owning domain persists them. Packet codes are protocol
-// values, not ordinals derived from the request or response order.
 var emptyResponses = map[string]int{
-	"/AvatarShopWishListInfo":          470,
-	"/CafeteriaInfo":                   351,
-	"/CommunityRewardInfo":             289,
-	"/DailyStoryInfo":                  538,
-	"/DatingInfo":                      361,
-	"/EquipPresetInfo":                 253,
-	"/EvilCastleDailyRewardState":      441,
-	"/EvilCastleTowerInfo":             200,
-	"/FishingCollectionInfo":           465,
-	"/FishingTrapInfo":                 457,
-	"/GuildInitInfo":                   332,
-	"/IdCardPresetInfo":                450,
-	"/LifeUserInfo":                    594,
-	"/PersonalInfo":                    199,
-	"/QuestMaxClearInfo":               137,
-	"/SpineInteractionAchievementInfo": 532,
-	"/TotalWarRewardState":             252,
-	"/TutorialInfo":                    101,
+	"/PersonalInfo":        199,
+	"/BalanceVersionCheck": 186,
+	"/UpdateAgeGate":       0,
 }
 
 // Handle recognizes only audited, stateless empty-response endpoints. The
@@ -50,16 +27,7 @@ var emptyResponses = map[string]int{
 func Handle(ctx command.Context, path string, request []byte) (packetCode int, proto []byte, ok bool, err error) {
 	packetCode, ok = emptyResponses[path]
 	if !ok {
-		packetCode, proto, ok = initialResponse(path)
-	}
-	if !ok {
-		packetCode, ok = standaloneDefaults[path]
-	}
-	if !ok {
-		packetCode, ok = commandSuccess[path]
-		if !ok {
-			return 0, nil, false, nil
-		}
+		return 0, nil, false, nil
 	}
 	sequence, present, walkErr := wire.Varint(request, 1)
 	if walkErr != nil || !present || sequence == 0 {

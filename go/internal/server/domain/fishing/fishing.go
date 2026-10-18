@@ -1,14 +1,13 @@
 package fishing
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"slices"
 	"strconv"
 	"time"
@@ -188,11 +187,7 @@ func sample(max uint64) (uint64, error) {
 	if max == 0 {
 		return 0, fmt.Errorf("fishing: empty pool")
 	}
-	n, e := rand.Int(rand.Reader, new(big.Int).SetUint64(max))
-	if e != nil {
-		return 0, e
-	}
-	return n.Uint64(), nil
+	return util.RandomUint64N(max)
 }
 func num(b []byte, n int) uint64 { v, _, _ := wire.Varint(b, n); return v }
 func dbl(b []byte, n int) float64 {

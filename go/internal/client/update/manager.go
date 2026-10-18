@@ -6,6 +6,7 @@
 package update
 
 import (
+	"bd2server/internal/common/util"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,7 +94,7 @@ type Manager struct {
 	manifestURL string
 	keys        []release.TrustedKey
 
-	operation      sync.Mutex
+	operation      chan struct{}
 	envelope       []byte
 	mu             sync.Mutex
 	status         Status
@@ -109,7 +110,7 @@ func New(options Options) *Manager {
 		options.Logger = slog.Default()
 	}
 	address := release.BuiltinChannel().ManifestURL
-	m := &Manager{options: options, manifestURL: address, keys: release.BuiltinChannel().TrustedKeys, pending: map[string]bool{}, gamePending: map[string]bool{}}
+	m := &Manager{options: options, manifestURL: address, keys: release.BuiltinChannel().TrustedKeys, pending: map[string]bool{}, gamePending: map[string]bool{}, operation: make(chan struct{}, 1)}
 	m.status.Enabled = address != "" && !options.Development
 	m.loadPackagedFingerprint()
 	if result := TakeResult(options.Directory); result != nil {
@@ -176,14 +177,39 @@ func operationBusy() error {
 }
 
 func (m *Manager) begin(busy string) bool {
-	if !m.operation.TryLock() {
+	select {
+	case m.operation <- struct{}{}:
+		m.setBusy(busy)
+		return true
+	default:
 		return false
 	}
-	m.setBusy(busy)
-	return true
 }
 
-func (m *Manager) end() { m.setBusy(""); m.operation.Unlock() }
+// acquire waits for a running background operation, so an action the player
+// asked for runs after it instead of failing.
+func (m *Manager) acquire(ctx context.Context, busy string) error {
+	select {
+	case m.operation <- struct{}{}:
+		m.setBusy(busy)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *Manager) end() { m.setBusy(""); <-m.operation }
+
+// WaitIdle waits until no update operation is running.
+func (m *Manager) WaitIdle(ctx context.Context) error {
+	select {
+	case m.operation <- struct{}{}:
+		<-m.operation
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // Run checks shortly after start and then every six hours, downloads what
 // is newer, installs a downloaded plugin set wherever no game runs, and
@@ -211,20 +237,25 @@ func (m *Manager) Run(ctx context.Context) {
 }
 
 func (m *Manager) refresh(ctx context.Context) {
+	warn := func(message string, err error) {
+		if ctx.Err() == nil {
+			m.options.Logger.Warn(message, "error", err)
+		}
+	}
 	if err := m.Check(ctx); err != nil {
-		m.options.Logger.Warn("update check failed", "error", err)
+		warn("update check failed", err)
 		return
 	}
 	if err := m.Download(ctx); err != nil {
-		m.options.Logger.Warn("update download failed", "error", err)
+		warn("update download failed", err)
 		return
 	}
 	if err := m.CommitPlugins(); err != nil {
-		m.options.Logger.Warn("plugin update not installed", "error", err)
+		warn("plugin update not installed", err)
 		return
 	}
 	if err := m.CommitGame(ctx); err != nil {
-		m.options.Logger.Warn("game resources not installed", "error", err)
+		warn("game resources not installed", err)
 	}
 }
 
@@ -270,7 +301,37 @@ func (m *Manager) Check(ctx context.Context) error {
 			m.status.Plugins = offer(c, files, m.pluginStaging(c.Version))
 		}
 	}
+	m.logCheck(manifest)
 	return nil
+}
+
+// logCheck records what the manifest offers compared with this launcher.
+func (m *Manager) logCheck(manifest release.Manifest) {
+	attrs := []any{"manifest_commit", manifest.Commit, "published_at", manifest.PublishedAt}
+	if c := manifest.Launcher; c != nil {
+		attrs = append(attrs, "launcher_installed", m.options.Versions.ClientVersion, "launcher_available", c.Version)
+	}
+	if c := manifest.Plugins; c != nil {
+		attrs = append(attrs, "plugins_installed", m.storeVersion(), "plugins_available", c.Version)
+	}
+	if c := manifest.Server; c != nil {
+		attrs = append(attrs, "server_available", c.Version)
+	}
+	var updates []string
+	if o := m.status.Launcher; o != nil {
+		updates = append(updates, fmt.Sprintf("launcher %s (%d bytes, downloaded=%t)", o.Version, o.Bytes, o.Ready))
+	}
+	if o := m.status.Plugins; o != nil {
+		updates = append(updates, fmt.Sprintf("plugins %s (%d bytes, downloaded=%t)", o.Version, o.Bytes, o.Ready))
+	}
+	if o := m.status.Game; o != nil {
+		updates = append(updates, fmt.Sprintf("game resources %s for %d instance(s)", o.Version, len(m.gamePending)))
+	}
+	if len(updates) == 0 {
+		m.options.Logger.Info("update check: everything is up to date", attrs...)
+		return
+	}
+	m.options.Logger.Info("update check: updates found", append(attrs, "updates", strings.Join(updates, "; "))...)
 }
 
 func newer(current, candidate string) bool {
@@ -376,6 +437,7 @@ func (m *Manager) Download(ctx context.Context) error {
 	var finished int64
 	for _, j := range jobs {
 		for _, f := range j.files {
+			m.options.Logger.Info("downloading update file", "version", j.offer.Version, "file", f.Name, "bytes", f.Size)
 			_, err := release.Download(ctx, m.options.Client, m.manifestURL, f, j.staging, func(_ string, done, _ int64) {
 				m.mu.Lock()
 				m.status.Done = finished + done
@@ -389,6 +451,7 @@ func (m *Manager) Download(ctx context.Context) error {
 		m.mu.Lock()
 		j.offer.Ready = true
 		m.mu.Unlock()
+		m.options.Logger.Info("update downloaded and verified", "version", j.offer.Version, "files", len(j.files))
 	}
 	return nil
 }
@@ -495,8 +558,8 @@ func (m *Manager) replaceStore(c *release.Component) error {
 
 // StoreSources lists the plugin files of the current store set.
 func (m *Manager) StoreSources() ([]string, error) {
-	m.operation.Lock()
-	defer m.operation.Unlock()
+	m.operation <- struct{}{}
+	defer func() { <-m.operation }()
 	return m.storeSources()
 }
 
@@ -515,7 +578,7 @@ func (m *Manager) storeSources() ([]string, error) {
 			return nil, fmt.Errorf("invalid stored plugin %q", f.Name)
 		}
 		source := filepath.Join(directory, f.Name)
-		digest, err := release.HashFile(source)
+		digest, err := util.SHA256File(source)
 		if err != nil {
 			return nil, err
 		}
@@ -588,9 +651,17 @@ func (m *Manager) ensurePlugins(game string) error {
 		m.mu.Lock()
 		delete(m.pending, game)
 		m.mu.Unlock()
-		m.options.Logger.Info("plugin set installed", "game", game)
+		m.options.Logger.Info("plugin set installed", "game", game, "plugins", strings.Join(pluginNames(sources), ", "))
 	}
 	return err
+}
+
+func pluginNames(sources []string) []string {
+	names := make([]string, len(sources))
+	for i, source := range sources {
+		names[i] = filepath.Base(source)
+	}
+	return names
 }
 
 func (m *Manager) installWaiting() {
@@ -802,6 +873,11 @@ func (m *Manager) CheckServer(ctx context.Context, client *http.Client, origin s
 		}
 	}
 	slices.Sort(stale)
+	requirement := "none"
+	if fp != nil {
+		requirement = fmt.Sprintf("%s (client %s, update required=%t, game update required=%t)", fp.ID, fp.ClientVersion, fp.RequireClientUpdate, fp.RequireGameUpdate)
+	}
+	m.options.Logger.Info("server compatibility checked", "origin", origin, "server_version", compat.ServerVersion, "game_version", compat.GameVersion, "requirement", requirement, "stale_plugins", strings.Join(stale, ", "))
 	if len(stale) != 0 {
 		return fmt.Errorf("Server %s no longer accepts these plugins: %s. Update the plugins in the launcher first", compat.ServerVersion, strings.Join(stale, ", ")) //nolint:staticcheck // ST1005: shown to players
 	}
@@ -810,8 +886,8 @@ func (m *Manager) CheckServer(ctx context.Context, client *http.Client, origin s
 
 // WithLaunch keeps updates excluded until the prepared game process has started.
 func (m *Manager) WithLaunch(ctx context.Context, client *http.Client, game, origin string, launch func() error) error {
-	if !m.begin("preparing") {
-		return operationBusy()
+	if err := m.acquire(ctx, "preparing"); err != nil {
+		return err
 	}
 	defer m.end()
 	if err := m.CheckServer(ctx, client, origin); err != nil {

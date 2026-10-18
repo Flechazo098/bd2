@@ -296,7 +296,7 @@ func (state *battleState) completion(win bool) Completion {
 func (s *Service) checkpoint(state *battleState, raw []byte) error {
 	common := one(raw, 1)
 	if len(raw) > 4<<20 || value(common, 1) != state.Mode || value(common, 2) != state.Index || value(common, 3)+1 != state.Round {
-		return fmt.Errorf("battle: checkpoint encounter mismatch")
+		return fmt.Errorf("battle: checkpoint encounter mismatch: bytes=%d mode=%d expected_mode=%d index=%d expected_index=%d round=%d expected_round=%d", len(raw), value(common, 1), state.Mode, value(common, 2), state.Index, value(common, 3), state.Round-1)
 	}
 	if scenario := one(raw, 103); scenario != nil {
 		pack := value(scenario, 3)

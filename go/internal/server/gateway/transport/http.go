@@ -142,6 +142,7 @@ type HTTP struct {
 	CommerceManifest      func() any
 	RealtimeTickets       http.Handler
 	StoryCheckpoints      http.Handler
+	SpineRecordings       http.Handler
 	// Console is the built-in administration website below /admin/.
 	Console http.Handler
 	// Compatibility is the launcher's view of what this server requires.
@@ -183,6 +184,9 @@ func (h HTTP) Handler() http.Handler {
 	}
 	if h.StoryCheckpoints != nil {
 		mux.Handle("/client/story-checkpoint", h.withCompatibility(h.withAvailability(h.StoryCheckpoints)))
+	}
+	if h.SpineRecordings != nil {
+		mux.Handle("GET /client/spine-recordings/", h.withAvailability(h.SpineRecordings))
 	}
 	if h.RealtimeTickets != nil {
 		mux.Handle("/client/realtime-ticket", h.withCompatibility(h.withAvailability(h.RealtimeTickets)))

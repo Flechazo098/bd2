@@ -8,6 +8,7 @@ import (
 )
 
 func packPurchaseIdentity(id int) string { return fmt.Sprintf("pack-purchase:%d", id) }
+func packEntryIdentity(id int) string    { return fmt.Sprintf("pack-entered:%d", id) }
 
 func (s *Service) grantPurchaseRewards(ctx command.Context, identity string, rewards []gamedata.Reward) ([]assets.Item, error) {
 	var itemRewards []gamedata.BattleReward

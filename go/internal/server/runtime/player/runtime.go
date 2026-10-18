@@ -51,6 +51,7 @@ const (
 	ReadRoomProfile
 	CloseExpiredRaid
 	StoryCheckpoint
+	ReadSpineRecording
 )
 
 type SystemRequest struct {
@@ -202,7 +203,7 @@ func (r *Runtime) Submit(ctx context.Context, c Command) (*Future, error) {
 	if c.Identity.SessionID == "" || c.Identity.RequestID == "" || (len(c.Requests) == 0) == (c.System == nil) {
 		return nil, errors.New("command requires session, request identity and requests")
 	}
-	if c.System != nil && (c.System.Kind < ReadOutbox || c.System.Kind > StoryCheckpoint || len(c.LoginSessionKey) != 0) {
+	if c.System != nil && (c.System.Kind < ReadOutbox || c.System.Kind > ReadSpineRecording || len(c.LoginSessionKey) != 0) {
 		return nil, errors.New("invalid player system command")
 	}
 	size := commandBytes(c)

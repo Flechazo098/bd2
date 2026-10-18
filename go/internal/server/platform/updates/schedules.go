@@ -1,6 +1,7 @@
 package updates
 
 import (
+	"bd2server/internal/common/util"
 	"context"
 	"errors"
 	"fmt"
@@ -119,7 +120,7 @@ func verifyScheduleFiles(root string, s release.Schedules) error {
 		if !info.Mode().IsRegular() || info.Size() != f.Size {
 			return fmt.Errorf("schedule %s is not a regular file of the signed size", f.Name)
 		}
-		sum, err := release.HashFile(path)
+		sum, err := util.SHA256File(path)
 		if err != nil {
 			return err
 		}
@@ -208,7 +209,7 @@ func bundledScheduleID(root, game, gameData string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		digest, err := release.HashFile(path)
+		digest, err := util.SHA256File(path)
 		if err != nil {
 			return "", err
 		}

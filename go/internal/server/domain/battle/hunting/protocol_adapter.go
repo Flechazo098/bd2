@@ -1,6 +1,7 @@
 package hunting
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
@@ -8,13 +9,11 @@ import (
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
-	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -522,13 +521,7 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 		if !sky && s.state.Free < cost && s.state.Bonus < cost-s.state.Free {
 			return code, nil, true, fmt.Errorf("hunting: insufficient hunting AP")
 		}
-		rewards, e := d.Roll(count, func(n uint64) (uint64, error) {
-			v, e := rand.Int(rand.Reader, new(big.Int).SetUint64(n))
-			if e != nil {
-				return 0, e
-			}
-			return v.Uint64(), nil
-		})
+		rewards, e := d.Roll(count, util.RandomUint64N)
 		if e != nil {
 			return code, nil, true, e
 		}
@@ -559,13 +552,7 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 			now := uint64(time.Now().UnixMilli())
 			runs := make([][]gamedata.BattleReward, count)
 			for i := range runs {
-				runs[i], e = d.Roll(1, func(n uint64) (uint64, error) {
-					v, e := rand.Int(rand.Reader, new(big.Int).SetUint64(n))
-					if e != nil {
-						return 0, e
-					}
-					return v.Uint64(), nil
-				})
+				runs[i], e = d.Roll(1, util.RandomUint64N)
 				if e != nil {
 					return code, nil, true, e
 				}

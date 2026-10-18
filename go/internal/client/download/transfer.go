@@ -1,6 +1,7 @@
 package download
 
 import (
+	"bd2server/internal/common/util"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,8 +27,10 @@ type file struct {
 }
 
 type receipt struct {
-	Bytes  int64  `json:"bytes"`
-	SHA256 string `json:"sha256"`
+	Bytes          int64  `json:"bytes"`
+	Modified       int64  `json:"modified"`
+	SHA256         string `json:"sha256"`
+	ArchiveEntries int    `json:"archive_entries,omitempty"`
 }
 
 type downloader struct {
@@ -36,6 +39,8 @@ type downloader struct {
 	out              io.Writer
 	mu               sync.Mutex
 	records          map[string]receipt
+	dirty            bool
+	measureOrigins   bool
 }
 
 func newDownloader(root string, out io.Writer) (*downloader, error) {
@@ -52,10 +57,7 @@ func newDownloader(root string, out io.Writer) (*downloader, error) {
 		return nil, err
 	}
 	if err == nil {
-		if saved.SchemaVersion != 1 {
-			return nil, errors.New("unsupported download checkpoint")
-		}
-		if saved.Files != nil {
+		if saved.SchemaVersion == 2 && saved.Files != nil {
 			d.records = saved.Files
 		}
 	}
@@ -68,25 +70,9 @@ func (d *downloader) log(format string, args ...any) {
 	_, _ = fmt.Fprintf(d.out, format+"\n", args...)
 }
 
-func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	h := sha256.New()
-	if _, err = io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
 func (d *downloader) verified(item file) bool {
 	info, err := os.Stat(item.target)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || (item.size > 0 && item.size != info.Size()) {
-		return false
-	}
-	if item.bundle && !validBundle(item.target, info.Size()) {
 		return false
 	}
 	key := d.receiptKey(item.target)
@@ -100,8 +86,52 @@ func (d *downloader) verified(item file) bool {
 	if expected == "" {
 		return false
 	}
-	actual, err := hashFile(item.target)
-	return err == nil && actual == expected
+	if previous.Bytes == info.Size() && previous.Modified == info.ModTime().UnixNano() && previous.SHA256 == expected {
+		return true
+	}
+	if item.bundle && !validBundle(item.target, info.Size()) {
+		return false
+	}
+	actual, err := util.SHA256File(item.target)
+	if err != nil || actual != expected {
+		return false
+	}
+	after, err := os.Stat(item.target)
+	if err != nil || after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+		return false
+	}
+	entries := 0
+	if actual == previous.SHA256 {
+		entries = previous.ArchiveEntries
+	}
+	d.remember(item.target, receipt{Bytes: info.Size(), Modified: info.ModTime().UnixNano(), SHA256: actual, ArchiveEntries: entries})
+	return true
+}
+
+func (d *downloader) remember(target string, r receipt) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	key := d.receiptKey(target)
+	if d.records[key] != r {
+		d.records[key] = r
+		d.dirty = true
+	}
+}
+
+func (d *downloader) saveRecords() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.dirty {
+		return nil
+	}
+	err := commonconfig.Save(d.checkpoint, struct {
+		SchemaVersion int                `json:"schema_version"`
+		Files         map[string]receipt `json:"files"`
+	}{2, d.records}, commonconfig.WriteOptions{FileMode: 0644})
+	if err == nil {
+		d.dirty = false
+	}
+	return err
 }
 
 func (d *downloader) receive(ctx context.Context, item file, origins []string) error {
@@ -171,14 +201,12 @@ func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) 
 	if err := os.Rename(temporary.Name(), item.target); err != nil {
 		return err
 	}
-	key := d.receiptKey(item.target)
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.records[key] = receipt{Bytes: written, SHA256: actual}
-	return commonconfig.Save(d.checkpoint, struct {
-		SchemaVersion int                `json:"schema_version"`
-		Files         map[string]receipt `json:"files"`
-	}{1, d.records}, commonconfig.WriteOptions{FileMode: 0644})
+	info, err := os.Stat(item.target)
+	if err != nil {
+		return err
+	}
+	d.remember(item.target, receipt{Bytes: written, Modified: info.ModTime().UnixNano(), SHA256: actual})
+	return nil
 }
 
 func (d *downloader) receiptKey(target string) string {
@@ -223,10 +251,7 @@ feed:
 	}
 	close(jobs)
 	wg.Wait()
-	if first != nil {
-		return first
-	}
-	return ctx.Err()
+	return errors.Join(first, ctx.Err(), d.saveRecords())
 }
 
 func (d *downloader) fastest(ctx context.Context, origins []string, relative, label string) ([]string, error) {
@@ -260,7 +285,7 @@ func (d *downloader) fastest(ctx context.Context, origins []string, relative, la
 			}
 			n, err := io.Copy(io.Discard, io.LimitReader(response.Body, 4<<20))
 			speed := float64(0)
-			if n >= 256<<10 {
+			if n > 0 {
 				speed = float64(n) / time.Since(start).Seconds()
 			}
 			results[i] = result{origin: origin, speed: speed, err: err}

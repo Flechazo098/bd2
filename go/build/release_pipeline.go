@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -240,7 +241,7 @@ func (r *release) writePluginStore() error {
 	byID := versions.Plugins.ByID()
 	store := clientupdate.Store{Version: versions.ClientVersion}
 	for _, spec := range clientplugin.Shipped {
-		sum, err := releasepkg.HashFile(filepath.Join(r.client, "plugins", spec.FileName()))
+		sum, err := util.SHA256File(filepath.Join(r.client, "plugins", spec.FileName()))
 		if err != nil {
 			return err
 		}

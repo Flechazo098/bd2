@@ -3,9 +3,11 @@ package world
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -59,15 +61,54 @@ func (s *Service) reputationState(ctx command.Context, pack int, rule gamedata.N
 	if err != nil {
 		return 0, 0, err
 	}
+	state, elapsed := s.npcReputation.state(v, pack, rule)
+	return state, elapsed, nil
+}
+
+func (r *npcReputationRuntime) state(v npcReputationSnapshot, pack int, rule gamedata.NPCReputationRule) (uint64, uint64) {
 	start, ok := v.Starts[reputationKey(pack, rule.ID)]
 	if !ok {
-		return 1, 0, nil
+		return 1, 0
 	}
-	elapsed := max(s.npcReputation.now().Unix()-start, 0)
+	elapsed := max(r.now().Unix()-start, 0)
 	if uint64(elapsed) >= rule.DownHours*3600 {
-		return 1, 0, nil
+		return 1, 0
 	}
-	return 2, uint64(elapsed), nil
+	return 2, uint64(elapsed)
+}
+
+func (s *Service) reputationInfo(ctx command.Context, request []byte) (int, []byte, bool, error) {
+	seq, found, err := wire.Varint(request, 1)
+	if err != nil || !found || seq == 0 || s.npcReputation == nil {
+		return 106, nil, true, ErrInvalidRequest
+	}
+	v, err := s.npcReputation.snapshot(ctx)
+	if err != nil {
+		return 106, nil, true, err
+	}
+	current, err := s.CurrentPackID(ctx)
+	if err != nil {
+		return 106, nil, true, err
+	}
+	d, err := s.npcReputation.load(current)
+	if err != nil {
+		return 106, nil, true, err
+	}
+	rows := make(map[uint64][]byte, len(d.Groups))
+	for id, rule := range d.Groups {
+		state, elapsed := s.npcReputation.state(v, current, rule)
+		rows[id] = reputationWire(id, state, elapsed)
+	}
+	ids := make([]uint64, 0, len(rows))
+	for id := range rows {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var out []byte
+	for _, id := range ids {
+		out = wire.AppendBytes(out, 1, rows[id])
+	}
+	return 106, out, true, nil
 }
 
 func (s *Service) NPCShopReputation(ctx command.Context, pack uint64) (uint64, uint64, error) {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	clientconfig "bd2server/internal/client/config"
+	"bd2server/internal/client/download"
 	"bd2server/internal/client/introdb"
 	clientlayout "bd2server/internal/client/layout"
 	"bd2server/internal/client/plugin"
@@ -52,6 +53,10 @@ type ResourcePolicy struct {
 type InstallResult = plugin.SetResult
 
 func Inspect(gameDir string, versions versionconfig.Config) (GameStatus, error) {
+	return inspect(gameDir, versions, true)
+}
+
+func inspect(gameDir string, versions versionconfig.Config, verifyPatch bool) (GameStatus, error) {
 	if strings.TrimSpace(gameDir) == "" {
 		return GameStatus{}, errors.New("select the Brown Dust II installation directory")
 	}
@@ -71,15 +76,17 @@ func Inspect(gameDir string, versions versionconfig.Config) (GameStatus, error) 
 	if status.ClientVersion != versions.GameVersion {
 		return status, fmt.Errorf("unsupported Brown Dust II client version %s; this bd2client release requires %s", status.ClientVersion, versions.GameVersion)
 	}
-	if verified, verifyErr := introdb.VerifyClient(installation.Root); verifyErr == nil {
-		status.PatchedURL = verified.URL
+	if verifyPatch {
+		if verified, verifyErr := introdb.VerifyClient(installation.Root); verifyErr == nil {
+			status.PatchedURL = verified.URL
+		}
 	}
 	return status, nil
 }
 
-func SaveSettings(gameDir string, settings clientconfig.Settings, versions versionconfig.Config) (clientconfig.Settings, error) {
-	if _, err := Inspect(gameDir, versions); err != nil {
-		return clientconfig.Settings{}, err
+func SaveSettings(gameDir string, settings clientconfig.Settings) (clientconfig.Settings, error) {
+	if strings.TrimSpace(gameDir) == "" {
+		return clientconfig.Settings{}, errors.New("select the Brown Dust II installation directory")
 	}
 	normalized, err := clientconfig.Normalize(settings)
 	if err != nil {
@@ -92,26 +99,18 @@ func SaveSettings(gameDir string, settings clientconfig.Settings, versions versi
 			return clientconfig.Settings{}, err
 		}
 	}
-	if normalized.CDNMode == clientconfig.CDNLocal {
-		if err := InstallLocalCatalog(gameDir, normalized.LocalResourceDirectory, versions.BundleVersion); err != nil {
-			return clientconfig.Settings{}, err
-		}
-	}
 	return clientconfig.Save(gameDir, normalized)
 }
 
-func Patch(gameDir string, settings clientconfig.Settings, versions versionconfig.Config) (introdb.Result, error) {
-	if _, err := SaveSettings(gameDir, settings, versions); err != nil {
-		return introdb.Result{}, err
-	}
+func Patch(gameDir string) (introdb.Result, error) {
 	result, err := introdb.PatchClient(gameDir, PatchPlaceholder)
 	if err != nil {
 		return introdb.Result{}, err
 	}
-	if _, err := introdb.VerifyClient(gameDir); err != nil {
-		return introdb.Result{}, fmt.Errorf("verify patched client resources: %w", err)
-	}
 	if _, err := disableLegacyPlugin(gameDir); err != nil {
+		return introdb.Result{}, err
+	}
+	if err := download.RecordPreparedGame(gameDir, "BrownDust II_Data/resources.assets"); err != nil {
 		return introdb.Result{}, err
 	}
 	return result, nil
@@ -119,22 +118,17 @@ func Patch(gameDir string, settings clientconfig.Settings, versions versionconfi
 
 func InstallPlugins(
 	gameDir string,
-	settings clientconfig.Settings,
-	versions versionconfig.Config,
 	localIdentitySource string,
 	loginUISource string,
 	cashShopSource string,
 	fChatSource string,
 ) (InstallResult, error) {
-	status, err := Inspect(gameDir, versions)
+	installation, err := clientlayout.Resolve(gameDir)
 	if err != nil {
 		return InstallResult{}, err
 	}
-	if !status.BepInEx {
+	if !regularFile(filepath.Join(installation.BepInEx, "core", "BepInEx.dll")) {
 		return InstallResult{}, fmt.Errorf("BepInEx is not installed; install it from %s before installing the plugins", plugin.BepInExReleasesURL)
-	}
-	if _, err := SaveSettings(gameDir, settings, versions); err != nil {
-		return InstallResult{}, err
 	}
 	var sources []string
 	for spec, explicit := range map[plugin.Spec]string{plugin.LocalIdentity: localIdentitySource, plugin.LoginUI: loginUISource, plugin.CashShop: cashShopSource, plugin.FChat: fChatSource} {

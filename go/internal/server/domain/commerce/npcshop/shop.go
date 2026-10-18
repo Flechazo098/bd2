@@ -2,6 +2,7 @@
 package npcshop
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
@@ -147,24 +148,13 @@ func (s *Service) rate(p gamedata.NPCProduct, shop, tab uint64) uint64 {
 		return 100 + p.HighPremium
 	}
 	seed := s.marketSeed() + shop + tab + p.Reward.Type + p.Reward.ID
-	a := seed
-	b := seed + 13*90
-	c := a ^ b ^ (a << 16) ^ (b << 15)
-	b = seed + 9*90
-	b ^= b >> 11
-	a = c ^ b
-	// WELL512's mask is the unsigned 32-bit pattern 0xDA442D24. The
-	// decompiler displays its signed int32 spelling, -633066204, inside
-	// an ulong cast; sign-extending that spelling changes the RNG result.
-	d := a ^ ((a << 5) & uint64(0xda442d24))
-	a = seed + 15*90
-	value := a ^ c ^ d ^ (a << 2) ^ (c << 18) ^ (b << 28)
+	random := util.NewWell512(seed)
 	lo := 100 - p.Discount
 	span := p.Discount + p.Premium
 	if span == 0 {
 		span = 1
 	}
-	return lo + value%span
+	return lo + random.Next()%span
 }
 
 // The client keeps ShopRandSeed until the next ShopInfo response. Advancing

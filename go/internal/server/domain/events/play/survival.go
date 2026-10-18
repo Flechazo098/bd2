@@ -1,6 +1,7 @@
 package eventplay
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/protocol/wire"
@@ -115,9 +116,8 @@ func (s *Service) startSurvival(req []byte, a *Run, st *snapshot) error {
 	a.SpecialItems = map[uint64]uint64{}
 	a.Skills = []uint64{num(char, 3)}
 	a.SkillLevels = map[uint64]uint64{num(char, 3): 1}
-	for i := range a.RandomState {
-		a.RandomState[i] = seqSeed(a.Started) + uint64(i)*90
-	}
+	random := util.NewWell512(seqSeed(a.Started))
+	a.RandomState, a.RandomIndex = random.State, random.Index
 	return nil
 }
 
@@ -169,25 +169,6 @@ func (s *Service) collectSurvival(st *snapshot, a Run, typ, value uint64) {
 	st.Records[recKey(a.UID, 0, 0, a.Family)] = ledger
 }
 
-func survivalRandom(a *Run, bound uint64) uint64 {
-	index := a.RandomIndex
-	x, y := a.RandomState[index], a.RandomState[(index+13)&15]
-	b := x ^ y ^ (x << 16) ^ (y << 15)
-	c := a.RandomState[(index+9)&15]
-	c ^= c >> 11
-	x = b ^ c
-	a.RandomState[index] = x
-	d := x ^ ((x << 5) & uint64(0xffffffffda442d24))
-	index = (index + 15) & 15
-	x = a.RandomState[index]
-	a.RandomState[index] = x ^ b ^ d ^ (x << 2) ^ (b << 18) ^ (c << 28)
-	a.RandomIndex = index
-	if bound == 0 {
-		bound = 1
-	}
-	return uint64(float32(a.RandomState[index] % bound))
-}
-
 func (s *Service) survivalDropBox(a *Run, id uint64) error {
 	row, err := s.design.Row("FieldMiniGameSurvivalBoxTable", 2, id)
 	if err != nil {
@@ -212,7 +193,9 @@ func (s *Service) survivalDropBox(a *Run, id uint64) error {
 		if total == 0 {
 			return fmt.Errorf("eventplay: empty survival drop ratios")
 		}
-		draw := survivalRandom(a, total)
+		random := util.Well512{State: a.RandomState, Index: a.RandomIndex}
+		draw := uint64(float32(random.Next() % total))
+		a.RandomState, a.RandomIndex = random.State, random.Index
 		for i, weight := range ratios {
 			if draw < weight {
 				items = []uint64{items[i]}

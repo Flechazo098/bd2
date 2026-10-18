@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/common/util"
 	"database/sql"
 	"fmt"
 	"math"
@@ -68,7 +69,7 @@ func loadEquipmentOptionRerollDesign(db *sql.DB) (*EquipmentOptionRerollDesign, 
 		Equipment: make(map[uint64]EquipmentOptionRerollItem),
 		Costs:     make(map[uint64]EquipmentOptionRerollCost),
 		Groups:    make(map[uint64]OptionGroup),
-		draw:      cryptoDraw,
+		draw:      util.RandomUint64N,
 	}
 	referencedGroups := make(map[uint64]bool)
 	rows, err := db.Query("SELECT id,ProtoBuf FROM EquipmentTable")
@@ -330,7 +331,7 @@ func (d *EquipmentOptionRerollDesign) rollGroup(groupID uint64) (EquipmentOption
 	}
 	draw := d.draw
 	if draw == nil {
-		draw = cryptoDraw
+		draw = util.RandomUint64N
 	}
 	id, err := rollEquipmentChoiceWith(pool, draw)
 	if err != nil {

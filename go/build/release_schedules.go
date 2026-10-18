@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bd2server/internal/common/util"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -83,7 +84,7 @@ func (t task) stageSchedules(output string, versions versionconfig.Config) (*rel
 	}
 	for _, entry := range entries {
 		file := filepath.Join(source, entry.Name())
-		sum, err := releasepkg.HashFile(file)
+		sum, err := util.SHA256File(file)
 		if err != nil {
 			return nil, err
 		}

@@ -1,14 +1,13 @@
 package gamedata
 
 import (
-	"crypto/rand"
+	"bd2server/internal/common/util"
 	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
-	"math/big"
 	"slices"
 	"sort"
 
@@ -410,8 +409,7 @@ func (c *RegularGachaCatalog) SpecialSelectionIDs(gachaID uint64) []uint64 {
 }
 
 // FiveStarIDs returns the selectable five-star costumes in one ordinary
-// gacha's authoritative reward pool. Unlike SpecialSelectionIDs it also
-// supports a normal rarity tree, which is used by the newbie guaranteed draw.
+// gacha's authoritative reward pool, including composite reward programs.
 func (c *RegularGachaCatalog) FiveStarIDs(gachaID uint64) []uint64 {
 	gacha, ok := c.Gacha(gachaID)
 	if !ok {
@@ -433,6 +431,14 @@ func (c *RegularGachaCatalog) FiveStarIDs(gachaID uint64) []uint64 {
 		}
 	}
 	visit(gacha.Pool)
+	var rewardIDs []uint64
+	collectCostumeRewardIDs(gacha.RewardGroup, &rewardIDs)
+	for _, id := range rewardIDs {
+		if c.grades[id] == 5 && !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
 	slices.Sort(result)
 	return result
 }
@@ -447,21 +453,9 @@ func (c *RegularGachaCatalog) SpecialSelectionCount(gachaID uint64) uint64 {
 
 func (g RegularGacha) Roll() ([]uint64, error) {
 	if g.RewardGroup != nil {
-		return g.rollRewardGroup(func(limit uint64) (uint64, error) {
-			selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-			if err != nil {
-				return 0, err
-			}
-			return selected.Uint64(), nil
-		})
+		return g.rollRewardGroup(util.RandomUint64N)
 	}
-	return g.rollWith(func(limit uint64) (uint64, error) {
-		selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return selected.Uint64(), nil
-	})
+	return g.rollWith(util.RandomUint64N)
 }
 
 // RollSpecialSelection executes a composite selection-gacha program while
@@ -470,13 +464,7 @@ func (g RegularGacha) Roll() ([]uint64, error) {
 // table IDs: a sequential root first emits the selected rewards and then
 // executes the remaining GameData reward branches unchanged.
 func (g RegularGacha) RollSpecialSelection(selected []uint64) ([]uint64, error) {
-	return g.rollSpecialSelection(selected, func(limit uint64) (uint64, error) {
-		value, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return value.Uint64(), nil
-	})
+	return g.rollSpecialSelection(selected, util.RandomUint64N)
 }
 
 func (g RegularGacha) rollSpecialSelection(selected []uint64, draw func(uint64) (uint64, error)) ([]uint64, error) {
@@ -544,13 +532,7 @@ func (g RegularGacha) RollWithCostumeFixed(previous4, previous5 uint64, fixed Ga
 }
 
 func (g RegularGacha) RollWithCostumeFixedSelection(previous4, previous5 uint64, fixed GachaFixedDesign, normalSelectedFive, pitySelectedFive []uint64) ([]uint64, GachaFixedRoll, error) {
-	return g.rollWithCostumeFixed(previous4, previous5, fixed, normalSelectedFive, pitySelectedFive, func(limit uint64) (uint64, error) {
-		selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return selected.Uint64(), nil
-	})
+	return g.rollWithCostumeFixed(previous4, previous5, fixed, normalSelectedFive, pitySelectedFive, util.RandomUint64N)
 }
 
 func (g RegularGacha) rollWithCostumeFixed(previous4, previous5 uint64, fixed GachaFixedDesign, normalSelectedFive, pitySelectedFive []uint64, draw func(uint64) (uint64, error)) ([]uint64, GachaFixedRoll, error) {
@@ -1762,13 +1744,7 @@ func fixed64Double(proto []byte, number int) (float64, bool, error) {
 }
 
 func (d *InfiniteGachaDesign) Roll() ([]uint64, error) {
-	return d.rollWith(func(limit uint64) (uint64, error) {
-		selected, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-		if err != nil {
-			return 0, err
-		}
-		return selected.Uint64(), nil
-	})
+	return d.rollWith(util.RandomUint64N)
 }
 
 func (d *InfiniteGachaDesign) rollWith(draw func(uint64) (uint64, error)) ([]uint64, error) {

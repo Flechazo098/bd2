@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -157,6 +158,9 @@ func Save(gameDir string, in Settings) (Settings, error) {
 	settings, err := Normalize(in)
 	if err != nil {
 		return Settings{}, err
+	}
+	if current, err := Load(gameDir); err == nil && reflect.DeepEqual(current, settings) {
+		return settings, nil
 	}
 	path := Path(gameDir)
 	if err := commonconfig.Save(path, settings, commonconfig.WriteOptions{}); err != nil {

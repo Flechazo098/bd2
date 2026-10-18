@@ -609,49 +609,9 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		s.state.Claims[ck] = true
 		return wire.AppendBytes(nil, 1, bundle), nil
 	case "/FriendshipSpecialEpisodeInfo":
-		var out []byte
-		for k := range s.state.Claims {
-			var g, id uint64
-			if _, e := fmt.Sscanf(k, "friend:%d/%d", &g, &id); e == nil {
-				x := wire.AppendVarint(nil, 1, g)
-				x = wire.AppendVarint(x, 2, id)
-				out = wire.AppendBytes(out, 1, x)
-			}
-		}
-		return out, nil
+		return s.friendshipEpisodeInfo(), nil
 	case "/FriendshipSpecialEpisodeClear":
-		g, id := val(b, 2), val(b, 3)
-		r, ok := s.row("FriendshipSpecialEpisodeTable", 5, 6, g, id)
-		if !ok {
-			return nil, errors.New("eventactions: unknown episode")
-		}
-		if s.friendship == nil || s.friendship(g) < r.V(12) {
-			return nil, errors.New("eventactions: friendship level insufficient")
-		}
-		if id > 1 && !s.state.Claims["friend:"+key(g, id-1)] {
-			return nil, errors.New("eventactions: previous episode incomplete")
-		}
-		ck := "friend:" + key(g, id)
-		if s.state.Claims[ck] {
-			return nil, errors.New("eventactions: episode already cleared")
-		}
-		rs := append([]gamedata.Reward(nil), r.Rewards...)
-		for _, v := range s.registry.List() {
-			if v.Type == 24 && v.ID == g && s.active(v) {
-				rs = append(rs, r.EventRewards...)
-				break
-			}
-		}
-		bundle, e := s.economy.Apply(ctx, identity, nil, rs)
-		if e != nil {
-			return nil, e
-		}
-		s.state.Claims[ck] = true
-		x := wire.AppendVarint(nil, 1, g)
-		x = wire.AppendVarint(x, 2, id)
-		out := wire.AppendBytes(nil, 1, bundle)
-		out = wire.AppendBytes(out, 2, x)
-		return out, nil
+		return s.clearFriendshipEpisode(ctx, b, identity)
 	case "/NpcQuizInfo":
 		uid := val(b, 2)
 		v, e := s.resolveQuiz(ctx, uid)

@@ -15,7 +15,7 @@ func LoadEventAPDesign(root, version string) (map[uint64]uint64, HuntingAPDesign
 		return nil, d, e
 	}
 	caps := map[uint64]uint64{}
-	for typ, field := range map[uint64]int{30: 43, 32: 113} {
+	for typ, field := range map[uint64]int{30: 43, 32: 113, 35: 102} {
 		n, e := optionalScalar(raw, field)
 		if e != nil {
 			return nil, d, e

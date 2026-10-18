@@ -78,10 +78,14 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 					t.Error(err)
 				}
 			})
+			session := scenario.name
 			run := func(identity, path string, body []byte) []byte {
 				t.Helper()
 				request := registryCommand(accounts[0], scenario.name+identity, path, body)
-				request.Identity.SessionID = scenario.name
+				request.Identity.SessionID = session
+				if path == "/LoginUser" {
+					request.LoginSessionKey = []byte("0123456789abcdef0123456789abcdef")
+				}
 				reply := registryExecute(t, runtime, request)
 				return reply.Responses[0].Body
 			}
@@ -112,6 +116,38 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			if appValue(response, 2) != scenario.selected {
 				t.Fatalf("client receives wrong enemy deck: %d, want %d", appValue(response, 2), scenario.selected)
 			}
+			reenter := func(identity string) {
+				t.Helper()
+				if err := owner.Recover(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				session += "-reconnected"
+				run(identity+"-login", "/LoginUser", appScalar(1, 1))
+				pack := run(identity+"-pack", "/PackInGameInfo", append(appScalar(1, 2), appScalar(2, 1)...))
+				// CommonPacket consumes field 17 before GameFieldManager opens BattleResumePopupUI.
+				positions := appRows(pack, 4)
+				if appValue(pack, 17) != 1 || len(appRows(pack, 2)) == 0 || len(positions) != 1 || len(positions[0]) == 0 {
+					t.Fatal("relogin could not load the field and offer the unfinished battle")
+				}
+				other := registryCommand(accounts[0], scenario.name+identity+"-switch-pack", "/PackInGameInfo", append(appScalar(1, 3), appScalar(2, 2)...))
+				other.Identity.SessionID = session
+				future, err := runtime.Submit(context.Background(), other)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := future.Wait(context.Background()); err == nil {
+					t.Fatal("unfinished battle allowed switching to another pack")
+				}
+				if owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold || !maps.Equal(appItemTotals(run(identity+"-items", "/ItemInfo", appScalar(1, 4))), beforeItems) {
+					t.Fatal("relogin granted battle rewards before victory")
+				}
+			}
+			reenter("before-start")
+			initial := run("resume-before-start", "/BattleResume", appScalar(1, 5))
+			commons := appRows(initial, 1)
+			if appValue(initial, 22) != 1 || len(commons) != 1 || appValue(commons[0], 2) != scenario.selected || appValue(initial, 5) != uint64(scenario.activeQuest) {
+				t.Fatal("session expiry before BattleStart lost the pending encounter")
+			}
 			blue := appScalar(3, 300)
 			common := append(appScalar(1, 1), appScalar(2, scenario.selected)...)
 			checkpoint := appMessage(1, common)
@@ -120,9 +156,7 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			start := append(appScalar(1, 3), appScalar(2, scenario.selected)...)
 			start = append(start, appMessage(100, checkpoint)...)
 			run("start", "/BattleStart", start)
-			if err := owner.Recover(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			reenter("after-start")
 			resume := run("resume", "/BattleResume", appScalar(1, 101))
 			if appValue(resume, 5) != uint64(scenario.activeQuest) {
 				t.Fatal("story battle recovery lost its actual owning quest")
@@ -165,6 +199,10 @@ func TestQuestBattleUsesItsOwnQuestDifficultyAndRewardOwner(t *testing.T) {
 			}
 			if totals := appItemTotals(run("items-retry", "/ItemInfo", appScalar(1, 6))); !maps.Equal(totals, afterItems) {
 				t.Fatal("settlement retry credited owned items twice")
+			}
+			pack := run("settled-pack", "/PackInGameInfo", append(appScalar(1, 7), appScalar(2, 1)...))
+			if appValue(pack, 17) != 0 {
+				t.Fatal("settled encounter still offered battle recovery")
 			}
 		})
 	}

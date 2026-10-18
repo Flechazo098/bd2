@@ -504,5 +504,9 @@
   "console.error.confirming_update": "前回の更新の動作確認中です。正常動作の確認が完了するまでお待ちください。",
   "console.updates.component": "更新内容",
   "console.updates.component.server": "サーバープログラム",
-  "console.updates.restarting": "更新を適用するためにサーバーを再起動しています。このページは自動的に再接続します。"
+  "console.updates.restarting": "更新を適用するためにサーバーを再起動しています。このページは自動的に再接続します。",
+  "config.game.section.spine_recording.title": "インタラクション録画",
+  "config.game.section.spine_recording.help": "プレイヤーのイラスト操作を保存し、ゲーム内で再生します。変更後はサーバーを再起動してください。",
+  "config.game.field.spine_recording.download_base_url.label": "録画ダウンロードのベース URL",
+  "config.game.field.spine_recording.download_base_url.help": "空欄の場合はこのサーバーを使用します。独自のアドレスは、このサーバーの /client/spine-recordings/ にリバースプロキシしてください。録画パスとアクセス資格情報は自動で追加されます。外部公開には HTTPS が必要です。"
 }

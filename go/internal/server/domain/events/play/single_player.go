@@ -1,8 +1,10 @@
 package eventplay
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/events"
 	"bd2server/internal/server/protocol/wire"
 	"fmt"
 	"math"
@@ -337,15 +339,13 @@ func (s *Service) endSichuan(ctx command.Context, req []byte, a Run, st *snapsho
 	for _, reward := range s.design.Tables["SichuanRewardTable"] {
 		group, id := num(reward, 1), num(reward, 2)
 		count := uint64(0)
-		for _, progress := range st.Records {
-			if progress.UID != a.UID || progress.Family != a.Family || progress.Mode != group {
-				continue
-			}
-			if group == 2 {
-				if progress.Clears["clear"] {
-					count++
+		if group == 2 {
+			count = boolWire(clear && a.Mode == group)
+		} else {
+			for _, progress := range st.Records {
+				if progress.UID != a.UID || progress.Family != a.Family || progress.Mode != group {
+					continue
 				}
-			} else {
 				for i := range 3 {
 					if progress.Clears[fmt.Sprintf("star:%d", i)] {
 						count++
@@ -354,7 +354,7 @@ func (s *Service) endSichuan(ctx command.Context, req []byte, a Run, st *snapsho
 			}
 		}
 		identity := fmt.Sprintf("reward:%d:%d", group, id)
-		if count < num(reward, 3) || ledger.Clears[identity] {
+		if count < num(reward, 3) || group != 2 && ledger.Clears[identity] {
 			continue
 		}
 		rr, e := gamedata.EventPlayRewards(reward, 6, 5, 4)
@@ -572,11 +572,8 @@ func (s *Service) endRhythm(ctx command.Context, req []byte, a Run, st *snapshot
 	for typ, count := range counts {
 		seed += typ * count
 	}
-	random := Run{}
-	for i := range random.RandomState {
-		random.RandomState[i] = seed + uint64(i)*90
-	}
-	checksum := fmt.Sprintf("%d-%d-%d-%d", 11111+survivalRandom(&random, 88888), 11111+survivalRandom(&random, 88888), 11111+survivalRandom(&random, 88888), 11111+survivalRandom(&random, 88888))
+	random := util.NewWell512(seed)
+	checksum := fmt.Sprintf("%d-%d-%d-%d", 11111+random.Next()%88888, 11111+random.Next()%88888, 11111+random.Next()%88888, 11111+random.Next()%88888)
 	checksumWire, _, err := wire.Bytes(req, 5)
 	if err != nil {
 		return nil, err
@@ -596,22 +593,10 @@ func (s *Service) endRhythm(ctx command.Context, req []byte, a Run, st *snapshot
 		r.BestCombo = combo
 	}
 	st.Records[recKey(a.UID, a.Stage, a.Mode, a.Family)] = r
-	if s.onProgress != nil {
-		for typ, count := range counts {
-			if count == 0 {
-				continue
-			}
-			if err := s.onProgress(ctx, 49, typ, count); err != nil {
-				return nil, err
-			}
-		}
-		for _, p := range []struct{ condition, value, count uint64 }{{51, a.Stage, score}, {52, grade, 1}, {53, a.Mode, 1}, {50, combo, 1}} {
-			if p.count == 0 {
-				continue
-			}
-			if err := s.onProgress(ctx, p.condition, p.value, p.count); err != nil {
-				return nil, err
-			}
+	if s.onRhythmResult != nil && grade > 0 && num(req, 7) == 0 {
+		result := events.RhythmResult{Music: a.Stage, Difficulty: a.Mode, Score: score, Grade: grade, Combo: combo, Judgments: counts}
+		if err := s.onRhythmResult(ctx, result); err != nil {
+			return nil, err
 		}
 	}
 	return wire.AppendBytes(nil, 1, rhythmRecordWire(r)), nil

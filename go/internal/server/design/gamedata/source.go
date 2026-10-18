@@ -45,6 +45,7 @@ type Source struct {
 	fieldMonsterMaps designIndex[int, map[int][]int]
 	fieldTraps       designIndex[int, FieldTrapDesign]
 	fieldStatues     designIndex[int, map[uint64]Reward]
+	questTitles      designIndex[int, []QuestTitle]
 	nPCReputation    designIndex[int, NPCReputationDesign]
 	inns             designIndex[int, []InnRule]
 	waypoint         designIndex[uint64, WaypointPack]
@@ -59,6 +60,9 @@ type Source struct {
 }
 
 func NewSource(root, version string) *Source { return &Source{root: root, version: version} }
+func (s *Source) QuestTitles(pack int) ([]QuestTitle, error) {
+	return s.questTitles.get(pack, func() ([]QuestTitle, error) { return loadQuestTitles(s.root, s.version, pack) })
+}
 func (s *Source) FieldObjects(key int) (FieldObjectDesign, error) {
 	return s.fieldObjects.get(key, func() (FieldObjectDesign, error) { return LoadFieldObjects(s.root, s.version, key) })
 }

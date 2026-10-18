@@ -504,5 +504,9 @@
   "console.error.confirming_update": "이전 업데이트의 정상 작동을 확인하는 중입니다. 확인이 완료될 때까지 기다려 주세요.",
   "console.updates.component": "업데이트 내용",
   "console.updates.component.server": "서버 프로그램",
-  "console.updates.restarting": "업데이트를 적용하기 위해 서버를 다시 시작하는 중입니다. 이 페이지는 자동으로 다시 연결됩니다."
+  "console.updates.restarting": "업데이트를 적용하기 위해 서버를 다시 시작하는 중입니다. 이 페이지는 자동으로 다시 연결됩니다.",
+  "config.game.section.spine_recording.title": "상호작용 녹화",
+  "config.game.section.spine_recording.help": "플레이어의 일러스트 상호작용을 저장하여 게임에서 재생합니다. 설정을 변경한 후 서버를 다시 시작하세요.",
+  "config.game.field.spine_recording.download_base_url.label": "녹화 다운로드 기본 URL",
+  "config.game.field.spine_recording.download_base_url.help": "비워 두면 이 서버를 사용합니다. 사용자 지정 주소는 이 서버의 /client/spine-recordings/ 로 역방향 프록시해야 합니다. 녹화 경로와 접근 자격 정보는 자동으로 추가됩니다. 외부 공개 주소에는 HTTPS가 필요합니다."
 }

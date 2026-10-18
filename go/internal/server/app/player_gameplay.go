@@ -90,6 +90,7 @@ func (p *playerAssembly) gameplay(ctx command.Context) error {
 		return fmt.Errorf("load event economy: %w", err)
 	}
 	p.eventEconomy.AttachHuntingAP(p.huntingService)
+	p.friendshipService.AttachEconomy(p.eventEconomy)
 	if err = p.worldService.AttachSkyWay(ctx, p.design.skyway, p.gameplayStore, p.eventEconomy, p.huntingService, p.design.skywaySchedules, p.design.rewardGraph); err != nil {
 		return fmt.Errorf("attach SkyWay: %w", err)
 	}
@@ -113,6 +114,8 @@ func (p *playerAssembly) gameplay(ctx command.Context) error {
 		return fmt.Errorf("attach overwhelm design: %w", err)
 	}
 	p.talentUseService.AttachEffect(4, p.worldService.ApplyTalentFieldAbsorb)
+	p.talentUseService.AttachEffect(15, p.worldService.ApplyTalentWaypoint)
+	p.deckStateStore.AttachWaypointTalent(p.talentUseService.ConsumeWaypoint)
 	p.talentUseService.AttachEffect(20, p.worldService.ApplyTalentMonsterSummon)
 	p.dispatchService, err = roster.OpenTalentDispatch(p.gameplayStore, p.design.dispatchDesign, p.eventEconomy)
 	if err != nil {

@@ -1,12 +1,12 @@
 package roster
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"slices"
 	"sort"
 	"strconv"
@@ -96,7 +95,7 @@ func (s *TalentUseService) Handle(ctx command.Context, path string, request []by
 	} else {
 		var owned bool
 		character, owned = s.characters.Find(ctx, index)
-		if !owned || character.TalentLevel == 0 {
+		if !owned || character.TalentLevel == 0 || character.HP == 0 {
 			return fail(fmt.Errorf("player: talent caster unavailable"))
 		}
 		var exists bool
@@ -108,6 +107,9 @@ func (s *TalentUseService) Handle(ctx command.Context, path string, request []by
 	rule, ok := s.design.Rules[[2]uint64{meta.Group, character.TalentLevel}]
 	if !ok {
 		return fail(fmt.Errorf("player: talent level design unavailable"))
+	}
+	fail = func(e error) (int, []byte, bool, error) {
+		return 43, nil, true, fmt.Errorf("player: talent caster=%d character=%d group=%d class=%d level=%d target_count=%d targets=%v: %w", index, character.ID, rule.Group, rule.Class, rule.Level, len(targets), targets[:min(len(targets), 5)], e)
 	}
 	if s.context == nil {
 		return fail(fmt.Errorf("player: talent field context unavailable"))
@@ -185,11 +187,11 @@ func (s *TalentUseService) Handle(ctx command.Context, path string, request []by
 			if len(rule.Values) > 0 {
 				probability = rule.Values[0]
 			}
-			draw, e := rand.Int(rand.Reader, big.NewInt(1000000))
+			draw, e := util.RandomUint64N(1000000)
 			if e != nil {
 				return fail(e)
 			}
-			success = float64(draw.Int64()) < probability*10000
+			success = float64(draw) < probability*10000
 		}
 		if success && npc.Rewards[matched] > 0 {
 			rewards, ok := s.design.Rewards[npc.Rewards[matched]]
@@ -244,7 +246,7 @@ func (s *TalentUseService) Handle(ctx command.Context, path string, request []by
 		if err != nil {
 			return fail(err)
 		}
-	} else if rule.Class == 4 || rule.Class == 18 || rule.Class == 20 {
+	} else if rule.Class == 4 || rule.Class == 15 || rule.Class == 18 || rule.Class == 20 {
 		return fail(fmt.Errorf("player: field talent executor unavailable"))
 	} else if len(targets) > 0 && rule.Class != 3 && rule.Class != 11 {
 		return fail(fmt.Errorf("player: unexpected talent targets"))
@@ -288,6 +290,9 @@ func (s *TalentUseService) Handle(ctx command.Context, path string, request []by
 		current.End += int64(rule.Values[1]) * 1000
 	}
 	state.Skills[rule.Group] = current
+	if rule.Class == 15 {
+		state.Receipts["waypoint:pending:"+ctx.SessionID] = talentUseReceipt{Digest: fmt.Sprintf("%d/%d", pack, targets[0])}
+	}
 	out := append([]byte(nil), extra...)
 	out = wire.AppendBytes(out, 1, talentUseWire(rule.Group, current, rule))
 	if gain > 0 {
@@ -838,6 +843,11 @@ func (s *CharacterStore) talentSkillUpgrade(ctx command.Context, request []byte)
 		}
 		s.characters = next
 	}
+	if s.talentUpgraded != nil {
+		if err := s.talentUpgraded(ctx, current); err != nil {
+			return 0, nil, true, fmt.Errorf("player: reset upgraded talent usage: %w", err)
+		}
+	}
 	// TalentSkillUpgradeResponse.item_info is an optional grant list. Current
 	// GameData defines no refund, so the correct protobuf response is empty.
 	s.talentApplied[ledgerKey] = reply
@@ -935,7 +945,7 @@ func (s *TalentUseService) healing(ctx command.Context, request []byte, operatio
 		var owned bool
 		character, owned = s.characters.Find(ctx, index)
 		meta, ok := s.design.Characters[character.ID]
-		if !owned || !ok || meta.BannedPacks[pack] {
+		if !owned || !ok || character.HP == 0 || meta.BannedPacks[pack] {
 			return fail(fmt.Errorf("player: invalid healing caster"))
 		}
 		rule, ok = s.design.Rules[[2]uint64{meta.Group, character.TalentLevel}]
@@ -982,10 +992,8 @@ func (s *TalentUseService) healing(ctx command.Context, request []byte, operatio
 			return fail(fmt.Errorf("player: recovery cost overflow"))
 		}
 		if rule.Catalyst > 0 {
-			if rule.Catalyst > 0 {
-				if _, err = s.wallet.SpendCatalystOnce(ctx, identity, rule.Catalyst*uint64(len(ids))); err != nil {
-					return fail(err)
-				}
+			if _, err = s.wallet.SpendCatalystOnce(ctx, identity, rule.Catalyst*uint64(len(ids))); err != nil {
+				return fail(err)
 			}
 		}
 	}

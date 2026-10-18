@@ -89,31 +89,36 @@ func Client(ctx context.Context, options Options, out io.Writer) (Installation, 
 		return result, err
 	}
 	defer d.client.CloseIdleConnections()
-	builds, err := d.fastest(ctx, m.BuildOrigins, m.GamePath, "Game ZIP")
-	if err != nil {
-		return result, err
-	}
 	dataPath := "/GameData/" + m.GameDataVersion
 	serverPath := "/ServerData/" + m.Platform + "/HD/" + m.BundleVersion
-	dataOrigins, err := d.fastest(ctx, m.ResourceOrigins, dataPath+"/release/common-dbdata.bin", "GameData")
-	if err != nil {
-		return result, err
-	}
-	bundleOrigins, err := d.fastest(ctx, m.ResourceOrigins, serverPath+"/catalog_alpha.json", "ServerData")
-	if err != nil {
-		return result, err
-	}
 	if options.ProbeOnly {
+		for _, probe := range []struct {
+			origins     []string
+			path, label string
+		}{{m.BuildOrigins, m.GamePath, "Game ZIP"}, {m.ResourceOrigins, dataPath + "/release/common-dbdata.bin", "GameData"}, {m.ResourceOrigins, serverPath + "/catalog_alpha.json", "ServerData"}} {
+			if _, err := d.fastest(ctx, probe.origins, probe.path, probe.label); err != nil {
+				return result, err
+			}
+		}
 		return result, nil
 	}
+	d.measureOrigins = true
 	archive := filepath.Join(packageDir, "downloads", "BrownDust-II-"+m.GameVersion+".zip")
-	if err := d.receiveAll(ctx, []file{{remote: m.GamePath, target: archive, digest: m.GameSHA256, size: m.GameBytes}}, builds, 1); err != nil {
+	gameFile := file{remote: m.GamePath, target: archive, digest: m.GameSHA256, size: m.GameBytes}
+	builds := m.BuildOrigins
+	if !d.verified(gameFile) {
+		builds, err = d.fastest(ctx, m.BuildOrigins, m.GamePath, "Game ZIP")
+		if err != nil {
+			return result, err
+		}
+	}
+	if err := d.receiveAll(ctx, []file{gameFile}, builds, 1); err != nil {
 		return result, err
 	}
 	if err := extractArchive(archive, result.GameDir, true, m.GameSHA256); err != nil {
 		return result, err
 	}
-	if err := d.resources(ctx, result.ResourceDir, m, serverPath, dataPath, bundleOrigins, dataOrigins, options.Workers); err != nil {
+	if err := d.resources(ctx, result.ResourceDir, m, serverPath, dataPath, m.ResourceOrigins, m.ResourceOrigins, options.Workers); err != nil {
 		return result, err
 	}
 	d.log("Downloaded: game=%s resources=%s", result.GameDir, result.ResourceDir)

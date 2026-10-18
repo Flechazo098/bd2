@@ -23,6 +23,10 @@ func (s *Store) ActivatedWaypoint(pack, id uint64) bool {
 	return hasWaypoint(s.state.Waypoints[pack], id)
 }
 
+func (s *Store) AttachWaypointTalent(consume func(ctx command.Context, pack, mapID, seq uint64) error) {
+	s.waypointTalent = consume
+}
+
 func (s *Store) ActivatedWaypointCount() uint64 {
 	var count uint64
 	for _, points := range s.state.Waypoints {

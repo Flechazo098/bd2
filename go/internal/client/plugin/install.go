@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -148,6 +149,9 @@ func InstallSet(gameDir string, sources []string) (SetResult, error) {
 			dropped = append(dropped, name)
 		}
 	}
+	if len(changed) == 0 && len(dropped) == 0 && slices.Equal(previous, names) {
+		return result, nil
+	}
 	defer func() {
 		for _, f := range changed {
 			if f.temporary != "" {
@@ -171,7 +175,7 @@ func InstallSet(gameDir string, sources []string) (SetResult, error) {
 		var failures []error
 		for _, f := range slices.Backward(replaced) {
 			if f.backup != "" {
-				if err := commonconfig.ReplaceFile(f.backup, f.destination); err != nil {
+				if err := util.ReplaceFile(f.backup, f.destination); err != nil {
 					failures = append(failures, fmt.Errorf("restore %s: %w", f.name, err))
 				}
 			} else if err := os.Remove(f.destination); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -199,7 +203,7 @@ func InstallSet(gameDir string, sources []string) (SetResult, error) {
 		}
 		replaced = append(replaced, f)
 		if f.temporary != "" {
-			if err := commonconfig.ReplaceFile(f.temporary, f.destination); err != nil {
+			if err := util.ReplaceFile(f.temporary, f.destination); err != nil {
 				return err
 			}
 			f.temporary = ""

@@ -84,21 +84,24 @@ BD2 Launcher 是使用 Wails 的独立桌面游戏启动器。Windows 使用系�
 
 ### 在 Linux 服务器上用 Docker 部署
 
-[`tools/server/bd2-host.sh`](tools/server/bd2-host.sh) 负责 Docker 主机上的全部工作：准备目录、生成认证主密钥、检出源码、安装更新交接单元，并从已发布的提交构建镜像、切换容器、等待就绪。需要 Docker（含 Compose 插件）、git、jq、curl、flock、nsenter 和 openssl，以 root 运行。一键安装并部署 `main` 的最新提交：
+[`tools/server/bd2-host.sh`](tools/server/bd2-host.sh) 负责 Docker 主机上的目录与密钥初始化、更新交接单元安装、镜像构建、容器切换和就绪检查。手动部署直接使用指定目录的当前源码（包括未提交的改动），或指定的 Docker 镜像，与 Git 提交、推送无关。需要 Docker（含 Compose 插件）、jq、curl、flock、nsenter、realpath 和 openssl，以 root 运行。从源码目录安装并部署：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Flechazo098/bd2/main/tools/server/bd2-host.sh -o bd2-host.sh && sudo sh bd2-host.sh setup
+sudo sh tools/server/bd2-host.sh setup "$PWD"
 ```
 
 脚本安装到 `/opt/bd2/bd2-host.sh`，数据在 `/opt/bd2/data`，Compose 文件首次从 [模板](tools/server/compose.yaml) 生成为 `/opt/bd2/compose.yaml`（默认只在本机 `8080` 端口提供服务，请放在 HTTPS 反向代理之后）。之后：
 
 ```bash
-sudo /opt/bd2/bd2-host.sh deploy     # 部署 main 的最新提交，或指定完整提交号
+sudo /opt/bd2/bd2-host.sh deploy /path/to/bd2  # 构建该目录当前源码
+sudo /opt/bd2/bd2-host.sh deploy --image bd2server:my-build
 sudo /opt/bd2/bd2-host.sh status
-sudo /opt/bd2/bd2-host.sh rollback   # 换回上次切换前的镜像；存档不回滚
+sudo /opt/bd2/bd2-host.sh rollback   # 换回上次切换前的镜像；存档不会回滚
 ```
 
-在管理台应用的服务端更新也由同一脚本完成交接。路径、源码地址和 Compose 文件可在 `/etc/bd2/host.conf` 中以 `BD2_DIR=`、`SOURCE_URL=`、`COMPOSE_FILE=`、`SERVICE=`、`READY_PORT=`、`SEED_CONFIG_DIR=` 修改。不用 Docker 时，可使用 [systemd 单元模板](tools/server/bd2server.service)。
+省略源码路径时，`deploy` 使用 `/opt/bd2/source` 中已有的源码。指定镜像时，优先使用本机镜像，不存在则拉取，并以解析出的不可变镜像 ID 切换。首次安装若没有相邻的 Compose 模板和本地源码，脚本会用 Git 从 `SOURCE_URL` 获取初始源码。
+
+在管理台应用的服务端更新也由同一脚本完成交接，继续使用经过验证的发布请求；发布提供固定摘要的镜像时无需 Git，按源码更新时才获取对应提交。路径、源码地址和 Compose 文件可在 `/etc/bd2/host.conf` 中以 `BD2_DIR=`、`SOURCE_URL=`、`COMPOSE_FILE=`、`SERVICE=`、`READY_PORT=`、`SEED_CONFIG_DIR=` 修改。不用 Docker 时，可使用 [systemd 单元模板](tools/server/bd2server.service)。
 
 服务端日志默认输出 INFO 及以上级别，仅终端启用颜色：TRACE 灰、DEBUG 青、INFO 绿、WARN 黄、ERROR 红。可用 `serve --log-level debug --log-color auto` 调整。级别支持 `trace/debug/info/warn/error`，颜色支持 `auto/always/never`。`auto` 下文件和重定向保持纯文本，`NO_COLOR` 或 `TERM=dumb` 也会关闭颜色；如需在 Docker 日志流中显示颜色，可显式选择 `always`。
 

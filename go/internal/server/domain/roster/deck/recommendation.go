@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 )
 
 type RecommendContext struct{ BattleMode, PackID, BattleIndex, Level, TeamCountType, DeckType uint64 }
@@ -191,6 +192,13 @@ func (s *Store) PrepareRecommendationSnapshot(ctx command.Context, identity stri
 }
 
 const RecommendationTopic = "deck.recommendation"
+const PopularityTopic = "deck.popularity"
+
+type PopularityPublication struct {
+	CompletedAt, Score, OwnerIndex uint64
+	TotalWarCostumes               []uint64
+	Record                         RecommendRecord
+}
 
 type RecommendationPublication struct {
 	Revision uint64
@@ -257,6 +265,25 @@ func (s *Store) CompleteRecommendation(ctx command.Context, identity string, win
 	options, e := s.RecommendationOptions(ctx)
 	if e != nil {
 		return e
+	}
+	if found && options.IsSave {
+		var record RecommendRecord
+		if e = json.Unmarshal(raw, &record); e != nil {
+			return e
+		}
+		if e = record.Validate(); e != nil {
+			return e
+		}
+		switch record.Context.BattleMode {
+		case 7, 16, 19, 20:
+			payload, err := json.Marshal(PopularityPublication{CompletedAt: uint64(time.Now().UnixMilli()), Record: record})
+			if err != nil {
+				return err
+			}
+			if e = ctx.Publish(command.Event{ID: "battle:" + identity, Topic: PopularityTopic, Payload: payload}); e != nil {
+				return e
+			}
+		}
 	}
 	if found && win && options.IsSave {
 		var record RecommendRecord

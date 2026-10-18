@@ -16,6 +16,10 @@ var schema = commonconfig.Schema{
 	Title:   "游戏规则",
 	Summary: "服务端统一的玩法规则。修改后重启服务端生效。",
 	Sections: []commonconfig.Section{
+		{ID: "spine_recording", Title: "互动录制", Help: "保存玩家的互动立绘操作记录，并供原生客户端回放。修改后重启服务端生效。", Fields: []commonconfig.Field{
+			{Path: "spine_recording.download_base_url", Kind: commonconfig.KindString, Label: "录制下载基础 URL", Format: "url", Placeholder: "https://game.example.com/client/spine-recordings",
+				Help: "留空使用本服地址。自定义地址须反向代理到本服的 /client/spine-recordings/；系统会在其后追加录制路径和访问凭据。公网须使用 HTTPS。"},
+		}},
 		{ID: "story", Title: "开局章节", Help: "首次成功初始化后永久保存在服务器状态中，之后不能更改；不能通过删除数据库切换开局。", Fields: []commonconfig.Field{
 			{Path: "story.start_pack_id", Kind: commonconfig.KindInteger, Label: "起始章节", Options: []commonconfig.Option{
 				{Value: 21, Label: "店长篇", Help: "当前客户端默认的开局，使用该篇的任务和教学流程。"},

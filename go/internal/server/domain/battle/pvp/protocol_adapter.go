@@ -16,6 +16,7 @@ import (
 )
 
 var codes = map[string]int{
+	"/ColosseumPromotionRewardInfo": 0,
 	"/PvpBattleReplayInfo": 0, "/PvpBattleReset": 0,
 	"/PvpBattleUserInfo": 86, "/PvpBattleDeckInfo": 87, "/PvpBattleDeckSave": 88, "/PvpBattleMatching": 89, "/PvpBattleStart": 90, "/PvpBattleEnd": 91, "/PvpBattleReward": 92, "/PvpBattleRanking": 93, "/PvpBattleRankUserDetail": 94, "/PvpBattleHistory": 97, "/PvpBattleHistoryDeckInfo": 98, "/PvpSeasonReward": 136, "/PvpBattleOnceRewardInfo": 277, "/PvpContentsItemRenew": 401,
 	"/ColosseumUserInfo": 473, "/ColosseumSeasonReward": 474, "/ColosseumDeckInfo": 475, "/ColosseumDeckSave": 476, "/ColosseumContentsItemRenew": 478, "/ColosseumRanking": 479, "/ColosseumRankDetail": 480, "/ColosseumBattleHistory": 481, "/ColosseumBattleReplayInfo": 482, "/ColosseumBattleMatching": 483, "/ColosseumBattleStart": 484, "/ColosseumBattleEnd": 485, "/ColosseumBlessInfo": 486, "/ColosseumBlessSave": 487, "/ColosseumBattleCountReset": 488, "/ColosseumApBuy": 489,
@@ -86,6 +87,9 @@ func (s *Service) handle(ctx command.Context, mode Mode, path string, request []
 	}
 	m := s.state.Modes[mode]
 	switch path {
+	case "/ColosseumPromotionRewardInfo":
+		// Current Colosseum design has season rewards only; the native client discards this legacy query's list.
+		return nil, nil
 	case "/PvpBattleUserInfo", "/ColosseumUserInfo":
 		return s.userInfo(ctx, mode)
 	case "/PvpBattleDeckInfo":

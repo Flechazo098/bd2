@@ -504,5 +504,9 @@
   "console.error.confirming_update": "The previous update is still being checked. Wait until it is confirmed healthy.",
   "console.updates.component": "Update content",
   "console.updates.component.server": "Server program",
-  "console.updates.restarting": "The server is restarting to apply the update. This page reconnects automatically."
+  "console.updates.restarting": "The server is restarting to apply the update. This page reconnects automatically.",
+  "config.game.section.spine_recording.title": "Interaction recording",
+  "config.game.section.spine_recording.help": "Save players’ interactive illustration actions for playback in the game. Restart the server after changing this setting.",
+  "config.game.field.spine_recording.download_base_url.label": "Recording download base URL",
+  "config.game.field.spine_recording.download_base_url.help": "Leave empty to use this server. A custom address must reverse proxy to /client/spine-recordings/ on this server; recording paths and access credentials are appended automatically. Public addresses must use HTTPS."
 }

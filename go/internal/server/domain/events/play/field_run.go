@@ -1,15 +1,14 @@
 package eventplay
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/ranking"
 	"bd2server/internal/server/protocol/wire"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
 	"slices"
 	"strings"
 )
@@ -35,11 +34,11 @@ func selectFieldObjects(d *gamedata.EventField) (map[uint64]bool, error) {
 		}
 		slices.Sort(ids)
 		for i := range count {
-			n, err := rand.Int(rand.Reader, big.NewInt(int64(len(ids))-int64(i)))
+			n, err := util.RandomUint64N(uint64(len(ids)) - i)
 			if err != nil {
 				return nil, err
 			}
-			j := int(i) + int(n.Int64())
+			j := int(i) + int(n)
 			ids[i], ids[j] = ids[j], ids[i]
 			selected[ids[i]] = true
 		}

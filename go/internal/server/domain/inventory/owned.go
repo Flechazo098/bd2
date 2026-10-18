@@ -19,15 +19,16 @@ import (
 // Inventory holds player-owned rewards separately from the immutable starter
 // seed. GrantOnce uses a battle identity to prevent double-credit on retries.
 type Inventory struct {
-	store       stateio.ScopedEntryStore
-	starter     []Item
-	randomBoxes *gamedata.RandomBoxDesign
-	itemStacks  *gamedata.ItemStackDesign
-	owned       ownedSnapshot
-	persisted   ownedSnapshot
-	capacity    *InventorySlots
-	discard     map[uint64]func(command.Context, Item) error
-	corePresent bool
+	store                 stateio.ScopedEntryStore
+	starter               []Item
+	randomBoxes           *gamedata.RandomBoxDesign
+	prestigeIllustrations map[uint64]uint64
+	itemStacks            *gamedata.ItemStackDesign
+	owned                 ownedSnapshot
+	persisted             ownedSnapshot
+	capacity              *InventorySlots
+	discard               map[uint64]func(command.Context, Item) error
+	corePresent           bool
 }
 
 type ownedSnapshot struct {
@@ -220,7 +221,7 @@ func (s *Inventory) GrantOnce(ctx command.Context, identity string, rewards []ga
 		return nil, err
 	}
 	s.owned = next
-	return newItems, nil
+	return s.withPrestigeIllustrations(newItems), nil
 }
 
 func cloneOwnedSnapshot(current ownedSnapshot) ownedSnapshot {
@@ -319,7 +320,7 @@ func equalItem(a, b Item) bool { return reflect.DeepEqual(a, b) }
 // Legacy grants made before instance tracking return an empty slice.
 func (s *Inventory) GrantedItems(identity string) []Item {
 	if rewards, found := s.owned.GrantRewards[identity]; found {
-		return append([]Item(nil), rewards...)
+		return s.withPrestigeIllustrations(append([]Item(nil), rewards...))
 	}
 	indexes := s.owned.GrantItems[identity]
 	result := make([]Item, 0, len(indexes))
@@ -331,7 +332,7 @@ func (s *Inventory) GrantedItems(identity string) []Item {
 			}
 		}
 	}
-	return result
+	return s.withPrestigeIllustrations(result)
 }
 
 // WasGranted reports whether GrantOnce committed the identity even when all

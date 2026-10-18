@@ -20,6 +20,7 @@ var (
 // deliberately absent. ResponseFields contains the remaining top-level
 // protobuf fields (such as client-notification state), never an HTTP envelope.
 type LoginSeed struct {
+	totalWarSlots      func(command.Context) (uint64, error)
 	guildRaidSlots     func(command.Context) (uint64, error)
 	fishing            func() FishingState
 	Version            string
@@ -78,6 +79,14 @@ func (s *LoginSeed) AttachGuildRaidSlots(read func(command.Context) (uint64, err
 		return errors.New("account: missing guild raid slots")
 	}
 	s.guildRaidSlots = read
+	return nil
+}
+
+func (s *LoginSeed) AttachTotalWarSlots(read func(command.Context) (uint64, error)) error {
+	if read == nil {
+		return errors.New("account: missing total war preset provider")
+	}
+	s.totalWarSlots = read
 	return nil
 }
 

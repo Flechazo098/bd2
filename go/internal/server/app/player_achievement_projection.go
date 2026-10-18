@@ -70,6 +70,15 @@ func (p *playerAssembly) attachAchievementProjection(provider *achievements.Owne
 				add(key[0], key[1], value)
 			}
 		}
+		if p.eventPlayService != nil {
+			values, err := p.eventPlayService.AchievementProgress(p.design.achievementCounterDesign)
+			if err != nil {
+				return err
+			}
+			for key, value := range values {
+				add(key[0], key[1], value)
+			}
+		}
 		if p.pvpService != nil {
 			for key, value := range p.pvpService.RecordedBattleCounts() {
 				add(key[0], key[1], value)

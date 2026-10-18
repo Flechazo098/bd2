@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -277,14 +278,20 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 			id, value, event := scalar(f.Value, 2), scalar(f.Value, 3), scalar(f.Value, 4)
 			v, e := s.find(4, event)
 			if e != nil {
-				return e
+				return fmt.Errorf("eventtasks: mission update event=%d group=%d mission=%d: %w", event, scalar(f.Value, 1), id, e)
 			}
 			t, ok := s.design.Missions[id]
-			if !ok || t.Group != scalar(f.Value, 1) || !s.availableTask(ctx, v, t) {
-				return errors.New("eventtasks: invalid mission update")
+			if !ok || t.Group != scalar(f.Value, 1) || !s.availableTask(ctx, v, t) || value > math.MaxInt32 {
+				return fmt.Errorf("eventtasks: invalid mission update event=%d group=%d mission=%d value=%d", event, scalar(f.Value, 1), id, value)
 			}
-			if value > s.mission(v, id).Value {
-				return errors.New("eventtasks: client progress exceeds authoritative gameplay")
+			m := s.mission(v, id)
+			progress := min(value, t.Target)
+			// Homescreen slots are saved in ClientLocalInfo; MissionUpdate is
+			// the native client's only server notification of this UI action.
+			if t.Type == 39 && t.SubType == 0 && (len(t.Params) == 0 || slices.Contains(t.Params, uint64(0))) {
+				m.Value = max(m.Value, progress)
+			} else if progress > m.Value {
+				return fmt.Errorf("eventtasks: client progress exceeds authoritative gameplay event=%d group=%d mission=%d condition=%d subtype=%d client=%d authoritative=%d target=%d", event, t.Group, id, t.Type, t.SubType, value, m.Value, t.Target)
 			}
 			return nil
 		})
@@ -352,7 +359,7 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 				m.Value = completed
 			}
 		}
-		for _, pv := range s.registry.List() {
+		for _, pv := range s.passSchedules() {
 			if pv.Type == 5 && s.active(pv) && s.design.Passes[pv.ID].MissionGroup == v.ID {
 				s.pass(pv).Exp += exp
 			}
@@ -360,10 +367,11 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		return wire.AppendBytes(nil, 1, bundle), nil
 	case "/PassInfo":
 		var out []byte
-		for _, v := range s.registry.List() {
+		for _, v := range s.passSchedules() {
 			if v.Type != 5 || !s.active(v) {
 				continue
 			}
+			s.reconcileGuidePass(v)
 			p := s.pass(v)
 			x := wire.AppendVarint(nil, 1, v.ID)
 			x = wire.AppendVarint(x, 2, p.Exp)
@@ -398,9 +406,10 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		if !ok {
 			return nil, errors.New("eventtasks: unknown pass")
 		}
+		s.reconcileGuidePass(v)
 		p := s.pass(v)
 		if d.NewbieStep > s.state.NewbieStep {
-			return nil, errors.New("eventtasks: guide pass step locked")
+			return nil, fmt.Errorf("eventtasks: guide pass step locked pass=%d step=%d unlocked_step=%d", v.ID, d.NewbieStep, s.state.NewbieStep)
 		}
 		all, id, rt := scalar(b, 2) != 0, scalar(b, 4), scalar(b, 5)
 		if rt > 1 {
@@ -479,6 +488,7 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		if e != nil {
 			return nil, e
 		}
+		s.reconcileGuidePass(v)
 		p := s.pass(v)
 		typ := scalar(b, 3)
 		var chosen *gamedata.EventPassBuy

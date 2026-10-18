@@ -11,8 +11,9 @@ type PrestigeSkinSelling struct {
 }
 
 type PrestigeSkinCatalog struct {
-	Skins   map[uint64]uint64
-	Selling []PrestigeSkinSelling
+	Skins         map[uint64]uint64
+	Illustrations map[uint64]uint64
+	Selling       []PrestigeSkinSelling
 }
 
 // LoadPrestigeSkinCatalog loads the skin ownership mapping and the separate
@@ -29,7 +30,7 @@ func LoadPrestigeSkinCatalog(root, version string) (*PrestigeSkinCatalog, error)
 		return nil, e
 	}
 	defer func() { _ = rows.Close() }()
-	catalog := &PrestigeSkinCatalog{Skins: map[uint64]uint64{}}
+	catalog := &PrestigeSkinCatalog{Skins: map[uint64]uint64{}, Illustrations: map[uint64]uint64{}}
 	for rows.Next() {
 		var id uint64
 		var raw []byte
@@ -44,11 +45,38 @@ func LoadPrestigeSkinCatalog(root, version string) (*PrestigeSkinCatalog, error)
 			return nil, fmt.Errorf("gamedata: invalid prestige skin %d", id)
 		}
 		catalog.Skins[id] = costume
+		illustration, err := optionalScalar(raw, 7)
+		if err != nil {
+			return nil, err
+		}
+		if illustration != 0 {
+			catalog.Illustrations[id] = illustration
+		}
 	}
 	if e := rows.Err(); e != nil {
 		return nil, e
 	}
 	_ = rows.Close()
+	matched := 0
+	if err := readCashMetadata(db, "LobbySettingItemTable", func(raw []byte) error {
+		id, err := optionalScalar(raw, 3)
+		if err != nil {
+			return err
+		}
+		skin, err := optionalScalar(raw, 9)
+		if err != nil {
+			return err
+		}
+		if skin != 0 && catalog.Illustrations[skin] == id {
+			matched++
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if matched != len(catalog.Illustrations) {
+		return nil, fmt.Errorf("gamedata: prestige illustration ownership mapping is incomplete")
+	}
 	rows, e = db.Query("SELECT ProtoBuf FROM SkinSellingTable ORDER BY groupId,id")
 	if e != nil {
 		return nil, e

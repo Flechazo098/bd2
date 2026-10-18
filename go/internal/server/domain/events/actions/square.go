@@ -1,12 +1,11 @@
 package eventactions
 
 import (
-	"crypto/rand"
+	"bd2server/internal/common/util"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
 	"strconv"
 
 	"bd2server/internal/server/design/gamedata"
@@ -116,11 +115,7 @@ func squareSample(limit uint64) (uint64, error) {
 	if limit == 0 {
 		return 0, fmt.Errorf("eventactions: empty square reward pool")
 	}
-	n, err := rand.Int(rand.Reader, new(big.Int).SetUint64(limit))
-	if err != nil {
-		return 0, err
-	}
-	return n.Uint64(), nil
+	return util.RandomUint64N(limit)
 }
 
 func (s *Service) square(ctx command.Context, path string, req []byte, identity string) ([]byte, error) {

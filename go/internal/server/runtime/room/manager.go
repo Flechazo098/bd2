@@ -1,9 +1,8 @@
 package room
 
 import (
+	"bd2server/internal/common/util"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -130,11 +129,11 @@ func New(config Config, rules Rules) (*Manager, error) {
 }
 
 func randomID() string {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	value, err := util.RandomHex(16)
+	if err != nil {
 		panic(err)
 	}
-	return hex.EncodeToString(value[:])
+	return value
 }
 func memberKey(p Principal, k Kind) string { return p.AccountID + ":" + string(k) }
 func validPrincipal(p Principal) bool {

@@ -13,6 +13,15 @@ import (
 )
 
 type designCatalog struct {
+	collectionStatistics     *gamedata.CollectionStatisticsDesign
+	interaction              *gamedata.SpineInteractionDesign
+	community                *gamedata.CommunityRewards
+	cafeteria                *gamedata.CafeteriaDesign
+	dating                   *gamedata.DatingDesign
+	castle                   *gamedata.CastleRewardDesign
+	ib                       *gamedata.IBDesign
+	roguelike                *gamedata.RogueLikeDesign
+	life                     *gamedata.LifeCatalog
 	friends                  gamedata.FriendRules
 	rooms                    *gamedata.RoomDesign
 	roomCommerce             *gamedata.RoomCommerceDesign
@@ -34,6 +43,7 @@ type designCatalog struct {
 	presetDesign             *gamedata.PresetDesign
 	recipeDesign             *gamedata.CookingRecipeDesign
 	randomBoxes              *gamedata.RandomBoxDesign
+	resourceItems            *gamedata.ResourceItemDesign
 	itemStacks               *gamedata.ItemStackDesign
 	slotDesign               *gamedata.InventorySlotDesign
 	contentTickets           *gamedata.GachaContentTicketDesign
@@ -101,8 +111,44 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	calendars, gameRules := c.calendars, c.gameRules
 	d := &designCatalog{source: gamedata.NewSource(gameData, gameDataVersion)}
 	var err error
+	d.collectionStatistics, err = gamedata.LoadCollectionStatistics(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load collection statistics: %w", err)
+	}
 	if err := d.loadSharedDesign(c); err != nil {
 		return nil, err
+	}
+	d.interaction, err = gamedata.LoadSpineInteractionDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load interaction design: %w", err)
+	}
+	d.community, err = gamedata.LoadCommunityRewards(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load community rewards: %w", err)
+	}
+	d.cafeteria, err = gamedata.LoadCafeteriaDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load cafeteria design: %w", err)
+	}
+	d.dating, err = gamedata.LoadDatingDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load dating design: %w", err)
+	}
+	d.castle, err = gamedata.LoadCastleRewardDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load castle design: %w", err)
+	}
+	d.ib, err = gamedata.LoadIBDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load IB design: %w", err)
+	}
+	d.roguelike, err = gamedata.LoadRogueLikeDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load roguelike design: %w", err)
+	}
+	d.life, err = gamedata.LoadLifeCatalog(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load life design: %w", err)
 	}
 	d.nicknameTicketID, err = gamedata.LoadNicknameTicketID(gameData, gameDataVersion)
 	if err != nil {
@@ -136,6 +182,10 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	d.randomBoxes, err = gamedata.LoadRandomBoxDesign(gameData, gameDataVersion)
 	if err != nil {
 		return nil, fmt.Errorf("load deterministic random-box GameData: %w", err)
+	}
+	d.resourceItems, err = gamedata.LoadResourceItemDesign(gameData, gameDataVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load resource selection items: %w", err)
 	}
 	d.itemStacks, err = gamedata.LoadItemStackDesign(gameData, gameDataVersion)
 	if err != nil {

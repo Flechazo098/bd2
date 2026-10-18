@@ -1,13 +1,12 @@
 package roster
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/storage/stateio"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/big"
 
 	"time"
 )
@@ -51,11 +50,7 @@ func OpenTalentDispatch(store stateio.Store, d map[uint64]gamedata.TalentDispatc
 		if n == 0 {
 			return 0, fmt.Errorf("dispatch: empty pool")
 		}
-		v, e := rand.Int(rand.Reader, new(big.Int).SetUint64(n))
-		if e != nil {
-			return 0, e
-		}
-		return v.Uint64(), nil
+		return util.RandomUint64N(n)
 	}}, nil
 }
 func (s *TalentDispatchService) load(ctx command.Context) (talentDispatchState, error) {

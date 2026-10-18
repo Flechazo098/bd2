@@ -34,6 +34,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load random box state: %w", err)
 	}
+	p.boxService.AttachResourceItems(p.design.resourceItems)
 	p.eventPlayService, err = eventplay.Open(ctx, p.gameplayStore, p.design.eventPlay, func(id uint64) (*gamedata.EventField, error) {
 		return p.design.source.EventField(p.design.eventPlay, id)
 	}, p.eventRegistry, p.eventEconomy)
@@ -41,6 +42,13 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("load event play state: %w", err)
 	}
 	p.eventPlayService.AttachBattleChallenges(p.design.eventBattleChallenges)
+	p.eventPlayService.AttachBattleCostumes(func(command.Context) map[uint64]bool {
+		owned := make(map[uint64]bool)
+		for _, costume := range p.collection.Costumes() {
+			owned[costume.ID] = true
+		}
+		return owned
+	})
 	if p.shared != nil {
 		p.eventPlayService.AttachArcadeRankings(p.shared.arcadeRanks, p.arcadeRankingProfile)
 		p.eventPlayService.AttachRankingGuilds(p.arcadeRankingGuilds)
@@ -83,14 +91,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	if err = p.eventActionsService.AttachMiniContent(ctx, p.eventPlayService, p.design.miniContent); err != nil {
 		return fmt.Errorf("attach mini event content: %w", err)
 	}
-	p.eventActionsService.AttachFriendshipLevel(func(id uint64) uint64 {
-		for _, entry := range p.collection.FriendshipEntries() {
-			if entry.State != nil && entry.State.CostumeID == id {
-				return entry.State.Level
-			}
-		}
-		return 0
-	})
+	p.eventActionsService.AttachFriendshipLevel(p.friendshipService.CurrentLevel)
 	p.eventActionsService.AttachChargeInfo(func(ctx command.Context) ([]byte, error) {
 		rows, err := p.eventEconomy.ChargeInfo(ctx)
 		if err != nil {
@@ -111,17 +112,12 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return rows, nil
 	})
 	p.eventActionsService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
-		if err := p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked); err != nil {
-			return err
-		}
-		return p.eventTasksService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
+		return p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
 	})
 	p.eventPlayService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
-		if err := p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked); err != nil {
-			return err
-		}
-		return p.eventTasksService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
+		return p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
 	})
+	p.eventPlayService.AttachRhythmResult(p.eventTasksService.RecordRhythmResult)
 	p.eventTasksService.AttachAssociatedMissionGroup(func(schedule events.Schedule) uint64 {
 		if group := p.eventActionsService.AssociatedMissionGroup(schedule); group != 0 {
 			return group

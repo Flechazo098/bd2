@@ -254,7 +254,7 @@ func TestSurvivalInsufficientUpgradePreservesStateAndResources(t *testing.T) {
 	}
 }
 
-func TestSichuanStarsUnlockAndFirstClearRewardsSurviveLogin(t *testing.T) {
+func TestSichuanStarsAndChallengeClearRewardsSurviveLogin(t *testing.T) {
 	h := newPlayHarness(t)
 	h.design.Tables["SichuanEventTable"] = [][]byte{testRow(1, 1, 2, 1, 3, 9), testRow(1, 1, 2, 2, 3, 9), testRow(1, 2, 2, 1, 3, 9)}
 	h.design.Tables["SichuanStageTable"] = [][]byte{testRow(2, 9, 8, 6, 3, 300, 3, 200, 3, 100)}
@@ -283,6 +283,7 @@ func TestSichuanStarsUnlockAndFirstClearRewardsSurviveLogin(t *testing.T) {
 	if h.balance(t, 27) != 2 {
 		t.Fatal("normal reward repeated after another level")
 	}
+	// LocalTextTable 125517 grants furniture for every challenge clear, regardless of rank.
 	h.call(t, "/MiniGameSichuanStart", start(7, 2, 1))
 	response := h.call(t, "/MiniGameSichuanEnd", end(8, 180))
 	if h.balance(t, 27) != 3 {
@@ -293,14 +294,28 @@ func TestSichuanStarsUnlockAndFirstClearRewardsSurviveLogin(t *testing.T) {
 		t.Fatal("challenge retry duplicated reward")
 	}
 	h.call(t, "/MiniGameSichuanStart", start(9, 2, 1))
-	h.call(t, "/MiniGameSichuanEnd", end(10, 120))
-	if h.balance(t, 27) != 3 {
-		t.Fatal("improved challenge time repeated furniture reward")
+	response = h.call(t, "/MiniGameSichuanEnd", end(10, 120))
+	if h.balance(t, 27) != 4 {
+		t.Fatal("second challenge clear did not grant its furniture reward")
+	}
+	h.reopen(t)
+	if !bytes.Equal(response, h.call(t, "/MiniGameSichuanEnd", end(10, 120))) || h.balance(t, 27) != 4 {
+		t.Fatal("second challenge retry duplicated reward")
+	}
+	h.call(t, "/MiniGameSichuanStart", start(11, 2, 1))
+	h.call(t, "/MiniGameSichuanEnd", end(12, 150))
+	if h.balance(t, 27) != 5 {
+		t.Fatal("slower challenge clear did not grant its furniture reward")
+	}
+	h.call(t, "/MiniGameSichuanStart", start(13, 2, 1))
+	h.call(t, "/MiniGameSichuanEnd", wire.AppendVarint(end(14, 150), 2, 1))
+	if h.balance(t, 27) != 5 {
+		t.Fatal("abandoned challenge granted a clear reward")
 	}
 	if records := h.service.RankRecords(); len(records) != 1 || records[0].Score != 120 {
 		t.Fatal("challenge did not retain the smaller clear time")
 	}
-	info := h.call(t, "/MiniGameSichuanInfo", testRow(1, 11, 2, 120))
+	info := h.call(t, "/MiniGameSichuanInfo", testRow(1, 15, 2, 120))
 	schedule, _, _ := wire.Bytes(info, 1)
 	var rewardClaims int
 	_ = wire.Walk(schedule, func(f wire.Field) error {
@@ -417,17 +432,18 @@ func TestRhythmModeRecordsAndClientChecksumPersistIndependently(t *testing.T) {
 	}
 	h.call(t, "/MiniGameRhythmPlayStart", testRow(1, 1, 2, 150, 3, 1, 4, 1, 5, 1))
 	h.reject(t, "/MiniGameRhythmPlayEnd", end(2, 500, 1, 2, "invalid", testRow(1, 1, 2, 2)))
-	// Checksums independently evaluated from the client's Well512 game-id recipe.
-	first := end(2, 500, 1, 2, "46791-73263-83023-36775", testRow(1, 1, 2, 2))
+	// Four GetRandom(11111, 99999) calls on the official 2.36.7 DLL's Well512,
+	// using seeds 511, 714, and 815 from owner + score + seq + weighted judgments.
+	first := end(2, 500, 1, 2, "46791-93319-66855-91591", testRow(1, 1, 2, 2))
 	response := h.call(t, "/MiniGameRhythmPlayEnd", first)
 	h.reopen(t)
 	if !bytes.Equal(response, h.call(t, "/MiniGameRhythmPlayEnd", first)) {
 		t.Fatal("rhythm retry changed persisted result")
 	}
 	h.call(t, "/MiniGameRhythmPlayStart", testRow(1, 3, 2, 150, 3, 1, 4, 1, 5, 2))
-	h.call(t, "/MiniGameRhythmPlayEnd", end(4, 700, 2, 1, "74755-20195-46291-30923", testRow(1, 1, 2, 1), testRow(1, 2, 2, 1)))
+	h.call(t, "/MiniGameRhythmPlayEnd", end(4, 700, 2, 1, "74755-89667-46635-29179", testRow(1, 1, 2, 1), testRow(1, 2, 2, 1)))
 	h.call(t, "/MiniGameRhythmPlayStart", testRow(1, 5, 2, 150, 3, 1, 4, 1, 5, 0))
-	h.call(t, "/MiniGameRhythmPlayEnd", end(6, 800, 1, 2, "82423-77223-39783-63487", testRow(1, 1, 2, 2)))
+	h.call(t, "/MiniGameRhythmPlayEnd", end(6, 800, 1, 2, "82423-43279-74967-75511", testRow(1, 1, 2, 2)))
 	h.reopen(t)
 	records := h.service.RankRecords()
 	if len(records) != 2 {

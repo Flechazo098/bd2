@@ -1,6 +1,8 @@
 *
 !go/
 !go/**
+go/.cache/
+go/config.json
 !versions.json
 !CHANGELOG.md*
 !UPDATE_FINGERPRINT.json

@@ -123,6 +123,11 @@ type DefensePublished struct {
 	Version int
 	Defense PublishedSnapshot
 }
+
+type PopularityPublished struct {
+	Timestamp, Side uint64
+	Snapshot        PublishedSnapshot
+}
 type BattleSettled struct {
 	Seeds                                            []uint64
 	Version                                          int

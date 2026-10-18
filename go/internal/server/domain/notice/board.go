@@ -21,6 +21,7 @@ const (
 	TypeNotice        Type = 0
 	TypeEvent         Type = 1
 	TypeUpdate        Type = 2
+	TypeSurvey        Type = 3
 	TypeEmergency     Type = 4
 	TypeDeveloperNote Type = 5
 )
@@ -32,6 +33,7 @@ type Block struct {
 
 type Notice struct {
 	ID        int32
+	SubType   int32
 	Type      Type
 	Thumbnail string
 	Start     time.Time
@@ -141,7 +143,7 @@ func (b *Board) Replace(source string, notices []Notice) {
 }
 
 func equal(a, b Notice) bool {
-	return a.ID == b.ID && a.Type == b.Type && a.Thumbnail == b.Thumbnail &&
+	return a.ID == b.ID && a.SubType == b.SubType && a.Type == b.Type && a.Thumbnail == b.Thumbnail &&
 		a.Start.Equal(b.Start) && a.End.Equal(b.End) && a.URL == b.URL && a.Pinned == b.Pinned && a.Sort == b.Sort &&
 		maps.EqualFunc(a.Text, b.Text, func(x, y Content) bool { return x.Title == y.Title && slices.Equal(x.Blocks, y.Blocks) })
 }

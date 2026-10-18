@@ -85,6 +85,9 @@ func encode(n Notice, locale string) []byte {
 	if n.Sort != 0 {
 		out = wire.AppendVarint(out, 11, uint64(n.Sort))
 	}
+	if n.SubType != 0 {
+		out = wire.AppendVarint(out, 12, uint64(n.SubType))
+	}
 	return out
 }
 

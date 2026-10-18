@@ -81,7 +81,10 @@ func (s *Service) packInfoFor(ctx command.Context, packID int) ([]byte, error) {
 }
 
 func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, error) {
-	var out []byte
+	out, err := s.mapExplorationWire(ctx, packID)
+	if err != nil {
+		return nil, err
+	}
 	if active := s.firstUnclearedQuestFor(packID); active != 0 {
 		quest := s.questInfoWire(packID, active)
 		chars, _, err := s.resolveActivePartyWires(ctx, packID, active)
@@ -364,6 +367,10 @@ func (s *Service) resolveActivePartyWires(ctx command.Context, packID, questID i
 }
 
 func (s *Service) storyPackDBInfoRows(ctx command.Context) [][]byte {
+	played := make(map[int]bool)
+	for _, quest := range s.state.AllClearedQuests() {
+		played[quest.PackID] = true
+	}
 	ids := make([]int, 0, len(s.storyCatalog.Packs))
 	for id := range s.storyCatalog.Packs {
 		if s.storyCatalog.Packs[id].Type == 5 {
@@ -405,6 +412,10 @@ func (s *Service) storyPackDBInfoRows(ctx command.Context) [][]byte {
 		if s.collection != nil {
 			_, owned := s.collection.Grant(packPurchaseIdentity(id))
 			purchased = purchased || owned
+			if pack := s.storyCatalog.Packs[id]; pack.Type == 0 && pack.BuyPrice == 0 {
+				_, entered := s.collection.Grant(packEntryIdentity(id))
+				purchased = purchased || entered || played[id]
+			}
 		}
 		if purchased {
 			row = wire.AppendVarint(row, 8, 1)
@@ -825,6 +836,13 @@ func (s *Service) handlePackDocking(ctx command.Context, path string, request []
 	identity := packJamIdentity(packID)
 	if path == "/PackPreviewInfo" {
 		var response []byte
+		titles, err := s.questTitleInfo(packID)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		for _, title := range titles {
+			response = wire.AppendBytes(response, 2, title)
+		}
 		if active := s.firstUnclearedQuestFor(packID); active != 0 {
 			quest := wire.AppendVarint(nil, 1, uint64(active))
 			quest = wire.AppendVarint(quest, 6, uint64(packID))
@@ -931,6 +949,11 @@ func (s *Service) enterEventFieldPack(ctx command.Context, pack gamedata.EventFi
 		position = saved.RawJSON
 	}
 	response := wire.AppendString(nil, 4, position)
+	exploration, err := s.mapExplorationWire(ctx, pack.ID)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	response = append(response, exploration...)
 	buffs, err := s.fieldBuffInfo(ctx)
 	if err != nil {
 		return 0, nil, true, err
@@ -969,6 +992,19 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 	}
 	switch path {
+	case "/PackSubQuestClearInfo":
+		return s.packSubQuestClearInfo(request)
+	case "/ReputationInfo":
+		return s.reputationInfo(ctx, request)
+	case "/QuestImmortalReset":
+		if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
+			return 70, nil, true, ErrInvalidRequest
+		}
+		return 70, nil, true, fmt.Errorf("world: immortal quest difficulty is unavailable in the current design")
+	case "/QuestMaxClearInfo":
+		return s.questMaxClearInfo(request)
+	case "/ActiveMap":
+		return s.handleActiveMap(ctx, request)
 	case "/StatueObjectReward":
 		return s.handleStatueReward(ctx, request)
 	case "/TimePause":
@@ -1110,12 +1146,19 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err := s.ResumeFieldTime(ctx); err != nil {
 			return 0, nil, true, err
 		}
-		if s.battleActive != nil && s.battleActive(ctx) {
-			return 0, nil, true, fmt.Errorf("%w: active battle", ErrInvalidRequest)
-		}
 		pack, err := requestPack(request)
 		if err != nil {
 			return 0, nil, true, err
+		}
+		activeBattle := s.battleActive != nil && s.battleActive(ctx)
+		if activeBattle {
+			current, err := s.CurrentPackID(ctx)
+			if err != nil {
+				return 0, nil, true, err
+			}
+			if pack != current {
+				return 0, nil, true, fmt.Errorf("%w: cannot change pack during active battle", ErrInvalidRequest)
+			}
 		}
 		if eventPack, found, err := s.resolveEventFieldPack(ctx, pack); err != nil {
 			return 0, nil, true, err
@@ -1127,6 +1170,9 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 					return 0, nil, true, x
 				}
 				body = append(body, extra...)
+			}
+			if e == nil && activeBattle {
+				body = wire.AppendVarint(body, 17, 1)
 			}
 			return code, body, handled, e
 		}
@@ -1141,9 +1187,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			if e != nil {
 				return 0, nil, true, e
 			}
-			v.Run = skyWayRun{Generation: v.Run.Generation}
-			if e = s.skyway.save(ctx, v); e != nil {
-				return 0, nil, true, e
+			if !activeBattle {
+				v.Run = skyWayRun{Generation: v.Run.Generation}
+				if e = s.skyway.save(ctx, v); e != nil {
+					return 0, nil, true, e
+				}
 			}
 		}
 		if active := s.firstUnclearedQuestFor(pack); active != 0 {
@@ -1155,6 +1203,9 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err != nil {
 			return 0, nil, true, err
 		}
+		if activeBattle {
+			response = wire.AppendVarint(response, 17, 1)
+		}
 		if s.talentPackInfo != nil {
 			extra, e := s.talentPackInfo(ctx, pack)
 			if e != nil {
@@ -1164,6 +1215,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		if err := s.state.SetActivePackID(ctx, pack); err != nil {
 			return 0, nil, true, err
+		}
+		if story := s.storyCatalog.Packs[pack]; story.Type == 0 && story.BuyPrice == 0 && s.collection != nil {
+			if err := s.collection.RecordGrantMarker(ctx, packEntryIdentity(pack)); err != nil {
+				return 0, nil, true, err
+			}
 		}
 		s.setCurrentPack(pack)
 		return 5, response, true, nil

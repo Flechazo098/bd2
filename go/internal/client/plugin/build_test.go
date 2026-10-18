@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"context"
 	"os"
@@ -54,7 +55,7 @@ func TestVerifiedPluginCacheSkipsSDKVersionAndCompilationStages(t *testing.T) {
 	}
 	write("plugins/LocalIdentity/bin/Release/netstandard2.1/BD2LocalIdentity.dll", "verified-output")
 	output := filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll")
-	digest, err := fileDigest(output)
+	digest, err := util.SHA256File(output)
 	if err != nil {
 		t.Fatal(err)
 	}

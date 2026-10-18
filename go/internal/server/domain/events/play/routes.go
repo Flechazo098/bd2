@@ -1,6 +1,7 @@
 package eventplay
 
 var codes = map[string]int{
+	"/QuickBattle":                      261,
 	"/MiniGameUserRecordInfo":           635,
 	"/MiniGameRanking":                  391,
 	"/MiniGameRelayServerInfo":          0,

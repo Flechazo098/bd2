@@ -5,6 +5,7 @@ package admin
 
 import (
 	"bd2server/internal/common/i18n"
+	"bd2server/internal/common/util"
 	"context"
 	"crypto/subtle"
 	"embed"
@@ -125,7 +126,7 @@ func New(options Options) (*Console, error) {
 // externally visible origin of this server. Whoever can read the server's
 // output is its operator, so the link needs no other credential.
 func (c *Console) IssueSignInLink(base string) (string, error) {
-	token, err := randomToken(32)
+	token, err := util.RandomBase64URL(32)
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +320,7 @@ func (c *Console) loginStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "invalid", "login could not be started")
 		return
 	}
-	key, err := randomToken(24)
+	key, err := util.RandomBase64URL(24)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "unavailable", "login could not be started")
 		return
@@ -647,7 +648,7 @@ func (c *Console) sendMail(w http.ResponseWriter, r *http.Request, current sessi
 		fail(w, http.StatusBadRequest, "invalid_text", "title (1-500) and body (1-5000) are required")
 		return
 	}
-	identity, err := randomToken(18)
+	identity, err := util.RandomBase64URL(18)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "unavailable", "mail unavailable")
 		return

@@ -19,7 +19,7 @@ type economyAPClock struct {
 func (e *Economy) AttachAPRefresh(caps map[uint64]uint64, design gamedata.HuntingAPDesign) error {
 
 	for typ, max := range caps {
-		if (typ != 30 && typ != 32) || max == 0 || max > math.MaxInt32 {
+		if (typ != 30 && typ != 32 && typ != 35) || max == 0 || max > math.MaxInt32 {
 			return fmt.Errorf("events: invalid free AP refresh")
 		}
 	}
@@ -29,6 +29,9 @@ func (e *Economy) AttachAPRefresh(caps map[uint64]uint64, design gamedata.Huntin
 	return nil
 }
 func (e *Economy) refreshAP(ctx command.Context, s *economySnapshot) error {
+	if err := e.refreshDatingAP(ctx, s); err != nil {
+		return err
+	}
 	if len(e.apCaps) == 0 {
 		return nil
 	}
@@ -51,7 +54,21 @@ func (e *Economy) refreshAP(ctx command.Context, s *economySnapshot) error {
 		reset = now >= clock.Next
 	}
 	if !reset {
-		return nil
+		changed := false
+		for typ, cap := range e.apCaps {
+			if _, found := s.Balances[typ]; !found {
+				s.Balances[typ] = cap
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			return err
+		}
+		return e.store.Save(ctx.State, "event_economy", raw)
 	}
 	maps.Copy(s.Balances, e.apCaps)
 	clock.Next = next
@@ -77,7 +94,7 @@ func (e *Economy) CanApply(ctx command.Context, costs []gamedata.Reward) error {
 	if err = e.refreshAP(ctx, &s); err != nil {
 		return err
 	}
-	var wallet, ap []gamedata.Reward
+	var wallet, ap, life []gamedata.Reward
 	var items []assets.Item
 	totals := map[[2]uint64]uint64{}
 	for _, r := range costs {
@@ -90,6 +107,8 @@ func (e *Economy) CanApply(ctx command.Context, costs []gamedata.Reward) error {
 	for k, n := range totals {
 		r := gamedata.Reward{Type: k[0], ID: k[1], Count: n}
 		switch {
+		case lifeCurrency(r.Type):
+			life = append(life, r)
 		case walletCurrency(r.Type):
 			wallet = append(wallet, r)
 		case apCurrency(r.Type):
@@ -120,7 +139,15 @@ func (e *Economy) CanApply(ctx command.Context, costs []gamedata.Reward) error {
 		}
 	}
 	if len(items) > 0 {
-		return e.items.CanConsume(ctx, items)
+		if err := e.items.CanConsume(ctx, items); err != nil {
+			return err
+		}
+	}
+	if len(life) > 0 {
+		if e.life == nil {
+			return fmt.Errorf("events: life economy unavailable")
+		}
+		return e.life.CanApply(ctx, life, nil)
 	}
 	return nil
 }

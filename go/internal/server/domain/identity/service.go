@@ -1,9 +1,8 @@
 package identity
 
 import (
+	"bd2server/internal/common/util"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"time"
 )
@@ -47,26 +46,19 @@ func New(config Config, store Repository) (*Service, error) {
 	return &Service{config: config, store: store}, nil
 }
 func (s *Service) Now() time.Time { return s.store.Now() }
-func randomToken(size int) (string, error) {
-	b := make([]byte, size)
-	if _, e := rand.Read(b); e != nil {
-		return "", e
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
 func (s *Service) CreateDevice(provider, clientIP string) (CreatedDevice, error) {
 	if _, ok := s.config.Providers[provider]; !ok {
 		return CreatedDevice{}, failure(Invalid, "provider is not enabled")
 	}
-	id, e := randomToken(18)
+	id, e := util.RandomBase64URL(18)
 	if e != nil {
 		return CreatedDevice{}, e
 	}
-	secret, e := randomToken(32)
+	secret, e := util.RandomBase64URL(32)
 	if e != nil {
 		return CreatedDevice{}, e
 	}
-	ticket, e := randomToken(32)
+	ticket, e := util.RandomBase64URL(32)
 	if e != nil {
 		return CreatedDevice{}, e
 	}
@@ -102,15 +94,15 @@ func (s *Service) Start(provider, id, ticket string) (Authorization, error) {
 	if s.Now().Unix() >= row.Expires {
 		return Authorization{}, failure(Expired, "login transaction expired")
 	}
-	state, e := randomToken(32)
+	state, e := util.RandomBase64URL(32)
 	if e != nil {
 		return Authorization{}, e
 	}
-	verifier, e := randomToken(32)
+	verifier, e := util.RandomBase64URL(32)
 	if e != nil {
 		return Authorization{}, e
 	}
-	nonce, e := randomToken(24)
+	nonce, e := util.RandomBase64URL(24)
 	if e != nil {
 		return Authorization{}, e
 	}
@@ -203,7 +195,7 @@ func (s *Service) CompleteDevice(deviceID, provider string, id ProviderIdentity)
 		if e != nil {
 			return e
 		}
-		account.ID, e = randomToken(18)
+		account.ID, e = util.RandomBase64URL(18)
 		if e != nil {
 			return e
 		}
@@ -222,15 +214,15 @@ func (s *Service) CompleteDevice(deviceID, provider string, id ProviderIdentity)
 	if account.Status != "active" {
 		return reject()
 	}
-	family, e := randomToken(18)
+	family, e := util.RandomBase64URL(18)
 	if e != nil {
 		return e
 	}
-	access, e := randomToken(32)
+	access, e := util.RandomBase64URL(32)
 	if e != nil {
 		return e
 	}
-	refresh, e := randomToken(32)
+	refresh, e := util.RandomBase64URL(32)
 	if e != nil {
 		return e
 	}
@@ -351,11 +343,11 @@ func (s *Service) Refresh(token, attemptID string) (TokenSet, error) {
 		}
 		return TokenSet{}, invalidRefresh(Unauthorized, "refresh token replayed")
 	}
-	access, e := randomToken(32)
+	access, e := util.RandomBase64URL(32)
 	if e != nil {
 		return TokenSet{}, e
 	}
-	refresh, e := randomToken(32)
+	refresh, e := util.RandomBase64URL(32)
 	if e != nil {
 		return TokenSet{}, e
 	}

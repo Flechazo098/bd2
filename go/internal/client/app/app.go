@@ -14,7 +14,6 @@ import (
 	"time"
 
 	clientconfig "bd2server/internal/client/config"
-	clientdownload "bd2server/internal/client/download"
 	clientlayout "bd2server/internal/client/layout"
 	clientplugin "bd2server/internal/client/plugin"
 	clientsetup "bd2server/internal/client/setup"
@@ -33,6 +32,8 @@ type Options struct {
 	LogPath             string
 	Versions            versionconfig.Config
 	Development         bool
+	PackageDirectory    string
+	DownloadManifest    string
 	LocalIdentityPlugin string
 	LoginUIPlugin       string
 	CashShopPlugin      string
@@ -85,7 +86,7 @@ type Studio struct {
 	cancel          context.CancelFunc
 	mu              sync.Mutex
 	quitOnce        sync.Once
-	launch          func(string, string) error
+	launch          func(string, string, *slog.Logger) error
 	savePreferences func(string) error
 	updates         *clientupdate.Manager
 }
@@ -153,7 +154,8 @@ func (s *Studio) Initialize() InitialState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state := InitialState{Platform: runtime.GOOS, ClientVersion: s.options.Versions.ClientVersion, GameVersion: s.options.Versions.GameVersion, LogPath: s.options.LogPath, GameDirectory: s.options.InitialGameDir, ServerOrigin: "http://127.0.0.1:8080", CDNMode: clientconfig.CDNOfficial}
-	if state.GameDirectory == "" {
+	s.installationDefaults(&state)
+	if s.options.InitialGameDir == "" {
 		return state
 	}
 	if _, err := clientsetup.Inspect(state.GameDirectory, s.versions(state.GameDirectory)); err != nil {
@@ -220,8 +222,7 @@ func (s *Studio) Browse(input Request) (Response, error) {
 		if dir == "" {
 			return success("Selection cancelled", nil), nil
 		}
-		status, err := clientsetup.Inspect(dir, s.versions(dir))
-		return success("Game client found", status), err
+		return success("Installation directory selected", clientsetup.GameStatus{GameDirectory: dir}), nil
 	})
 }
 
@@ -263,7 +264,7 @@ func (s *Studio) Resources(input Request) (Response, error) {
 
 func (s *Studio) Save(input Request) (Response, error) {
 	return s.perform("save settings", func() (Response, error) {
-		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings(), s.versions(input.GameDirectory))
+		settings, err := clientsetup.SaveSettings(input.GameDirectory, input.settings())
 		if err != nil {
 			return Response{}, err
 		}
@@ -276,7 +277,10 @@ func (s *Studio) Save(input Request) (Response, error) {
 
 func (s *Studio) Patch(input Request) (Response, error) {
 	return s.perform("patch client", func() (Response, error) {
-		result, err := clientsetup.Patch(input.GameDirectory, input.settings(), s.versions(input.GameDirectory))
+		if _, err := clientsetup.SaveSettings(input.GameDirectory, input.settings()); err != nil {
+			return Response{}, err
+		}
+		result, err := clientsetup.Patch(input.GameDirectory)
 		if err != nil {
 			return Response{}, err
 		}
@@ -293,7 +297,10 @@ func (s *Studio) Patch(input Request) (Response, error) {
 
 func (s *Studio) Install(input Request) (Response, error) {
 	return s.perform("install plugins", func() (Response, error) {
-		result, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), s.versions(input.GameDirectory), s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin)
+		if _, err := clientsetup.SaveSettings(input.GameDirectory, input.settings()); err != nil {
+			return Response{}, err
+		}
+		result, err := clientsetup.InstallPlugins(input.GameDirectory, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin)
 		if err != nil {
 			return Response{}, err
 		}
@@ -326,9 +333,10 @@ func (s *Studio) Launch(input Request) (Response, error) {
 		if !status.BepInEx {
 			return Response{}, errors.New("install BepInEx before launching the game")
 		}
-		ctx, cancel := context.WithTimeout(s.context(), 12*time.Second)
-		defer cancel()
-		if _, err := clientsetup.FetchResourcePolicy(ctx, nil, input.settings(), versions); err != nil {
+		policyCtx, cancel := context.WithTimeout(s.context(), 12*time.Second)
+		_, err = clientsetup.FetchResourcePolicy(policyCtx, nil, input.settings(), versions)
+		cancel()
+		if err != nil {
 			return Response{}, err
 		}
 
@@ -337,9 +345,14 @@ func (s *Studio) Launch(input Request) (Response, error) {
 			if s.updates != nil {
 				configured.Runtime = s.updates.Runtime(input.GameDirectory)
 			}
-			settings, err := clientsetup.SaveSettings(input.GameDirectory, configured, versions)
+			settings, err := clientsetup.SaveSettings(input.GameDirectory, configured)
 			if err != nil {
 				return Response{}, err
+			}
+			if settings.CDNMode == clientconfig.CDNLocal {
+				if err := clientsetup.InstallLocalCatalog(input.GameDirectory, settings.LocalResourceDirectory, versions.BundleVersion); err != nil {
+					return Response{}, err
+				}
 			}
 			if err := s.savePreferences(input.GameDirectory); err != nil {
 				return Response{}, err
@@ -357,7 +370,7 @@ func (s *Studio) Launch(input Request) (Response, error) {
 					return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)
 				}
 			}
-			if err := s.launch(installation.LaunchTarget(), settings.ProxyURL); err != nil {
+			if err := s.launch(installation.LaunchTarget(), settings.ProxyURL, s.log()); err != nil {
 				if errors.Is(err, errGameAlreadyRunning) {
 					return success("Brown Dust II is already running", nil), nil
 				}
@@ -370,7 +383,7 @@ func (s *Studio) Launch(input Request) (Response, error) {
 			return launch()
 		}
 		var response Response
-		err = s.updates.WithLaunch(ctx, nil, status.GameDirectory, input.ServerOrigin, func() error {
+		err = s.updates.WithLaunch(s.context(), nil, status.GameDirectory, input.ServerOrigin, func() error {
 			var err error
 			response, err = launch()
 			return err
@@ -394,6 +407,9 @@ func (s *Studio) CheckUpdates() (Response, error) {
 		return Response{}, errors.New("update service is unavailable")
 	}
 	ctx := s.context()
+	if err := s.updates.WaitIdle(ctx); err != nil {
+		return Response{}, err
+	}
 	if err := s.updates.Check(ctx); err != nil {
 		return Response{}, err
 	}
@@ -441,41 +457,5 @@ func (s *Studio) Quit() {
 		if s.host.Quit != nil {
 			s.host.Quit(s.context())
 		}
-	})
-}
-
-// Prepare readies an installation in one step: the required game and resource
-// update, BepInEx from the launcher package, the client patch and the plugins.
-func (s *Studio) Prepare(input Request) (Response, error) {
-	return s.perform("prepare client", func() (Response, error) {
-		if s.updates != nil {
-			if err := s.updates.PrepareGame(s.context(), input.GameDirectory, input.ServerOrigin); err != nil {
-				return Response{}, err
-			}
-		}
-		versions := s.versions(input.GameDirectory)
-		status, err := clientsetup.Inspect(input.GameDirectory, versions)
-		if err != nil {
-			return Response{}, err
-		}
-		if !status.BepInEx {
-			executable, err := os.Executable()
-			if err != nil {
-				return Response{}, err
-			}
-			if err := clientdownload.InstallBepInEx(filepath.Dir(executable), status.GameDirectory); err != nil {
-				return Response{}, err
-			}
-		}
-		if _, err := clientsetup.Patch(input.GameDirectory, input.settings(), versions); err != nil {
-			return Response{}, err
-		}
-		if _, err := clientsetup.InstallPlugins(input.GameDirectory, input.settings(), versions, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin); err != nil {
-			return Response{}, err
-		}
-		if err := s.savePreferences(input.GameDirectory); err != nil {
-			return Response{}, err
-		}
-		return success("Client prepared", nil), nil
 	})
 }

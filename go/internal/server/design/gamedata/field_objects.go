@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/common/util"
 	"database/sql"
 	"fmt"
 )
@@ -155,7 +156,7 @@ func loadFieldObjects(db, common *sql.DB) (FieldObjectDesign, error) {
 // DropType 0 makes DropCount weighted selections. DropType 1 checks each
 // component's percentage independently; its DropCount may be proto default zero.
 func (o FieldRewardObject) Draw() ([]BattleReward, error) {
-	return o.draw(cryptoDraw)
+	return o.draw(util.RandomUint64N)
 }
 
 // Validate every OPEN branch before the catalog is installed, including zero

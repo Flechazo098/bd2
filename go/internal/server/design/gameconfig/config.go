@@ -19,6 +19,7 @@ type Config struct {
 	Story          StoryConfig          `json:"story"`
 	Purchases      PurchasesConfig      `json:"purchases"`
 	TextModeration TextModerationConfig `json:"text_moderation"`
+	SpineRecording SpineRecordingConfig `json:"spine_recording"`
 }
 
 type TextModerationConfig struct {
@@ -42,6 +43,7 @@ var TextScopes = []string{
 	"nickname", "greeting", "master_title", "preset_name", "equipment_preset_name", "equipment_mark",
 	"monster_hunt_preset_name", "guild_raid_preset_name", "colosseum_preset_name",
 	"guild_name", "guild_message", "guild_notice", "room_name", "chat",
+	"spine_record_name",
 }
 
 func DefaultTextModeration() TextModerationConfig {
@@ -141,6 +143,7 @@ var Document = commonconfig.Document[Config]{
 		var problems commonconfig.Problems
 		realtimeRules(c.Realtime, &problems)
 		textModerationRules(c.TextModeration, &problems)
+		spineRecordingRules(c.SpineRecording, &problems)
 		return problems
 	},
 	Advice: func(c Config, path string) commonconfig.Problems {

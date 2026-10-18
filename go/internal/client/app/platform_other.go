@@ -5,6 +5,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 )
 
@@ -14,6 +15,6 @@ func ShowFatalError(err error) {
 	}
 }
 
-func launchGame(string, string) error {
+func launchGame(string, string, *slog.Logger) error {
 	return errors.New("the Brown Dust II client is not supported on Linux")
 }

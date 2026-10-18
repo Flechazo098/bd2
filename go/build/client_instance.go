@@ -63,8 +63,13 @@ func (t task) runClient2(args []string) error {
 					return fmt.Errorf("load second client's connection settings: %w", err)
 				}
 			}
-			if _, err := clientsetup.SaveSettings(instance.GameDirectory, settings, versions); err != nil {
+			if _, err := clientsetup.SaveSettings(instance.GameDirectory, settings); err != nil {
 				return fmt.Errorf("prepare second client's resources: %w", err)
+			}
+			if settings.CDNMode == clientconfig.CDNLocal {
+				if err := clientsetup.InstallLocalCatalog(instance.GameDirectory, settings.LocalResourceDirectory, versions.BundleVersion); err != nil {
+					return fmt.Errorf("prepare second client's catalog: %w", err)
+				}
 			}
 			return nil
 		}},
@@ -78,7 +83,7 @@ func (t task) runClient2(args []string) error {
 			plugins := func(name string) string {
 				return filepath.Join(t.root, "plugins", name, "bin", "Release", "netstandard2.1", "BD2"+name+".dll")
 			}
-			_, err := clientsetup.InstallPlugins(instance.GameDirectory, settings, versions, plugins("LocalIdentity"), plugins("LoginUI"), plugins("CashShop"), plugins("FChat"))
+			_, err := clientsetup.InstallPlugins(instance.GameDirectory, plugins("LocalIdentity"), plugins("LoginUI"), plugins("CashShop"), plugins("FChat"))
 			return err
 		}},
 		taskgraph.Task{Name: "instance:launcher", DependsOn: []string{"instance:plugins"}, Run: func(context.Context) error {

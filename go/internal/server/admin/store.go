@@ -1,11 +1,10 @@
 package admin
 
 import (
+	"bd2server/internal/common/util"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,10 +79,10 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // CreateSession returns a new session token and its CSRF token.
 func (s *Store) CreateSession(ctx context.Context, accountID string, role Role) (token, csrf string, err error) {
-	if token, err = randomToken(32); err != nil {
+	if token, err = util.RandomBase64URL(32); err != nil {
 		return "", "", err
 	}
-	if csrf, err = randomToken(24); err != nil {
+	if csrf, err = util.RandomBase64URL(24); err != nil {
 		return "", "", err
 	}
 	now := s.now()
@@ -185,14 +184,6 @@ func (s *Store) RemoveAdministrator(ctx context.Context, accountID string) error
 		return err
 	}
 	return tx.Commit()
-}
-
-func randomToken(size int) (string, error) {
-	b := make([]byte, size)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func digest(token string) []byte {

@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,7 @@ func visibleCommand(name string, args ...string) *exec.Cmd {
 	return command
 }
 
-func launchGame(target, proxyURL string) error {
+func launchGame(target, proxyURL string, logger *slog.Logger) error {
 	if processID, running, err := windowsExecutableProcessID(filepath.Base(target)); err != nil {
 		return err
 	} else if running {
@@ -77,10 +78,32 @@ func launchGame(target, proxyURL string) error {
 	if err := command.Start(); err != nil {
 		return err
 	}
-	// Unity creates the top-level window asynchronously. Best-effort foreground
-	// activation prevents the new window from opening behind BD2 Launcher.
-	activateProcessWindow(uint32(command.Process.Pid), 15*time.Second)
-	return nil
+	pid := command.Process.Pid
+	logger.Info("game process started", "pid", pid, "executable", target)
+	finished := make(chan error, 1)
+	go func() {
+		err := command.Wait()
+		logger.Info("game process exited", "pid", pid, "exit_code", command.ProcessState.ExitCode(), "error", err)
+		finished <- err
+	}()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-finished:
+			return fmt.Errorf("game exited before showing a window: pid=%d exit_code=%d error=%v; see Player.log", pid, command.ProcessState.ExitCode(), err)
+		case <-deadline.C:
+			return fmt.Errorf("game process is running without a visible window after 30 seconds: pid=%d; see Player.log", pid)
+		case <-ticker.C:
+			if topLevelWindowForProcess(uint32(pid)) != 0 {
+				activateProcessWindow(uint32(pid), 0)
+				logger.Info("game window ready", "pid", pid)
+				return nil
+			}
+		}
+	}
 }
 
 func windowsExecutableProcessID(name string) (uint32, bool, error) {

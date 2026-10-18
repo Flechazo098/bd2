@@ -39,6 +39,7 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err := p.ownedItems.AttachItemStacks(p.design.itemStacks); err != nil {
 		return err
 	}
+	p.ownedItems.AttachPrestigeIllustrations(p.design.prestigeCatalog.Illustrations)
 	if p.initializeAccount {
 		if err := p.ownedItems.InitializeItems(ctx, p.starter.OwnedItems); err != nil {
 			return fmt.Errorf("initialize owned item seed: %w", err)

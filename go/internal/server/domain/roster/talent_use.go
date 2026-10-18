@@ -51,7 +51,9 @@ func NewTalentUseService(d *gamedata.TalentUseDesign, store stateio.Store, chara
 	if d == nil || store == nil || characters == nil || inventory == nil || wallet == nil || economy == nil {
 		return nil, fmt.Errorf("player: missing talent use dependencies")
 	}
-	return &TalentUseService{design: d, store: store, characters: characters, inventory: inventory, wallet: wallet, economy: economy, effects: map[uint64]TalentUseEffect{}, now: time.Now}, nil
+	s := &TalentUseService{design: d, store: store, characters: characters, inventory: inventory, wallet: wallet, economy: economy, effects: map[uint64]TalentUseEffect{}, now: time.Now}
+	characters.talentUpgraded = s.resetUpgradedTalent
+	return s, nil
 }
 func (s *TalentUseService) AttachContext(ctx command.Context, f TalentUseContext) { s.context = f }
 func (s *TalentUseService) AttachEffect(class uint64, f TalentUseEffect)          { s.effects[class] = f }
@@ -76,7 +78,29 @@ func (s *TalentUseService) load(ctx command.Context) (talentUseSnapshot, error) 
 func sha256Sum(b []byte) []byte        { v := sha256.Sum256(b); return v[:] }
 func talentNPCClass(class uint64) bool { return class == 1 || class == 5 || class == 16 || class == 19 }
 func talentHasCooldown(class uint64) bool {
-	return class == 2 || class == 6 || class == 12 || class == 13 || class == 15 || class == 17
+	return class == 2 || class == 6 || class == 12 || class == 13 || class == 17
+}
+
+func (s *TalentUseService) resetUpgradedTalent(ctx command.Context, character Character) error {
+	meta := s.design.Characters[character.ID]
+	rule := s.design.Rules[[2]uint64{meta.Group, character.TalentLevel}]
+	if rule.Class != 3 {
+		return nil
+	}
+	v, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	current := v.Skills[rule.Group]
+	current.Count = 0
+	current.Level = rule.Level
+	current.Settled = true
+	v.Skills[rule.Group] = current
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return s.store.Save(ctx.State, "talentuse", raw)
 }
 
 func (s *TalentUseService) experienceMaximum(c Character) (uint64, error) {
@@ -117,6 +141,33 @@ func (s *TalentUseService) ShopDiscount(ctx command.Context, pack, npc uint64) (
 		return 0, e
 	}
 	return v.Discounts[ctx.SessionID+":"+fmt.Sprintf("%d/%d", pack, npc)], nil
+}
+
+func (s *TalentUseService) ConsumeWaypoint(ctx command.Context, pack, mapID, seq uint64) error {
+	v, err := s.load(ctx)
+	if err != nil {
+		return err
+	}
+	key := "waypoint:pending:" + ctx.SessionID
+	digest := fmt.Sprintf("%d/%d", pack, mapID)
+	replayKey := fmt.Sprintf("waypoint:used:%s:%d", ctx.SessionID, seq)
+	if used, found := v.Receipts[replayKey]; found {
+		if used.Digest != digest {
+			return fmt.Errorf("player: changed waypoint talent replay")
+		}
+		return nil
+	}
+	permission, found := v.Receipts[key]
+	if !found || permission.Digest != digest {
+		return fmt.Errorf("player: waypoint travel has no matching talent cast pack=%d map=%d", pack, mapID)
+	}
+	delete(v.Receipts, key)
+	v.Receipts[replayKey] = talentUseReceipt{Digest: digest}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return s.store.Save(ctx.State, "talentuse", raw)
 }
 
 // ConsumeOverwhelm authorizes the follow-up result for one successful cast.

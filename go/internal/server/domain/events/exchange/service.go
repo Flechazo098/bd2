@@ -1,6 +1,7 @@
 package eventexchange
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
@@ -8,11 +9,9 @@ import (
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/storage/stateio"
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
 	"strconv"
 
 	"time"
@@ -54,11 +53,7 @@ func Open(ctx command.Context, store stateio.Store, design *gamedata.EventExchan
 		if n == 0 {
 			return 0, fmt.Errorf("eventexchange: empty reward pool")
 		}
-		v, e := rand.Int(rand.Reader, new(big.Int).SetUint64(n))
-		if e != nil {
-			return 0, e
-		}
-		return v.Uint64(), nil
+		return util.RandomUint64N(n)
 	}
 	_, err := s.load(ctx)
 	return s, err

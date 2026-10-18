@@ -1,20 +1,18 @@
 package plugin
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	commonconfig "bd2server/internal/common/config"
 )
 
 type buildManifest struct {
@@ -44,7 +42,7 @@ func (cache fileDigestCache) digest(path string) (string, error) {
 		return "", err
 	}
 	if info.Size() < 1024*1024 {
-		return fileDigest(path)
+		return util.SHA256File(path)
 	}
 	stamp, reliable := fileChangeStamp(path, info)
 	if reliable {
@@ -52,7 +50,7 @@ func (cache fileDigestCache) digest(path string) (string, error) {
 			return previous.Hash, nil
 		}
 	}
-	sum, err := fileDigest(path)
+	sum, err := util.SHA256File(path)
 	if err == nil && reliable {
 		cache[path] = cachedFileDigest{Stamp: stamp, Hash: sum}
 	}
@@ -108,7 +106,7 @@ func projectFingerprint(root string, inputs map[string]string, project, versionS
 		}
 		relevant[file] = sum
 	}
-	sum, err := fileDigest(versionSource)
+	sum, err := util.SHA256File(versionSource)
 	if err != nil {
 		return "", err
 	}
@@ -210,19 +208,6 @@ func writeBuildInput(path, fingerprint string) error {
 	return os.WriteFile(path, content, 0o644)
 }
 
-func fileDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = file.Close() }()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
 func currentBuild(path, fingerprint string, cache fileDigestCache) bool {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -262,5 +247,5 @@ func saveBuildJSON(path string, raw []byte) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return commonconfig.ReplaceFile(temporary.Name(), path)
+	return util.ReplaceFile(temporary.Name(), path)
 }

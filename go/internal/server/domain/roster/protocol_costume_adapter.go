@@ -812,9 +812,20 @@ func (s *FriendshipService) counsel(ctx command.Context, request []byte, state F
 	day := now.UTC().Format("2006-01-02")
 	daily := s.daily(entries, day)
 	free := state.Level >= s.design.Default.MaxLevels[2]
+	var stacked bool
 	if !free {
 		if daily.Used >= s.design.Default.MaxCounselingAP {
-			return nil, errors.New("player: no daily friendship AP remaining")
+			if s.economy == nil {
+				return nil, errors.New("player: no friendship AP remaining")
+			}
+			balance, err := s.economy.CurrencyBalance(ctx, 72)
+			if err != nil {
+				return nil, err
+			}
+			if balance == 0 {
+				return nil, errors.New("player: no friendship AP remaining")
+			}
+			stacked = true
 		}
 		if state.CounselingDay == day && state.CounselingCount >= s.design.Default.MaxCounselingAPByCostume {
 			return nil, errors.New("player: costume daily counseling limit reached")
@@ -835,7 +846,9 @@ func (s *FriendshipService) counsel(ctx command.Context, request []byte, state F
 	completed := slices.Contains(state.Sessions, session)
 	if !free {
 		rewards = append(rewards, s.design.Default.CounselingRewards...)
-		daily.Used++
+		if !stacked {
+			daily.Used++
+		}
 	} else if !completed && quick == 0 {
 		// At the final cap the client allows unrestricted story playback. A
 		// previously unseen story earns its default reward once; repeated
@@ -857,7 +870,12 @@ func (s *FriendshipService) counsel(ctx command.Context, request []byte, state F
 			slices.Sort(next.Sessions)
 		}
 	}
-	bundle, err := s.grant(ctx, key, rewards)
+	var bundle []byte
+	if stacked {
+		bundle, err = s.economy.Apply(ctx, key, []gamedata.Reward{{Type: 72, Count: 1}}, rewards)
+	} else {
+		bundle, err = s.grant(ctx, key, rewards)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -876,43 +894,10 @@ func (s *FriendshipService) counsel(ctx command.Context, request []byte, state F
 }
 
 func (s *FriendshipService) grant(ctx command.Context, identity string, rewards []gamedata.Reward) ([]byte, error) {
-	if len(rewards) == 0 {
-		return nil, nil
+	if s.economy == nil {
+		return nil, errors.New("player: friendship economy unavailable")
 	}
-	var items []gamedata.BattleReward
-	for _, reward := range rewards {
-		if reward.Type == 0 || reward.Count == 0 || reward.Count > math.MaxInt32 {
-			return nil, errors.New("player: invalid friendship reward")
-		}
-		switch reward.Type {
-		case 2, 3, 4, 12, 20:
-		default:
-			if reward.ID == 0 || reward.ID > math.MaxInt32 {
-				return nil, errors.New("player: invalid friendship item reward")
-			}
-			items = append(items, gamedata.BattleReward{Type: reward.Type, ID: reward.ID, Count: reward.Count}) //nolint:staticcheck // S1016
-		}
-	}
-	if _, err := s.wallet.GrantQuestOnce(ctx, identity+":currency", rewards); err != nil {
-		return nil, err
-	}
-	granted, err := s.inventory.GrantOnce(ctx, identity+":items", items)
-	if err != nil {
-		return nil, err
-	}
-	var bundle []byte
-	for _, item := range granted {
-		bundle = wire.AppendBytes(bundle, 1, assets.ItemWire(item))
-	}
-	for _, reward := range rewards {
-		view := assets.Item{ID: reward.ID, Type: reward.Type, Count: reward.Count}
-		bundle = wire.AppendBytes(bundle, 6, assets.ItemWire(view))
-		switch reward.Type {
-		case 2, 3, 4, 12, 20:
-			bundle = wire.AppendBytes(bundle, 1, assets.ItemWire(view))
-		}
-	}
-	return bundle, nil
+	return s.economy.Apply(ctx, identity, nil, rewards)
 }
 
 func (s *CostumePotentialService) connect(ctx command.Context, request []byte) (int, []byte, bool, error) {

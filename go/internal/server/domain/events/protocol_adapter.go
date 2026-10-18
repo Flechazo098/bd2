@@ -198,6 +198,10 @@ func (e *Economy) Apply(ctx command.Context, identity string, costs, rewards []g
 	})
 	for _, k := range keys {
 		n := totals[k]
+		if lifeCurrency(k[0]) {
+			selected = append(selected, assets.Item{Type: k[0], ID: k[1], Count: n})
+			continue
+		}
 		if walletCurrency(k[0]) || extraCurrency(k[0]) || apCurrency(k[0]) {
 			if k[1] != 0 {
 				return nil, fmt.Errorf("events: currency has item id")
@@ -249,13 +253,18 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 		return nil, err
 	}
 	var itemCosts []assets.Item
-	var walletCosts, apCosts []gamedata.Reward
+	var walletCosts, apCosts, lifeCosts []gamedata.Reward
 	for _, c := range consumed {
 		if c.Count == 0 || c.Count > math.MaxInt32 {
 			return nil, fmt.Errorf("events: invalid consumption count")
 		}
 		r := gamedata.Reward{Type: c.Type, ID: c.ID, Count: c.Count}
 		switch {
+		case lifeCurrency(c.Type):
+			if c.InvenIndex != 0 {
+				return nil, fmt.Errorf("events: invalid life cost index")
+			}
+			lifeCosts = append(lifeCosts, r)
 		case walletCurrency(c.Type):
 			if c.ID != 0 || c.InvenIndex != 0 {
 				return nil, fmt.Errorf("events: invalid currency cost")
@@ -296,7 +305,7 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 	if err != nil {
 		return nil, err
 	}
-	var walletRewards, apRewards, buffItems []gamedata.Reward
+	var walletRewards, apRewards, buffItems, lifeRewards []gamedata.Reward
 	var itemRewards []gamedata.BattleReward
 	var costumes []uint64
 	var equips []assets.Equipment
@@ -306,6 +315,8 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 			return nil, fmt.Errorf("events: invalid reward count")
 		}
 		switch {
+		case lifeCurrency(r.Type):
+			lifeRewards = append(lifeRewards, gamedata.Reward(r))
 		case walletCurrency(r.Type):
 			if r.ID != 0 {
 				return nil, fmt.Errorf("events: currency reward has item id")
@@ -399,6 +410,14 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 			return nil, err
 		}
 	}
+	if len(lifeCosts)+len(lifeRewards) != 0 {
+		if e.life == nil {
+			return nil, fmt.Errorf("events: life economy unavailable")
+		}
+		if err := e.life.CanApply(ctx, lifeCosts, lifeRewards); err != nil {
+			return nil, err
+		}
+	}
 	// Validation and random generation finish before the first account write.
 	if len(itemCosts) > 0 {
 		if err = e.items.Consume(ctx, itemCosts); err != nil {
@@ -417,6 +436,13 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 		if err = e.buffRewards.GrantOnce(ctx, identity+":buff-items", buffItems); err != nil {
 			return nil, err
 		}
+	}
+	if len(lifeCosts)+len(lifeRewards) != 0 {
+		lifeBundle, err := e.life.Apply(ctx, identity+":life", lifeCosts, lifeRewards)
+		if err != nil {
+			return nil, err
+		}
+		bundle = append(bundle, lifeBundle...)
 	}
 	items, err := e.items.GrantOnce(ctx, identity+":items", itemRewards)
 	if err != nil {
@@ -469,6 +495,10 @@ func (e *Economy) OpenBox(ctx command.Context, identity string, box assets.Item)
 }
 
 func (s *BoxService) Handle(ctx command.Context, path string, req []byte) (int, []byte, bool, error) {
+	if path == "/UseResourceItem" {
+		out, err := s.useResource(ctx, req)
+		return 271, out, true, err
+	}
 	commandSession := ctx.SessionID
 	if path != "/UseRandomBox" {
 		return 0, nil, false, nil
@@ -545,7 +575,7 @@ func (e *Economy) ChargeInfo(ctx command.Context) ([]byte, error) {
 		return nil, err
 	}
 	var out []byte
-	for _, typ := range []uint64{30, 32} {
+	for _, typ := range []uint64{30, 32, 35} {
 		if _, ok := e.apCaps[typ]; !ok {
 			continue
 		}

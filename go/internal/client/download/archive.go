@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -192,42 +191,13 @@ func extractArchive(path, root string, game bool, digest string) error {
 			return err
 		}
 	}
-	marker := filepath.Join(root, ".bd2-official-game-version")
 	if game {
-		value, err := os.ReadFile(marker)
-		ready := err == nil && strings.TrimSpace(string(value)) == digest
-		for _, entry := range entries {
-			info, err := os.Stat(entry.target)
-			if err != nil || info.IsDir() != entry.file.FileInfo().IsDir() || (!info.IsDir() && uint64(info.Size()) != entry.file.UncompressedSize64) {
-				ready = false
-				break
-			}
-			if !info.IsDir() {
-				installed, err := os.Open(entry.target)
-				if err != nil {
-					ready = false
-					break
-				}
-				hash := crc32.NewIEEE()
-				_, readErr := io.Copy(hash, installed)
-				closeErr := installed.Close()
-				if readErr != nil || closeErr != nil || hash.Sum32() != entry.file.CRC32 {
-					ready = false
-					break
-				}
-			}
-		}
-		if ready {
-			return nil
-		}
+		return extractGame(entries, root, digest)
 	}
 	for _, entry := range entries {
 		if err := extractEntry(entry); err != nil {
 			return fmt.Errorf("extract %s: %w", entry.file.Name, err)
 		}
-	}
-	if game {
-		return atomicWrite(marker, []byte(digest+"\n"))
 	}
 	return nil
 }

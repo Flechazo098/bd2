@@ -504,5 +504,9 @@
   "console.error.confirming_update": "上一次更新仍在进行健康检查，请等待确认完成。",
   "console.updates.component": "更新内容",
   "console.updates.component.server": "服务端程序",
-  "console.updates.restarting": "服务器正在重启以应用更新，本页面会自动重新连接。"
+  "console.updates.restarting": "服务器正在重启以应用更新，本页面会自动重新连接。",
+  "config.game.section.spine_recording.title": "互动录制",
+  "config.game.section.spine_recording.help": "保存玩家的互动立绘操作记录，并供原生客户端回放。修改后重启服务端生效。",
+  "config.game.field.spine_recording.download_base_url.label": "录制下载基础 URL",
+  "config.game.field.spine_recording.download_base_url.help": "留空使用本服地址。自定义地址须反向代理到本服的 /client/spine-recordings/；系统会在其后追加录制路径和访问凭据。公网须使用 HTTPS。"
 }

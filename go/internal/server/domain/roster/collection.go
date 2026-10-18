@@ -266,7 +266,7 @@ func (s *CollectionStore) CompleteStepUp(ctx command.Context, groupID, step uint
 }
 
 func (s *CollectionStore) SaveGachaSelections(ctx command.Context, groupID uint64, selections []GachaSelection, changeLimit uint64) error {
-	if groupID == 0 || len(selections) == 0 {
+	if groupID == 0 {
 		return errors.New("player: invalid gacha selection")
 	}
 
@@ -276,12 +276,16 @@ func (s *CollectionStore) SaveGachaSelections(ctx command.Context, groupID uint6
 	if equalGachaSelections(s.data.GachaSelections[key], normalized) {
 		return nil
 	}
-	if changeLimit != 0 && s.data.GachaSelectionChanges[key] >= changeLimit {
+	if len(normalized) != 0 && changeLimit != 0 && s.data.GachaSelectionChanges[key] >= changeLimit {
 		return fmt.Errorf("player: gacha selection group %d exhausted %d changes", groupID, changeLimit)
 	}
 	next := cloneCollection(s.data)
-	next.GachaSelections[key] = normalized
-	if changeLimit != 0 {
+	if len(normalized) == 0 {
+		delete(next.GachaSelections, key)
+	} else {
+		next.GachaSelections[key] = normalized
+	}
+	if len(normalized) != 0 && changeLimit != 0 {
 		next.GachaSelectionChanges[key]++
 	}
 	return s.commit(ctx, next)
@@ -598,7 +602,6 @@ func (s *CollectionStore) grantCostumesSorted(ctx command.Context, identity stri
 					return CollectionGrant{}, err
 				}
 				grant.Exchanges = append(grant.Exchanges, exchange)
-				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: exchange.InvenIndex, CostumeID: costumeID, Before: maxLevel, After: maxLevel, SortID: exchange.SortID})
 			}
 			continue
 		}
@@ -614,7 +617,6 @@ func (s *CollectionStore) grantCostumesSorted(ctx command.Context, identity stri
 					return CollectionGrant{}, err
 				}
 				grant.Exchanges = append(grant.Exchanges, exchange)
-				grant.Upgrades = append(grant.Upgrades, CostumeUpgrade{InvenIndex: exchange.InvenIndex, CostumeID: costumeID, Before: maxLevel, After: maxLevel, SortID: exchange.SortID})
 			}
 			continue
 		}

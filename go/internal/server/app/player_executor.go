@@ -3,6 +3,7 @@ package app
 import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/social"
+	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/runtime/player"
 	accountstate "bd2server/internal/server/storage/account"
 	"bd2server/internal/server/storage/outbox"
@@ -172,6 +173,7 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		if !changed {
 			return cause
 		}
+		slog.Warn("player command rollback requires session renewal", "account_id", p.accountID, "error", cause)
 		p.assembly = nil
 		if recoveryErr := p.Recover(context.WithoutCancel(ctx)); recoveryErr != nil {
 			return player.Failure{Cause: errors.Join(cause, recoveryErr), RecoveryRequired: true}
@@ -237,7 +239,8 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 			}
 		}
 		if err != nil {
-			return reply, failCommand(err)
+			sequence, _, _ := wire.Varint(item.Body, 1)
+			return reply, failCommand(&command.RequestError{Path: item.Path, Sequence: sequence, Cause: err})
 		}
 
 		reply.Responses = append(reply.Responses, response)
@@ -250,6 +253,9 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		}
 		if isLogin || huntRankingChanged(request.Requests) {
 			if err := assembly.publishHuntRanking(identity); err != nil {
+				return reply, failCommand(err)
+			}
+			if err := assembly.publishCastleRanking(identity); err != nil {
 				return reply, failCommand(err)
 			}
 		}
@@ -301,6 +307,19 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 }
 
 func (p *playerAssembly) dispatch(ctx command.Context, path string, request []byte) (int, []byte, error) {
+	if (path == "/PopularCostumeInfo" || path == "/PopularEquipInfo") && p.shared != nil {
+		return p.shared.popularInfo(ctx, path, request, time.Now())
+	}
+	if path == "/UserRelayInfoUpdate" {
+		seq, found, err := wire.Varint(request, 1)
+		if err != nil || !found || seq == 0 || ctx.AccountID == "" || ctx.SessionID == "" || ctx.State == nil {
+			return 506, nil, fmt.Errorf("relay: invalid authenticated refresh")
+		}
+		if err := p.publishFriendProfile(ctx, false); err != nil {
+			return 506, nil, err
+		}
+		return 506, nil, p.publishDirectory(ctx)
+	}
 	for _, handler := range p.handlers {
 		code, body, handled, err := handler.Handle(ctx, path, request)
 		if handled || err != nil {
@@ -323,6 +342,9 @@ func (p *playerAssembly) beginLogin(ctx command.Context) error {
 		if hook, ok := handler.(interface{ BeginLogin(command.Context) }); ok {
 			hook.BeginLogin(ctx)
 		}
+	}
+	if err := p.eventTasksService.ReconcileRhythmResults(ctx, p.eventPlayService.CompletedRhythmResults()); err != nil {
+		return err
 	}
 	return p.missionService.RecordLogin(ctx, p.worldService.MissionsUnlocked)
 }

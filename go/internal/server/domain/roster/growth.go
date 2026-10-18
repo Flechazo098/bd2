@@ -40,8 +40,9 @@ type CharacterStore struct {
 	immortal        *gamedata.ImmortalDesign
 	immortalReplies map[string]talentUpgradeReply
 
-	talentReplies map[string]map[string]talentUpgradeReply
-	talentApplied map[string]talentUpgradeReply
+	talentReplies  map[string]map[string]talentUpgradeReply
+	talentApplied  map[string]talentUpgradeReply
+	talentUpgraded func(command.Context, Character) error
 }
 
 type talentUpgradeReply struct {

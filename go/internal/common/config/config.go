@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -71,7 +72,7 @@ func Save[T any](path string, value T, options WriteOptions) error {
 		return err
 	}
 	defer func() { _ = os.Remove(temporary) }()
-	return ReplaceFile(temporary, path)
+	return util.ReplaceFile(temporary, path)
 }
 
 // Ensure publishes defaults atomically and never replaces an existing file.
@@ -111,7 +112,7 @@ func WriteFile(path string, raw []byte) error {
 		return err
 	}
 	defer func() { _ = os.Remove(temporary) }()
-	return ReplaceFile(temporary, path)
+	return util.ReplaceFile(temporary, path)
 }
 
 func stageBytes(path string, raw []byte, options WriteOptions) (string, error) {

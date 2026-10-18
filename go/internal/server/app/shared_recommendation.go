@@ -61,6 +61,17 @@ func (s *sharedRuntime) consumeRecommendation(ctx context.Context, event outbox.
 				return e
 			}
 		}
+		if s.statistics != nil && update.Revision > previous.Revision {
+			var record *deck.RecommendRecord
+			if update.Public {
+				record = update.Record
+			}
+			if record != nil || !update.Public {
+				if e = s.equipmentPopularity(tx, source, record); e != nil {
+					return e
+				}
+			}
+		}
 		if update.Record == nil {
 			return nil
 		}

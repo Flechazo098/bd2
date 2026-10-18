@@ -199,17 +199,25 @@ func (s *Store) handleWaypoint(ctx command.Context, path string, req []byte) (in
 		return 0, nil, true, errors.New("deck: invalid waypoint destination")
 	}
 	target, known := design.Points[end]
-	if !known || target.MapID == 0 || !hasWaypoint(s.state.Waypoints[pack], end) || !hasWaypoint(s.state.Waypoints[pack], id) {
+	talent := design.Points[id].MapID == 0
+	if !known || target.MapID == 0 || !hasWaypoint(s.state.Waypoints[pack], end) || !talent && !hasWaypoint(s.state.Waypoints[pack], id) {
 		return 0, nil, true, errors.New("deck: waypoint is not activated")
 	}
 	moves, found, err := wire.Varint(req, 5)
 	if err != nil || !found || moves != 1 {
 		return 0, nil, true, errors.New("deck: invalid waypoint move count")
 	}
-	if reply, ok := s.cachedReplyLocked(ctx, "waypoint-use", seq); ok {
+	if talent {
+		if s.waypointTalent == nil {
+			return 0, nil, true, errors.New("deck: waypoint talent authorization unavailable")
+		}
+		if err := s.waypointTalent(ctx, pack, target.MapID, seq); err != nil {
+			return 0, nil, true, err
+		}
+	} else if reply, ok := s.cachedReplyLocked(ctx, "waypoint-use", seq); ok {
 		return reply.code, reply.body, true, nil
 	}
-	if design.PriceUnit != 0 {
+	if !talent && design.PriceUnit != 0 {
 		if s.wallet == nil || ctx.SessionID == "" {
 			return 0, nil, true, errors.New("deck: waypoint wallet session unavailable")
 		}

@@ -283,6 +283,15 @@ func (s *Service) handle(ctx command.Context, path string, request []byte) (int,
 		if len(state.Phases) != 0 && Index != state.Phases[state.Phase].DeckID {
 			return 0, nil, true, errors.New("battle: start Index does not match current Phase")
 		}
+		if runtime := s.eventBattle(state.Mode); runtime != nil {
+			if validator, ok := runtime.(interface {
+				ValidateBattleStart(command.Context, []byte) error
+			}); ok {
+				if err := validator.ValidateBattleStart(ctx, request); err != nil {
+					return 0, nil, true, err
+				}
+			}
+		}
 		nextRound := state.Round + 1
 		if nextRound == 1 && gamedata.IsSkyWayMode(state.Mode) {
 			if err := s.skyway.SkyWayBattleStarted(ctx, state.Mode, state.EnterReceipt); err != nil {

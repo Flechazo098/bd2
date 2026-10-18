@@ -613,9 +613,6 @@ func (s *Service) openFieldObjectResponse(ctx command.Context, pack, group, id i
 	if !ok || obj.GroupID != group || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
 		return nil, ErrInvalidRequest
 	}
-	if err := s.validateFieldObjectMap(ctx, pack, obj.MapID); err != nil {
-		return nil, err
-	}
 	period, err := s.fieldObjectPeriodFor(pack, obj)
 	if err != nil {
 		return nil, err
@@ -872,9 +869,6 @@ func (s *Service) openFieldObject(ctx command.Context, pack, group, id int) ([]b
 	obj, exists := design.Objects[id]
 	if !exists || obj.GroupID != group || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
 		return nil, fmt.Errorf("%w: unavailable field object", ErrInvalidRequest)
-	}
-	if err := s.validateFieldObjectMap(ctx, pack, obj.MapID); err != nil {
-		return nil, err
 	}
 	period, err := s.fieldObjectPeriodFor(pack, obj)
 	if err != nil {

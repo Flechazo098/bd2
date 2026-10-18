@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	clientapp "bd2server/internal/client/app"
 	clientconfig "bd2server/internal/client/config"
@@ -110,12 +111,19 @@ func runClient(args []string, options clientRunOptions) error {
 			*gameDir = preferences.GameDirectory
 		}
 	}
+	var packageDirectory, downloadManifest string
+	if options.versionConfigPath != "" {
+		packageDirectory = filepath.Dir(options.versionConfigPath)
+		downloadManifest = filepath.Join(packageDirectory, "tools", "client", "client-download.json")
+	}
 	if err := clientapp.Run(clientapp.Options{
 		InitialGameDir:      *gameDir,
 		Logger:              logger,
 		LogPath:             logPath,
 		Versions:            versions,
 		Development:         options.versionConfigPath != "",
+		PackageDirectory:    packageDirectory,
+		DownloadManifest:    downloadManifest,
 		LocalIdentityPlugin: options.localIdentityPlugin,
 		LoginUIPlugin:       options.loginUIPlugin,
 		CashShopPlugin:      options.cashShopPlugin,

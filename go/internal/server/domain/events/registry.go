@@ -12,6 +12,11 @@ type Schedule struct {
 	Start, End           int64
 }
 
+type RhythmResult struct {
+	Music, Difficulty, Score, Grade, Combo uint64
+	Judgments                              map[uint64]uint64
+}
+
 // Resolver separates gameplay from the project's published calendar.
 type Resolver interface {
 	Resolve(uid uint64) (Schedule, error)

@@ -1,6 +1,7 @@
 package updates
 
 import (
+	"bd2server/internal/common/util"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -515,7 +516,7 @@ func copyVerified(source, target string) error {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	copied, err := release.HashFile(target)
+	copied, err := util.SHA256File(target)
 	if err != nil {
 		return err
 	}

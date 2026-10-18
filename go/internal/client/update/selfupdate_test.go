@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bd2server/internal/common/util"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -67,7 +68,7 @@ func TestRunHelperWaitsForOldLauncherBeforeReplacementResultAndRestart(t *testin
 	target, staging := filepath.Join(root, "installed"), filepath.Join(root, "staged")
 	launcherPath := filepath.Join(target, launcherExecutable())
 	pid, stopLauncher := startWaitingProcess(t, launcherPath)
-	oldDigest, err := release.HashFile(launcherPath)
+	oldDigest, err := util.SHA256File(launcherPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestRunHelperWaitsForOldLauncherBeforeReplacementResultAndRestart(t *testin
 		t.Fatalf("updater finished while the old launcher was still running: %v", helperErr)
 	case <-time.After(300 * time.Millisecond):
 	}
-	if digest, err := release.HashFile(launcherPath); err != nil || digest != oldDigest {
+	if digest, err := util.SHA256File(launcherPath); err != nil || digest != oldDigest {
 		t.Fatalf("running launcher was replaced: digest=%s, error=%v", digest, err)
 	}
 	assertContent(t, filepath.Join(target, "runtime.dat"), "old runtime")

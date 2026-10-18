@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bd2server/internal/common/util"
 	"context"
 	"errors"
 	"fmt"
@@ -116,6 +117,7 @@ func (m *Manager) ensureGame(ctx context.Context, game string) error {
 	if fp.RequireClientUpdate && clientUpdateRequired(m.options.Versions.ClientVersion, fp.ClientVersion) {
 		return fmt.Errorf("update the launcher to %s before updating the game", fp.ClientVersion)
 	}
+	m.options.Logger.Info("game installation does not match the server requirement", "game", game, "requirement", fp.ID, "game_version", gameVersion(fp))
 	reuseResources := previousErr == nil && previous.ResourceFingerprint == fp.GameFingerprint && fp.GameFingerprint != "" && len(previous.Files) > 0 && gameReceiptMatches(game, previous.Fingerprint)
 	installGame := fp.RequireGameUpdate && !reuseResources
 	if installGame {
@@ -155,13 +157,17 @@ func (m *Manager) ensureGame(ctx context.Context, game string) error {
 		if resources == "" {
 			resources = filepath.Join(m.options.Directory, "resources")
 		}
+		m.options.Logger.Info("downloading required game and resources", "game", game, "resources", resources, "game_version", fp.Game.GameVersion, "bundle_version", fp.Game.BundleVersion, "game_data_version", fp.Game.GameDataVersion)
 		installed, err := download.Client(ctx, download.Options{PackageDir: m.options.Directory, GameDir: game, ResourceDir: resources, Workers: 8, Pinned: fp.Game}, io.Discard)
 		if err != nil {
 			return err
 		}
 		v.GameVersion, v.BundleVersion, v.GameDataVersion = installed.Versions.GameVersion, installed.Versions.BundleVersion, installed.Versions.GameDataVersion
 		resources = installed.ResourceDir
-		if _, err := setup.Patch(game, settings, v); err != nil {
+		if _, err := setup.SaveSettings(game, settings); err != nil {
+			return fmt.Errorf("restore game connection settings: %w", err)
+		}
+		if _, err := setup.Patch(game); err != nil {
 			return fmt.Errorf("restore game connection patch: %w", err)
 		}
 		if err := setup.InstallLocalCatalog(game, resources, v.BundleVersion); err != nil {
@@ -197,7 +203,7 @@ func (m *Manager) ensureGame(ctx context.Context, game string) error {
 			if err != nil {
 				return err
 			}
-			digest, err := release.HashFile(path)
+			digest, err := util.SHA256File(path)
 			if err != nil {
 				return err
 			}
@@ -209,6 +215,7 @@ func (m *Manager) ensureGame(ctx context.Context, game string) error {
 	if err := commonconfig.Save(filepath.Join(game, gameReceiptFile), receipt, commonconfig.WriteOptions{FileMode: 0644}); err != nil {
 		return err
 	}
+	m.options.Logger.Info("game installation recorded for the server requirement", "game", game, "requirement", fp.ID, "downloaded", installGame, "reused_resources", reuseResources, "verified_files", len(receipt.Files))
 	m.mu.Lock()
 	delete(m.gamePending, game)
 	if len(m.gamePending) == 0 {
@@ -268,8 +275,8 @@ func (m *Manager) installGameUpdates(ctx context.Context) {
 // PrepareGame resolves the server's signed requirement before inspecting a
 // possibly obsolete game installation with the new release's versions.
 func (m *Manager) PrepareGame(ctx context.Context, game, origin string) error {
-	if !m.begin("preparing") {
-		return operationBusy()
+	if err := m.acquire(ctx, "preparing"); err != nil {
+		return err
 	}
 	defer m.end()
 	if err := m.CheckServer(ctx, m.options.Client, origin); err != nil {
@@ -338,4 +345,11 @@ func (m *Manager) clearServerRequirement() {
 	m.mu.Lock()
 	m.fingerprint = nil
 	m.mu.Unlock()
+}
+
+func gameVersion(fp *release.Fingerprint) string {
+	if fp.Game == nil {
+		return ""
+	}
+	return fp.Game.GameVersion
 }

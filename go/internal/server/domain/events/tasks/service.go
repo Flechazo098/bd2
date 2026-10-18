@@ -198,8 +198,11 @@ func (s *Service) active(v events.Schedule) bool {
 }
 func (s *Service) find(t, id uint64) (events.Schedule, error) {
 	rows := s.registry.List()
-	if t == 4 {
+	switch t {
+	case 4:
 		rows = s.taskSchedules()
+	case 5:
+		rows = s.passSchedules()
 	}
 	for _, v := range rows {
 		if v.Type == t && v.ID == id && s.active(v) {

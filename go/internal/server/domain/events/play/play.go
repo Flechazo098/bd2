@@ -65,6 +65,7 @@ type snapshot struct {
 type FieldRuleLoader func(uint64) (*gamedata.EventField, error)
 
 type Service struct {
+	battleCostumes   func(command.Context) map[uint64]bool
 	fieldRules       FieldRuleLoader
 	battleChallenges gamedata.EventBattleChallenges
 
@@ -79,9 +80,17 @@ type Service struct {
 	arcadeProfile           func(command.Context) (ranking.ArcadeProfile, error)
 	arcadeGuilds            func(command.Context, []uint64) (map[uint64][]byte, error)
 	onProgress              func(command.Context, uint64, uint64, uint64) error
+	onRhythmResult          func(command.Context, events.RhythmResult) error
+	achievementDesign       *gamedata.AchievementCounterDesign
+	achievementProgress     map[[2]uint64]uint64
+	completedRhythmResults  []events.RhythmResult
 	hubCalendars            *readonly.Seed
 	fieldBindings           []FieldBinding
 	actionMissionCharacters map[uint64]uint64
+}
+
+func (s *Service) AttachBattleCostumes(owned func(command.Context) map[uint64]bool) {
+	s.battleCostumes = owned
 }
 
 func Open(ctx command.Context, store stateio.Store, design *gamedata.EventPlayCatalog, fieldRules FieldRuleLoader, registry events.Resolver, economy Rewards) (*Service, error) {

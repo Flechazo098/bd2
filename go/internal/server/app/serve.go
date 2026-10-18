@@ -3,6 +3,7 @@ package app
 import (
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/i18n"
+	"bd2server/internal/common/util"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/events/calendar"
@@ -15,8 +16,6 @@ import (
 	"bd2server/internal/server/platform/updates"
 	identitystore "bd2server/internal/server/storage/identity"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -107,11 +106,10 @@ func Serve(args []string) (serveErr error) {
 		authHandler = authService.Handler()
 	}
 	availability := lifecycle.NewGate()
-	instanceBytes := make([]byte, 16)
-	if _, err := rand.Read(instanceBytes); err != nil {
+	instanceID, err := util.RandomHex(16)
+	if err != nil {
 		return fmt.Errorf("create server instance identity: %w", err)
 	}
-	instanceID := hex.EncodeToString(instanceBytes)
 	realtime, err := openRealtime(c, registry, game, shared, instanceID)
 	if err != nil {
 		return err
@@ -170,6 +168,7 @@ func Serve(args []string) (serveErr error) {
 		AuthenticationHandler: authHandler, ResourcePolicy: c.publicResources,
 		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID, RealtimeTickets: realtimeTickets,
 		StoryCheckpoints: storyCheckpoints{game: game, players: registry}, Console: console.Handler(),
+		SpineRecordings:   spineRecordings{players: registry},
 		LoginsClosed:      func() bool { return loginsClosed(0) != "" },
 		Releases:          releaseFiles(filepath.Join(c.dataDir, "releases")),
 		ClientAllowed:     compatibility.allowed,

@@ -2,6 +2,7 @@
 package session
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/gateway/transport"
 	"bd2server/internal/server/protocol"
@@ -9,7 +10,6 @@ import (
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/runtime/player"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -122,7 +122,7 @@ func (s *Server) dispatchRaw(ctx context.Context, path string, body []byte, cook
 				return rejection, encodeErr
 			}
 		}
-		return transport.RawReply{}, err
+		return transport.RawReply{}, rejectedRequestError(game.accountID, requests, err)
 	}
 	if len(response.Responses) != len(requests) {
 		return transport.RawReply{}, errors.New("player response count does not match command")
@@ -301,25 +301,25 @@ func (s *Server) authorize(cookie string) (*gameSession, error) {
 	return &gameSession{key: append([]byte(nil), game.key...), accountID: game.accountID, id: game.id, expiresAt: game.expiresAt, lastUsed: game.lastUsed, generation: game.generation}, nil
 }
 func newGameSession(accountID string, now time.Time, ttl time.Duration) (*gameSession, string, error) {
-	keyBytes := make([]byte, 16)
-	if _, err := rand.Read(keyBytes); err != nil {
+	key, err := util.RandomHex(16)
+	if err != nil {
 		return nil, "", fmt.Errorf("create game session key: %w", err)
 	}
-	tokenBytes := make([]byte, 24)
-	if _, err := rand.Read(tokenBytes); err != nil {
+	token, err := util.RandomHex(24)
+	if err != nil {
 		return nil, "", fmt.Errorf("create game session token: %w", err)
 	}
-	idBytes := make([]byte, 12)
-	if _, err := rand.Read(idBytes); err != nil {
+	id, err := util.RandomHex(12)
+	if err != nil {
 		return nil, "", fmt.Errorf("create login request identity: %w", err)
 	}
 	return &gameSession{
-		key:       []byte(hex.EncodeToString(keyBytes)),
+		key:       []byte(key),
 		accountID: accountID,
-		id:        hex.EncodeToString(idBytes),
+		id:        id,
 		expiresAt: now.Add(ttl),
 		lastUsed:  now,
-	}, hex.EncodeToString(tokenBytes) + "|1", nil
+	}, token + "|1", nil
 }
 
 func sessionTokenKey(token string) [sha256.Size]byte { return sha256.Sum256([]byte(token)) }

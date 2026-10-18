@@ -1,11 +1,10 @@
 package app
 
 import (
+	"bd2server/internal/common/util"
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -99,12 +98,11 @@ func (t *realtimeTickets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "instance changed", http.StatusConflict)
 		return
 	}
-	var secret [32]byte
-	if _, err := rand.Read(secret[:]); err != nil {
+	token, err := util.RandomBase64URL(32)
+	if err != nil {
 		http.Error(w, "ticket unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	token := base64.RawURLEncoding.EncodeToString(secret[:])
 	key := sha256.Sum256([]byte(token))
 	now := time.Now()
 	expires := now.Add(30 * time.Second)

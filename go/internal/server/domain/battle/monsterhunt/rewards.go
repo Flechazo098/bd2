@@ -81,14 +81,11 @@ func monsterHuntAttackDamage(request []byte) (uint64, error) {
 	return total, nil
 }
 
-func (s *Service) rankRewards(d *gamedata.MonsterHunt, group uint64) []gamedata.BattleReward {
+func (s *Service) rankRewards(d *gamedata.MonsterHunt, group uint64, rank RankEntry) []gamedata.BattleReward {
 	var selected *gamedata.MonsterHuntRankReward
 	for _, r := range d.Ranks[group] {
-		threshold := float64(1)
-		if r.Type == 1 {
-			threshold = 100
-		}
-		if r.Ranking >= threshold && (selected == nil || r.Type < selected.Type || r.Type == selected.Type && r.Ranking < selected.Ranking) {
+		eligible := r.Type == 0 && float64(rank.Rank) <= r.Ranking || r.Type == 1 && rank.TopPercent < r.Ranking+0.1
+		if rank.Rank != 0 && eligible && (selected == nil || r.Type < selected.Type || r.Type == selected.Type && r.Ranking < selected.Ranking) {
 			selected = &r
 		}
 	}
@@ -96,4 +93,19 @@ func (s *Service) rankRewards(d *gamedata.MonsterHunt, group uint64) []gamedata.
 		return nil
 	}
 	return selected.Rewards
+}
+
+func (s *Service) pendingSeasonReward() (Season, bool) {
+	var next Season
+	now := uint64(s.now().UnixMilli())
+	for _, season := range s.seasons {
+		u, ok := s.state.Users[fmt.Sprint(season.ID)]
+		if !ok || !u.Played || u.RankLevel == 0 || u.Claimed || now < season.End || now <= season.Calculate {
+			continue
+		}
+		if next.ID == 0 || season.Calculate < next.Calculate || season.Calculate == next.Calculate && season.ID < next.ID {
+			next = season
+		}
+	}
+	return next, next.ID != 0
 }

@@ -1,9 +1,6 @@
 package world
 
-import (
-	"bd2server/internal/server/domain/command"
-	"fmt"
-)
+import "bd2server/internal/server/domain/command"
 
 func (s *Service) fieldObjectCurrentPack(pack int) bool {
 
@@ -13,25 +10,6 @@ func (s *Service) fieldObjectCurrentPack(pack int) bool {
 		current = s.state.ActivePackID()
 	}
 	return current == pack
-}
-
-func (s *Service) validateFieldObjectMap(ctx command.Context, pack, mapID int) error {
-	_, saved := s.state.Position()
-	_, event, err := s.resolveEventFieldPack(ctx, pack)
-	if err != nil {
-		return err
-	}
-	if !saved && !event {
-		return nil
-	}
-	current, err := s.currentFieldMap(ctx, pack)
-	if err != nil {
-		return fmt.Errorf("%w: field object map unavailable (pack=%d object_map=%d): %v", ErrInvalidRequest, pack, mapID, err)
-	}
-	if current != mapID {
-		return fmt.Errorf("%w: field object outside current map (pack=%d object_map=%d current_map=%d)", ErrInvalidRequest, pack, mapID, current)
-	}
-	return nil
 }
 
 func (s *Service) rewardMonsterAvailable(ctx command.Context, pack, monster int) (bool, error) {

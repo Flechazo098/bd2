@@ -1,14 +1,13 @@
 package roster
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"math"
-	"math/big"
 	"slices"
 	"strconv"
 
@@ -90,11 +89,10 @@ func (s *RecruitService) rollSpecial(count uint64) (specialRecruitState, error) 
 			}
 			total += s.design.Rules[id].AppearProb
 		}
-		draw, e := rand.Int(rand.Reader, new(big.Int).SetUint64(total))
+		n, e := util.RandomUint64N(total)
 		if e != nil {
 			return state, e
 		}
-		n := draw.Uint64()
 		for i, id := range pool {
 			w := s.design.Rules[id].AppearProb
 			if n < w {

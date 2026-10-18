@@ -72,6 +72,7 @@ func (s *Inventory) Handle(ctx command.Context, path string, request []byte) (in
 	items := make([]Item, 0, len(s.starter)+len(s.owned.Items))
 	items = append(items, s.starter...)
 	items = append(items, s.owned.Items...)
+	items = s.withPrestigeIllustrations(items)
 	seq, present, err := wire.Varint(request, 1)
 	if err != nil || !present || seq == 0 {
 		return 0, nil, true, fmt.Errorf("player: %s invalid sequence", path)

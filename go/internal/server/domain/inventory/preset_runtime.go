@@ -65,3 +65,8 @@ func (s *EquipmentInventory) ValidatePresetEquipment(ctx command.Context, bindin
 
 // ApplyPresetCostumes changes the currently selected costume for each listed
 // character and persists both seeded and collection-owned character records.
+
+func (s *EquipmentInventory) EquipmentSlot(equipmentID uint64) (uint64, bool) {
+	slot, ok := s.slots[equipmentID]
+	return slot, ok
+}

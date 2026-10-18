@@ -28,6 +28,7 @@ func LoadEventPlayCatalog(root, version string) (*EventPlayCatalog, error) {
 	names = append(names, "FieldMiniGameCollectionTable", "FieldMiniGameMapGroupTable", "FieldMiniGameStarterTable", "SichuanDefaultTable", "SichuanBlockDesignTable", "RhythmGameDefaultTable", "RhythmGameCharTable", "HopscotchGalleryTable", "HopscotchRankingTable", "HopscotchAbuseTable")
 	names = append(names, "PackManDefaultTable", "PackManModeTable", "PackManModeRuleTable", "PackManScoreTable", "PackManMapTable", "PackManObjectTable", "PackManItemTable", "PackManChaserTable", "PackManChaserSpawnTable", "PackManChainTable", "PackManGalleryTable", "PackManGuideTable")
 	names = append(names, "ActionGameTable", "ActionGameCharTable")
+	names = append(names, "PickUpCostumeEventTable")
 	names = append(names, "FishingDefaultTable", "FishingMapTable", "FishingMapGroupTable", "FishingBoatTable", "FishingBoatDesignTable", "FishingRodTable", "FishingItemTable", "FishingCharTable", "FishingFishTable", "FishingFishPoolTable", "FishingFishSizePoolTable", "FishingGradePoolTable", "FishingCastingTable", "FishingBuffTable", "FishingBoatBuffTable", "FishingFishSkillTable", "FishingTimeTable")
 	names = append(names, "FishingBuyItemTable", "FishingSellItemTable", "FishingShopTable", "FishingPricePremiumDefaultTable")
 	names = append(names, "GameDefaultTable", "FishingInventoryBuyTable")

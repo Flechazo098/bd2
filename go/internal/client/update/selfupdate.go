@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bd2server/internal/common/util"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,7 +147,7 @@ func switchLauncher(staging, target, from, to string, keys []release.TrustedKey)
 		for _, m := range slices.Backward(done) {
 			current := filepath.Join(target, m.name)
 			if m.backup != "" {
-				if err := commonconfig.ReplaceFile(m.backup, current); err != nil {
+				if err := util.ReplaceFile(m.backup, current); err != nil {
 					failures = append(failures, fmt.Errorf("restore %s: %w", m.name, err))
 				}
 			} else if err := os.Remove(current); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -195,7 +196,7 @@ func switchLauncher(staging, target, from, to string, keys []release.TrustedKey)
 			return undo(err)
 		}
 		done = append(done, m)
-		if err := commonconfig.ReplaceFile(name, current); err != nil {
+		if err := util.ReplaceFile(name, current); err != nil {
 			_ = os.Remove(name)
 			return undo(err)
 		}

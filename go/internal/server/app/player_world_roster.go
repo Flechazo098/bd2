@@ -68,6 +68,9 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 	}
 	p.gachaService.AttachInventory(p.ownedItems)
 	p.gachaService.AttachEquipmentGacha(p.design.equipmentGacha, p.ownedEquipment)
+	if err := p.gachaService.AttachStatistics(p.design.collectionStatistics); err != nil {
+		return err
+	}
 	p.gachaService.AttachDrawMission(func(ctx command.Context, count uint64) error {
 		return p.missionService.RecordEvent(ctx, missions.ConditionGachaBuy, 0, count, p.worldService.MissionsUnlocked)
 	})
@@ -174,7 +177,7 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 	if err != nil {
 		return err
 	}
-	p.friendshipService, err = roster.NewFriendshipService(&p.design.friendshipDesign, p.design.charAwakeDesign, p.design.costumePotentialDesign, p.collection, p.ownedItems, p.wallet)
+	p.friendshipService, err = roster.NewFriendshipService(&p.design.friendshipDesign, p.design.charAwakeDesign, p.design.costumePotentialDesign, p.collection, p.ownedItems)
 	if err != nil {
 		return fmt.Errorf("load friendship state: %w", err)
 	}

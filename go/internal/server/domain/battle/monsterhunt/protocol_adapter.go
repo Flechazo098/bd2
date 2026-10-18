@@ -382,7 +382,7 @@ func (s *Service) encodeUser(u user, c Season, level uint64) []byte {
 			b = wire.AppendVarint(b, n, v)
 		}
 	}
-	if u.Played && !u.Claimed && uint64(s.now().UnixMilli()) > c.Calculate {
+	if _, pending := s.pendingSeasonReward(); pending {
 		b = wire.AppendVarint(b, 10, 1)
 	}
 	return b
@@ -462,6 +462,11 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		return s.scheduleInfo(ctx, req)
 	}
 	c := s.current()
+	if path == "/MonsterHuntSeasonReward" {
+		if pending, ok := s.pendingSeasonReward(); ok {
+			c = pending
+		}
+	}
 	u, e := s.getUser(c)
 	if e != nil {
 		return code, nil, true, e
@@ -475,8 +480,12 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	case "/MonsterHuntUserInfo":
 		out = wire.AppendBytes(nil, 1, s.encodeUser(u, c, u.ClearLevel))
 		if u.Played {
-			out = wire.AppendVarint(out, 2, 1)
-			out = wire.AppendDouble(out, 3, 100)
+			rank, rankErr := s.ranking(u)
+			if rankErr != nil {
+				return code, nil, true, rankErr
+			}
+			out = wire.AppendVarint(out, 2, rank.Rank)
+			out = wire.AppendDouble(out, 3, rank.TopPercent)
 		}
 	case "/MonsterHuntDeckInfo":
 		for _, v := range s.state.Decks {
@@ -694,11 +703,15 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		u.DailyDate = uint64(s.now().UnixMilli())
 		next.Users[strconv.FormatUint(c.ID, 10)] = u
 		out = wire.AppendBytes(out, 1, s.encodeUser(u, c, u.ClearLevel))
-		out = wire.AppendVarint(out, 4, 1)
-		out = wire.AppendDouble(out, 5, 100)
+		rank, rankErr := s.ranking(u)
+		if rankErr != nil {
+			return code, nil, true, rankErr
+		}
+		out = wire.AppendVarint(out, 4, rank.Rank)
+		out = wire.AppendDouble(out, 5, rank.TopPercent)
 		mutation = true
 	case "/MonsterHuntSeasonReward":
-		if !u.Played || u.Claimed || uint64(s.now().UnixMilli()) <= c.Calculate {
+		if !u.Played || u.RankLevel == 0 || u.Claimed || uint64(s.now().UnixMilli()) < c.End || uint64(s.now().UnixMilli()) <= c.Calculate {
 			e = fmt.Errorf("monsterhunt: season reward unavailable")
 			break
 		}
@@ -708,7 +721,11 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			e = loadErr
 			break
 		}
-		rewards := s.rankRewards(d, c.RankGroup)
+		rank, rankErr := s.ranking(u)
+		if rankErr != nil {
+			return code, nil, true, rankErr
+		}
+		rewards := s.rankRewards(d, c.RankGroup, rank)
 		bundle, grantErr := s.grant(ctx, "monsterhunt:"+key, rewards)
 		if grantErr != nil {
 			e = grantErr
@@ -717,14 +734,14 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		next.Users[strconv.FormatUint(c.ID, 10)] = u
 		out = wire.AppendVarint(nil, 3, u.Hunt)
 		out = wire.AppendBytes(out, 4, bundle)
-		out = wire.AppendVarint(out, 1, 1)
+		out = wire.AppendVarint(out, 1, rank.Rank)
 		score, scoreErr := s.score(u)
 		if scoreErr != nil {
 			e = scoreErr
 			break
 		}
 		out = wire.AppendDouble(out, 2, score)
-		out = wire.AppendDouble(out, 5, 100)
+		out = wire.AppendDouble(out, 5, rank.TopPercent)
 		mutation = true
 	}
 	if e != nil {
@@ -1002,8 +1019,12 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		u.DailyDamage = damage
 	}
 	out, _, _ = wire.ReplaceBytes(out, 13, s.encodeUser(u, c, u.ClearLevel))
-	out = wire.AppendVarint(out, 14, 1)
-	out = wire.AppendDouble(out, 26, 100)
+	rank, rankErr := s.ranking(u)
+	if rankErr != nil {
+		return nil, rankErr
+	}
+	out = wire.AppendVarint(out, 14, rank.Rank)
+	out = wire.AppendDouble(out, 26, rank.TopPercent)
 	next := s.clone()
 	next.Users[strconv.FormatUint(c.ID, 10)] = u
 	next.Replies[key] = reply{append([]byte(nil), req...), out}

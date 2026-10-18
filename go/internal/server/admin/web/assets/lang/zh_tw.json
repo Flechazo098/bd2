@@ -504,5 +504,9 @@
   "console.error.confirming_update": "上次更新仍在進行健康檢查，請等待確認完成。",
   "console.updates.component": "更新內容",
   "console.updates.component.server": "伺服器程式",
-  "console.updates.restarting": "伺服器正在重新啟動以套用更新，本頁面會自動重新連線。"
+  "console.updates.restarting": "伺服器正在重新啟動以套用更新，本頁面會自動重新連線。",
+  "config.game.section.spine_recording.title": "互動錄製",
+  "config.game.section.spine_recording.help": "儲存玩家的互動立繪操作記錄，供原生客戶端重播。修改後重新啟動伺服器生效。",
+  "config.game.field.spine_recording.download_base_url.label": "錄製下載基礎 URL",
+  "config.game.field.spine_recording.download_base_url.help": "留空使用本服位址。自訂位址須反向代理至本服的 /client/spine-recordings/；系統會在其後附加錄製路徑與存取憑證。公網須使用 HTTPS。"
 }

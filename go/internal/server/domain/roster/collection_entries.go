@@ -17,6 +17,7 @@ const collectionDomain = "collection"
 var collectionEntryBuckets = [...]string{
 	"characters", "costumes", "grants", "gacha_applied", "gacha_users",
 	"gacha_fixed", "step_up_progress", "gacha_point_exchanges",
+	"gacha_history", "gacha_history_receipts", "gacha_history_clock", "gacha_history_totals",
 	"gacha_selections", "gacha_selection_changes", "costume_potential",
 	"costume_burst_levels", "costume_burst_upgrades", "char_awake", "char_partners", "costume_potential_locks", "friendships",
 }

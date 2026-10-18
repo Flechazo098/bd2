@@ -9,10 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
+	"bd2server/internal/client/download"
 	clientlayout "bd2server/internal/client/layout"
 	"bd2server/internal/common/resourcecatalog"
+	"bd2server/internal/common/util"
 )
 
 const (
@@ -28,14 +31,40 @@ func InstallLocalCatalog(gameDir, localRoot, bundleVersion string) error {
 		return err
 	}
 	release := filepath.Join(filepath.Clean(localRoot), "ServerData", "StandaloneWindows64", "HD", bundleVersion)
-	source := filepath.Join(release, "catalog_alpha.json")
-	sourceHash := filepath.Join(release, "catalog_alpha.hash")
-	raw, err := readCatalog(source)
+	aa := filepath.Join(installation.Data, "StreamingAssets", "aa")
+	cache, err := addressablesCacheDirectory(installation)
 	if err != nil {
 		return err
 	}
-	aa := filepath.Join(installation.Data, "StreamingAssets", "aa")
+	if err := separateCatalogDirectories(release, aa, cache); err != nil {
+		return err
+	}
+	for _, entry := range []struct{ root, relative string }{
+		{release, "catalog_alpha.json"}, {release, "catalog_alpha.hash"},
+		{aa, "catalog.json"}, {aa, localCatalogBackup}, {aa, localBundleManifest}, {aa, localCatalogReceipt},
+		{cache, "catalog_alpha.json"}, {cache, "catalog_alpha.hash"},
+	} {
+		if _, err := catalogFilePath(entry.root, entry.relative); err != nil {
+			return err
+		}
+	}
 	managed, err := managedCatalogBundles(aa)
+	if err != nil {
+		return err
+	}
+	for relative := range managed {
+		for _, root := range []string{release, aa} {
+			if _, err := catalogFilePath(root, relative); err != nil {
+				return err
+			}
+		}
+	}
+	if localCatalogCurrent(release, aa, cache) {
+		return nil
+	}
+	source := filepath.Join(release, "catalog_alpha.json")
+	sourceHash := filepath.Join(release, "catalog_alpha.hash")
+	raw, err := readCatalog(source)
 	if err != nil {
 		return err
 	}
@@ -43,14 +72,21 @@ func InstallLocalCatalog(gameDir, localRoot, bundleVersion string) error {
 	if err != nil {
 		return err
 	}
-	raw, err = localizeCatalog(raw, release, aa, managed)
-	if err != nil {
-		return err
-	}
 	target := filepath.Join(aa, "catalog.json")
 	current, err := os.ReadFile(target)
 	if err != nil {
 		return fmt.Errorf("read built-in Addressables catalog: %w", err)
+	}
+	hash, err := os.ReadFile(sourceHash)
+	if err != nil {
+		return fmt.Errorf("read local ServerData catalog hash: %w", err)
+	}
+	if len(hash) == 0 || len(hash) > 1024 {
+		return errors.New("local ServerData catalog hash has an invalid size")
+	}
+	raw, err = localizeCatalog(raw, release, aa, managed)
+	if err != nil {
+		return err
 	}
 	if !bytes.Equal(current, raw) {
 		backup := filepath.Join(aa, localCatalogBackup)
@@ -81,21 +117,18 @@ func InstallLocalCatalog(gameDir, localRoot, bundleVersion string) error {
 	if err != nil {
 		return err
 	}
+	if err := synchronizePersistentCatalog(cache, raw, hash); err != nil {
+		return err
+	}
+	if installation.Kind == clientlayout.Windows {
+		if err := download.RecordPreparedGame(gameDir, "BrownDust II_Data/StreamingAssets/aa/catalog.json"); err != nil {
+			return err
+		}
+	}
 	if err := replaceCatalog(filepath.Join(aa, localBundleManifest), managedRaw); err != nil {
 		return fmt.Errorf("record managed Addressables bundles: %w", err)
 	}
-	hash, err := os.ReadFile(sourceHash)
-	if err != nil {
-		return fmt.Errorf("read local ServerData catalog hash: %w", err)
-	}
-	if len(hash) == 0 || len(hash) > 1024 {
-		return errors.New("local ServerData catalog hash has an invalid size")
-	}
-	cache, err := addressablesCacheDirectory(installation)
-	if err != nil {
-		return err
-	}
-	return synchronizePersistentCatalog(cache, raw, hash)
+	return recordLocalCatalog(release, aa, cache, raw)
 }
 
 func addressablesCacheDirectory(installation clientlayout.Installation) (string, error) {
@@ -222,24 +255,38 @@ func localizeCatalog(raw []byte, release, aa string, managed map[string]managedB
 		return nil, err
 	}
 	remoteCount := 0
+	type bundleLink struct{ source, destination, relative string }
+	var links []bundleLink
 	for index, internalID := range ids {
 		if strings.HasPrefix(internalID, resourcecatalog.RemotePrefix) {
 			relative, err := resourcecatalog.BundlePath(internalID)
 			if err != nil {
 				return nil, err
 			}
-			source := filepath.Join(release, filepath.FromSlash(relative))
-			destination := filepath.Join(aa, filepath.FromSlash(relative))
-			if err := ensureCatalogBundleLink(source, destination, managed[relative]); err != nil {
+			source, err := catalogFilePath(release, relative)
+			if err != nil {
 				return nil, err
 			}
+			info, err := os.Stat(source)
+			if err != nil || !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("local ServerData catalog references a missing bundle: %s", source)
+			}
+			destination, err := catalogFilePath(aa, relative)
+			if err != nil {
+				return nil, err
+			}
+			links = append(links, bundleLink{source, destination, relative})
 			ids[index] = localCatalogPrefix + strings.ReplaceAll(filepath.ToSlash(relative), "/", "\\")
 			remoteCount++
 			continue
 		}
 		if relative, ok := strings.CutPrefix(internalID, localCatalogPrefix); ok {
-			relative = filepath.FromSlash(strings.ReplaceAll(relative, "\\", "/"))
-			if info, err := os.Stat(filepath.Join(aa, relative)); err != nil || !info.Mode().IsRegular() {
+			relative = strings.ReplaceAll(relative, "\\", "/")
+			path, err := catalogFilePath(aa, relative)
+			if err != nil {
+				return nil, err
+			}
+			if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("built-in Addressables catalog references a missing local bundle: %s", relative)
 			}
 		}
@@ -256,6 +303,11 @@ func localizeCatalog(raw []byte, release, aa string, managed map[string]managedB
 	if err != nil {
 		return nil, fmt.Errorf("encode localized ServerData catalog: %w", err)
 	}
+	for _, link := range links {
+		if err := ensureCatalogBundleLink(link.source, link.destination, managed[link.relative]); err != nil {
+			return nil, err
+		}
+	}
 	return localized, nil
 }
 
@@ -264,18 +316,28 @@ func ensureCatalogBundleLink(source, destination string, managed managedBundle) 
 	if err != nil || !sourceInfo.Mode().IsRegular() {
 		return fmt.Errorf("local ServerData catalog references a missing bundle: %s", source)
 	}
-	if destinationInfo, err := os.Stat(destination); err == nil {
+	if destinationInfo, err := os.Lstat(destination); err == nil {
 		if !destinationInfo.Mode().IsRegular() {
 			return fmt.Errorf("game Addressables bundle conflicts with the selected local release: %s", destination)
 		}
 		if os.SameFile(sourceInfo, destinationInfo) {
 			return nil
 		}
-		if managed.Path == "" {
-			return fmt.Errorf("game Addressables bundle conflicts with the selected local release: %s", destination)
-		}
-		if sourceInfo.Size() == managed.SourceSize && sourceInfo.ModTime().UnixNano() == managed.SourceModified && destinationInfo.Size() == managed.TargetSize && destinationInfo.ModTime().UnixNano() == managed.TargetModified {
+		if managed.Path != "" && sourceInfo.Size() == managed.SourceSize && sourceInfo.ModTime().UnixNano() == managed.SourceModified && destinationInfo.Size() == managed.TargetSize && destinationInfo.ModTime().UnixNano() == managed.TargetModified {
 			return nil
+		}
+		if sourceInfo.Size() == destinationInfo.Size() {
+			sourceHash, err := util.SHA256File(source)
+			if err != nil {
+				return err
+			}
+			targetHash, err := util.SHA256File(destination)
+			if err != nil {
+				return err
+			}
+			if sourceHash == targetHash {
+				return nil
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect game Addressables bundle: %w", err)
@@ -314,7 +376,85 @@ func ensureCatalogBundleLink(source, destination string, managed managedBundle) 
 			return errors.New("incomplete local Addressables bundle copy")
 		}
 	}
-	return os.Rename(path, destination)
+	return util.ReplaceFile(path, destination)
+}
+
+func catalogFilePath(root, relative string) (string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsLocal(filepath.FromSlash(relative)) {
+		return "", errors.New("catalog file path must be relative to its directory")
+	}
+	target := filepath.Join(root, filepath.FromSlash(relative))
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.New("catalog file escapes its directory")
+	}
+	for path := target; ; path = filepath.Dir(path) {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("catalog path contains a symbolic link: %s", path)
+			}
+			if path == target && !info.Mode().IsRegular() || path != target && !info.IsDir() {
+				return "", fmt.Errorf("catalog path conflicts with a non-regular file or directory: %s", path)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if path == root {
+			break
+		}
+	}
+	return target, nil
+}
+
+func resolvedCatalogPath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for _, part := range slices.Backward(suffix) {
+				resolved = filepath.Join(resolved, part)
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(path))
+		path = parent
+	}
+}
+
+func separateCatalogDirectories(release string, outputs ...string) error {
+	source, err := resolvedCatalogPath(release)
+	if err != nil {
+		return err
+	}
+	for _, output := range outputs {
+		target, err := resolvedCatalogPath(output)
+		if err != nil {
+			return err
+		}
+		for _, pair := range [][2]string{{source, target}, {target, source}} {
+			rel, err := filepath.Rel(pair[0], pair[1])
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return errors.New("local resource source and game output directories must not overlap")
+			}
+		}
+	}
+	return nil
 }
 
 func writeExclusiveFile(path string, data []byte, mode os.FileMode) error {
@@ -332,6 +472,11 @@ func writeExclusiveFile(path string, data []byte, mode os.FileMode) error {
 }
 
 func replaceCatalog(path string, data []byte) error {
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, data) {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".catalog-local-*.json")
 	if err != nil {
 		return err

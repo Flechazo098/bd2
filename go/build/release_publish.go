@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bd2server/internal/common/util"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -279,7 +280,7 @@ func (t task) releasePublish(args []string) error {
 		return err
 	}
 	publish := func(source, name, platform, id, version string) (releasepkg.File, error) {
-		sum, err := releasepkg.HashFile(source)
+		sum, err := util.SHA256File(source)
 		if err != nil {
 			return releasepkg.File{}, err
 		}

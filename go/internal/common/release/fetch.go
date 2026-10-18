@@ -2,6 +2,7 @@ package release
 
 import (
 	"archive/zip"
+	"bd2server/internal/common/util"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	commonconfig "bd2server/internal/common/config"
 )
 
 const (
@@ -154,7 +153,7 @@ func Download(ctx context.Context, client *http.Client, manifestURL string, file
 	if written != file.Size || hex.EncodeToString(digest.Sum(nil)) != file.SHA256 {
 		return "", fmt.Errorf("release: %s failed verification; the download was discarded", file.Name)
 	}
-	if err := commonconfig.ReplaceFile(temporary.Name(), target); err != nil {
+	if err := util.ReplaceFile(temporary.Name(), target); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -166,21 +165,8 @@ func Matches(path string, file File) bool {
 	if err != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
 		return false
 	}
-	sum, err := HashFile(path)
+	sum, err := util.SHA256File(path)
 	return err == nil && sum == file.SHA256
-}
-
-func HashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	digest := sha256.New()
-	if _, err := io.Copy(digest, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // Extract unpacks a verified zip archive into an empty directory, refusing

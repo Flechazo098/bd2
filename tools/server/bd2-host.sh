@@ -1,14 +1,16 @@
 #!/bin/sh
 # bd2-host.sh: everything a Docker host does for bd2server, in one place.
 #
-#   setup [COMMIT]     first install and deploy (one-click; safe to rerun)
-#   install            prepare directories, secrets, source checkout and the
+#   setup [SOURCE]     first install and deploy local source (safe to rerun)
+#   setup --image REF  first install and deploy a Docker image
+#   install [SOURCE]   prepare directories, secrets, a Compose template and the
 #                      update-handoff units; never replaces existing data
-#   deploy [COMMIT]    build COMMIT (default: tip of origin/main) from a clean
-#                      checkout, switch the container and wait until ready
+#   deploy [SOURCE]    build a source directory (default: /opt/bd2/source),
+#                      switch the container and wait until ready; no Git needed
+#   deploy --image REF deploy an existing local image or pull it if missing
 #   handoff            serve a server-requested update (run by the .path unit)
 #   rollback           start the image that ran before the last switch
-#   status             show the running image, commit and readiness
+#   status             show the running image and optional commit
 #
 # Run as root. Settings come from /etc/bd2/host.conf (KEY=value lines, see
 # load_config) and default to a self-contained layout below /opt/bd2.
@@ -75,31 +77,34 @@ lock() {
 # --- source -------------------------------------------------------------------
 
 verify_source() {
-    [ -d "$SOURCE_DIR/.git" ] || die "no source checkout at $SOURCE_DIR; run install"
+    if [ ! -e "$SOURCE_DIR" ]; then
+        git clone --quiet "$SOURCE_URL" "$SOURCE_DIR" || die 'cannot clone the release source'
+    fi
+    [ -d "$SOURCE_DIR/.git" ] || die "no Git checkout at $SOURCE_DIR for source-based automatic updates"
     actual=$(git -C "$SOURCE_DIR" remote get-url --all origin) || die 'cannot read the source origin'
     actual=${actual%/}
     expected=${SOURCE_URL%/}
     [ "${actual%.git}" = "${expected%.git}" ] || die "source origin $actual is not $SOURCE_URL"
-    [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || die 'the source checkout has local changes'
     git -C "$SOURCE_DIR" fetch --quiet --no-tags --prune origin '+refs/heads/*:refs/bd2-update/*' || die 'cannot fetch the source origin'
 }
 
-# resolve_commit prints COMMIT, or the tip of origin/main, after checking it
-# is a published commit: production only runs pushed, versioned code.
+# Automatic updates resolve the commit from the authenticated release request.
 resolve_commit() {
-    if [ -z "${1:-}" ]; then
-        git -C "$SOURCE_DIR" rev-parse --verify 'refs/bd2-update/main^{commit}' || die 'origin has no main branch'
-        return
-    fi
     printf '%s\n' "$1" | grep -Eq '^[0-9a-f]{40}$' || die 'COMMIT must be a full 40-digit commit hash'
     [ "$(git -C "$SOURCE_DIR" rev-parse --verify "$1^{commit}" 2>/dev/null)" = "$1" ] || die "$1 is not a commit in the source repository"
-    for ref in $(git -C "$SOURCE_DIR" for-each-ref --format='%(refname)' refs/bd2-update/); do
-        if git -C "$SOURCE_DIR" merge-base --is-ancestor "$1" "$ref"; then
-            printf '%s\n' "$1"
-            return
-        fi
-    done
-    die "$1 is not reachable from any published branch"
+    printf '%s\n' "$1"
+}
+
+build_source_image() {
+    source_path=$(realpath "$1") || die 'cannot resolve the source directory'
+    [ -f "$source_path/Dockerfile.server" ] || die "no Dockerfile.server in $source_path"
+    docker build --quiet -f "$source_path/Dockerfile.server" "$source_path"
+}
+
+resolve_image() {
+    docker image inspect --format '{{.Id}}' "$1" 2>/dev/null && return
+    docker pull "$1" >&2 || return 1
+    docker image inspect --format '{{.Id}}' "$1"
 }
 
 # build_image COMMIT prints the immutable image ID built from a fresh
@@ -189,13 +194,22 @@ previous_image() {
 # --- commands -----------------------------------------------------------------
 
 cmd_install() {
-    require docker git jq flock curl nsenter openssl install stat
+    require docker jq flock curl nsenter openssl install stat
     docker compose version >/dev/null 2>&1 || die 'the Docker Compose plugin is required'
     install -d -m 700 -o root -g root "$BD2_DIR"
-    if [ ! -d "$SOURCE_DIR/.git" ]; then
-        git clone --quiet "$SOURCE_URL" "$SOURCE_DIR"
+    if [ ! -e "$COMPOSE_FILE" ]; then
+        template=$(dirname "$(readlink -f "$0")")/compose.yaml
+        if [ -n "${1:-}" ]; then
+            template=$1/tools/server/compose.yaml
+        elif [ ! -f "$template" ]; then
+            if [ ! -d "$SOURCE_DIR" ]; then
+                require git
+                git clone --quiet "$SOURCE_URL" "$SOURCE_DIR"
+            fi
+            template=$SOURCE_DIR/tools/server/compose.yaml
+        fi
+        [ -f "$template" ] || die "no Compose template at $template"
     fi
-    verify_source
     install -d -m 700 -o 10001 -g 10001 "$DATA_DIR" "$UPDATES"
     install -d -m 755 -o 10001 -g 10001 "$DATA_DIR/config"
     if [ -n "$SEED_CONFIG_DIR" ]; then
@@ -214,7 +228,7 @@ cmd_install() {
     fi
     [ "$(grep -c '^BD2_AUTH_MASTER_KEY=' "$ENV_FILE")" -eq 1 ] || die "$ENV_FILE needs exactly one BD2_AUTH_MASTER_KEY"
     if [ ! -e "$COMPOSE_FILE" ]; then
-        install -m 644 "$SOURCE_DIR/tools/server/compose.yaml" "$COMPOSE_FILE"
+        install -m 644 "$template" "$COMPOSE_FILE"
         log "created $COMPOSE_FILE from the template; review its ports before exposing the server"
     fi
     if [ "$(readlink -f "$0")" != "$(readlink -f "$SELF" 2>/dev/null || true)" ]; then
@@ -257,14 +271,27 @@ EOF
 }
 
 cmd_deploy() {
-    require docker git jq flock curl nsenter
+    require docker jq flock curl nsenter
+    mode=source
+    source_path=$SOURCE_DIR
+    case "$#" in
+        0) ;;
+        1) [ "$1" != --image ] || die 'usage: deploy --image REF'; source_path=$1 ;;
+        2) [ "$1" = --image ] || die 'usage: deploy [SOURCE] | deploy --image REF'; mode=image; image_ref=$2 ;;
+        *) die 'usage: deploy [SOURCE] | deploy --image REF' ;;
+    esac
     lock
     [ ! -f "$UPDATES/docker-request.json" ] && [ ! -f "$UPDATES/docker-request.processing.json" ] ||
         die 'a server-requested update is pending; let it finish (or inspect it) before deploying'
-    verify_source
-    commit=$(resolve_commit "${1:-}")
-    log "building $commit"
-    target=$(build_image "$commit")
+    if [ "$mode" = image ]; then
+        log "resolving image $image_ref"
+        target=$(resolve_image "$image_ref") || die 'cannot resolve the deployment image'
+    else
+        require realpath
+        log "building local source $source_path"
+        target=$(build_source_image "$source_path") || die 'building the local source failed'
+    fi
+    printf '%s\n' "$target" | grep -Eq '^sha256:[0-9a-f]{64}$' || die 'build did not produce an immutable image ID'
     if replaced=$(previous_image); then
         old_container=${replaced% *}
         remember_previous "${replaced#* }"
@@ -274,12 +301,21 @@ cmd_deploy() {
     log "starting $target"
     use_image "$target" || die 'switching the container failed'
     if ready "$target" "$old_container"; then
-        log "deployed $commit; the server is ready"
+        log "deployed $target; the server is ready"
         cmd_status
         return
     fi
     compose logs --since 10m --tail 200 "$SERVICE" >&2 || true
     die "the new container did not become ready; inspect the logs above, then fix forward or run: $SELF rollback"
+}
+
+cmd_setup() {
+    case "$#" in
+        0|1) cmd_install "$@" ;;
+        2) [ "$1" = --image ] || die 'usage: setup [SOURCE] | setup --image REF'; cmd_install ;;
+        *) die 'usage: setup [SOURCE] | setup --image REF' ;;
+    esac
+    cmd_deploy "$@"
 }
 
 cmd_rollback() {
@@ -386,20 +422,19 @@ cmd_handoff() {
     [ -z "$fingerprint" ] || printf '%s\n' "$fingerprint" | grep -Eq '^[0-9a-f]{64}$' || fail 'invalid target fingerprint'
     image=$(jq -r '.image // ""' "$processing")
     migration=$(jq -r '.migration.kind' "$processing")
-    for dependency in docker curl nsenter git mktemp stat cp; do
+    for dependency in docker curl nsenter mktemp stat cp; do
         command -v "$dependency" >/dev/null || fail "$dependency is required"
     done
     replaced=$(previous_image) || fail 'expected exactly one existing Compose container with an immutable image'
     old_container=${replaced% *}
     previous=${replaced#* }
 
-    # The commit must be published even when an immutable image is supplied.
-    (verify_source && resolve_commit "$commit" >/dev/null) || fail 'the requested commit is not a published commit of the source repository'
     if [ -n "$image" ]; then
         printf '%s\n' "$image" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$' || fail 'image must be pinned by a sha256 repository digest'
         docker pull "$image" >/dev/null || fail 'pulling the requested image failed'
         target=$(docker image inspect --format '{{.Id}}' "$image") || fail 'cannot resolve the pulled image ID'
     else
+        (require git && verify_source && resolve_commit "$commit" >/dev/null) || fail 'cannot resolve the release source commit'
         target=$(build_image "$commit") || fail 'building the requested commit failed'
     fi
 
@@ -437,11 +472,11 @@ load_config
 command=${1:-}
 [ "$#" -eq 0 ] || shift
 case "$command" in
-    setup) cmd_install; cmd_deploy "${1:-}" ;;
-    install) cmd_install ;;
-    deploy) cmd_deploy "${1:-}" ;;
+    setup) cmd_setup "$@" ;;
+    install) [ "$#" -le 1 ] || die 'usage: install [SOURCE]'; cmd_install "$@" ;;
+    deploy) cmd_deploy "$@" ;;
     rollback) cmd_rollback ;;
     status) cmd_status ;;
     handoff) cmd_handoff ;;
-    *) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 2 ;;
+    *) sed -n '2,15s/^# \{0,1\}//p' "$0"; exit 2 ;;
 esac

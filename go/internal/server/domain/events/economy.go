@@ -36,6 +36,7 @@ type economySnapshot struct {
 // Economy dispatches verified static rewards to their owning domains. It is
 // called inside the same account transaction as the gameplay operation.
 type Economy struct {
+	life          LifeEconomy
 	ownedDesign   map[uint64]map[uint64]bool
 	avatarRewards *gamedata.AvatarRewardDesign
 	buffRewards   *BuffRewards
@@ -51,6 +52,7 @@ type Economy struct {
 	hunting          HuntingAP
 	prestige         map[uint64]uint64
 	prestigePortrait func() uint64
+	datingCap        uint64
 	apCaps           map[uint64]uint64
 	resetSeconds     int64
 	now              func() time.Time
@@ -74,7 +76,7 @@ func NewEconomy(ctx command.Context, store stateio.Store, items *assets.Inventor
 
 // AdditionalCurrencyFields maps EElementType to its UserDBInfo field. These
 // balances use a gameplay entry, leaving the frozen wallet schema unchanged.
-var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 38: 42, 39: 44, 40: 45, 43: 48, 44: 54, 52: 58, 53: 59, 54: 61, 60: 60, 70: 71}
+var AdditionalCurrencyFields = map[uint64]int{15: 16, 16: 17, 18: 18, 24: 22, 30: 34, 31: 35, 32: 36, 33: 37, 35: 41, 38: 42, 39: 44, 40: 45, 41: 46, 42: 47, 43: 48, 44: 54, 52: 58, 53: 59, 54: 61, 60: 60, 70: 71, 72: 70}
 
 func (e *Economy) AttachAvatarRewards(d *gamedata.AvatarRewardDesign) { e.avatarRewards = d }
 
@@ -96,9 +98,11 @@ func (e *Economy) AdditionalCurrencies(ctx command.Context) (map[int]uint64, err
 }
 func (e *Economy) load(ctx command.Context) (economySnapshot, error) {
 	s := economySnapshot{Balances: map[uint64]uint64{}, Receipts: map[string]economyReceipt{}}
-	maps.Copy(s.Balances, e.initial)
 	b, err := e.store.Load(ctx.State, "event_economy")
 	if err != nil || b == nil {
+		if b == nil {
+			maps.Copy(s.Balances, e.initial)
+		}
 		return s, err
 	}
 	if err = stateio.RequireExactJSONObject(b, "balances", "receipts"); err != nil {

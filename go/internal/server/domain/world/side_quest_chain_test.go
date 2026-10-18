@@ -84,7 +84,8 @@ func TestForestSideQuestCompletionSurvivesPackEntry(t *testing.T) {
 			t.Fatal(err)
 		}
 		service := &Service{seed: Seed{PackID: 1}, activePack: 1, state: state, wallet: wallet, inventory: inventory,
-			storyCatalog: catalog, collection: collection, questCostumes: questCostumes}
+			storyCatalog: catalog, collection: collection, questCostumes: questCostumes,
+			presentationSource: gamedata.NewSource(versions.Resolve("data/resources/GameData"), versions.GameDataVersion)}
 		service.attachFieldMonsterDesign(gamedata.NewSource(versions.Resolve("data/resources/GameData"), versions.GameDataVersion))
 		if err := service.AttachFieldMonsterState(stateio.RootStore{}); err != nil {
 			t.Fatal(err)
@@ -172,7 +173,20 @@ func TestForestSideQuestCompletionSurvivesPackEntry(t *testing.T) {
 			}
 		})
 		run(func(ctx command.Context, service *Service) {
-			rows := service.activeSideQuestWires(1)
+			preview := handle(ctx, service, "/PackSubQuestClearInfo", wire.AppendBytes(wire.AppendVarint(nil, 1, 1), 2, []byte{1}))
+			rows, err := nestedMessages(preview, 1)
+			if err != nil || len(rows) != 1 {
+				t.Fatal("side-story menu lost the requested chapter")
+			}
+			count, _, err := wire.Varint(rows[0], 2)
+			var completed uint64
+			if step.next == 0 {
+				completed = 1
+			}
+			if err != nil || count != completed {
+				t.Fatal("the chapter must count the finished side story, not its completed intermediate stages or main difficulty")
+			}
+			rows = service.activeSideQuestWires(1)
 			wantRows := 1
 			if step.next == 0 {
 				wantRows = 0

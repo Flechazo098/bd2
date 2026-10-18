@@ -2,15 +2,20 @@ package app
 
 import (
 	"bd2server/internal/server/domain/battle"
+	"bd2server/internal/server/domain/battle/castle"
 	"bd2server/internal/server/domain/battle/hunting"
+	"bd2server/internal/server/domain/battle/ib"
 	"bd2server/internal/server/domain/battle/monsterhunt"
 	"bd2server/internal/server/domain/battle/pvp"
+	"bd2server/internal/server/domain/battle/roguelike"
+	"bd2server/internal/server/domain/cafeteria"
 	"bd2server/internal/server/domain/chat"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
 	"bd2server/internal/server/domain/commerce/gacha"
 	"bd2server/internal/server/domain/commerce/npcinn"
 	"bd2server/internal/server/domain/commerce/npcshop"
+	"bd2server/internal/server/domain/dating"
 	"bd2server/internal/server/domain/events"
 	"bd2server/internal/server/domain/events/actions"
 	"bd2server/internal/server/domain/events/exchange"
@@ -19,6 +24,7 @@ import (
 	"bd2server/internal/server/domain/events/tasks"
 	"bd2server/internal/server/domain/fishing"
 	assets "bd2server/internal/server/domain/inventory"
+	"bd2server/internal/server/domain/life"
 	"bd2server/internal/server/domain/mail"
 	"bd2server/internal/server/domain/profile"
 	"bd2server/internal/server/domain/progression/achievements"
@@ -60,11 +66,17 @@ type PlayerFactory struct {
 }
 
 type playerAssembly struct {
-	fishingService *fishing.Service
-	pvpService     *pvp.Service
-	worldSeed      world.Seed
-	mailbox        *mail.Starter
-	deckSeed       deck.Seed
+	cafeteriaService *cafeteria.Service
+	datingService    *dating.Service
+	castleService    *castle.Service
+	ibService        *ib.Service
+	rogueLikeService *roguelike.Service
+	lifeService      *life.Service
+	fishingService   *fishing.Service
+	pvpService       *pvp.Service
+	worldSeed        world.Seed
+	mailbox          *mail.Starter
+	deckSeed         deck.Seed
 	*PlayerFactory
 	progressState           *progress.Store
 	deckStateStore          *deck.Store
@@ -225,7 +237,7 @@ func (f *PlayerFactory) assemble(ctx context.Context, accountID string, reposito
 	}()
 
 	identity := command.Context{Identity: command.Identity{AccountID: accountID, SessionID: "startup", RequestID: "initialize"}, Cancellation: ctx, State: startupTransaction}
-	for _, assemble := range []func(command.Context) error{p.assets, p.worldRoster, p.gameplay, p.commerce, p.events, p.session} {
+	for _, assemble := range []func(command.Context) error{p.assets, p.worldRoster, p.gameplay, p.commerce, p.events, p.optionalGameplay, p.openIB, p.rogueLike, p.session} {
 		if err := assemble(identity); err != nil {
 			return nil, err
 		}

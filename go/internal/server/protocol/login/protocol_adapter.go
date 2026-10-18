@@ -308,6 +308,19 @@ func (s *LoginSeed) Login(ctx command.Context, request, sessionKey []byte) ([]by
 			return nil, err
 		}
 	}
+	if s.totalWarSlots != nil {
+		value, err := s.totalWarSlots(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if value > math.MaxInt32 {
+			return nil, errors.New("account: total war slots exceed protocol range")
+		}
+		user, _, err = wire.ReplaceVarint(user, 33, value)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if s.fishing != nil {
 		state := s.fishing()
 		for i, value := range []uint64{state.AP, state.FishSlots, state.RodSlots, state.ItemSlots} {

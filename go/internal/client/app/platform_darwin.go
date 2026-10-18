@@ -4,6 +4,7 @@ package app
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,7 @@ func ShowFatalError(err error) {
 	}
 }
 
-func launchGame(target, proxyURL string) error {
+func launchGame(target, proxyURL string, _ *slog.Logger) error {
 	info, err := os.Stat(target)
 	if err != nil || !info.IsDir() || !strings.EqualFold(filepath.Ext(target), ".app") {
 		return fmt.Errorf("invalid macOS application bundle %q", target)

@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/common/util"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -299,7 +300,7 @@ func firstGachaRewardCount(g *FirstGachaRewardGroup, visiting map[*FirstGachaRew
 	return total, nil
 }
 
-func (d *FirstGachaDesign) Roll() ([]FirstGachaReward, error) { return d.roll(cryptoDraw) }
+func (d *FirstGachaDesign) Roll() ([]FirstGachaReward, error) { return d.roll(util.RandomUint64N) }
 func (d *FirstGachaDesign) roll(draw func(uint64) (uint64, error)) ([]FirstGachaReward, error) {
 	if d == nil {
 		return nil, errors.New("gamedata: missing first gacha")

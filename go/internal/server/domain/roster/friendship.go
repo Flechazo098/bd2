@@ -2,6 +2,7 @@ package roster
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/command"
 
 	assets "bd2server/internal/server/domain/inventory"
 	"errors"
@@ -9,6 +10,11 @@ import (
 
 	"time"
 )
+
+type FriendshipEconomy interface {
+	CurrencyBalance(command.Context, uint64) (uint64, error)
+	Apply(command.Context, string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
+}
 
 // FriendshipService applies inventory gifts and counseling inside the account
 // request transaction. Static IDs, thresholds and rewards come from GameData.
@@ -18,16 +24,20 @@ type FriendshipService struct {
 	potential  *gamedata.CostumePotentialDesign
 	collection *CollectionStore
 	inventory  *assets.Inventory
-	wallet     *assets.Wallet
+	economy    FriendshipEconomy
 
 	now func() time.Time
 }
 
-func NewFriendshipService(design *gamedata.FriendshipDesign, awake *gamedata.CharAwakeDesign, potential *gamedata.CostumePotentialDesign, collection *CollectionStore, inventory *assets.Inventory, wallet *assets.Wallet) (*FriendshipService, error) {
-	if design == nil || awake == nil || potential == nil || collection == nil || inventory == nil || wallet == nil {
+func (s *FriendshipService) AttachEconomy(economy FriendshipEconomy) {
+	s.economy = economy
+}
+
+func NewFriendshipService(design *gamedata.FriendshipDesign, awake *gamedata.CharAwakeDesign, potential *gamedata.CostumePotentialDesign, collection *CollectionStore, inventory *assets.Inventory) (*FriendshipService, error) {
+	if design == nil || awake == nil || potential == nil || collection == nil || inventory == nil {
 		return nil, errors.New("player: incomplete friendship service")
 	}
-	s := &FriendshipService{design: design, awake: awake, potential: potential, collection: collection, inventory: inventory, wallet: wallet, now: time.Now}
+	s := &FriendshipService{design: design, awake: awake, potential: potential, collection: collection, inventory: inventory, now: time.Now}
 	for _, entry := range collection.FriendshipEntries() {
 		if entry.Daily != nil && entry.Daily.Used > design.Default.MaxCounselingAP {
 			return nil, errors.New("player: saved daily friendship AP exceeds maximum")
@@ -62,6 +72,16 @@ func (s *FriendshipService) FriendshipAP() (uint64, error) {
 		return 0, nil
 	}
 	return s.design.Default.MaxCounselingAP - daily.Used, nil
+}
+
+func (s *FriendshipService) CurrentLevel(id uint64) uint64 {
+	if _, owned := s.owned(id); !owned {
+		return 0
+	}
+	if entry := s.collection.data.Friendships[friendshipStateKey(id)]; entry.State != nil {
+		return entry.State.Level
+	}
+	return 1
 }
 
 func (s *FriendshipService) daily(entries map[string]FriendshipEntry, day string) FriendshipDaily {

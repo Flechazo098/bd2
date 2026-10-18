@@ -80,6 +80,7 @@ type Store struct {
 	replies        map[string]deckReply
 	waypointDesign func(uint64) (gamedata.WaypointPack, error)
 	waypointPack   func(ctx command.Context, _ uint64, _ bool) error
+	waypointTalent func(ctx command.Context, pack, mapID, seq uint64) error
 }
 
 type deckReply struct {

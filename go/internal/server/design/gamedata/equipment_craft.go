@@ -1,6 +1,7 @@
 package gamedata
 
 import (
+	"bd2server/internal/common/util"
 	"database/sql"
 	"fmt"
 	"math"
@@ -55,7 +56,7 @@ func loadEquipmentCraftDesign(db *sql.DB) (*EquipmentCraftDesign, error) {
 	design := &EquipmentCraftDesign{
 		Recipes: make(map[uint64]EquipmentCraftRecipe), Equipment: make(map[uint64]EquipmentDesign),
 		CharTalent: make(map[uint64]equipmentMakingTalent), Skills: make(map[[2]uint64]equipmentMakingTalentSkill),
-		TalentNeed: make(map[[2]uint64]uint64), draw: cryptoDraw,
+		TalentNeed: make(map[[2]uint64]uint64), draw: util.RandomUint64N,
 	}
 	rows, err := db.Query("SELECT id,ProtoBuf FROM EquipmentMakingTable ORDER BY id")
 	if err != nil {
@@ -281,7 +282,7 @@ func (d *EquipmentCraftDesign) Generate(recipeID uint64) (GeneratedEquipment, er
 	}
 	draw := d.draw
 	if draw == nil {
-		draw = cryptoDraw
+		draw = util.RandomUint64N
 	}
 	id, err := rollEquipmentChoiceWith(recipe.Results, draw)
 	if err != nil {

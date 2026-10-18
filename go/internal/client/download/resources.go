@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/release"
 	"bd2server/internal/common/resourcecatalog"
 )
@@ -23,6 +22,7 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 	for _, pin := range m.ResourceFiles {
 		pins[pin.Path] = pin
 	}
+	serverRanked, dataRanked := false, false
 	receive := func(files []file, origins []string, workers int) error {
 		if len(pins) != 0 {
 			for i := range files {
@@ -38,7 +38,39 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 				usedPins[pin.Path] = true
 			}
 		}
-		return d.receiveAll(ctx, files, origins, workers)
+		var missing []file
+		for _, item := range files {
+			if !d.verified(item) {
+				missing = append(missing, item)
+			}
+		}
+		if len(missing) == 0 {
+			return d.saveRecords()
+		}
+		if d.measureOrigins {
+			if strings.HasPrefix(missing[0].remote, dataPath+"/") {
+				if !dataRanked {
+					var err error
+					dataOrigins, err = d.fastest(ctx, origins, missing[0].remote, "GameData")
+					if err != nil {
+						return err
+					}
+					dataRanked = true
+				}
+				origins = dataOrigins
+			} else {
+				if !serverRanked {
+					var err error
+					serverOrigins, err = d.fastest(ctx, origins, missing[0].remote, "ServerData")
+					if err != nil {
+						return err
+					}
+					serverRanked = true
+				}
+				origins = serverOrigins
+			}
+		}
+		return d.receiveAll(ctx, missing, origins, workers)
 	}
 	serverDir := filepath.Join(root, "ServerData", m.Platform, "HD", m.BundleVersion)
 	dataDir := filepath.Join(root, "GameData", m.GameDataVersion)
@@ -107,7 +139,7 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 	if size != stat.Size() {
 		return errors.New("GameData size metadata mismatch")
 	}
-	entries, err := validateDataArchive(filepath.Join(dataDir, "release", "common-dbdata.bin"))
+	entries, err := d.dataArchiveEntries(filepath.Join(dataDir, "release", "common-dbdata.bin"))
 	if err != nil {
 		return err
 	}
@@ -144,9 +176,48 @@ func (d *downloader) resources(ctx context.Context, root string, m manifest, ser
 		}
 		total += info.Size()
 	}
-	return commonconfig.Save(filepath.Join(root, "resource-fetch-manifest.json"), map[string]any{
+	metadata := map[string]any{
 		"bundle_version": m.BundleVersion, "game_data_version": m.GameDataVersion, "platform": m.Platform,
 		"server_data": map[string]any{"catalog_hash": strings.ToLower(actualHash), "bundles": len(files), "bytes": total},
 		"game_data":   map[string]any{"version": m.GameDataVersion, "entry_count": entries, "bytes": size},
-	}, commonconfig.WriteOptions{FileMode: 0644})
+	}
+	raw, err = json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	path := filepath.Join(root, "resource-fetch-manifest.json")
+	if current, err := os.ReadFile(path); err == nil && bytes.Equal(current, raw) {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return atomicWrite(path, raw)
+}
+
+func (d *downloader) dataArchiveEntries(path string) (int, error) {
+	d.mu.Lock()
+	r := d.records[d.receiptKey(path)]
+	d.mu.Unlock()
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	if r.Bytes == info.Size() && r.Modified == info.ModTime().UnixNano() && r.ArchiveEntries > 0 {
+		return r.ArchiveEntries, nil
+	}
+	entries, err := validateDataArchive(path)
+	if err != nil {
+		return 0, err
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	if after.Size() != info.Size() || after.ModTime() != info.ModTime() {
+		return 0, errors.New("GameData changed during archive validation")
+	}
+	r.ArchiveEntries = entries
+	d.remember(path, r)
+	return entries, d.saveRecords()
 }

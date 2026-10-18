@@ -410,6 +410,8 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 	var out []byte
 	var e error
 	switch path {
+	case "/QuickBattle":
+		out, e = s.quickBattle(ctx, req, key)
 	case "/MiniGameRelayServerInfo":
 		provider, ok := s.rooms.(RelayEndpointSource)
 		if !ok {
@@ -511,6 +513,12 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		return fail(e)
 	}
 	s.state = next
+	if strings.HasSuffix(path, "End") {
+		s.achievementProgress = nil
+		if path == "/MiniGameRhythmPlayEnd" {
+			s.completedRhythmResults = nil
+		}
+	}
 	return code, out, true, nil
 }
 
@@ -1414,6 +1422,14 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 				rs = append(rs, definitions[index].Reward)
 				next.Stories[marker] = true
 			}
+		}
+		hub, e := s.battleHub(ctx, a.UID, false)
+		if e != nil {
+			return nil, e
+		}
+		rs, e = s.battleBonus(ctx, hub, rs)
+		if e != nil {
+			return nil, e
 		}
 		rewards := []gamedata.Reward{}
 		for _, r := range rs {
