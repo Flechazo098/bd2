@@ -27,17 +27,14 @@ var webFS embed.FS
 var errGameAlreadyRunning = errors.New("Brown Dust II is already running") //nolint:staticcheck // ST1005
 
 type Options struct {
-	InitialGameDir      string
-	Logger              *slog.Logger
-	LogPath             string
-	Versions            versionconfig.Config
-	Development         bool
-	PackageDirectory    string
-	DownloadManifest    string
-	LocalIdentityPlugin string
-	LoginUIPlugin       string
-	CashShopPlugin      string
-	FChatPlugin         string
+	InitialGameDir   string
+	Logger           *slog.Logger
+	LogPath          string
+	Versions         versionconfig.Config
+	Development      bool
+	PackageDirectory string
+	DownloadManifest string
+	Plugins          clientplugin.Set
 }
 
 type Request struct {
@@ -94,13 +91,10 @@ type Studio struct {
 func NewStudio(options Options, host NativeHost) *Studio {
 	s := &Studio{options: options, host: host, ctx: context.Background(), launch: launchGame, savePreferences: clientconfig.SavePreferences}
 	if executable, err := os.Executable(); err == nil {
-		var developmentPlugins []string
-		if options.Development {
-			developmentPlugins = []string{options.LocalIdentityPlugin, options.LoginUIPlugin, options.CashShopPlugin, options.FChatPlugin, filepath.Join(filepath.Dir(options.LocalIdentityPlugin), clientplugin.GameNames.FileName())}
-		}
+
 		s.updates = clientupdate.New(clientupdate.Options{
 			Versions: options.Versions, Directory: filepath.Dir(executable), Logger: options.Logger, Development: options.Development,
-			DevelopmentPlugins: developmentPlugins,
+			DevelopmentPlugins: options.Plugins,
 			Games: func() string {
 				preferences, err := clientconfig.LoadPreferences()
 				if err != nil {
@@ -300,7 +294,11 @@ func (s *Studio) Install(input Request) (Response, error) {
 		if _, err := clientsetup.SaveSettings(input.GameDirectory, input.settings()); err != nil {
 			return Response{}, err
 		}
-		result, err := clientsetup.InstallPlugins(input.GameDirectory, s.options.LocalIdentityPlugin, s.options.LoginUIPlugin, s.options.CashShopPlugin, s.options.FChatPlugin)
+		plugins, err := s.plugins()
+		if err != nil {
+			return Response{}, err
+		}
+		result, err := clientsetup.InstallPlugins(input.GameDirectory, plugins)
 		if err != nil {
 			return Response{}, err
 		}
@@ -364,7 +362,12 @@ func (s *Studio) Launch(input Request) (Response, error) {
 			if !installation.SupportedOnHost() {
 				return Response{}, fmt.Errorf("cannot launch a %s game client from this operating system", installation.Kind)
 			}
-			for _, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll", "BD2CashShop.dll", "BD2FChat.dll"} {
+			plugins, err := s.plugins()
+			if err != nil {
+				return Response{}, err
+			}
+			for _, artifact := range plugins {
+				name := artifact.Name
 				info, err := os.Stat(filepath.Join(installation.Plugins, name))
 				if err != nil || !info.Mode().IsRegular() {
 					return Response{}, fmt.Errorf("install or update the client plugins before launching; %s is missing", name)
@@ -458,4 +461,18 @@ func (s *Studio) Quit() {
 			s.host.Quit(s.context())
 		}
 	})
+}
+
+func (s *Studio) plugins() (clientplugin.Set, error) {
+	if s.options.Development {
+		if _, err := s.options.Plugins.Sources(); err != nil {
+			return nil, err
+		}
+		return s.options.Plugins, nil
+	}
+	directory, err := s.packageDirectory()
+	if err != nil {
+		return nil, err
+	}
+	return clientplugin.Packaged(directory)
 }

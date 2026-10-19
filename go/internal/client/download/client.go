@@ -19,6 +19,8 @@ type Options struct {
 	Workers                            int
 	ProbeOnly                          bool
 	Pinned                             *release.GameResources
+	// Progress, when set, receives byte and file counts while downloading.
+	Progress func(Progress)
 }
 
 type Installation struct {
@@ -89,6 +91,7 @@ func Client(ctx context.Context, options Options, out io.Writer) (Installation, 
 		return result, err
 	}
 	defer d.client.CloseIdleConnections()
+	d.progress = options.Progress
 	dataPath := "/GameData/" + m.GameDataVersion
 	serverPath := "/ServerData/" + m.Platform + "/HD/" + m.BundleVersion
 	if options.ProbeOnly {
@@ -112,12 +115,15 @@ func Client(ctx context.Context, options Options, out io.Writer) (Installation, 
 			return result, err
 		}
 	}
+	d.setPhase(PhaseGame)
 	if err := d.receiveAll(ctx, []file{gameFile}, builds, 1); err != nil {
 		return result, err
 	}
+	d.setPhase(PhaseExtracting)
 	if err := extractArchive(archive, result.GameDir, true, m.GameSHA256); err != nil {
 		return result, err
 	}
+	d.setPhase(PhaseResources)
 	if err := d.resources(ctx, result.ResourceDir, m, serverPath, dataPath, m.ResourceOrigins, m.ResourceOrigins, options.Workers); err != nil {
 		return result, err
 	}

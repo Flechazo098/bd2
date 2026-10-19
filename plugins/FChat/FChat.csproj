@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BD2FChat</AssemblyName>
     <RootNamespace>Bd2FChat</RootNamespace>
+    <BD2UsesGameSdk>true</BD2UsesGameSdk>
     <BD2PluginVersionKey>fchat</BD2PluginVersionKey>
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>

@@ -80,10 +80,7 @@ func (t task) runClient2(args []string) error {
 			if err := clientplugin.BuildDevelopment(ctx, t.root, game, os.Stdout); err != nil {
 				return err
 			}
-			plugins := func(name string) string {
-				return filepath.Join(t.root, "plugins", name, "bin", "Release", "netstandard2.1", "BD2"+name+".dll")
-			}
-			_, err := clientsetup.InstallPlugins(instance.GameDirectory, plugins("LocalIdentity"), plugins("LoginUI"), plugins("CashShop"), plugins("FChat"))
+			_, err := clientsetup.InstallPlugins(instance.GameDirectory, clientplugin.Development(t.root))
 			return err
 		}},
 		taskgraph.Task{Name: "instance:launcher", DependsOn: []string{"instance:plugins"}, Run: func(context.Context) error {

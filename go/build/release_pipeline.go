@@ -2,17 +2,14 @@ package main
 
 import (
 	"bd2server/internal/common/util"
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	clientplugin "bd2server/internal/client/plugin"
-	clientupdate "bd2server/internal/client/update"
 	releasepkg "bd2server/internal/common/release"
 	"bd2server/internal/common/taskgraph"
 	"bd2server/internal/common/versionconfig"
@@ -155,21 +152,9 @@ func (r *release) stageAssets() error {
 			return err
 		}
 	}
-	var shared []byte
-	for _, plugin := range []string{"LocalIdentity", "LoginUI", "CashShop", "FChat"} {
-		out := filepath.Join(root, "plugins", plugin, "bin", "Release", "netstandard2.1")
-		raw, err := os.ReadFile(filepath.Join(out, "BD2.GameNames.dll"))
-		if err != nil {
+	for _, artifact := range clientplugin.Development(root) {
+		if err := copyFile(artifact.Source, filepath.Join(r.client, "plugins", artifact.Name)); err != nil {
 			return err
-		}
-		if shared != nil && !bytes.Equal(shared, raw) {
-			return errors.New("plugins were built with different BD2.GameNames libraries")
-		}
-		shared = raw
-		for _, name := range []string{"BD2" + plugin + ".dll", "BD2.GameNames.dll"} {
-			if err := copyFile(filepath.Join(out, name), filepath.Join(r.client, "plugins", name)); err != nil {
-				return err
-			}
 		}
 	}
 	if err := copyTree(filepath.Join(root, "go", "seed"), filepath.Join(r.server, "go", "seed")); err != nil {
@@ -239,20 +224,20 @@ func (r *release) writePluginStore() error {
 		return err
 	}
 	byID := versions.Plugins.ByID()
-	store := clientupdate.Store{Version: versions.ClientVersion}
-	for _, spec := range clientplugin.Shipped {
-		sum, err := util.SHA256File(filepath.Join(r.client, "plugins", spec.FileName()))
+	store := clientplugin.Store{Version: versions.ClientVersion}
+	for _, artifact := range clientplugin.Development(r.task.root) {
+		sum, err := util.SHA256File(filepath.Join(r.client, "plugins", artifact.Name))
 		if err != nil {
 			return err
 		}
-		id := pluginIDs[spec.FileName()]
-		store.Files = append(store.Files, clientupdate.StoredFile{ID: id, Name: spec.FileName(), Version: byID[id], SHA256: sum})
+		id := artifact.ID
+		store.Files = append(store.Files, clientplugin.StoredFile{ID: id, Name: artifact.Name, Version: byID[artifact.VersionKey], SHA256: sum})
 	}
 	raw, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(r.client, "plugins", clientupdate.StoreFile), append(raw, '\n'), 0o644)
+	return os.WriteFile(filepath.Join(r.client, "plugins", clientplugin.StoreFile), append(raw, '\n'), 0o644)
 }
 
 func (r *release) archive() error {

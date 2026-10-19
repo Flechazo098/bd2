@@ -178,5 +178,5 @@ func (s *Service) InnContext(ctx command.Context, pack, npc uint64) (gamedata.In
 		state, _, e := s.reputationState(ctx, current, d.Groups[r.MapGroup])
 		return r, state, e
 	}
-	return empty, 0, fmt.Errorf("world: motel NPC outside current map")
+	return empty, 0, fmt.Errorf("world: motel NPC outside current map: pack=%d map=%d npc=%d", current, position.Position.MapID, npc)
 }

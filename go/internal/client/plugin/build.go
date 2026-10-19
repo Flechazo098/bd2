@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -19,13 +20,12 @@ import (
 	"bd2server/internal/common/taskgraph"
 )
 
-var developmentProjects = []struct{ name, key string }{
-	{"LocalIdentity", "local_identity"}, {"LoginUI", "login_ui"}, {"CashShop", "cash_shop"}, {"FChat", "fchat"},
-}
-
 // BuildDevelopment compiles the client plugins as one dependency graph, sharing
-// the game SDK and version preparation across the four entry projects.
+// the game SDK and version preparation across the entry projects.
 func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Writer) error {
+	if err := validateDefinitions(); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -133,15 +133,18 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 		taskgraph.Task{Name: "versionSources", DependsOn: []string{"sdkPrepare"}, Run: func(context.Context) error {
 			versionStarted := time.Now()
 			_, _ = fmt.Fprintln(progress, "Client plugins: generating version and compilation fingerprints...")
-			for _, project := range developmentProjects {
-				if err := buildversion.Generate(versionConfig, filepath.Join(versionDir, project.key+".g.cs"), project.key); err != nil {
+			for _, project := range definitions {
+				if project.VersionKey == "" {
+					continue
+				}
+				if err := buildversion.Generate(versionConfig, filepath.Join(versionDir, project.VersionKey+".g.cs"), project.VersionKey); err != nil {
 					return err
 				}
-				inputStamp, err := projectFingerprint(root, inputs, project.name, filepath.Join(versionDir, project.key+".g.cs"))
+				inputStamp, err := projectFingerprint(root, inputs, project.Name(), filepath.Join(versionDir, project.VersionKey+".g.cs"))
 				if err != nil {
 					return err
 				}
-				if err := writeBuildInput(filepath.Join(compileInputsDir, project.key+".g.cs"), inputStamp); err != nil {
+				if err := writeBuildInput(filepath.Join(compileInputsDir, project.VersionKey+".g.cs"), inputStamp); err != nil {
 					return err
 				}
 			}
@@ -151,11 +154,14 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 		}},
 		taskgraph.Task{Name: "pluginsCompile", DependsOn: []string{"versionSources"}, Run: func(context.Context) error {
 			compileStarted := time.Now()
-			_, _ = fmt.Fprintln(progress, "Client plugins: compiling all four plugins as one parallel dependency graph...")
-			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(root, "plugins", "ClientPlugins.proj"), "-m", "-c", "Release", "--nologo",
+			if err := writeAggregateProject(filepath.Join(work, "ClientPlugins.proj"), root); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(progress, "Client plugins: compiling all %d plugins as one parallel dependency graph...\n", len(definitions))
+			if err := runPluginBuild(ctx, root, progress, "build", filepath.Join(work, "ClientPlugins.proj"), "-m", "-c", "Release", "--nologo",
 				"-p:GameDir="+installation.Root, "-p:BD2ManagedDir="+managed, "-p:BD2BepInExDir="+installation.BepInEx,
 				"-p:BD2SdkPrepared=true", "-p:BD2SdkDir="+sdkDir, "-p:BD2SharedSdkDir="+shared,
-				"-p:BD2SdkTool="+sdkTool,
+				"-p:BD2PluginRegistryProps="+filepath.Join(work, "ClientPlugins.props"), "-p:BD2SdkTool="+sdkTool, "-p:GameNamesTable="+filepath.Join(shared, "names.json"),
 				"-p:BD2PreparedVersionDir="+versionDir, "-p:BD2CompileInputsDir="+compileInputsDir, "-p:BD2NamesCompileInputsFile="+namesInputs, "-v:quiet", "-clp:NoSummary"); err != nil {
 				return err
 			}
@@ -178,9 +184,14 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 			outputs = append(outputs, toolDependencies...)
 			sdkOutputs := append([]string(nil), outputs...)
 			outputs = append(outputs, namesInputs)
-			for _, project := range developmentProjects {
-				output := filepath.Join(root, "plugins", project.name, "bin", "Release", "netstandard2.1")
-				outputs = append(outputs, filepath.Join(output, "BD2"+project.name+".dll"), filepath.Join(output, GameNames.fileName), filepath.Join(versionDir, project.key+".g.cs"), filepath.Join(compileInputsDir, project.key+".g.cs"))
+			for _, project := range definitions {
+				outputs = append(outputs, project.Output(root))
+				if project.VersionKey != "" {
+					outputs = append(outputs, filepath.Join(versionDir, project.VersionKey+".g.cs"), filepath.Join(compileInputsDir, project.VersionKey+".g.cs"))
+				}
+			}
+			if err := verifyDependencyOutputs(root); err != nil {
+				return err
 			}
 			sums := make(map[string]string, len(outputs))
 			for _, output := range outputs {
@@ -217,7 +228,7 @@ func BuildDevelopment(ctx context.Context, root, gameDir string, progress io.Wri
 	if err := graph.Run(ctx, "cacheCommit"); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(progress, "Client plugins: all four ready in %s\n", time.Since(started).Round(time.Millisecond))
+	_, _ = fmt.Fprintf(progress, "Client plugins: all %d ready in %s\n", len(definitions), time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
@@ -274,6 +285,45 @@ func runPluginBuild(ctx context.Context, root string, progress io.Writer, args .
 	command.Stderr = command.Stdout
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("build client plugins: %w\n%s", err, strings.TrimSpace(output.String()))
+	}
+	return nil
+}
+
+func writeAggregateProject(path, root string) error {
+	var content, properties bytes.Buffer
+	content.WriteString("<Project DefaultTargets=\"Build\"><ItemGroup>")
+	properties.WriteString("<Project>")
+	for _, definition := range definitions {
+		content.WriteString("<ClientPlugin Include=\"")
+		if err := xml.EscapeText(&content, []byte(definition.ProjectFile(root))); err != nil {
+			return err
+		}
+		content.WriteString("\" />")
+		properties.WriteString("<PropertyGroup Condition=\"'$(MSBuildProjectName)' == '")
+		if err := xml.EscapeText(&properties, []byte(definition.Name())); err != nil {
+			return err
+		}
+		properties.WriteString("'\"><BD2UsesGameSdk>")
+		if definition.UsesGameSdk {
+			properties.WriteString("true")
+		} else {
+			properties.WriteString("false")
+		}
+		properties.WriteString("</BD2UsesGameSdk><BD2PluginVersionKey>")
+		if err := xml.EscapeText(&properties, []byte(definition.VersionKey)); err != nil {
+			return err
+		}
+		properties.WriteString("</BD2PluginVersionKey></PropertyGroup>")
+	}
+	properties.WriteString("</Project>\n")
+	content.WriteString("</ItemGroup><Target Name=\"Restore\"><MSBuild Projects=\"@(ClientPlugin)\" Targets=\"Restore\" BuildInParallel=\"true\" /></Target><Target Name=\"Build\"><MSBuild Projects=\"@(ClientPlugin)\" Targets=\"Build\" BuildInParallel=\"true\" /></Target></Project>\n")
+	for filename, data := range map[string][]byte{path: content.Bytes(), filepath.Join(filepath.Dir(path), "ClientPlugins.props"): properties.Bytes()} {
+		if previous, err := os.ReadFile(filename); err == nil && bytes.Equal(previous, data) {
+			continue
+		}
+		if err := os.WriteFile(filename, data, 0o644); err != nil {
+			return err
+		}
 	}
 	return nil
 }

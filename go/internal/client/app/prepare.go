@@ -8,7 +8,9 @@ import (
 	"runtime"
 
 	clientconfig "bd2server/internal/client/config"
+	"bd2server/internal/client/download"
 	"bd2server/internal/client/preparation"
+	clientupdate "bd2server/internal/client/update"
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/versionconfig"
 )
@@ -54,13 +56,16 @@ func (s *Studio) Prepare(input Request) (Response, error) {
 		if err != nil {
 			return Response{}, err
 		}
+		if s.updates != nil {
+			defer s.updates.EndDownload()
+		}
 		result, err := preparation.Run(s.context(), preparation.Options{
 			PackageDirectory: directory, DownloadManifest: s.downloadManifest(directory),
 			GameDirectory: input.GameDirectory, Settings: input.settings(), Versions: s.versions(input.GameDirectory),
 			Workers: 8, DownloadIfMissing: true,
-			LocalIdentityPlugin: s.options.LocalIdentityPlugin, LoginUIPlugin: s.options.LoginUIPlugin,
-			CashShopPlugin: s.options.CashShopPlugin, FChatPlugin: s.options.FChatPlugin,
+			Plugins:         s.options.Plugins,
 			SavePreferences: s.savePreferences,
+			Progress:        s.reportDownload(),
 			PrepareGame: func(ctx context.Context, game string, settings clientconfig.Settings) (versionconfig.Config, error) {
 				if s.updates != nil {
 					if err := s.updates.PrepareGame(ctx, game, settings.ServerOrigin); err != nil {
@@ -75,4 +80,19 @@ func (s *Studio) Prepare(input Request) (Response, error) {
 		}
 		return success("Client prepared", result.Status), nil
 	})
+}
+
+func (s *Studio) reportDownload() func(download.Progress) {
+	if s.updates == nil {
+		return nil
+	}
+	return s.updates.ReportDownload(clientupdate.DownloadGame)
+}
+
+// DownloadProgress reports the running download for the launcher's progress card.
+func (s *Studio) DownloadProgress() *clientupdate.Download {
+	if s.updates == nil {
+		return nil
+	}
+	return s.updates.DownloadProgress()
 }

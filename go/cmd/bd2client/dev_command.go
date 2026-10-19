@@ -126,12 +126,9 @@ func runClientDevelopmentCommand(args []string) (bool, error) {
 		}},
 		taskgraph.Task{Name: "client:options", DependsOn: []string{"client:plugins"}, Run: func(context.Context) error {
 			options = clientRunOptions{
-				versionConfigPath:   filepath.Join(root, "versions.json"),
-				logExecutablePath:   filepath.Join(root, "data", "bd2client-dev"),
-				localIdentityPlugin: filepath.Join(root, "plugins", "LocalIdentity", "bin", "Release", "netstandard2.1", "BD2LocalIdentity.dll"),
-				loginUIPlugin:       filepath.Join(root, "plugins", "LoginUI", "bin", "Release", "netstandard2.1", "BD2LoginUI.dll"),
-				cashShopPlugin:      filepath.Join(root, "plugins", "CashShop", "bin", "Release", "netstandard2.1", "BD2CashShop.dll"),
-				fChatPlugin:         filepath.Join(root, "plugins", "FChat", "bin", "Release", "netstandard2.1", "BD2FChat.dll"),
+				versionConfigPath: filepath.Join(root, "versions.json"),
+				logExecutablePath: filepath.Join(root, "data", "bd2client-dev"),
+				plugins:           clientplugin.Development(root),
 			}
 			return nil
 		}},
@@ -189,9 +186,7 @@ func findClientDevelopmentRoot() (string, error) {
 	}
 	for directory := filepath.Clean(working); ; directory = filepath.Dir(directory) {
 		if clientDevelopmentFile(filepath.Join(directory, "versions.json")) &&
-			clientDevelopmentFile(filepath.Join(directory, "go", "go.mod")) &&
-			clientDevelopmentFile(filepath.Join(directory, "plugins", "LocalIdentity", "LocalIdentity.csproj")) &&
-			clientDevelopmentFile(filepath.Join(directory, "plugins", "LoginUI", "LoginUI.csproj")) {
+			clientDevelopmentFile(filepath.Join(directory, "go", "go.mod")) {
 			return directory, nil
 		}
 		parent := filepath.Dir(directory)
@@ -234,6 +229,6 @@ func buildDevelopmentPlugins(ctx context.Context, root, gameDir string) error {
 	if !clientDevelopmentFile(filepath.Join(installation.BepInEx, "core", "BepInEx.dll")) {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, "bd2client: preparing four development plugins; cached inputs will be reused")
+	fmt.Fprintln(os.Stderr, "bd2client: preparing development plugins; cached inputs will be reused")
 	return clientplugin.BuildDevelopment(ctx, root, gameDir, os.Stderr)
 }

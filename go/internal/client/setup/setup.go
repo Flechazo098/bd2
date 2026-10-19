@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -116,32 +115,11 @@ func Patch(gameDir string) (introdb.Result, error) {
 	return result, nil
 }
 
-func InstallPlugins(
-	gameDir string,
-	localIdentitySource string,
-	loginUISource string,
-	cashShopSource string,
-	fChatSource string,
-) (InstallResult, error) {
-	installation, err := clientlayout.Resolve(gameDir)
+func InstallPlugins(gameDir string, plugins plugin.Set) (InstallResult, error) {
+	sources, err := plugins.Sources()
 	if err != nil {
 		return InstallResult{}, err
 	}
-	if !regularFile(filepath.Join(installation.BepInEx, "core", "BepInEx.dll")) {
-		return InstallResult{}, fmt.Errorf("BepInEx is not installed; install it from %s before installing the plugins", plugin.BepInExReleasesURL)
-	}
-	var sources []string
-	for spec, explicit := range map[plugin.Spec]string{plugin.LocalIdentity: localIdentitySource, plugin.LoginUI: loginUISource, plugin.CashShop: cashShopSource, plugin.FChat: fChatSource} {
-		source, err := plugin.ResolvePackaged(spec, explicit)
-		if err != nil {
-			return InstallResult{}, err
-		}
-		sources = append(sources, source)
-	}
-	// The shared runtime ships beside the plugins, including development builds.
-	localSource, _ := plugin.ResolvePackaged(plugin.LocalIdentity, localIdentitySource)
-	sources = append(sources, filepath.Join(filepath.Dir(localSource), plugin.GameNames.FileName()))
-	sort.Strings(sources)
 	return plugin.InstallSet(gameDir, sources)
 }
 

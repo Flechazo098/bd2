@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"slices"
 
+	"bd2server/internal/client/plugin"
 	"bd2server/internal/common/taskgraph"
 )
 
 func (t task) checkCSharp(projects []string) error {
-	allowed := []string{"GameSdk", "GameNames", "LocalIdentity", "LoginUI", "CashShop", "FChat", "CaptureEnvironment"}
+	allowed := csharpProjects()
 	if len(projects) == 0 {
 		projects = allowed
 	}
@@ -26,6 +27,12 @@ func (t task) checkCSharp(projects []string) error {
 		}
 		seen[project] = true
 		file := filepath.Join(t.root, "plugins", project, project+".csproj")
+		for _, definition := range plugin.Definitions() {
+			if definition.Name() == project {
+				file = definition.ProjectFile(t.root)
+				break
+			}
+		}
 		build, format := "csharp:build:"+project, "csharp:style:"+project
 		tasks = append(tasks,
 			taskgraph.Task{Name: build, Run: func(context.Context) error {
@@ -40,4 +47,12 @@ func (t task) checkCSharp(projects []string) error {
 	}
 	tasks = append(tasks, taskgraph.Task{Name: "check-csharp", DependsOn: targets})
 	return t.execute("check-csharp", tasks...)
+}
+
+func csharpProjects() []string {
+	projects := []string{"GameSdk", "CaptureEnvironment"}
+	for _, d := range plugin.Definitions() {
+		projects = append(projects, d.Name())
+	}
+	return projects
 }

@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BD2CashShop</AssemblyName>
     <RootNamespace>Bd2CashShop</RootNamespace>
+    <BD2UsesGameSdk>true</BD2UsesGameSdk>
     <BD2PluginVersionKey>cash_shop</BD2PluginVersionKey>
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>

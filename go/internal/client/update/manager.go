@@ -6,7 +6,6 @@
 package update
 
 import (
-	"bd2server/internal/common/util"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"bd2server/internal/client/download"
 	clientlayout "bd2server/internal/client/layout"
 	"bd2server/internal/client/plugin"
 	"bd2server/internal/client/setup"
@@ -31,21 +31,6 @@ import (
 	"bd2server/internal/common/release"
 	"bd2server/internal/common/versionconfig"
 )
-
-// StoreFile describes the launcher's plugin store, plugins/plugins.json.
-const StoreFile = "plugins.json"
-
-type Store struct {
-	Version string       `json:"version"`
-	Files   []StoredFile `json:"files"`
-}
-
-type StoredFile struct {
-	ID      string `json:"id,omitempty"`
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
-	SHA256  string `json:"sha256"`
-}
 
 type Offer struct {
 	Version string    `json:"version"`
@@ -68,7 +53,21 @@ type Status struct {
 	// Waiting lists game directories whose new plugins install on exit.
 	Waiting []string `json:"waiting,omitempty"`
 	Message *Message `json:"message,omitempty"`
+	// Download is the running download the launcher shows as a progress card.
+	Download *Download `json:"download,omitempty"`
 }
+
+// Download is a running download of the launcher, plugins or the game.
+type Download struct {
+	Kind string `json:"kind"`
+	download.Progress
+}
+
+// Download kinds.
+const (
+	DownloadUpdate = "update"
+	DownloadGame   = "game"
+)
 
 // Message is a translation key with arguments, rendered by the launcher UI.
 type Message struct {
@@ -84,7 +83,7 @@ type Options struct {
 	Logger             *slog.Logger
 	Client             *http.Client
 	Development        bool
-	DevelopmentPlugins []string
+	DevelopmentPlugins plugin.Set
 	// Games returns the main game directory the launcher manages.
 	Games func() string
 }
@@ -137,6 +136,10 @@ func (m *Manager) Status() Status {
 		return &out
 	}
 	out.Launcher, out.Plugins, out.Game = cloneOffer(out.Launcher), cloneOffer(out.Plugins), cloneOffer(out.Game)
+	if out.Download != nil {
+		progress := *out.Download
+		out.Download = &progress
+	}
 	if out.Message != nil {
 		message := *out.Message
 		message.Args = slices.Clone(message.Args)
@@ -368,18 +371,8 @@ func (m *Manager) pluginStaging(version string) string {
 	return filepath.Join(m.options.Directory, ".update", "plugins", version)
 }
 
-// ReadStore returns the launcher's plugin store description.
-func ReadStore(directory string) (Store, error) {
-	var store Store
-	raw, err := os.ReadFile(filepath.Join(directory, "plugins", StoreFile))
-	if err != nil {
-		return store, err
-	}
-	return store, json.Unmarshal(raw, &store)
-}
-
 func (m *Manager) storeVersion() string {
-	store, err := ReadStore(m.options.Directory)
+	store, err := plugin.ReadStore(m.options.Directory)
 	if err != nil || store.Version == "" {
 		return m.options.Versions.ClientVersion
 	}
@@ -387,7 +380,7 @@ func (m *Manager) storeVersion() string {
 }
 
 func (m *Manager) storeMatches(component *release.Component) bool {
-	store, err := ReadStore(m.options.Directory)
+	store, err := plugin.ReadStore(m.options.Directory)
 	if err != nil || store.Version != component.Version || len(store.Files) != len(component.Files) {
 		return false
 	}
@@ -433,20 +426,34 @@ func (m *Manager) Download(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.status.Total = total
+	files := 0
+	for _, j := range jobs {
+		files += len(j.files)
+	}
+	m.status.Download = &Download{Kind: DownloadUpdate, Progress: download.Progress{Total: total, Files: files}}
 	m.mu.Unlock()
+	defer m.EndDownload()
 	var finished int64
 	for _, j := range jobs {
+		phase := "plugins"
+		if j.offer == launcher {
+			phase = "launcher"
+		}
 		for _, f := range j.files {
 			m.options.Logger.Info("downloading update file", "version", j.offer.Version, "file", f.Name, "bytes", f.Size)
 			_, err := release.Download(ctx, m.options.Client, m.manifestURL, f, j.staging, func(_ string, done, _ int64) {
 				m.mu.Lock()
 				m.status.Done = finished + done
+				m.status.Download.Phase, m.status.Download.Done = phase, finished+done
 				m.mu.Unlock()
 			})
 			if err != nil {
 				return err
 			}
 			finished += f.Size
+			m.mu.Lock()
+			m.status.Download.FilesDone++
+			m.mu.Unlock()
 		}
 		m.mu.Lock()
 		j.offer.Ready = true
@@ -521,7 +528,7 @@ func (m *Manager) replaceStore(c *release.Component) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(next) }()
-	store := Store{Version: c.Version}
+	store := plugin.Store{Version: c.Version}
 	for _, f := range c.Files {
 		source := filepath.Join(current, f.Name)
 		if !release.Matches(source, f) {
@@ -536,9 +543,9 @@ func (m *Manager) replaceStore(c *release.Component) error {
 		if !release.Matches(filepath.Join(next, f.Name), f) {
 			return fmt.Errorf("plugin %s changed while copying", f.Name)
 		}
-		store.Files = append(store.Files, StoredFile{ID: f.ID, Name: f.Name, Version: f.Version, SHA256: f.SHA256})
+		store.Files = append(store.Files, plugin.StoredFile{ID: f.ID, Name: f.Name, Version: f.Version, SHA256: f.SHA256})
 	}
-	if err := commonconfig.Save(filepath.Join(next, StoreFile), store, commonconfig.WriteOptions{}); err != nil {
+	if err := commonconfig.Save(filepath.Join(next, plugin.StoreFile), store, commonconfig.WriteOptions{}); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(previous); err != nil {
@@ -564,30 +571,11 @@ func (m *Manager) StoreSources() ([]string, error) {
 }
 
 func (m *Manager) storeSources() ([]string, error) {
-	directory := filepath.Join(m.options.Directory, "plugins")
-	store, err := ReadStore(m.options.Directory)
+	set, err := plugin.Packaged(m.options.Directory)
 	if err != nil {
 		return nil, err
 	}
-	var sources []string
-	if len(store.Files) == 0 {
-		return nil, errors.New("plugin store contains no files")
-	}
-	for _, f := range store.Files {
-		if filepath.Base(f.Name) != f.Name || strings.ContainsAny(f.Name, `\:`) || filepath.Ext(f.Name) != ".dll" {
-			return nil, fmt.Errorf("invalid stored plugin %q", f.Name)
-		}
-		source := filepath.Join(directory, f.Name)
-		digest, err := util.SHA256File(source)
-		if err != nil {
-			return nil, err
-		}
-		if digest != f.SHA256 {
-			return nil, fmt.Errorf("stored plugin %s failed verification", f.Name)
-		}
-		sources = append(sources, source)
-	}
-	return sources, nil
+	return set.Sources()
 }
 
 // EnsurePlugins installs the store set into a closed game instance when it
@@ -604,21 +592,15 @@ func (m *Manager) ensurePlugins(game string) error {
 	var sources []string
 	var err error
 	if m.options.Development {
-		sources = m.options.DevelopmentPlugins
-		if len(sources) == 0 {
-			return errors.New("development plugin sources are missing")
-		}
+		sources, err = m.options.DevelopmentPlugins.Sources()
 	} else {
 		sources, err = m.storeSources()
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
 	}
 	if err != nil {
 		return err
 	}
 	if versions := m.Versions(game); versions.GameVersion != "" && !m.options.Development {
-		store, err := ReadStore(m.options.Directory)
+		store, err := plugin.ReadStore(m.options.Directory)
 		if err != nil {
 			return err
 		}
@@ -799,7 +781,7 @@ func (m *Manager) CheckServer(ctx context.Context, client *http.Client, origin s
 	installed := m.options.Versions.Plugins.ByID()
 	if !m.options.Development {
 		installed = map[string]string{}
-		store, err := ReadStore(m.options.Directory)
+		store, err := plugin.ReadStore(m.options.Directory)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -904,4 +886,31 @@ func (m *Manager) WithLaunch(ctx context.Context, client *http.Client, game, ori
 		}
 	}
 	return launch()
+}
+
+// ReportDownload returns a progress callback that shows kind's download.
+func (m *Manager) ReportDownload(kind string) func(download.Progress) {
+	return func(p download.Progress) {
+		m.mu.Lock()
+		m.status.Download = &Download{Kind: kind, Progress: p}
+		m.mu.Unlock()
+	}
+}
+
+// EndDownload hides the download progress.
+func (m *Manager) EndDownload() {
+	m.mu.Lock()
+	m.status.Download = nil
+	m.mu.Unlock()
+}
+
+// DownloadProgress reports the running download, or nil.
+func (m *Manager) DownloadProgress() *Download {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status.Download == nil {
+		return nil
+	}
+	progress := *m.status.Download
+	return &progress
 }

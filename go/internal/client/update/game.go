@@ -158,7 +158,8 @@ func (m *Manager) ensureGame(ctx context.Context, game string) error {
 			resources = filepath.Join(m.options.Directory, "resources")
 		}
 		m.options.Logger.Info("downloading required game and resources", "game", game, "resources", resources, "game_version", fp.Game.GameVersion, "bundle_version", fp.Game.BundleVersion, "game_data_version", fp.Game.GameDataVersion)
-		installed, err := download.Client(ctx, download.Options{PackageDir: m.options.Directory, GameDir: game, ResourceDir: resources, Workers: 8, Pinned: fp.Game}, io.Discard)
+		installed, err := download.Client(ctx, download.Options{PackageDir: m.options.Directory, GameDir: game, ResourceDir: resources, Workers: 8, Pinned: fp.Game, Progress: m.ReportDownload(DownloadGame)}, io.Discard)
+		m.EndDownload()
 		if err != nil {
 			return err
 		}

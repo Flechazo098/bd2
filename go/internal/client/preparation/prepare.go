@@ -12,6 +12,7 @@ import (
 	clientconfig "bd2server/internal/client/config"
 	"bd2server/internal/client/download"
 	"bd2server/internal/client/layout"
+	"bd2server/internal/client/plugin"
 	"bd2server/internal/client/setup"
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/taskgraph"
@@ -26,9 +27,9 @@ type Options struct {
 	Workers                                           int
 	DownloadOnly, BaseOnly, ProbeOnly, PlanOnly       bool
 	DownloadIfMissing                                 bool
-	LocalIdentityPlugin, LoginUIPlugin                string
-	CashShopPlugin, FChatPlugin                       string
+	Plugins                                           plugin.Set
 	PrepareGame                                       func(context.Context, string, clientconfig.Settings) (versionconfig.Config, error)
+	Progress                                          func(download.Progress)
 	SavePreferences                                   func(string) error
 }
 
@@ -93,7 +94,7 @@ func Run(ctx context.Context, options Options, out io.Writer) (Result, error) {
 			installed, err := download.Client(ctx, download.Options{
 				PackageDir: directory, Manifest: options.DownloadManifest,
 				GameDir: result.GameDirectory, ResourceDir: result.ResourceDirectory, ServerOrigin: result.Settings.ServerOrigin,
-				Workers: options.Workers, ProbeOnly: options.ProbeOnly,
+				Workers: options.Workers, ProbeOnly: options.ProbeOnly, Progress: options.Progress,
 			}, out)
 			if err != nil {
 				return err
@@ -204,13 +205,15 @@ func Run(ctx context.Context, options Options, out io.Writer) (Result, error) {
 			return err
 		}},
 		taskgraph.Task{Name: "base:plugins", DependsOn: []string{"base:patch"}, Run: func(context.Context) error {
-			sources := []*string{&options.LocalIdentityPlugin, &options.LoginUIPlugin, &options.CashShopPlugin, &options.FChatPlugin}
-			for n, name := range []string{"BD2LocalIdentity.dll", "BD2LoginUI.dll", "BD2CashShop.dll", "BD2FChat.dll"} {
-				if *sources[n] == "" {
-					*sources[n] = filepath.Join(directory, "plugins", name)
+			plugins := options.Plugins
+			if plugins == nil {
+				var err error
+				plugins, err = plugin.Packaged(directory)
+				if err != nil {
+					return err
 				}
 			}
-			_, err := setup.InstallPlugins(result.GameDirectory, options.LocalIdentityPlugin, options.LoginUIPlugin, options.CashShopPlugin, options.FChatPlugin)
+			_, err := setup.InstallPlugins(result.GameDirectory, plugins)
 			return err
 		}},
 		taskgraph.Task{Name: "base:preferences", DependsOn: []string{"base:plugins"}, Run: func(context.Context) error {

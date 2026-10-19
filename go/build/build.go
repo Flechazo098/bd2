@@ -28,14 +28,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Println(`Usage:
+	fmt.Printf(`Usage:
   bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
   bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement] [--component all|schedules]
   bd2w runClient [client options]
   bd2w runClient2 [--instance player2] [--game-dir directory]
   bd2w plugins [--game-dir directory]
   bd2w runServer [server options]
-  bd2w check-csharp [GameSdk GameNames LocalIdentity LoginUI CashShop FChat CaptureEnvironment]
+  bd2w check-csharp [%s]
   bd2w sdk pack [--game-dir directory] [--package-version version] [--output-directory directory]
   bd2w sdk verify [--game-dir directory] [--package-version version] [--package-directory directory]
   bd2w sdk update-names --game-mapping file [--game-dir directory] [--version-config file]
@@ -49,7 +49,8 @@ func usage() {
 Windows: .\bd2w build
 Linux/macOS: ./bd2w build
 Build automatically selects the native platform and architecture.
-The wrappers cache the build tool and refresh it when its sources change.`)
+The wrappers cache the build tool and refresh it when its sources change.
+`, strings.Join(csharpProjects(), " "))
 }
 
 func run(args []string) error {

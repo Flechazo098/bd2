@@ -12,17 +12,15 @@ import (
 	clientapp "bd2server/internal/client/app"
 	clientconfig "bd2server/internal/client/config"
 	"bd2server/internal/client/download"
+	clientplugin "bd2server/internal/client/plugin"
 	clientupdate "bd2server/internal/client/update"
 	"bd2server/internal/common/versionconfig"
 )
 
 type clientRunOptions struct {
-	versionConfigPath   string
-	logExecutablePath   string
-	localIdentityPlugin string
-	loginUIPlugin       string
-	cashShopPlugin      string
-	fChatPlugin         string
+	versionConfigPath string
+	logExecutablePath string
+	plugins           clientplugin.Set
 }
 
 func main() {
@@ -117,17 +115,14 @@ func runClient(args []string, options clientRunOptions) error {
 		downloadManifest = filepath.Join(packageDirectory, "tools", "client", "client-download.json")
 	}
 	if err := clientapp.Run(clientapp.Options{
-		InitialGameDir:      *gameDir,
-		Logger:              logger,
-		LogPath:             logPath,
-		Versions:            versions,
-		Development:         options.versionConfigPath != "",
-		PackageDirectory:    packageDirectory,
-		DownloadManifest:    downloadManifest,
-		LocalIdentityPlugin: options.localIdentityPlugin,
-		LoginUIPlugin:       options.loginUIPlugin,
-		CashShopPlugin:      options.cashShopPlugin,
-		FChatPlugin:         options.fChatPlugin,
+		InitialGameDir:   *gameDir,
+		Logger:           logger,
+		LogPath:          logPath,
+		Versions:         versions,
+		Development:      options.versionConfigPath != "",
+		PackageDirectory: packageDirectory,
+		DownloadManifest: downloadManifest,
+		Plugins:          options.plugins,
 	}); err != nil {
 		logger.Error("bd2client stopped with an error", "error", err)
 		return err

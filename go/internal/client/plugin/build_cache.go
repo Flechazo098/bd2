@@ -85,36 +85,26 @@ func snapshotInputs(root, managed, bep string, cache fileDigestCache) (map[strin
 }
 
 func projectFingerprint(root string, inputs map[string]string, project, versionSource string) (string, error) {
-	relevant := make(map[string]string)
-	for file, sum := range inputs {
-		if strings.HasSuffix(file, ".go") || file == filepath.Join(root, "go", "go.mod") || file == filepath.Join(root, "go", "go.sum") {
-			continue
+	var definition Definition
+	for _, candidate := range definitions {
+		if candidate.Name() == project {
+			definition = candidate
+			break
 		}
-		relative, err := filepath.Rel(filepath.Join(root, "plugins"), file)
-		folder, _, nested := strings.Cut(filepath.ToSlash(relative), "/")
+	}
+	relevant := selectDependencyInputs(root, inputs, definition)
+	if versionSource != "" {
+		sum, err := util.SHA256File(versionSource)
 		if err != nil {
-			nested = false
+			return "", err
 		}
-		isPlugin := folder == "LocalIdentity" || folder == "LoginUI" || folder == "CashShop" || folder == "FChat"
-		needsLoginUI := project == "CashShop" || project == "FChat"
-		isDependency := folder == project || folder == "LoginUI" && needsLoginUI
-		if nested && isPlugin && !isDependency {
-			continue
-		}
-		if file == filepath.Join(root, "versions.json") {
-			continue
-		}
-		relevant[file] = sum
+		relevant[versionSource] = sum
 	}
-	sum, err := util.SHA256File(versionSource)
-	if err != nil {
-		return "", err
-	}
-	relevant[versionSource] = sum
 	return digestInputs(relevant), nil
 }
 
-func dependencyFingerprint(root string, inputs map[string]string, project string) string {
+func selectDependencyInputs(root string, inputs map[string]string, definition Definition) map[string]string {
+	projects := definition.dependencyProjects()
 	relevant := make(map[string]string)
 	for file, sum := range inputs {
 		if strings.HasSuffix(file, ".go") || file == filepath.Join(root, "versions.json") || file == filepath.Join(root, "go", "go.mod") || file == filepath.Join(root, "go", "go.sum") {
@@ -125,11 +115,48 @@ func dependencyFingerprint(root string, inputs map[string]string, project string
 			continue
 		}
 		folder, _, nested := strings.Cut(filepath.ToSlash(relative), "/")
-		if !nested || folder == ".." || folder == project || project == "GameSdk" && folder == "GameNames" {
-			relevant[file] = sum
+		if nested && folder != ".." {
+			registered := false
+			dependency := false
+			for _, candidate := range definitions {
+				if strings.HasPrefix(filepath.ToSlash(relative), filepath.ToSlash(filepath.Dir(candidate.ProjectPath))+"/") {
+					registered = true
+					dependency = projects[candidate.Name()]
+					break
+				}
+			}
+			if registered && !dependency {
+				continue
+			}
+			if folder == "GameSdk" && folder != definition.Name() && !definition.UsesGameSdk {
+				continue
+			}
+			if !registered && folder != "GameSdk" && folder != "Shared" {
+				continue
+			}
+		}
+		relevant[file] = sum
+	}
+	return relevant
+}
+
+func dependencyFingerprint(root string, inputs map[string]string, project string) string {
+	definition := Definition{ProjectPath: project + "/" + project + ".csproj"}
+	for _, candidate := range definitions {
+		if candidate.Name() == project {
+			definition = candidate
+			break
 		}
 	}
-	return digestInputs(relevant)
+	if project == "GameSdk" {
+		for _, candidate := range definitions {
+			if candidate.SharedRuntime {
+				definition.Dependencies = append(definition.Dependencies, candidate.ID)
+			}
+		}
+		definition.UsesGameSdk = true
+	}
+	return digestInputs(selectDependencyInputs(root, inputs, definition))
 }
 
 func developmentInputs(root, managed, bep string) ([]string, error) {

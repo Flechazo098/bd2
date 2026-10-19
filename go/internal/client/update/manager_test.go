@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"bd2server/internal/client/plugin"
 	"bd2server/internal/common/release"
 	"bd2server/internal/common/versionconfig"
 )
@@ -96,12 +97,12 @@ func TestPluginOnlyRemovalStillOffersAndAppliesTheNewSet(t *testing.T) {
 	m.manifestURL, m.keys = server.URL+"/manifest.json", keys
 	writeFixture(t, filepath.Join(root, "plugins", keep.Name), "same login")
 	writeFixture(t, filepath.Join(root, "plugins", "BD2FChat.dll"), "old chat")
-	store := Store{Version: "2.36.7+client.0.1.0", Files: []StoredFile{{Name: keep.Name, SHA256: keep.SHA256}, {Name: "BD2FChat.dll"}}}
+	store := plugin.Store{Version: "2.36.7+client.0.1.0", Files: []plugin.StoredFile{{Name: keep.Name, SHA256: keep.SHA256}, {Name: "BD2FChat.dll"}}}
 	encoded, err := json.Marshal(store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFixture(t, filepath.Join(root, "plugins", StoreFile), string(encoded))
+	writeFixture(t, filepath.Join(root, "plugins", plugin.StoreFile), string(encoded))
 	if err := m.Check(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestPluginOnlyRemovalStillOffersAndAppliesTheNewSet(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "plugins", "BD2FChat.dll")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dropped plugin remains: %v", err)
 	}
-	store, err = ReadStore(root)
+	store, err = plugin.ReadStore(root)
 	if err != nil || store.Version != component.Version || len(store.Files) != 1 {
 		t.Fatalf("store = %+v, %v", store, err)
 	}
@@ -234,7 +235,7 @@ func TestPluginUpdateWaitsForRunningGameExitAndPreservesPlayerConfig(t *testing.
 		t.Fatal(err)
 	}
 	assertContent(t, filepath.Join(root, "plugins", f.Name), "new login")
-	store, err := ReadStore(root)
+	store, err := plugin.ReadStore(root)
 	if err != nil || store.Version != component.Version || len(store.Files) != 1 || store.Files[0].SHA256 != f.SHA256 {
 		t.Fatalf("committed plugin store = %+v, %v", store, err)
 	}
@@ -264,12 +265,21 @@ func TestWithLaunchKeepsUpdatesExcludedThroughProcessStartAndReturnsLaunchError(
 	game := filepath.Join(root, "game")
 	writeFixture(t, filepath.Join(game, "BrownDust II.exe"), "fixture")
 	writeFixture(t, filepath.Join(game, "BrownDust II_Data", "resources.assets"), "fixture")
+	file := releaseFile("BD2LoginUI.dll", "installed login")
+	writeFixture(t, filepath.Join(root, "plugins", file.Name), "installed login")
+	writeFixture(t, filepath.Join(game, "BepInEx", "plugins", file.Name), "installed login")
+	store := plugin.Store{Version: "2.36.7+client.0.1.0", Files: []plugin.StoredFile{{Name: file.Name, SHA256: file.SHA256}}}
+	encoded, err := json.Marshal(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, "plugins", plugin.StoreFile), string(encoded))
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 	m := New(Options{Directory: root})
 	failure := errors.New("process start failed")
 	called := false
-	err := m.WithLaunch(context.Background(), server.Client(), game, server.URL, func() error {
+	err = m.WithLaunch(context.Background(), server.Client(), game, server.URL, func() error {
 		called = true
 		if !m.Busy() {
 			t.Error("operation was released before process start")

@@ -26,11 +26,6 @@ import (
 // serverPlatforms are the packages published for self-updating servers.
 var serverPlatforms = [][2]string{{"linux", "amd64"}, {"linux", "arm64"}}
 
-// pluginIDs maps shipped plugin files to their versions.json keys.
-var pluginIDs = map[string]string{
-	"BD2LocalIdentity.dll": "local_identity", "BD2LoginUI.dll": "login_ui", "BD2CashShop.dll": "cash_shop", "BD2FChat.dll": "fchat", "BD2.GameNames.dll": "game_names",
-}
-
 func (t task) release(args []string) error {
 	if len(args) == 0 || isHelp(args[0]) {
 		fmt.Println(`Usage:
@@ -343,10 +338,12 @@ func (t task) releasePublish(args []string) error {
 	}
 
 	plugins := &releasepkg.Component{Version: versions.ClientVersion, Date: date(clientEntry), Notes: clientEntry.Notes()}
-	pluginVersions := versions.Plugins.ByID()
-	for _, spec := range clientplugin.Shipped {
-		id := pluginIDs[spec.FileName()]
-		f, err := publish(filepath.Join(clientPackage, "plugins", spec.FileName()), spec.FileName(), "", id, pluginVersions[id])
+	packagedPlugins, err := clientplugin.Packaged(clientPackage)
+	if err != nil {
+		return err
+	}
+	for _, artifact := range packagedPlugins {
+		f, err := publish(artifact.Source, artifact.Name, "", artifact.ID, artifact.Version)
 		if err != nil {
 			return err
 		}

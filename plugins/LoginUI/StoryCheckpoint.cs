@@ -97,6 +97,7 @@ internal static class StoryCheckpoint
             postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(InitializeTimelinePostfix)));
         harmony.Patch(typeof(AppManager).GetGameMethod("AppReStart", InstanceFlags, null, Type.EmptyTypes, null),
             prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(ResetSession)));
+        StoryBattleRecovery.Install(harmony);
     }
 
     internal static void ResetSession()

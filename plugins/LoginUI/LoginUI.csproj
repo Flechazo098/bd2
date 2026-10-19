@@ -5,6 +5,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BD2LoginUI</AssemblyName>
     <RootNamespace>Bd2LoginUI</RootNamespace>
+    <BD2UsesGameSdk>true</BD2UsesGameSdk>
     <BD2PluginVersionKey>login_ui</BD2PluginVersionKey>
     <BD2GameVersion>2.36.7</BD2GameVersion>
   </PropertyGroup>

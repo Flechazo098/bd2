@@ -24,27 +24,9 @@ const (
 	managedFile = ".bd2-managed.json"
 )
 
-type Spec struct {
-	fileName string
-}
-
-var (
-	LocalIdentity = Spec{fileName: "BD2LocalIdentity.dll"}
-	LoginUI       = Spec{fileName: "BD2LoginUI.dll"}
-	CashShop      = Spec{fileName: "BD2CashShop.dll"}
-	FChat         = Spec{fileName: "BD2FChat.dll"}
-	GameNames     = Spec{fileName: "BD2.GameNames.dll"}
-)
-
-// Shipped lists every plugin the launcher installs, including the shared
-// runtime the others depend on.
-var Shipped = []Spec{LocalIdentity, LoginUI, CashShop, FChat, GameNames}
-
-func (s Spec) FileName() string { return s.fileName }
-
-func (s Spec) validate() error {
-	if s.fileName == "" || filepath.Base(s.fileName) != s.fileName || path.Base(s.fileName) != s.fileName || strings.ContainsAny(s.fileName, `\:`) || filepath.Ext(s.fileName) != ".dll" {
-		return errors.New("clientplugin: invalid plugin specification")
+func validateName(name string) error {
+	if name == "" || filepath.Base(name) != name || path.Base(name) != name || strings.ContainsAny(name, `\:`) || filepath.Ext(name) != ".dll" {
+		return errors.New("clientplugin: invalid plugin file name")
 	}
 	return nil
 }
@@ -58,20 +40,6 @@ type SetResult struct {
 	Changed bool     `json:"changed"`
 	Files   []Result `json:"files"`
 	Removed []string `json:"removed,omitempty"`
-}
-
-func ResolvePackaged(spec Spec, explicit string) (string, error) {
-	if err := spec.validate(); err != nil {
-		return "", err
-	}
-	if explicit != "" {
-		return filepath.Clean(explicit), nil
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("clientplugin: resolve client tool executable: %w", err)
-	}
-	return filepath.Join(filepath.Dir(executable), "plugins", spec.fileName), nil
 }
 
 var installMu sync.Mutex
@@ -107,7 +75,7 @@ func InstallSet(gameDir string, sources []string) (SetResult, error) {
 	names := make([]string, 0, len(sources))
 	for _, source := range sources {
 		name := filepath.Base(source)
-		if err := (Spec{fileName: name}).validate(); err != nil {
+		if err := validateName(name); err != nil {
 			return SetResult{}, err
 		}
 		data, err := os.ReadFile(source)
@@ -273,7 +241,7 @@ func readManaged(directory string) ([]string, error) {
 			return nil, fmt.Errorf("clientplugin: duplicate managed plugin %q", name)
 		}
 		seen[strings.ToLower(name)] = true
-		if err := (Spec{fileName: name}).validate(); err != nil {
+		if err := validateName(name); err != nil {
 			return nil, fmt.Errorf("clientplugin: invalid managed plugin %q", name)
 		}
 	}

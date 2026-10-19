@@ -1,5 +1,44 @@
 # 更新日志
 
+## client 2.36.7+client.0.2.4 · 2026-10-19
+
+> type: update
+
+### en_us: Download progress and story battle recovery
+
+- Show game and resource download progress during preparation.
+- Improve resource downloads and resume handling.
+- Add BrownDustX character mod loading acceleration.
+- Fix story battles getting stuck when the combat party is exhausted, including recovery and inn return.
+
+### zh_cn: 下载进度与剧情战斗恢复
+
+- 准备游戏时显示游戏和资源的下载进度。
+- 改进资源下载与断点续传处理。
+- 加入 BrownDustX 角色模组加载加速。
+- 修复战斗队伍全部虚脱时剧情入战卡住，补全恢复与返回旅馆流程。
+
+### zh_tw: 下載進度與劇情戰鬥恢復
+
+- 準備遊戲時顯示遊戲與資源下載進度。
+- 改善資源下載與續傳處理。
+- 加入 BrownDustX 角色模組載入加速。
+- 修復戰鬥隊伍全員虛脫時劇情入戰卡住，補全恢復與返回旅館流程。
+
+### ja_jp: ダウンロード進捗とストーリー戦闘の復帰
+
+- 準備中にゲームとリソースのダウンロード進捗を表示します。
+- リソースのダウンロードと再開処理を改善しました。
+- BrownDustX のキャラクターMOD読み込みを高速化します。
+- 戦闘パーティー全員が戦闘不能の場合にストーリー戦闘へ進めなくなる問題を修正し、回復と宿屋への帰還処理を補いました。
+
+### ko_kr: 다운로드 진행 상황 및 스토리 전투 복구
+
+- 준비 중 게임과 리소스 다운로드 진행 상황을 표시합니다.
+- 리소스 다운로드와 이어받기 처리를 개선했습니다.
+- BrownDustX 캐릭터 모드 로딩 가속을 추가했습니다.
+- 전투 파티 전원이 탈진한 경우 스토리 전투에서 멈추는 문제를 수정하고 회복 및 여관 복귀 흐름을 보완했습니다.
+
 ## client 2.36.7+client.0.2.3 · 2026-10-18
 
 > type: update

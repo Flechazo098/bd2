@@ -25,10 +25,15 @@ func LoadInns(root, version string, pack int) ([]InnRule, error) {
 		return nil, err
 	}
 	defer done()
-	return loadInns(db, shared)
+	scenes, closeScenes, err := openLogicalReadDB(root, version, "FieldObjectSceneData")
+	if err != nil {
+		return nil, err
+	}
+	defer closeScenes()
+	return loadInns(db, shared, scenes, pack)
 }
 
-func loadInns(db, shared *sql.DB) ([]InnRule, error) {
+func loadInns(db, shared, scenes *sql.DB, pack int) ([]InnRule, error) {
 	rows, err := db.Query("SELECT id,ProtoBuf FROM FieldNpcTable ORDER BY id")
 	if err != nil {
 		return nil, err
@@ -50,17 +55,12 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 		if !slices.Contains(interactions, uint64(2)) {
 			continue
 		}
-		mapID, e := optionalScalar(raw, 14)
-		if e != nil {
-			_ = rows.Close()
-			return nil, e
-		}
 		recovery, e := optionalScalar(raw, 21)
-		if e != nil || recovery == 0 || mapID == 0 {
+		if e != nil || recovery == 0 {
 			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid motel NPC %d", id)
 		}
-		rules = append(rules, InnRule{NPCID: id, MapID: mapID})
+		rules = append(rules, InnRule{NPCID: id})
 		recoveryIDs = append(recoveryIDs, recovery)
 	}
 	err = rows.Err()
@@ -68,6 +68,7 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 	if err != nil {
 		return nil, err
 	}
+	var placed []InnRule
 	for i := range rules {
 		r := &rules[i]
 		var raw []byte
@@ -83,13 +84,37 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 		if r.Currency != 4 || r.ItemCount == 0 {
 			return nil, fmt.Errorf("gamedata: unsupported inn currency or HP rate")
 		}
-		if err = shared.QueryRow("SELECT ProtoBuf FROM MapTable WHERE id=?", r.MapID).Scan(&raw); err != nil {
-			return nil, err
-		}
-		r.MapGroup, err = optionalScalar(raw, 18)
+		placements, err := scenes.Query(fmt.Sprintf("SELECT DISTINCT sceneName FROM FieldObjectSceneData%d WHERE objectType=1 AND tableId=? ORDER BY sceneName", pack), r.NPCID)
 		if err != nil {
 			return nil, err
 		}
+		for placements.Next() {
+			var scene string
+			if err = placements.Scan(&scene); err != nil {
+				_ = placements.Close()
+				return nil, err
+			}
+			p := *r
+			if err = shared.QueryRow("SELECT id,ProtoBuf FROM MapTable WHERE packId=? AND mapScenePath=?", pack, scene).Scan(&p.MapID, &raw); err != nil {
+				_ = placements.Close()
+				return nil, fmt.Errorf("gamedata: inn NPC %d scene %s: %w", r.NPCID, scene, err)
+			}
+			p.MapGroup, err = optionalScalar(raw, 18)
+			if err != nil {
+				_ = placements.Close()
+				return nil, err
+			}
+			placed = append(placed, p)
+		}
+		err = placements.Err()
+		_ = placements.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i := range placed {
+		r := &placed[i]
+		var raw []byte
 		err = db.QueryRow("SELECT ProtoBuf FROM ReputationGroupTable WHERE id=?", r.MapGroup).Scan(&raw)
 		if err == nil {
 			r.GoodDiscount, err = optionalScalar(raw, 2)
@@ -101,5 +126,5 @@ func loadInns(db, shared *sql.DB) ([]InnRule, error) {
 			return nil, fmt.Errorf("gamedata: invalid motel discount")
 		}
 	}
-	return rules, nil
+	return placed, nil
 }

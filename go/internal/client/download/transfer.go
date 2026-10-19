@@ -41,6 +41,11 @@ type downloader struct {
 	records          map[string]receipt
 	dirty            bool
 	measureOrigins   bool
+
+	progress   func(Progress)
+	progressMu sync.Mutex
+	state      Progress
+	reported   time.Time
 }
 
 func newDownloader(root string, out io.Writer) (*downloader, error) {
@@ -136,6 +141,7 @@ func (d *downloader) saveRecords() error {
 
 func (d *downloader) receive(ctx context.Context, item file, origins []string) error {
 	if d.verified(item) {
+		d.addDone(max(item.size, 0))
 		return nil
 	}
 	if len(origins) == 0 {
@@ -155,7 +161,7 @@ func (d *downloader) receive(ctx context.Context, item file, origins []string) e
 	return fmt.Errorf("download %s: %w", item.remote, last)
 }
 
-func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) error {
+func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(item.target), 0755); err != nil {
 		return err
 	}
@@ -178,7 +184,21 @@ func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) 
 	}
 	defer func() { _ = temporary.Close(); _ = os.Remove(temporary.Name()) }()
 	h := sha256.New()
-	written, err := io.Copy(io.MultiWriter(temporary, h), response.Body)
+	counted := &countingWriter{d: d}
+	if item.size <= 0 && response.ContentLength > 0 {
+		d.addTotal(response.ContentLength)
+		defer func() {
+			if err != nil {
+				d.addTotal(-response.ContentLength)
+			}
+		}()
+	}
+	defer func() {
+		if err != nil {
+			d.addDone(-counted.n)
+		}
+	}()
+	written, err := io.Copy(io.MultiWriter(temporary, h, counted), response.Body)
 	if err != nil {
 		return err
 	}
@@ -225,6 +245,7 @@ func (d *downloader) receiveAll(ctx context.Context, files []file, origins []str
 	var errOnce sync.Once
 	completed := 0
 	var progress sync.Mutex
+	d.addFiles(files)
 	for range min(workers, len(files)) {
 		wg.Go(func() {
 			for item := range jobs {
@@ -232,6 +253,7 @@ func (d *downloader) receiveAll(ctx context.Context, files []file, origins []str
 					errOnce.Do(func() { first = err; cancel() })
 					return
 				}
+				d.fileDone()
 				progress.Lock()
 				completed++
 				if completed%25 == 0 || completed == len(files) {
@@ -345,3 +367,66 @@ func atomicWrite(path string, data []byte) error {
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+// Download phases reported through Progress.
+const (
+	PhaseGame       = "game"
+	PhaseExtracting = "extracting"
+	PhaseResources  = "resources"
+)
+
+// Progress is a running download: bytes and files grow as the downloader
+// learns which files are missing.
+type Progress struct {
+	Phase     string `json:"phase"`
+	Done      int64  `json:"done"`
+	Total     int64  `json:"total"`
+	Files     int    `json:"files"`
+	FilesDone int    `json:"files_done"`
+}
+
+type countingWriter struct {
+	d *downloader
+	n int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	w.n += int64(len(p))
+	w.d.addDone(int64(len(p)))
+	return len(p), nil
+}
+
+func (d *downloader) update(force bool, change func(*Progress)) {
+	if d.progress == nil {
+		return
+	}
+	d.progressMu.Lock()
+	defer d.progressMu.Unlock()
+	change(&d.state)
+	if !force && time.Since(d.reported) < 200*time.Millisecond {
+		return
+	}
+	d.reported = time.Now()
+	d.progress(d.state)
+}
+
+func (d *downloader) setPhase(phase string) {
+	d.update(true, func(p *Progress) { p.Phase = phase })
+}
+
+func (d *downloader) addDone(n int64) { d.update(false, func(p *Progress) { p.Done += n }) }
+
+func (d *downloader) addTotal(n int64) { d.update(false, func(p *Progress) { p.Total += n }) }
+
+func (d *downloader) addFiles(files []file) {
+	d.update(true, func(p *Progress) {
+		for _, item := range files {
+			if item.size > 0 {
+				p.Total += item.size
+			}
+		}
+		p.Files += len(files)
+	})
+}
+
+func (d *downloader) fileDone() { d.update(true, func(p *Progress) { p.FilesDone++ }) }

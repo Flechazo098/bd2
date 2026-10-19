@@ -1095,21 +1095,6 @@ func (s *Store) handleAutoRecovery(ctx command.Context, req []byte) (int, []byte
 		if caster != settings.Caster {
 			return fail(fmt.Errorf("deck: automatic recovery caster differs from saved setting"))
 		}
-		if n.FieldCharControlDeckType == 2 {
-			allExhausted := true
-			for _, v := range n.Deck {
-				hp, err := s.characters.CurrentHealth(ctx, v.CharacterInvenIndex)
-				if err != nil {
-					return fail(err)
-				}
-				if hp > 0 {
-					allExhausted = false
-				}
-			}
-			if allExhausted {
-				mode = 3
-			}
-		}
 		field := s.visibleFieldDeckLocked(ctx)
 		var targets []uint64
 		seen := map[uint64]bool{}
@@ -1131,7 +1116,8 @@ func (s *Store) handleAutoRecovery(ctx command.Context, req []byte) (int, []byte
 			}
 			return nil
 		}
-		if n.FieldCharControlDeckType == 0 { //nolint:staticcheck // QF1003
+		// Story field actors do not replace the player's combat party.
+		if n.FieldCharControlDeckType == 0 || n.FieldCharControlDeckType == 2 { //nolint:staticcheck // QF1003
 			for _, v := range n.Deck {
 				if e = add(v.CharacterInvenIndex); e != nil {
 					return fail(e)
