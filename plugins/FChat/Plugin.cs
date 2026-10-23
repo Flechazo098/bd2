@@ -27,6 +27,7 @@ public sealed class Plugin : BaseUnityPlugin
             NativeChatTranslation.Install(harmony);
             TranslationSettingsUI.Install(harmony);
             ServerTextPolicy.Install(harmony, Logger);
+            FriendPresence.Install(harmony);
             Logger.LogInfo("Client chat translation and server text policy installed");
         }
         catch (Exception error)

@@ -46,7 +46,7 @@ internal static class RealtimeBridge
     private static void TcpConstructorPrefix(string __1, ref string __2, ref int __3)
     {
         if (LoginRuntime.ServerRoot == null || !string.Equals(__2, LoginRuntime.ServerRoot.Host, StringComparison.OrdinalIgnoreCase)) return;
-        string channel = __1 switch { "Chat" => "matching", "Action" => "action", "RandomDefense" => "defense", "Fishing" => "fishing", _ => null };
+        string channel = __1 switch { "Chat" => "matching", "Action" => "action", "RandomDefense" => "defense", "Fishing" => "fishing", "Field" => "square", _ => null };
         if (channel == null) return;
         if (channel == "action")
             Volatile.Write(ref forceActionTCP, NativeProxyPolicy.Resolve(new UriBuilder("https", __2, __3).Uri).ProxyUrl == null ? 0 : 1);

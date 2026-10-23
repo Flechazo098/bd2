@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Threading;
@@ -69,6 +70,7 @@ internal static class StoryCheckpoint
     private static MethodInfo StartCinema;
     private static MethodInfo CheckEntry;
     private static MethodInfo Interact;
+    private static MethodInfo SetLocalInt;
     private static int Session;
     private static MethodInfo InvokingNative;
     private static bool RestoringComplete;
@@ -78,12 +80,20 @@ internal static class StoryCheckpoint
     internal static bool WaitingForEntrySync;
     internal static bool SynchronizedStory;
 
+    private static bool IsStoryReplay => QuicklyQuestHelper.IsOpenUI || StoryReplaySuppoter.Instance?.IsReplayingStory == true;
+
     internal static void Install(Harmony harmony)
     {
         StartCinema = typeof(TimelinePlayManager).GetGameMethod("StartCinemaTimeline", InstanceFlags, null,
             [typeof(int), typeof(string), typeof(int), typeof(int), typeof(int), typeof(Action), typeof(Action), typeof(ETimelinePlayType), typeof(string)], null);
         CheckEntry = typeof(GameFieldManager).GetGameMethod("CheckEnterPackQuest", InstanceFlags);
         Interact = typeof(FieldQuestObjectController).GetGameMethod("InteractionQuest", InstanceFlags);
+        MethodInfo guildIntro = typeof(GameFieldManager).GetGameMethod("CoCheckGuildRaidIntroTimelineAndOpenUI", InstanceFlags, null, Type.EmptyTypes, null);
+        SetLocalInt = Game.FindType("gamfs.GameUtil")?.GetGameMethod("SetInt", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+            null, [typeof(string), typeof(int), typeof(bool)], null);
+        if (guildIntro == null || SetLocalInt == null)
+            throw new MissingMethodException("Guild raid introduction recovery members are unavailable");
+        harmony.Patch(guildIntro, postfix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(GuildIntroPostfix)));
         harmony.Patch(StartCinema, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(CinemaPrefix)));
         harmony.Patch(CheckEntry, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(EntryPrefix)));
         harmony.Patch(Interact, prefix: new HarmonyMethod(typeof(StoryCheckpoint), nameof(InteractionPrefix)));
@@ -198,6 +208,7 @@ internal static class StoryCheckpoint
     {
         if (InvokingNative == StartCinema || ServerRoot == null || !EstablishedGameSession || (ETimelinePlayType)__args[7] != ETimelinePlayType.Quest || __instance.IsPlayCinemaTimeline)
             return true;
+        if (IsStoryReplay) return true;
         int questID = (int)__args[2];
         string timeline = (string)__args[1];
         if (questID <= 0 || string.IsNullOrEmpty(timeline)) return true;
@@ -241,12 +252,42 @@ internal static class StoryCheckpoint
 
     private static bool EntryPrefix(GameFieldManager __instance)
     {
-        if (InvokingNative == CheckEntry || ServerRoot == null || !EstablishedGameSession) return true;
+        if (InvokingNative == CheckEntry || ServerRoot == null || !EstablishedGameSession || IsStoryReplay) return true;
+        // The guild entry owns its intro callback and restarts an unfinished
+        // cinema through CinemaPrefix, without accepting or clearing a quest.
+        if (FindUnitySingleton<PackManager>()?.IsGuildRaidPack() == true) return true;
         if (WaitingForEntrySync) return false;
         WaitingForEntrySync = true;
         FindUnitySingleton<TimelinePlayManager>().IsPlayCinemaTimeline = true;
         StartStoryCoroutine(RestoreEntry(__instance, Session));
         return false;
+    }
+
+    private static void GuildIntroPostfix(ref IEnumerator __result)
+    {
+        if (ServerRoot != null && EstablishedGameSession)
+            __result = RestoreGuildIntro(__result, Session);
+    }
+
+    private static IEnumerator RestoreGuildIntro(IEnumerator native, int session)
+    {
+        Response response = null;
+        yield return Send("read", null, session, value => response = value);
+        if (session != Session || response == null) yield break;
+        Checkpoint pending = response.Pending;
+        if (pending != null)
+        {
+            PackManager pack = FindUnitySingleton<PackManager>();
+            if (pack?.IsGuildRaidPack() != true || pending.PackID != pack.PlayingPackID || pending.Phase != "accept")
+            {
+                ShowStoryFailure("pending checkpoint does not match the guild introduction");
+                yield break;
+            }
+            // The native end callback writes this before server confirmation.
+            // A pending checkpoint takes precedence over that local flag.
+            SetLocalInt.Invoke(null, [string.Format(CultureInfo.InvariantCulture, "guild_raid_timeline_{0}", BDNetwork.CommonPacket.UserInfo.OwnerIndex), 0, true]);
+        }
+        yield return native;
     }
 
     private static IEnumerator RestoreEntry(GameFieldManager field, int session)

@@ -26,7 +26,7 @@ internal sealed class ClientRouting : IDisposable
         MethodInfo makeCDNInfo = Game.Method(() => BDNetwork.CommonPacket.MakeCDNInfo(null));
         if (load == null || sendMaintenance == null || makeCDNInfo == null)
         {
-            throw new MissingMethodException("2.36.7 server/resource routing methods were not found");
+            throw new MissingMethodException("2.37.13 server/resource routing methods were not found");
         }
         harmony.Patch(load, postfix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));
         harmony.Patch(sendMaintenance, prefix: new HarmonyMethod(typeof(ClientRouting), nameof(ApplyServerOriginHook)));

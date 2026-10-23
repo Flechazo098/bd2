@@ -157,6 +157,14 @@ internal static class CaptureWriter
                 }
             }
         }
+        catch (ThreadAbortException ex)
+        {
+            // Mono aborts background threads when the domain unloads at exit;
+            // every written record is already flushed, so only queued ones are lost.
+            int pending = WriteQueue.Count;
+            if (pending != 0)
+                MarkIncomplete("capture writer was aborted with " + pending + " queued records", ex);
+        }
         catch (Exception ex)
         {
             MarkIncomplete("capture writer failed to initialize or finalize", ex);

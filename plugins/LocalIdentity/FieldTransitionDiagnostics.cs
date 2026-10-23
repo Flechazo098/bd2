@@ -27,7 +27,8 @@ internal static class FieldTransitionDiagnostics
     {
         Log = logger;
         Patch(harmony, Game.Method(() => QuestPacket.SendQuestClearRequest(0)), nameof(QuestClearSend));
-        Patch(harmony, Game.Method(() => QuestPacket.RecvQuestClearResponse(null, 0, 0, null)), nameof(QuestClearReceive));
+        Patch(harmony, typeof(QuestPacket).GetGameMethod("RecvQuestClearResponse",
+            BindingFlags.NonPublic | BindingFlags.Static, null, [typeof(byte[]), typeof(int), typeof(int), typeof(Action)], null), nameof(QuestClearReceive));
         Patch(harmony, Game.Method(() => QuestInfo.PlayQuestCinemaTimeline(0, false, null, null)), nameof(QuestCinema));
         Patch(harmony, Game.Method(() => QuestInfo.PlayQuestCinemaTimelineAfterMoveScene(0, false, 0, null, null)), nameof(QuestCinemaAfterMove));
         Patch(harmony, Game.Method<GameFieldManager>(field => field.SetCharPosition(default)), nameof(PositionBefore), nameof(PositionAfter));

@@ -64,12 +64,16 @@ public sealed class Plugin : BaseUnityPlugin
             Routing.Install(harmony);
             TryInstall("startup fullscreen", () => ClientPresentation.InstallStartupFullscreen(harmony, appManager));
             TryInstall("performance overlay suppression", () => ClientPresentation.InstallPerformanceOverlaySuppression(harmony));
+            TryInstall("debugger error notification suppression", () => DebuggerErrorNotification.Install(harmony, Logger));
             TryInstall("maintenance timeout guard", () => ClientDiagnostics.InstallMaintenanceTimeoutGuard(harmony, introUI));
             TryInstall("age-gate persistence", () => LocalAccountPolicy.InstallAgeGatePersistence(harmony));
             TryInstall("database diagnostics", () => ClientDiagnostics.InstallDatabaseDiagnostics(harmony));
             TryInstall("commission navigation completion", () => CommissionNavigation.Install(harmony, Logger));
             TryInstall("field reward position ordering", () => FieldRewardPosition.Install(harmony, Logger));
             TryInstall("battle checkpoint", () => BattleCheckpoint.Install(harmony, Logger));
+            TryInstall("battle preparation recovery", () => BattlePreparation.Install(harmony));
+            TryInstall("costume auto-mount indices", () => CostumeAutoMount.Install(harmony, Logger));
+            TryInstall("battle formation diagnostics", () => BattleFormationDiagnostics.Install(harmony, Logger));
             TryInstall("field transition diagnostics", () => FieldTransitionDiagnostics.Install(harmony, Logger));
             TryInstall("event hub presentation", () => EventHubPresentation.Install(harmony, Logger));
             TryInstall("notice presentation", () => NoticePresentation.Install(harmony));

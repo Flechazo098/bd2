@@ -26,7 +26,34 @@ internal static class BattleCheckpoint
         MethodInfo send = typeof(BDNetwork.NetworkManager).GetMethods(All)
             .Single(method => method.IsGameMethod("Send") && method.GetParameters().Length == 6 && method.GetParameters()[0].ParameterType == typeof(IMessage));
         harmony.Patch(send, prefix: new HarmonyMethod(typeof(BattleCheckpoint), nameof(BeforeSend)));
+        harmony.Patch(typeof(ResumeBattleData).GetGameMethod("SetData", All),
+            prefix: new HarmonyMethod(typeof(BattleCheckpoint), nameof(BeforeResume)),
+            postfix: new HarmonyMethod(typeof(BattleCheckpoint), nameof(AfterResume)));
+    }
 
+    private static void BeforeResume(BattleResumeResponse __0, out int __state)
+    {
+        __state = __0.SupporterInfo.Count > 0 && __0.SupporterCharInfo.Count > 0
+            ? __0.SupporterCharInfo[0].CharInfo?.SupporterSlotIndex ?? 0 : 0;
+    }
+
+    private static void AfterResume(BattleResumeResponse __0, int __state)
+    {
+        if (__state == 0 || __0.ModeInfo?.BattleMode == Define_BattleModeType.GuildRaidBoss) return;
+        CharDBInfo character = __0.SupporterCharInfo[0].CharInfo;
+        character.SupporterSlotIndex = __state;
+        (long, int, int) originalKey = (character.SupporterOwnerIndex, 0, (int)character.SupporterBorrowOwnerType);
+        (long, int, int) restoredKey = (character.SupporterOwnerIndex, __state, (int)character.SupporterBorrowOwnerType);
+        Dictionary<(long, int, int), SupporterBattleCharInfoEx> supporters = BattlePacket.DeckSupporterCharInfoDict;
+        if (supporters.TryGetValue(originalKey, out SupporterBattleCharInfoEx inserted)
+            && ReferenceEquals(inserted.SupporterBattleCharInfo, __0.SupporterCharInfo[0]))
+            supporters.Remove(originalKey);
+        supporters[restoredKey] = new SupporterBattleCharInfoEx
+        {
+            SupporterBattleCharInfo = __0.SupporterCharInfo[0],
+            usageCount = __0.SupporterInfo[0].UsageCount,
+            userName = __0.SupporterInfo[0].UserId
+        };
     }
 
     private static void BeforeSend(IMessage __0)
@@ -95,6 +122,8 @@ internal static class BattleCheckpoint
                 RedTeamSkillBubbleCount = manager.GetPlayData(ETeamType.TT_RED).SkillBubbleCount,
                 MonsterHuntTeam = manager.MonsterHuntTeam,
                 CumulativeSummonCount = processor.CumulativeSummonCount,
+                ArmorBreakCount = processor.ArmorBreakCount,
+                CanIncreaseArmorBreak = processor.CanIncreaseArmorBreak,
                 BattleResult = Convert.ToBase64String(result.ToByteArray()),
                 EngineType = (Define_BattleEngineType)1,
                 ContinueRedTeamSkillBubbleCount = manager.ContinueEnemySkillBubblePoint,
@@ -171,7 +200,20 @@ internal static class BattleCheckpoint
                 FieldInfo season = typeof(GuildRaidPacket.GuildRaidMainInfo).GetGameField("season", All);
                 checkpoint.Season = (int)season.GetValue(GuildRaidPacket.MainInfo);
             }
-            if (manager.BorrowedSupporterDeckInfo != null) checkpoint.SupporterInfo.Add(manager.BorrowedSupporterDeckInfo.Clone());
+            if (manager.BorrowedSupporterDeckInfo != null)
+            {
+                checkpoint.SupporterInfo.Add(manager.BorrowedSupporterDeckInfo.Clone());
+                foreach (BattleCharData character in manager.GetTeamBattleCharSequenceList(ETeamType.TT_BLUE))
+                {
+                    if (!character.IsBorrowedSupporter) continue;
+                    SupporterBattleCharInfoEx supporter = BattlePacket.GetSupporterBattleCharInfoEx(character.CharDBInfo.SupporterOwnerIndex,
+                        character.CharDBInfo.SupporterSlotIndex, character.CharDBInfo.SupporterBorrowOwnerType);
+                    if (supporter?.SupporterBattleCharInfo == null) continue;
+                    GuildSupporterBattleCharInfo bundle = supporter.SupporterBattleCharInfo.Clone();
+                    if (bundle.CharInfo != null) bundle.CharInfo.SupporterSlotIndex = character.CharDBInfo.SupporterSlotIndex;
+                    checkpoint.SupporterCharInfo.Add(bundle);
+                }
+            }
             checkpoint.CanRequestFriend = manager.CanRequestFriend;
             var recommendation = new RecommendDeckInfoRequest { BattleMode = (int)battleMode, PackId = Singleton<PackManager>.Instance.PlayingPackID, BattleIndex = manager.CurrentBattleDeckInfo?.Id ?? 0 };
             var packType = (Define_PackType)Singleton<PackManager>.Instance.EnterPackDTO.PackType;

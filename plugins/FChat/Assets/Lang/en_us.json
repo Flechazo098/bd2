@@ -56,5 +56,6 @@
   "fchat.help.target": "Describe the target language in natural language, for example “Simplified Chinese”, “British English” or “Japanese”. Leave this field empty to use your current game UI language. The AI interprets your description when translating.",
   "fchat.help.blacklist": "Enter language names or descriptions in natural language, separated by commas, for example “English, Japanese”. Leave empty to allow all languages. The AI must identify the actual language of each message. This cannot be reliably determined locally, so message content may still be sent to your configured AI API even when translation is skipped. Language identification may consume additional tokens and incur charges. Set your API budget accordingly.",
   "fchat.error.target_invalid": "Target language must be a single line of at most 200 characters.",
-  "fchat.error.blacklist_invalid": "Language blacklist must be a single line of at most 2,000 characters."
+  "fchat.error.blacklist_invalid": "Language blacklist must be a single line of at most 2,000 characters.",
+  "fchat.friend.online": "Online"
 }
