@@ -361,7 +361,7 @@ func (s *Service) helperPreview(v *snapshot) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return wire.AppendBytes(row(1, uint64(earliest)), 2, rewardPreview(gains)), nil
+	return wire.AppendBytes(row(1, uint64(earliest*1000)), 2, rewardPreview(gains)), nil
 }
 func (s *Service) settle(v *snapshot, response bool) ([]byte, error) {
 	gains, progress, _, err := s.helperRewards(v)

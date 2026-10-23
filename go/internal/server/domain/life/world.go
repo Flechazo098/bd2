@@ -401,12 +401,11 @@ func (s *Service) refresh(v *snapshot) error {
 			function := num(d, 2)
 			for slot, in := range o.Inner {
 				if in.Status == 0 && (function == 1 || function == 2) && now >= in.Start+int64(num(d, 3)) {
-					r, err := s.randomGather(o.ID)
-					if err != nil {
-						return err
+					rows := s.design.Gathering[o.ID][in.ID]
+					if len(rows) == 0 {
+						return ErrInvalid
 					}
-					first := s.design.Gathering[o.ID][num(r, 6)][0]
-					in = &object{ID: num(r, 6), Index: slot, Status: num(first, 10), Start: in.Start + int64(num(d, 3)), Inner: map[uint64]*object{}}
+					in = &object{ID: in.ID, Index: slot, Status: num(rows[0], 10), Start: in.Start + int64(num(d, 3)), Inner: map[uint64]*object{}}
 					o.Inner[slot] = in
 				}
 				if function >= 1 && function <= 3 && in.Status > 0 {
@@ -484,9 +483,29 @@ func (s *Service) seed(v *snapshot, seeds [][]byte) ([]byte, error) {
 	}
 	return b, nil
 }
-func (s *Service) gather(v *snapshot, places [][]byte) ([]byte, error) {
+func (s *Service) gather(v *snapshot, places [][]byte) (body []byte, err error) {
+	var chunk uint64
+	var parent, requested, current *object
+	defer func() {
+		if err == nil {
+			return
+		}
+		if parent == nil {
+			err = fmt.Errorf("%w: gathering chunk=%d", err, chunk)
+			return
+		}
+		if requested == nil {
+			err = fmt.Errorf("%w: gathering chunk=%d parent=%s", err, chunk, objectKey(parent))
+			return
+		}
+		actualID, actualStatus := uint64(0), uint64(0)
+		if current != nil {
+			actualID, actualStatus = current.ID, current.Status
+		}
+		err = fmt.Errorf("%w: gathering chunk=%d parent=%s slot=%d requested_id=%d requested_status=%d actual_id=%d actual_status=%d", err, chunk, objectKey(parent), requested.Index, requested.ID, requested.Status, actualID, actualStatus)
+	}()
 	if len(places) == 0 || len(places) > 15 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: invalid gathering batch size=%d", ErrInvalid, len(places))
 	}
 	var bundle []byte
 	var changed []byte
@@ -495,29 +514,34 @@ func (s *Service) gather(v *snapshot, places [][]byte) ([]byte, error) {
 	changedObjects := map[string]*object{}
 	mixedChunks := false
 	for _, raw := range places {
-		chunk := num(raw, 1)
+		chunk = num(raw, 1)
+		parent, requested, current = nil, nil, nil
 		os := messages(raw, 2)
 		if !v.Chunks[chunk] || len(os) == 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: unavailable chunk or empty objects", ErrInvalid)
 		}
 		for _, requestObject := range os {
 			p := parseObject(requestObject)
+			parent, requested, current = p, nil, nil
 			o := v.Objects[chunk][objectKey(p)]
 			if o == nil || o.Status != 1 {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: parent missing or incomplete", ErrInvalid)
 			}
 			ins := messages(requestObject, 10)
 			if len(ins) != 1 {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: inner object count=%d", ErrInvalid, len(ins))
 			}
 			want := parseObject(ins[0])
+			want.Status = num(ins[0], 7)
+			requested = want
 			in := o.Inner[want.Index]
+			current = in
 			if in == nil || in.ID != want.ID || in.Status == 0 {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: resource unavailable or changed", ErrInvalid)
 			}
 			d := s.design.Row("LifeGatheringObjectTable", o.ID, in.ID, in.Status)
 			if d == nil {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: gathering design missing", ErrInvalid)
 			}
 			if in.End > 0 && s.options.Now().Unix() < in.End {
 				return nil, ErrInvalid

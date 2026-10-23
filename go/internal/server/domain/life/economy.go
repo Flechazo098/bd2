@@ -10,8 +10,13 @@ import (
 	"bd2server/internal/server/protocol/wire"
 )
 
-func (s *Service) economy(v *snapshot, path string, req []byte) ([]byte, error) {
+func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, err error) {
 	id, count := num(req, 2), num(req, 3)
+	defer func() {
+		if err != nil && (path == "/LifeCrafting" || path == "/LifeCooking") {
+			err = fmt.Errorf("%w: operation=%s recipe=%d count=%d", err, path, id, count)
+		}
+	}()
 	switch path {
 	case "/LifeCrafting":
 		d := s.design.Row("LifeCraftingObjectTable", id)
@@ -106,7 +111,7 @@ func (s *Service) economy(v *snapshot, path string, req []byte) ([]byte, error) 
 			return nil, err
 		}
 		v.Foods[id] = s.options.Now().Unix() + int64(duration)
-		return wire.AppendBytes(nil, 1, row(1, id, 2, uint64(v.Foods[id]))), nil
+		return wire.AppendBytes(nil, 1, row(1, id, 2, uint64(v.Foods[id]*1000))), nil
 	case "/LifeShopBuy":
 		return s.buy(v, req)
 	case "/LifeShopSell":
@@ -233,7 +238,7 @@ func (s *Service) shopInfo(v *snapshot) []byte {
 	}
 	week := time.Date(now.Year(), now.Month(), now.Day()+days, 0, 0, 0, 0, time.UTC)
 	month := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
-	b := row(2, uint64(day.Unix()), 3, uint64(week.Unix()), 4, uint64(month.Unix()))
+	b := row(2, uint64(day.UnixMilli()), 3, uint64(week.UnixMilli()), 4, uint64(month.UnixMilli()))
 	for key, p := range v.Purchases {
 		var group, id uint64
 		if _, err := fmt.Sscanf(key, "%d:%d", &group, &id); err != nil {

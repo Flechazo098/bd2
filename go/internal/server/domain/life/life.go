@@ -183,7 +183,7 @@ func sorted[V any](m map[uint64]V) []uint64 {
 	return ids
 }
 func objectWire(o *object) []byte {
-	b := row(1, uint64(int64(o.X)), 2, uint64(int64(o.Y)), 3, o.Rotate, 4, o.Index, 6, o.ID, 7, o.Status, 8, uint64(o.Start), 9, uint64(o.End))
+	b := row(1, uint64(int64(o.X)), 2, uint64(int64(o.Y)), 3, o.Rotate, 4, o.Index, 6, o.ID, 7, o.Status, 8, uint64(o.Start*1000), 9, uint64(o.End*1000))
 	for _, id := range sorted(o.Inner) {
 		b = wire.AppendBytes(b, 10, objectWire(o.Inner[id]))
 	}
@@ -217,7 +217,7 @@ func userWire(v *snapshot) []byte {
 }
 func citizenWire(c citizen) []byte { return wire.AppendBytes(row(1, c.Index, 2, c.Slot), 3, c.Avatar) }
 func helperWire(h helper) []byte {
-	b := row(1, h.Index, 2, h.ID, 3, h.Slot, 6, h.Work, 7, h.WorkID, 8, uint64(h.Assigned))
+	b := row(1, h.Index, 2, h.ID, 3, h.Slot, 6, h.Work, 7, h.WorkID, 8, uint64(h.Assigned*1000))
 	b = wire.AppendString(b, 4, h.Name)
 	return wire.AppendBytes(b, 5, h.Avatar)
 }
@@ -259,7 +259,7 @@ func (s *Service) info(v *snapshot, full bool) []byte {
 		}
 		for _, id := range sorted(v.Foods) {
 			if v.Foods[id] > s.options.Now().Unix() {
-				b = wire.AppendBytes(b, 6, row(1, id, 2, uint64(v.Foods[id])))
+				b = wire.AppendBytes(b, 6, row(1, id, 2, uint64(v.Foods[id]*1000)))
 			}
 		}
 		for _, id := range sorted(v.Collections) {
@@ -441,14 +441,14 @@ func (s *Service) spend(v *snapshot, costs []gamedata.Reward) error {
 		switch r.Type {
 		case 64:
 			if v.Coin < r.Count {
-				return ErrFunds
+				return fmt.Errorf("%w: type=%d id=%d need=%d have=%d", ErrFunds, r.Type, r.ID, r.Count, v.Coin)
 			}
 			v.Coin -= r.Count
 		case 65, 66:
 			key := itemKey(r.Type, r.ID)
 			it := v.Items[key]
 			if it.Count < r.Count {
-				return ErrFunds
+				return fmt.Errorf("%w: type=%d id=%d need=%d have=%d", ErrFunds, r.Type, r.ID, r.Count, it.Count)
 			}
 			it.Count -= r.Count
 			v.Items[key] = it
@@ -499,6 +499,7 @@ func (s *Service) grant(v *snapshot, gains []gamedata.Reward) ([]byte, error) {
 		for _, id := range s.design.CollectionsByItem[[2]uint64{r.Type, r.ID}] {
 			v.Collections[id] = true
 		}
+		it.Count = r.Count
 		b = wire.AppendBytes(b, 1, itemWire(it))
 		b = wire.AppendBytes(b, 6, itemWire(item{ID: r.ID, Type: r.Type, Count: r.Count}))
 	}

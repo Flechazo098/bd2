@@ -51,6 +51,8 @@ var mailItemSources = []mailItemSource{
 	{"CollectionTable", 17, 3, 7, "collection", "NameTextTable"},
 	{"MyRoomItemTable", 27, 7, 17, "my_room", "NameTextTable"},
 	{"InstantUseItemTable", 29, 1, 3, "instant_use", "NameTextTable"},
+	{"LifeObjectGroupTable", 65, 5, 11, "life_furniture", "NameTextTable"},
+	{"LifeItemTable", 66, 5, 7, "life_material", "NameTextTable"},
 }
 
 // MailCurrencyTypes are the account currencies whose mail claim is credited
@@ -61,7 +63,7 @@ var MailCurrencyTypes = []uint64{2, 3, 4, 12, 20}
 // carry: their claim is credited by the event economy (wallet hope powder and
 // refining traces, action points and the gameplay-entry balances such as the
 // Cafeteria and decoration coins). Their reward ID is zero as well.
-var MailEconomyCurrencyTypes = []uint64{15, 16, 18, 21, 22, 23, 24, 30, 31, 32, 33, 35, 38, 39, 40, 41, 42, 43, 44, 52, 53, 54, 60, 68, 70, 72}
+var MailEconomyCurrencyTypes = []uint64{15, 16, 18, 21, 22, 23, 24, 30, 31, 32, 33, 35, 38, 39, 40, 41, 42, 43, 44, 52, 53, 54, 60, 64, 68, 70, 72}
 
 func mailCurrency(elementType uint64) bool {
 	return slices.Contains(MailCurrencyTypes, elementType) || slices.Contains(MailEconomyCurrencyTypes, elementType)
@@ -98,6 +100,22 @@ func loadMailCatalog(db *sql.DB) ([]MailCatalogItem, error) {
 				Name: names[source.textTable][singleVarint(proto, source.nameField)]}
 			if source.table == "ResourceTable" {
 				item.resourceType = singleVarint(proto, 13)
+			}
+			if source.table == "LifeObjectGroupTable" {
+				switch singleVarint(proto, 12) {
+				case 3:
+					item.Category = "life_building"
+				case 4:
+					item.Category = "life_decoration"
+				}
+			}
+			if source.table == "LifeItemTable" {
+				switch singleVarint(proto, 9) {
+				case 2:
+					item.Category = "life_product"
+				case 3:
+					item.Category = "life_cooking"
+				}
 			}
 			items = append(items, item)
 			return nil
@@ -373,6 +391,12 @@ func SortMailCatalog(items []MailCatalogItem) {
 	order := map[string]int{"currency": 0}
 	for i, source := range mailItemSources {
 		order[source.category] = i + 1
+	}
+	for _, category := range []string{"life_building", "life_decoration"} {
+		order[category] = order["life_furniture"]
+	}
+	for _, category := range []string{"life_product", "life_cooking"} {
+		order[category] = order["life_material"]
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		a, b := items[i], items[j]

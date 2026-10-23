@@ -165,9 +165,15 @@ func TestResidentsWorkersGrowthAndCurrencySurviveRealActionFlow(t *testing.T) {
 	recruit := child(child(nil, 3, candidate), 4, workerHouse)
 	g.call("/LifeHelperRecruit", recruit)
 	helper := child(proto(1, scalar(t, candidate, 1), 6, 1), 5, avatar)
-	g.call("/LifeHelperAssign", child(child(nil, 2, helper), 3, workerHouse))
+	assigned := g.call("/LifeHelperAssign", child(child(nil, 2, helper), 3, workerHouse))
+	if got := scalar(t, nested(t, assigned, 1), 8); got != uint64(g.now.UnixMilli()) {
+		t.Fatalf("native helper assignment timestamp: got %d, want %d milliseconds", got, g.now.UnixMilli())
+	}
 	g.now = g.now.Add(20 * time.Second)
 	preview := g.call("/LifeHelperRewardInfo", nil)
+	if got := scalar(t, preview, 1); got != uint64(g.now.Add(-20*time.Second).UnixMilli()) {
+		t.Fatalf("native helper preview timestamp: got %d", got)
+	}
 	previewItems := repeated(t, nested(t, preview, 2), 1)
 	if len(previewItems) != 1 || scalar(t, previewItems[0], 4) != 8 {
 		t.Fatalf("two work cycles at four per cycle: %x", preview)
@@ -296,5 +302,51 @@ func TestAtomicWriteFailureDoesNotLeakCandidateStateOrReceipt(t *testing.T) {
 	}
 	if coin, _ := g.s.Coin(g.ctx); coin != 17 {
 		t.Fatal("successful retry must charge once")
+	}
+}
+
+// TimerManager.UnixTimeStampToDateTime consumes milliseconds for resource,
+// construction, food and shop timers; saved life state keeps seconds.
+func TestLifeWireTimersMatchNativeMilliseconds(t *testing.T) {
+	g := scenario(t)
+	g.call("/LifeWorldChoice", proto(2, 91))
+	info := g.call("/LifeInfo", nil)
+	forest := nested(t, nested(t, info, 1), 2)
+	inner := nested(t, forest, 10)
+	if got := scalar(t, inner, 8); got != uint64(g.now.UnixMilli()) {
+		t.Fatalf("resource creation time: got %d, want %d", got, g.now.UnixMilli())
+	}
+	gather := child(nil, 2, child(proto(1, 1), 2, child(proto(1, 2, 2, 3, 6, 301), 10, proto(4, 0, 6, 1, 7, 1))))
+	harvest := g.call("/LifeWorldObjectGathering", gather)
+	spent := nested(t, nested(t, nested(t, harvest, 3), 2), 10)
+	deadline := time.UnixMilli(int64(scalar(t, spent, 8))).Add(30 * time.Second)
+	if scalar(t, spent, 7) != 0 || !deadline.Equal(g.now.Add(30*time.Second)) {
+		t.Fatalf("native resource must remain spent until %s, got %s", g.now.Add(30*time.Second), deadline)
+	}
+	g.fund("construction", 0, 3)
+	building := nested(t, nested(t, g.call("/LifeWorldObjectPlaceSave", child(nil, 2, placement(302, 5, 6))), 1), 2)
+	if got := scalar(t, building, 9); got != uint64(g.now.Add(5*time.Second).UnixMilli()) {
+		t.Fatalf("native construction deadline: got %d", got)
+	}
+	g.d.Tables["LifeItemTable"][[3]uint64{502}] = proto(5, 502, 1, 601, 8, 1000)
+	g.d.Tables["LifeBuffTable"][[3]uint64{601}] = proto(8, 601, 1, 60)
+	if _, err := g.s.Apply(g.ctx, "food", nil, []gamedata.Reward{{Type: 66, ID: 502, Count: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	food := g.call("/LifeEatFood", child(nil, 2, proto(2, 502, 3, 66, 4, 1)))
+	if got := scalar(t, nested(t, food, 1), 2); got != uint64(g.now.Add(time.Minute).UnixMilli()) {
+		t.Fatalf("native food deadline: got %d", got)
+	}
+	g.reopen()
+	restoredFood := nested(t, g.call("/LifeInfo", nil), 6)
+	if got := scalar(t, restoredFood, 2); got != uint64(g.now.Add(time.Minute).UnixMilli()) {
+		t.Fatalf("food deadline changed after reload: %d", got)
+	}
+	shop := g.call("/LifeShopBuyInfo", nil)
+	expected := []time.Time{time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC), time.Date(2026, 4, 13, 0, 0, 0, 0, time.UTC), time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)}
+	for i, want := range expected {
+		if got := scalar(t, shop, i+2); got != uint64(want.UnixMilli()) {
+			t.Fatalf("shop reset field %d: got %d, want %d", i+2, got, want.UnixMilli())
+		}
 	}
 }

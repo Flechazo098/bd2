@@ -78,6 +78,7 @@ var compensationCurrencies = func() map[uint64]bool {
 
 func extendedCompensationReward(reward gamedata.Reward) bool {
 	return compensationCurrencies[reward.Type] && reward.ID == 0 ||
+		(reward.Type == 65 || reward.Type == 66) && reward.ID != 0 ||
 		(reward.Type == 49 || reward.Type == 50) && reward.ID != 0 && reward.Count == 1
 }
 
