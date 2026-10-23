@@ -143,6 +143,7 @@ type HTTP struct {
 	RealtimeTickets       http.Handler
 	StoryCheckpoints      http.Handler
 	SpineRecordings       http.Handler
+	ClientPatches         http.Handler
 	// Console is the built-in administration website below /admin/.
 	Console http.Handler
 	// Compatibility is the launcher's view of what this server requires.
@@ -163,6 +164,9 @@ func (h HTTP) Handler() http.Handler {
 	mux.HandleFunc("/client/resources", h.clientResources)
 	mux.HandleFunc("/client/runtime", h.clientRuntime)
 	mux.HandleFunc("/client/commerce", h.clientCommerce)
+	if h.ClientPatches != nil {
+		mux.Handle("/client/patches", h.ClientPatches)
+	}
 	if h.UpdateFingerprint != nil {
 		mux.HandleFunc("GET /client/update-fingerprint", func(w http.ResponseWriter, r *http.Request) {
 			raw := h.UpdateFingerprint()

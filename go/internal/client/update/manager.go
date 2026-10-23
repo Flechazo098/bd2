@@ -884,6 +884,9 @@ func (m *Manager) WithLaunch(ctx context.Context, client *http.Client, game, ori
 		if err := m.ensurePlugins(game); err != nil {
 			return err
 		}
+		if err := m.PrepareLocalDatabase(ctx, client, game, origin); err != nil {
+			return err
+		}
 	}
 	return launch()
 }

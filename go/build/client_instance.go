@@ -12,6 +12,7 @@ import (
 	clientinstance "bd2server/internal/client/instance"
 	clientplugin "bd2server/internal/client/plugin"
 	clientsetup "bd2server/internal/client/setup"
+	clientupdate "bd2server/internal/client/update"
 	"bd2server/internal/common/taskgraph"
 	"bd2server/internal/common/versionconfig"
 )
@@ -94,7 +95,11 @@ func (t task) runClient2(args []string) error {
 			fmt.Println("BepInEx log:", filepath.Join(instance.GameDirectory, "BepInEx", "LogOutput.log"))
 			return nil
 		}},
-		taskgraph.Task{Name: "runClient2", DependsOn: []string{"instance:launcher"}, Run: func(context.Context) error {
+		taskgraph.Task{Name: "instance:database", DependsOn: []string{"instance:launcher"}, Run: func(ctx context.Context) error {
+			manager := clientupdate.New(clientupdate.Options{Versions: versions, Development: true})
+			return manager.PrepareLocalDatabase(ctx, nil, instance.GameDirectory, settings.ServerOrigin)
+		}},
+		taskgraph.Task{Name: "runClient2", DependsOn: []string{"instance:database"}, Run: func(context.Context) error {
 			if t.target.goos == "windows" {
 				return exec.CommandContext(t.ctx, "wscript.exe", "//nologo", launcher).Run()
 			}

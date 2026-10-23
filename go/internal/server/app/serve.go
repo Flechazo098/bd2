@@ -3,12 +3,14 @@ package app
 import (
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/i18n"
+	"bd2server/internal/common/release"
 	"bd2server/internal/common/util"
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/events/calendar"
 	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/gateway/auth"
+	"bd2server/internal/server/gateway/clientpatch"
 	"bd2server/internal/server/gateway/session"
 	"bd2server/internal/server/gateway/transport"
 	"bd2server/internal/server/platform/lifecycle"
@@ -169,6 +171,7 @@ func Serve(args []string) (serveErr error) {
 		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID, RealtimeTickets: realtimeTickets,
 		StoryCheckpoints: storyCheckpoints{game: game, players: registry}, Console: console.Handler(),
 		SpineRecordings:   spineRecordings{players: registry},
+		ClientPatches:     clientpatch.New(clientpatch.Config{Root: filepath.Join(c.dataDir, "client-patches"), Origin: strings.TrimRight(consoleOrigin(c), "/"), GameVersion: c.versions.GameVersion, Keys: release.BuiltinChannel().TrustedKeys}),
 		LoginsClosed:      func() bool { return loginsClosed(0) != "" },
 		Releases:          releaseFiles(filepath.Join(c.dataDir, "releases")),
 		ClientAllowed:     compatibility.allowed,
