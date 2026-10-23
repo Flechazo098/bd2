@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrWriterFenced = errors.New("state writer fenced by a newer server instance")
@@ -117,6 +118,12 @@ type Memory struct {
 
 func NewMemory() *Memory {
 	return &Memory{data: make(map[string][]byte), entries: make(map[string]map[string]map[string][]byte)}
+}
+
+var memoryInstanceSequence atomic.Uint64
+
+func (*Memory) NewInstanceID() (uint64, error) {
+	return (1 << 40) + memoryInstanceSequence.Add(1), nil
 }
 
 func (m *Memory) Load(name string) ([]byte, error) {
