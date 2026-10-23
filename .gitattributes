@@ -17,6 +17,7 @@
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
 bd2w text eol=lf
+go/build/tasks.txt text eol=lf
 
 *.dll binary
 *.exe binary

@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 
 	"bd2server/build/sourcetools"
 	"bd2server/internal/common/taskgraph"
 )
+
+//go:embed tasks.txt
+var taskNames string
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -27,30 +32,11 @@ func main() {
 	}
 }
 
-func usage() {
-	fmt.Printf(`Usage:
-  bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
-  bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement] [--component all|schedules]
-  bd2w runClient [client options]
-  bd2w runClient2 [--instance player2] [--game-dir directory]
-  bd2w plugins [--game-dir directory]
-  bd2w runServer [server options]
-  bd2w check-csharp [%s]
-  bd2w sdk pack [--game-dir directory] [--package-version version] [--output-directory directory]
-  bd2w sdk verify [--game-dir directory] [--package-version version] [--package-directory directory]
-  bd2w sdk update-names --game-mapping file [--game-dir directory] [--version-config file]
-  bd2w version-source --config file --output file --plugin name
-  bd2w deobfuscate --source directory --mapping file --output directory
-  bd2w diff --a directory --b directory --out report.txt [diff options]
-  bd2w download-client [--package-dir directory] [--manifest file] [--download | --base]
-  bd2w download-resources --output directory --bundle-version version --game-data-version version
-  Add --plan to show task dependencies without running them.
+//go:embed help.txt
+var helpText string
 
-Windows: .\bd2w build
-Linux/macOS: ./bd2w build
-Build automatically selects the native platform and architecture.
-The wrappers cache the build tool and refresh it when its sources change.
-`, strings.Join(csharpProjects(), " "))
+func usage() {
+	fmt.Print(helpText)
 }
 
 func run(args []string) error {
@@ -71,14 +57,14 @@ func run(args []string) error {
 		usage()
 		return nil
 	}
+	if !slices.Contains(strings.Fields(taskNames), args[0]) {
+		return fmt.Errorf("unknown task %q; use --help for available commands", args[0])
+	}
 	switch args[0] {
 	case "deobfuscate":
 		return t.execute("deobfuscate", taskgraph.Task{Name: "deobfuscate", Run: func(context.Context) error { return sourcetools.RunDeobfuscate(args[1:], os.Stdout) }})
 	case "diff":
 		return t.execute("diff", taskgraph.Task{Name: "diff", Run: func(context.Context) error { return sourcetools.RunDiff(args[1:], os.Stdout) }})
-	}
-	if args[0] != "build" && args[0] != "runClient" && args[0] != "runClient2" && args[0] != "runServer" && args[0] != "sdk" && args[0] != "version-source" && args[0] != "plugins" && args[0] != "check-csharp" && args[0] != "download-client" && args[0] != "download-resources" && args[0] != "release" {
-		return fmt.Errorf("unknown task %q; use --help for available commands", args[0])
 	}
 	if len(args) == 2 && isHelp(args[1]) && args[0] != "release" {
 		usage()

@@ -2,12 +2,31 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 
+validate_task() {
+    for argument do
+        case "$argument" in
+            --plan) continue ;;
+            help|-h|--help|-[Hh][Ee][Ll][Pp]) cat "$root/go/build/help.txt"; exit 0 ;;
+        esac
+        while IFS= read -r task || [ -n "$task" ]; do
+            [ "$argument" != "$task" ] || return 0
+        done < "$root/go/build/tasks.txt"
+        printf 'bd2w: unknown task "%s"; use --help for available commands\n' "$argument" >&2
+        return 1
+    done
+}
+if [ "$#" -eq 0 ]; then
+    cat "$root/go/build/help.txt"
+    exit 0
+fi
+validate_task "$@"
+
 tool_dir="$root/.build/tools"
 tool="$tool_dir/bd2w"
 
 tool_is_current() {
     [ -f "$tool" ] || return 1
-    newer_sources=$(find "$root/go/build" "$root/go/internal/common" "$root/go/internal/client" "$root/go/go.mod" "$root/go/go.sum" -type f -newer "$tool" -print) || {
+    newer_sources=$(find "$root/go/build" "$root/go/internal" "$root/go/go.mod" "$root/go/go.sum" -type f -newer "$tool" -print) || {
         printf 'bd2w: cannot check build tool source timestamps.\n' >&2
         exit 1
     }

@@ -1,0 +1,22 @@
+Usage:
+  bd2w build [-GameDir directory] [-SkipTests] [-SchedulesOnly]
+  bd2w release changelog --component server|client [--bump patch] | publish [--no-announcement] [--component all|schedules]
+  bd2w runClient [client options]
+  bd2w runClient2 [--instance player2] [--game-dir directory]
+  bd2w plugins [--game-dir directory]
+  bd2w runServer [server options]
+  bd2w check-csharp [project ...]
+  bd2w sdk pack [--game-dir directory] [--package-version version] [--output-directory directory]
+  bd2w sdk verify [--game-dir directory] [--package-version version] [--package-directory directory]
+  bd2w sdk update-names --game-mapping file [--game-dir directory] [--version-config file]
+  bd2w version-source --config file --output file --plugin name
+  bd2w deobfuscate --source directory --mapping file --output directory
+  bd2w diff --a directory --b directory --out report.txt [diff options]
+  bd2w download-client [--package-dir directory] [--manifest file] [--download | --base]
+  bd2w download-resources --output directory --bundle-version version --game-data-version version
+  Add --plan to show task dependencies without running them.
+
+Windows: .\bd2w build
+Linux/macOS: ./bd2w build
+Build automatically selects the native platform and architecture.
+The wrappers cache the build tool and refresh it when its sources change.
