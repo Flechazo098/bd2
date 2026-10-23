@@ -1,5 +1,229 @@
 # 更新日志
 
+## client 2.37.13+client.0.2.10 · 2026-10-24
+
+> type: update
+
+### en_us: Guild raid introduction and costume settings
+
+- Fix the guild raid introduction checkpoint and replay an unfinished introduction after reconnecting.
+- Preserve full character and costume identifiers when automatically adding a newly acquired costume to the field party.
+- Fix the friend online indicator failing to initialize.
+
+### zh_cn: 公会联合战介绍与服装设置修复
+
+- 修复公会联合战入场介绍的剧情检查点，重连后可重新播放未完成的介绍。
+- 修复新服装自动加入跑图队伍时角色和服装编号被截断的问题。
+- 修复好友在线标记初始化失败的问题。
+
+### zh_tw: 公會聯合戰介紹與服裝設定修正
+
+- 修正公會聯合戰入場介紹的劇情檢查點，重新連線後可重播未完成的介紹。
+- 修正新服裝自動加入跑圖隊伍時角色與服裝編號被截斷的問題。
+- 修正好友上線標記初始化失敗的問題。
+
+### ja_jp: ギルドレイドの導入と衣装設定の修正
+
+- ギルドレイドの導入チェックポイントを修正し、再接続後に未完了の導入を最初から再生できるようにしました。
+- 新しい衣装をフィールド編成に自動追加する際、キャラクターと衣装の識別番号が切り詰められる問題を修正しました。
+- フレンドのオンライン表示を初期化できない問題を修正しました。
+
+### ko_kr: 길드 레이드 도입 및 코스튬 설정 수정
+
+- 길드 레이드 도입 체크포인트를 수정하여 재접속 후 완료하지 못한 도입을 처음부터 재생할 수 있습니다.
+- 새 코스튬을 필드 파티에 자동 추가할 때 캐릭터와 코스튬 식별 번호가 잘리는 문제를 수정했습니다.
+- 친구 온라인 표시가 초기화되지 않는 문제를 수정했습니다.
+
+## client 2.37.13+client.0.2.9 · 2026-10-23
+
+> type: update
+
+### en_us: Friend presence and connection fixes
+
+- Show a green online indicator in the friend list.
+- Fix the Square connection being repeatedly rejected.
+- Remove the blinking debugger error icon while keeping error logs.
+
+### zh_cn: 好友在线状态与连接修复
+
+- 好友列表新增绿色在线标记。
+- 修复虚拟广场连接被重复拒绝的问题。
+- 移除闪烁的调试错误图标，错误日志继续保留。
+
+### zh_tw: 好友上線狀態與連線修正
+
+- 好友列表新增綠色上線標記。
+- 修正虛擬廣場連線被重複拒絕的問題。
+- 移除閃爍的除錯錯誤圖示，錯誤日誌繼續保留。
+
+### ja_jp: フレンドのオンライン表示と接続修正
+
+- フレンド一覧に緑色のオンライン表示を追加しました。
+- 仮想広場への接続が繰り返し拒否される問題を修正しました。
+- エラーログを残したまま、点滅するデバッガー通知アイコンを非表示にしました。
+
+### ko_kr: 친구 접속 상태 및 연결 수정
+
+- 친구 목록에 초록색 온라인 표시를 추가했습니다.
+- 가상 광장 연결이 반복해서 거부되는 문제를 수정했습니다.
+- 오류 로그는 유지하면서 깜박이는 디버거 오류 아이콘을 숨겼습니다.
+
+## server 2.37.13+server.0.2.0 · 2026-10-23
+
+> type: update
+> migration: none
+
+### en_us: Brown Dust II 2.37.13, guild raid overkill and console permissions
+
+- Support Brown Dust II 2.37.13 with schedules from the current official events.
+- Guild raid standings break score ties with the overkill of each guild's top-scoring members.
+- The console can mail every currency the game credits, including the Cafeteria and decoration coins.
+- Administrators no longer receive mail access by default; with it they can only mail their own account, and only the owner chooses other recipients.
+- A server that cannot serve its client patch plan now tells the launcher why.
+
+### zh_cn: 适配 2.37.13，公会讨伐超杀与管理台权限
+
+- 适配棕色尘埃2 2.37.13，排期更新为官方当前活动。
+- 公会讨伐排名在分数相同时，按各公会得分最高成员的超杀值决定先后。
+- 管理台可以寄送游戏能入账的全部货币，包括格鲁菲之星和装饰币。
+- 任命管理员不再默认获得邮件权限；获得后也只能给自己的账号寄送，只有服主可以选择其他收件人。
+- 服务器无法提供客户端补丁计划时，会告诉启动器具体原因。
+
+### zh_tw: 支援 2.37.13，公會討伐超殺與管理台權限
+
+- 支援棕色塵埃2 2.37.13，排程更新為官方目前的活動。
+- 公會討伐排名在分數相同時，依各公會得分最高成員的超殺值決定先後。
+- 管理台可以寄送遊戲能入帳的所有貨幣，包括格魯菲之星與裝飾幣。
+- 任命管理員不再預設取得郵件權限；取得後也只能寄給自己的帳號，只有服主可以選擇其他收件人。
+- 伺服器無法提供用戶端修補計畫時，會告訴啟動器具體原因。
+
+### ja_jp: 2.37.13 対応、ギルド討伐のオーバーキルと管理画面の権限
+
+- ブラウンダスト2 2.37.13 に対応し、スケジュールを公式の現行イベントに更新しました。
+- ギルド討伐の順位は、スコアが同じ場合に各ギルドの上位メンバーのオーバーキル値で決まります。
+- 管理画面から、ゲームが付与できるすべての通貨（食堂コインや装飾コインを含む）を送れるようになりました。
+- 管理者には既定でメール権限が付与されなくなりました。付与された場合も自分のアカウントにのみ送れ、ほかの受取人を選べるのはサーバー主だけです。
+- サーバーがクライアントパッチ計画を提供できない場合、その理由をランチャーに伝えます。
+
+### ko_kr: 2.37.13 지원, 길드 토벌 오버킬 및 관리 콘솔 권한
+
+- 브라운더스트2 2.37.13을 지원하며 일정을 공식 현재 이벤트로 갱신했습니다.
+- 길드 토벌 순위는 점수가 같을 때 각 길드 상위 멤버의 오버킬 값으로 결정됩니다.
+- 관리 콘솔에서 게임이 지급할 수 있는 모든 재화(식당 코인, 장식 코인 포함)를 보낼 수 있습니다.
+- 관리자는 더 이상 기본으로 메일 권한을 받지 않으며, 권한이 있어도 자신의 계정에만 보낼 수 있습니다. 다른 수신자는 서버 주인만 선택할 수 있습니다.
+- 서버가 클라이언트 패치 계획을 제공하지 못하면 그 이유를 런처에 알려 줍니다.
+
+## client 2.37.13+client.0.2.8 · 2026-10-23
+
+> type: update
+
+### en_us: Brown Dust II 2.37.13 and clearer errors
+
+- Support Brown Dust II 2.37.13.
+- When the server refuses a download or update, the launcher now shows the server's own reason instead of only an HTTP status code.
+
+### zh_cn: 适配 2.37.13，错误提示更清楚
+
+- 适配棕色尘埃2 2.37.13。
+- 服务器拒绝下载或更新时，启动器会显示服务器给出的具体原因，而不再只显示 HTTP 状态码。
+
+### zh_tw: 支援 2.37.13，錯誤提示更清楚
+
+- 支援棕色塵埃2 2.37.13。
+- 伺服器拒絕下載或更新時，啟動器會顯示伺服器提供的具體原因，而不再只顯示 HTTP 狀態碼。
+
+### ja_jp: 2.37.13 対応とわかりやすいエラー表示
+
+- ブラウンダスト2 2.37.13 に対応しました。
+- サーバーがダウンロードや更新を拒否した場合、HTTP ステータスコードだけでなくサーバーが示した理由を表示します。
+
+### ko_kr: 2.37.13 지원 및 오류 안내 개선
+
+- 브라운더스트2 2.37.13을 지원합니다.
+- 서버가 다운로드나 업데이트를 거부하면 HTTP 상태 코드 대신 서버가 알려 준 구체적인 이유를 표시합니다.
+
+## client 2.36.7+client.0.2.7 · 2026-10-21
+
+> type: update
+
+### en_us: Local preset migration
+
+- Migrate saved local inventory references before game startup to preserve talent shortcuts and party presets after inventory identifiers change.
+
+### zh_cn: 本地预设迁移
+
+- 启动游戏前迁移本地保存的背包引用，避免实例编号调整后天赋快捷栏与配队预设失效。
+
+### zh_tw: 本地預設遷移
+
+- 啟動遊戲前遷移本機儲存的背包引用，避免實例編號調整後天賦快捷欄與隊伍預設失效。
+
+### ja_jp: ローカルプリセットの移行
+
+- ゲーム起動前に保存済みのインベントリ参照を移行し、識別子変更後も才能ショートカットと編成プリセットを保持します。
+
+### ko_kr: 로컬 프리셋 이전
+
+- 게임 시작 전에 저장된 인벤토리 참조를 이전하여 식별자 변경 후에도 재능 단축 슬롯과 편성 프리셋을 유지합니다.
+
+## client 2.36.7+client.0.2.6 · 2026-10-20
+
+> type: update
+
+### en_us: Supporter identity and battle recovery
+
+- Fix borrowed supporters replacing an owned character when their inventory identifiers collide.
+- Preserve the borrowed supporter's character data and selected slot when resuming a battle.
+
+### zh_cn: 助战角色与战斗恢复修复
+
+- 修复助战与自有角色的背包实例编号冲突，导致自有角色被错误替换的问题。
+- 恢复战斗时保留借用助战的角色数据和实际选择的槽位。
+
+### zh_tw: 助戰角色與戰鬥恢復修復
+
+- 修復助戰與自有角色的背包實例編號衝突，導致自有角色被錯誤替換的問題。
+- 恢復戰鬥時保留借用助戰的角色資料與實際選擇的欄位。
+
+### ja_jp: 助っ人と戦闘復帰の修正
+
+- 所持キャラクターと助っ人のインベントリ識別子が重複し、所持キャラクターが誤って置き換わる問題を修正しました。
+- 戦闘再開時に、借りた助っ人のキャラクターデータと選択したスロットを保持します。
+
+### ko_kr: 지원 캐릭터 및 전투 복구 수정
+
+- 보유 캐릭터와 지원 캐릭터의 인벤토리 식별자가 중복되어 보유 캐릭터가 잘못 교체되는 문제를 수정했습니다.
+- 전투 재개 시 빌린 지원 캐릭터의 데이터와 선택한 슬롯을 유지합니다.
+
+## client 2.36.7+client.0.2.5 · 2026-10-20
+
+> type: update
+
+### en_us: Story replay and battle preparation
+
+- Fix completed story replays incorrectly showing a story recovery failure.
+- Preserve the combat party when borrowing a supporter fails before the first turn, preventing an empty formation and unresponsive battle controls.
+
+### zh_cn: 剧情回放与战斗布阵修复
+
+- 修复回放已完成剧情时误报剧情恢复失败的问题。
+- 修复首回合开始前借用支援失败后队伍被清空、战斗布阵卡住的问题。
+
+### zh_tw: 劇情回放與戰鬥佈陣修復
+
+- 修復回放已完成劇情時誤報劇情恢復失敗的問題。
+- 修復首回合開始前借用支援失敗後隊伍被清空、戰鬥佈陣卡住的問題。
+
+### ja_jp: ストーリー再生と戦闘準備の修正
+
+- クリア済みストーリーの再生時に、ストーリーの復元に失敗したと表示される問題を修正しました。
+- 最初のターン開始前に助っ人の借用が失敗すると、編成が空になり戦闘画面を操作できなくなる問題を修正しました。
+
+### ko_kr: 스토리 다시보기 및 전투 편성 수정
+
+- 완료한 스토리를 다시 볼 때 스토리 복구 실패가 표시되는 문제를 수정했습니다.
+- 첫 턴 시작 전에 지원 캐릭터 대여가 실패하면 편성이 비워지고 전투 화면이 멈추는 문제를 수정했습니다.
+
 ## client 2.36.7+client.0.2.4 · 2026-10-19
 
 > type: update
