@@ -155,11 +155,24 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 	}
 
 	gift := map[string]any{"element_type": 4, "id": 0, "count": 5, "title": "t", "body": "b"}
-	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusCreated {
-		t.Fatalf("default administrator mail: %d", status)
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/friend/mail", gift, nil); status != http.StatusForbidden {
+		t.Fatalf("default administrator mailed without an explicit grant: %d", status)
 	}
-	if raw, err := os.ReadFile(spool); err != nil || !strings.Contains(string(raw), `"account_id": "other"`) {
-		t.Fatalf("spool recipient: %s, %v", raw, err)
+	mailer := map[string]any{"administrator": true, "permissions": []string{PermissionMail}}
+	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", mailer, nil); status != http.StatusOK {
+		t.Fatalf("grant mail: %d", status)
+	}
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusForbidden {
+		t.Fatalf("administrator mailed another player: %d", status)
+	}
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/friend/mail", gift, nil); status != http.StatusCreated {
+		t.Fatalf("administrator mailed own account: %d", status)
+	}
+	if status, _ := owner.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusCreated {
+		t.Fatalf("owner mailed another player: %d", status)
+	}
+	if raw, err := os.ReadFile(spool); err != nil || !strings.Contains(string(raw), `"account_id": "friend"`) || !strings.Contains(string(raw), `"account_id": "other"`) {
+		t.Fatalf("spool recipients: %s, %v", raw, err)
 	}
 	if _, value := friend.do(http.MethodGet, "/admin/api/players", nil, nil); len(value["players"].([]any)) != 3 {
 		t.Fatalf("default administrator player list: %v", value)
@@ -190,7 +203,7 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 	if status, _ := friend.do(http.MethodPut, "/admin/api/players/other/inventory", map[string]bool{"unlimited": true}, nil); status != http.StatusOK {
 		t.Fatalf("granted inventory permission: %d", status)
 	}
-	if status, _ := friend.do(http.MethodPost, "/admin/api/players/other/mail", gift, nil); status != http.StatusForbidden {
+	if status, _ := friend.do(http.MethodPost, "/admin/api/players/friend/mail", gift, nil); status != http.StatusForbidden {
 		t.Fatalf("replaced permissions kept mail: %d", status)
 	}
 	status, document := friend.do(http.MethodGet, "/admin/api/config/game", nil, nil)

@@ -21,8 +21,9 @@ func configPermission(document, section, mode string) string {
 	return "config." + document + "." + section + "." + mode
 }
 
-// DefaultAdministratorPermissions are granted when an owner appoints an administrator.
-var DefaultAdministratorPermissions = []string{PermissionMail, PermissionPlayers}
+// DefaultAdministratorPermissions are granted when an owner appoints an
+// administrator. Mail is never implied: the owner grants it explicitly.
+var DefaultAdministratorPermissions = []string{PermissionPlayers}
 
 type Ability struct {
 	Key      string   `json:"key"`
@@ -34,7 +35,7 @@ type Ability struct {
 
 var abilities = []Ability{
 	{Key: PermissionPlayers, Label: "查看玩家", Help: "查看玩家列表、UID 与背包设置。", Default: true},
-	{Key: PermissionMail, Label: "邮件发放", Help: "给任意玩家寄送物品和货币。", Requires: []string{PermissionPlayers}, Default: true},
+	{Key: PermissionMail, Label: "邮件发放", Help: "给自己的账号寄送物品和货币；只有服主能给其他玩家寄送。", Requires: []string{PermissionPlayers}},
 	{Key: PermissionInventory, Label: "调整背包容量", Help: "开关任意玩家的无限背包容量。", Requires: []string{PermissionPlayers}},
 }
 

@@ -489,8 +489,10 @@ const mailTool = (() => {
     try { all.forEach(x => { x._h = searchText(x); }); buildCategories(); rendered(await render(), renderPass);
     } catch (error) { if (error !== staleRender) throw error; }
   }
+  // Only the owner picks a recipient; an administrator mails their own account.
+  const mailable = p => p.active && (isOwner() || (state.session.player && p.account_id === state.session.player.account_id));
   async function playerOptions() {
-    const usable = state.players.filter(p => p.active);
+    const usable = state.players.filter(mailable);
     $('player-selector').hidden = usable.length < 2;
     const selected = $('player').value, language = locale;
     const options = await Promise.all(usable.map(async p => new Option(p.owner ? await dynamicText('console.account.as_owner', playerLabel(p)) : playerLabel(p), p.account_id)));
@@ -504,7 +506,7 @@ const mailTool = (() => {
       await paintParcel(); paintPeek(); await paintLog();
       const usable = await playerOptions();
       const self = state.session.player && state.session.player.account_id;
-      const initial = accountID || (target && usable.some(p => p.account_id === target.account_id) ? target.account_id : null) || (usable.some(p => p.account_id === self) ? self : usable[0] && usable[0].account_id);
+      const initial = (usable.some(p => p.account_id === accountID) ? accountID : null) || (target && usable.some(p => p.account_id === target.account_id) ? target.account_id : null) || (usable.some(p => p.account_id === self) ? self : usable[0] && usable[0].account_id);
       if (initial) $('player').value = initial;
       if (loaded) await relabelCatalog(); else if (!all.length) await loadCatalog();
       await checkQuantity(); await select(initial || '');
@@ -552,7 +554,7 @@ const roster = (() => {
           el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active || !can('players.inventory'), async event => await setInventory(p, event.target), t('console.inventory.unlimited'))),
           el('td', {class: 'act'},
             owner && p.administrator ? el('button', {type: 'button', class: 'linkish', onclick: async () => await editPermissions(p)}, t('console.roster.permissions')) : null,
-            p.active && can('mail.send') ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(async () => await mailTool.open(p.account_id)); }}, t('console.roster.mail')) : null));
+            can('mail.send') && mailable(p) ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(async () => await mailTool.open(p.account_id)); }}, t('console.roster.mail')) : null));
       })), renderPass));
       if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 6, class: 'muted'}, t(state.players.length ? 'console.roster.no_match' : 'console.roster.empty'))));
 

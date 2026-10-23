@@ -171,7 +171,7 @@
   "console.permission.players.view.help": "プレイヤー一覧、UID、所持品の設定を確認できます。",
   "console.permission.players.view.short": "プレイヤー閲覧",
   "console.permission.mail.send.label": "メールを送信",
-  "console.permission.mail.send.help": "任意のプレイヤーにアイテムや通貨を送れます。",
+  "console.permission.mail.send.help": "自分のアカウントにアイテムや通貨を送れます。ほかのプレイヤーへの送付はサーバー主のみです。",
   "console.permission.mail.send.short": "メール",
   "console.permission.players.inventory.label": "所持品の容量を変更",
   "console.permission.players.inventory.help": "任意のプレイヤーの所持品の容量制限を切り替えられます。",

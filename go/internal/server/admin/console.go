@@ -614,6 +614,11 @@ func (c *Console) sendMail(w http.ResponseWriter, r *http.Request, current sessi
 	if !ok {
 		return
 	}
+	// Only the owner chooses a recipient; an administrator mails their own account.
+	if current.Role != RoleOwner && player.AccountID != current.AccountID {
+		fail(w, http.StatusForbidden, "forbidden", "only the owner can mail other players")
+		return
+	}
 	var request struct {
 		ElementType uint64 `json:"element_type"`
 		ID          uint64 `json:"id"`

@@ -171,7 +171,7 @@
   "console.permission.players.view.help": "檢視玩家列表、UID 與背包設定。",
   "console.permission.players.view.short": "檢視玩家",
   "console.permission.mail.send.label": "郵件發放",
-  "console.permission.mail.send.help": "給任意玩家寄送物品和貨幣。",
+  "console.permission.mail.send.help": "給自己的帳號寄送物品和貨幣；只有服主能給其他玩家寄送。",
   "console.permission.mail.send.short": "寄件",
   "console.permission.players.inventory.label": "調整背包容量",
   "console.permission.players.inventory.help": "開關任意玩家的無限背包容量。",
