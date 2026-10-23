@@ -143,15 +143,16 @@ type GachaFixedRoll struct {
 }
 
 type RegularGachaCatalog struct {
-	Gachas                 map[uint64]RegularGacha
-	gachaEventAddFreeCount uint64
-	characters             map[uint64]CharacterDesign
-	groups                 map[uint64]GachaGroupDesign
-	byGacha                map[uint64]uint64
-	fixed                  map[uint64]GachaFixedDesign
-	grades                 map[uint64]uint64
-	stepUps                map[uint64]GachaStepUpDesign
-	stepByGacha            map[uint64]GachaStepDesign
+	Gachas                     map[uint64]RegularGacha
+	gachaEventAddFreeCount     uint64
+	gachaEventAddDailyPayCount uint64
+	characters                 map[uint64]CharacterDesign
+	groups                     map[uint64]GachaGroupDesign
+	byGacha                    map[uint64]uint64
+	fixed                      map[uint64]GachaFixedDesign
+	grades                     map[uint64]uint64
+	stepUps                    map[uint64]GachaStepUpDesign
+	stepByGacha                map[uint64]GachaStepDesign
 }
 
 func (c *RegularGachaCatalog) GachaEventAddFreeCount() uint64 {
@@ -159,6 +160,13 @@ func (c *RegularGachaCatalog) GachaEventAddFreeCount() uint64 {
 		return 0
 	}
 	return c.gachaEventAddFreeCount
+}
+
+func (c *RegularGachaCatalog) GachaEventAddDailyPayCount() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.gachaEventAddDailyPayCount
 }
 
 func (c *RegularGachaCatalog) SetGachaEventAddFreeCount(count uint64) error {
@@ -983,6 +991,11 @@ func LoadRegularCostumeGachaGroups(root, version string, groupIDs, stepUpGroupID
 			return nil, err
 		}
 	}
+	paidBonus, err := optionalScalar(defaults, 47)
+	if err != nil || paidBonus > 256 {
+		return nil, errors.New("gamedata: malformed GachaEventAddDailyPayGachaCount")
+	}
+	catalog.gachaEventAddDailyPayCount = paidBonus
 	gachaIDs := make(map[uint64]struct{})
 	for _, groupID := range groupIDs {
 		var raw []byte

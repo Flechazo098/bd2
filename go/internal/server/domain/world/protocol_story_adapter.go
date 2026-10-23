@@ -11,21 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
-	"sort"
 )
-
-func requestPack(request []byte) (int, error) {
-	seq, found, err := wire.Varint(request, 1)
-	if err != nil || !found || seq == 0 {
-		return 0, ErrInvalidRequest
-	}
-	pack, found, err := wire.Varint(request, 2)
-	if err != nil || !found || pack == 0 || pack > uint64(^uint32(0)>>1) {
-		return 0, ErrInvalidRequest
-	}
-	return int(pack), nil
-}
 
 func requestQuest(request []byte) (int, int, error) {
 	quest, err := requestPack(request) // fields 1 and 2 have the same validation.
@@ -39,140 +25,7 @@ func requestQuest(request []byte) (int, int, error) {
 	return quest, int(pack), nil
 }
 
-// packInfo is the canonical protobuf encoding of the semantic new-account
-// starter-pack state. Its response is generated from the authoritative local progress state.
-
-func (s *Service) packInfoFor(ctx command.Context, packID int) ([]byte, error) {
-	out, err := s.basePackInfoFor(ctx, packID)
-	if err != nil {
-		return out, err
-	}
-	rows, err := s.monsterRows(ctx, packID, nil)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		out = wire.AppendBytes(out, 6, row)
-	}
-	buffs, err := s.fieldBuffInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, buffs...)
-	research, err := s.state.ResearchObjects(ctx, packID)
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range research {
-		out = wire.AppendVarint(out, 11, uint64(id))
-	}
-	if s.huntingGround == nil {
-		return out, nil
-	}
-	ground, err := s.huntingGround.EnsureForPack(ctx, packID)
-	if err != nil {
-		return nil, err
-	}
-	if len(ground) == 0 {
-		return out, nil
-	}
-	out, _, err = wire.ReplaceBytes(out, 12, ground)
-	return out, err
-}
-
-func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, error) {
-	out, err := s.mapExplorationWire(ctx, packID)
-	if err != nil {
-		return nil, err
-	}
-	if active := s.firstUnclearedQuestFor(packID); active != 0 {
-		quest := s.questInfoWire(packID, active)
-		chars, _, err := s.resolveActivePartyWires(ctx, packID, active)
-		if err != nil {
-			return nil, err
-		}
-		for _, char := range chars {
-			out = wire.AppendBytes(out, 1, char)
-		}
-		out = wire.AppendBytes(out, 2, quest)
-	}
-	for _, quest := range s.activeSideQuestWires(packID) {
-		out = wire.AppendBytes(out, 2, quest)
-	}
-	cleared := s.completedQuestIDs(packID)
-	// CommonPacket requests TodayQuestInfo after parsing this response, before
-	// the waypoint callback calls PackManager.Enter. That separate response owns
-	// commission restoration; including commissions here lets Enter append them
-	// a second time when TodayQuestInfo arrives first, crashing the quest HUD.
-	if len(cleared) != 0 {
-		var packed []byte
-		for _, id := range cleared {
-			packed = binary.AppendUvarint(packed, uint64(id))
-		}
-		out = wire.AppendBytes(out, 3, packed)
-	}
-	position := "{}"
-	mapID := 0
-	restored := false
-	if saved, found := s.state.Position(); found && saved.PackID == packID && saved.Difficulty == s.questDifficulty(packID) && saved.RawJSON != "" {
-		if pack, arena := s.fieldPacks[packID]; arena && !pack.MapIDs[saved.Position.MapID] {
-			return nil, fmt.Errorf("world: saved map %d does not belong to arena pack %d", saved.Position.MapID, packID)
-		}
-		position = saved.RawJSON
-		mapID = saved.Position.MapID
-		restored = true
-	}
-	slog.Info("world: deliver field position", "pack", packID, "map", mapID, "restored", restored)
-	out = wire.AppendString(out, 4, position)
-	if s.npcReputation != nil {
-		rows, err := s.npcReputationRows(ctx, packID)
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			out = wire.AppendBytes(out, 9, row)
-		}
-	}
-	statues, err := s.statueInfo(ctx, packID)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, statues...)
-	// The remaining starter-only records were observed in the official
-	// starter-pack response. They represent reputation, hunting-ground, statue,
-	// and reward state, not generic defaults, so a newly entered later pack must
-	// not inherit them.
-	if packID != s.seed.PackID {
-		visit := wire.AppendVarint(nil, 5, uint64(packID))
-		return wire.AppendBytes(out, 12, visit), nil
-	}
-	for _, state := range s.seed.InitialReputations {
-		if s.npcReputation != nil {
-			break
-		}
-		row := wire.AppendVarint(nil, 1, state.GroupID)
-		row = wire.AppendVarint(row, 2, state.State)
-		if state.ElapsedSeconds != 0 {
-			row = wire.AppendVarint(row, 3, state.ElapsedSeconds)
-		}
-		out = wire.AppendBytes(out, 9, row)
-	}
-	visit := wire.AppendVarint(nil, 5, uint64(packID))
-	out = wire.AppendBytes(out, 12, visit)
-	if s.packJamDesign == nil {
-		return out, nil
-	}
-	if err := s.packJamDesign.ValidateReward(); err != nil {
-		return nil, err
-	}
-	reward := wire.AppendVarint(nil, 3, s.packJamDesign.Reward.Type)
-	reward = wire.AppendVarint(reward, 4, s.packJamDesign.Reward.Count)
-	group := wire.AppendBytes(nil, 1, reward)
-	group = wire.AppendBytes(group, 6, reward)
-	return wire.AppendBytes(out, 16, group), nil
-}
-
-func (s *Service) clearResponse(ctx command.Context, packID, quest int, designRewards []gamedata.Reward, items []assets.Item, questEquipment *assets.Equipment, nextItems []assets.Item, nextChars [][]byte) []byte {
+func (s *Service) questClearRewards(packID, quest int, designRewards []gamedata.Reward, items []assets.Item, questEquipment *assets.Equipment) []byte {
 	var rewards []byte
 	if s.collection != nil {
 		if grant, found := s.collection.Grant(questRewardIdentity(packID, quest, s.questDifficultyFor(packID, quest)) + ":costumes"); found {
@@ -223,6 +76,10 @@ func (s *Service) clearResponse(ctx command.Context, packID, quest int, designRe
 		viewCharacter = wire.AppendVarint(viewCharacter, 4, 1)
 		rewards = wire.AppendBytes(rewards, 6, viewCharacter)
 	}
+	return rewards
+}
+
+func (s *Service) clearResponse(ctx command.Context, packID, quest int, rewards []byte, nextItems []assets.Item, nextChars [][]byte) ([]byte, error) {
 	var out []byte
 	out = wire.AppendBytes(out, 1, rewards)
 	next := s.nextQuestFor(ctx, packID, quest)
@@ -247,7 +104,11 @@ func (s *Service) clearResponse(ctx command.Context, packID, quest int, designRe
 		// The final normal quest unlocks PackTable.NextPackId. Without these
 		// PackDBInfo updates the client cannot find the next story pack and
 		// falls back to presenting the hard-difficulty objective.
-		for _, info := range s.packDBInfoRows(ctx) {
+		rows, err := s.packDBInfoRows(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, info := range rows {
 			out = wire.AppendBytes(out, 11, info)
 		}
 	}
@@ -258,37 +119,9 @@ func (s *Service) clearResponse(ctx command.Context, packID, quest int, designRe
 	}
 	out = wire.AppendBytes(out, 9, s.questLevelInfoWire(packID, s.questDifficultyFor(packID, quest)))
 	out = wire.AppendBytes(out, 12, nil)
-	return wire.AppendBytes(out, 13, nil)
+	return wire.AppendBytes(out, 13, nil), nil
 }
 
-func (s *Service) packDBInfoRows(ctx command.Context) [][]byte {
-	if s.storyCatalog == nil {
-		return nil
-	}
-	return s.storyPackDBInfoRows(ctx)
-}
-
-func (s *Service) accountPackInfo(ctx command.Context) []byte {
-	var out []byte
-	for _, info := range s.packDBInfoRows(ctx) {
-		out = wire.AppendBytes(out, 1, info)
-	}
-	for _, info := range s.packDBInfoRows(ctx) {
-		id, _, _ := wire.Varint(info, 1)
-		for level := 0; level <= 4; level++ {
-			if len(s.state.ClearedQuests(int(id), level)) > 0 || s.questDifficulty(int(id)) == level {
-				out = wire.AppendBytes(out, 2, s.questLevelInfoWire(int(id), level))
-			}
-		}
-	}
-	if s.seed.SquareSceneID != 0 {
-		out = wire.AppendVarint(out, 5, s.seed.SquareSceneID)
-	}
-	return out
-}
-
-// Absorb consumes the exact acquisition objects requested by the client using
-// the same period receipts and reward graph as an ordinary field interaction.
 func (s *Service) ApplyTalentFieldAbsorb(ctx command.Context, _ string, _ roster.Character, rule gamedata.TalentUseRule, ids []uint64) ([]byte, error) {
 	pack, mapID, _, err := s.TalentFieldContext(ctx)
 	if err != nil {
@@ -364,110 +197,6 @@ func (s *Service) resolveActivePartyWires(ctx command.Context, packID, questID i
 		characters = append(characters, encodeCharacter(c))
 	}
 	return characters, s.currentBattleDeckWires(), nil
-}
-
-func (s *Service) storyPackDBInfoRows(ctx command.Context) [][]byte {
-	played := make(map[int]bool)
-	for _, quest := range s.state.AllClearedQuests() {
-		played[quest.PackID] = true
-	}
-	ids := make([]int, 0, len(s.storyCatalog.Packs))
-	for id := range s.storyCatalog.Packs {
-		if s.storyCatalog.Packs[id].Type == 5 {
-			if s.collection == nil {
-				continue
-			}
-			if _, owned := s.collection.Grant(packPurchaseIdentity(id)); !owned {
-				continue
-			}
-		}
-		if s.storyPackUnlocked(ctx, id) {
-			ids = append(ids, id)
-		}
-	}
-	sort.Ints(ids)
-	var rows [][]byte
-	for _, id := range ids {
-		row := wire.AppendVarint(nil, 1, uint64(id))
-		selection, _ := s.state.Selection(id)
-		if selection.Difficulty != 0 {
-			row = wire.AppendVarint(row, 4, uint64(selection.Difficulty))
-		}
-		if selection.Option != 0 {
-			row = wire.AppendVarint(row, 5, uint64(selection.Option))
-		}
-		mainCleared := 0
-		for _, qid := range s.storyCatalog.Packs[id].MainQuestIDs {
-			if s.state.QuestCleared(qid, id, s.questDifficulty(id)) {
-				mainCleared++
-			}
-		}
-		if mainCleared > 0 {
-			row = wire.AppendVarint(row, 2, uint64(mainCleared))
-		}
-		if s.packCompleteFor(id) {
-			row = wire.AppendVarint(row, 3, 1)
-		}
-		purchased := false
-		if s.collection != nil {
-			_, owned := s.collection.Grant(packPurchaseIdentity(id))
-			purchased = purchased || owned
-			if pack := s.storyCatalog.Packs[id]; pack.Type == 0 && pack.BuyPrice == 0 {
-				_, entered := s.collection.Grant(packEntryIdentity(id))
-				purchased = purchased || entered || played[id]
-			}
-		}
-		if purchased {
-			row = wire.AppendVarint(row, 8, 1)
-		}
-		rows = append(rows, row)
-	}
-	if saved, found := s.state.Position(); found {
-		if pack, arena := s.fieldPacks[saved.PackID]; arena && pack.Type != 5 && pack.MapIDs[saved.Position.MapID] {
-			rows = append(rows, wire.AppendVarint(wire.AppendVarint(nil, 1, uint64(saved.PackID)), 8, 1))
-		}
-	}
-	return rows
-}
-
-func (s *Service) handlePackSummary(ctx command.Context, request []byte) (int, []byte, bool, error) {
-	seq, found, err := wire.Varint(request, 1)
-	if err != nil || !found || seq == 0 || seq > 0x7fffffff {
-		return 0, nil, true, fmt.Errorf("%w: PackSummaryInfoList missing or invalid sequence", ErrInvalidRequest)
-	}
-	var response []byte
-	for _, row := range s.packDBInfoRows(ctx) {
-		id, found, err := wire.Varint(row, 1)
-		if err != nil || !found {
-			return 0, nil, true, fmt.Errorf("world: invalid account pack row")
-		}
-		if !s.packSummaryTargets[int(id)] {
-			continue
-		}
-		once, regen, research, err := s.packRewardCounts(ctx, int(id))
-		if err != nil {
-			return 0, nil, true, err
-		}
-		row := wire.AppendVarint(nil, 1, id)
-		if once > 0 {
-			row = wire.AppendVarint(row, 2, once)
-		}
-		if regen > 0 {
-			row = wire.AppendVarint(row, 3, regen)
-		}
-		defeated, err := s.packMonsterDefeatedCount(ctx, int(id))
-		if err != nil {
-			return 0, nil, true, err
-		}
-		if defeated > 0 {
-			row = wire.AppendVarint(row, 4, defeated)
-		}
-		if research > 0 {
-			row = wire.AppendVarint(row, 5, research)
-		}
-		response = wire.AppendBytes(response, 1, row)
-	}
-	return 625, response, true, nil
 }
 
 func intsRequest(raw []byte, number int) ([]uint64, error) {
@@ -602,384 +331,10 @@ func (s *Service) handleFieldResearch(ctx command.Context, request []byte) (int,
 	return 59, append(wire.AppendVarint(nil, 1, seq), items...), true, nil
 }
 
-func (s *Service) handlePackRewardCounts(ctx command.Context, request []byte) (int, []byte, bool, error) {
-	seq, present, err := wire.Varint(request, 1)
-	if err != nil || !present || seq == 0 {
-		return 226, nil, true, ErrInvalidRequest
-	}
-	packs, err := intsRequest(request, 2)
-	if err != nil || len(packs) == 0 {
-		return 226, nil, true, ErrInvalidRequest
-	}
-	types, err := intsRequest(request, 3)
-	if err != nil {
-		return 226, nil, true, err
-	}
-	if len(types) == 0 {
-		types = []uint64{1, 2, 3, 4}
-	}
-	var out []byte
-	seen := map[[2]uint64]bool{}
-	for _, p := range packs {
-		pack := int(p)
-		if pack <= 0 || !s.packUnlocked(ctx, pack) {
-			return 226, nil, true, ErrInvalidRequest
-		}
-		for _, t := range types {
-			if t < 1 || t > 4 {
-				return 226, nil, true, ErrInvalidRequest
-			}
-			key := [2]uint64{p, t}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			var count, max uint64
-			if t == 1 {
-				d, e := s.researchDesign(pack)
-				if e != nil {
-					return 226, nil, true, e
-				}
-				ids, e := s.state.ResearchObjects(ctx, pack)
-				if e != nil {
-					return 226, nil, true, e
-				}
-				for _, o := range d.Objects {
-					if o.CollectionID > 0 || o.Reward.Type > 0 {
-						max++
-					}
-				}
-				for _, id := range ids {
-					if o, ok := d.Objects[id]; ok && (o.CollectionID > 0 || o.Reward.Type > 0) {
-						count++
-					}
-				}
-			} else {
-				d, e := s.fieldObjectDesign(ctx, pack)
-				if e != nil {
-					return 226, nil, true, e
-				}
-				for _, o := range d.Objects {
-					if !matchesFieldCount(o, t) {
-						continue
-					}
-					period, e := s.fieldObjectPeriodFor(pack, o)
-					if t != 4 || e == nil {
-						max++
-					}
-					if e != nil {
-						continue
-					}
-					opened, e := s.state.FieldRewardOpened(ctx, pack, o.ID, period)
-					if e != nil {
-						return 226, nil, true, e
-					}
-					if opened {
-						count++
-					}
-				}
-			}
-			info := wire.AppendVarint(nil, 1, t)
-			info = wire.AppendVarint(info, 2, p)
-			info = wire.AppendVarint(info, 3, count)
-			info = wire.AppendVarint(info, 4, max)
-			out = wire.AppendBytes(out, 1, info)
-		}
-	}
-	return 226, out, true, nil
-}
-
-// EnsureInitialPackPurchase is called only by new-account initialization. It
-// awards the bootstrap pack's real purchase rewards, not a recovery inference
-// from a saved position or from the former seed-only unlock chain.
-func (s *Service) EnsureInitialPackPurchase(ctx command.Context) error {
-	_, err := s.purchaseStoryPack(ctx, s.startingPack(), true)
-	return err
-}
-
-func (s *Service) handlePackBuy(ctx command.Context, request []byte) (int, []byte, bool, error) {
-	id, err := requestPack(request)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	if pack, found, err := s.resolveEventFieldPack(ctx, id); err != nil {
-		return 0, nil, true, err
-	} else if found {
-		bundle, err := s.purchasePack(ctx, id, pack.BuyType, pack.BuyPrice, pack.BuyRewards, false)
-		if err != nil {
-			return 0, nil, true, err
-		}
-		response := wire.AppendBytes(nil, 1, s.eventPackDBInfo(pack))
-		return 6, wire.AppendBytes(response, 2, bundle), true, nil
-	}
-	if !s.packUnlocked(ctx, id) {
-		return 0, nil, true, fmt.Errorf("%w: unavailable purchase pack %d", ErrInvalidRequest, id)
-	}
-	bundle, err := s.purchaseStoryPack(ctx, id, false)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	var info []byte
-	for _, row := range s.packDBInfoRows(ctx) {
-		value, _, _ := wire.Varint(row, 1)
-		if value == uint64(id) {
-			info = row
-			break
-		}
-	}
-	if info == nil {
-		return 0, nil, true, fmt.Errorf("world: purchased pack absent from account")
-	}
-	response := wire.AppendBytes(nil, 1, info)
-	return 6, wire.AppendBytes(response, 2, bundle), true, nil
-}
-
-func (s *Service) purchaseStoryPack(ctx command.Context, id int, initial bool) ([]byte, error) {
-	if s.storyCatalog == nil {
-		return nil, fmt.Errorf("world: purchase services unavailable")
-	}
-	pack, exists := s.storyCatalog.Packs[id]
-	if !exists {
-		return nil, fmt.Errorf("%w: unknown purchase pack %d", ErrInvalidRequest, id)
-	}
-	if pack.Type == 5 {
-		if s.skyway == nil || s.collection == nil {
-			return nil, fmt.Errorf("world: SkyWay purchase runtime unavailable")
-		}
-		identity := packPurchaseIdentity(id)
-		if _, owned := s.collection.Grant(identity); owned {
-			return []byte{}, nil
-		}
-		var costs []gamedata.Reward
-		if !initial && pack.BuyPrice > 0 {
-			costs = []gamedata.Reward{{Type: pack.BuyType, Count: pack.BuyPrice}}
-		}
-		bundle, err := s.skyway.economy.Apply(ctx, identity, costs, pack.BuyRewards)
-		if err != nil {
-			return nil, err
-		}
-		if err = s.collection.RecordGrantMarker(ctx, identity); err != nil {
-			return nil, err
-		}
-		return bundle, nil
-	}
-	return s.purchasePack(ctx, id, pack.BuyType, pack.BuyPrice, pack.BuyRewards, initial)
-}
-
-// purchasePack shares the same durable receipt and enclosing account transaction
-// across story and calendar-authorized hidden event packs.
-func (s *Service) purchasePack(ctx command.Context, id int, buyType, buyPrice uint64, buyRewards []gamedata.Reward, initial bool) ([]byte, error) {
-	if s.collection == nil || s.wallet == nil || s.inventory == nil {
-		return nil, fmt.Errorf("world: purchase services unavailable")
-	}
-	identity := packPurchaseIdentity(id)
-	if _, owned := s.collection.Grant(identity); owned {
-		return []byte{}, nil
-	}
-	for _, reward := range buyRewards {
-		if !purchaseCurrency(reward.Type) && reward.Type != 19 && reward.Type != 11 {
-			return nil, fmt.Errorf("world: unsupported pack purchase reward type %d", reward.Type)
-		}
-	}
-	if !initial && buyPrice != 0 {
-		var err error
-		switch buyType {
-		case 2:
-			_, err = s.wallet.SpendJewelryOnce(ctx, identity+":price", buyPrice)
-		case 3:
-			_, err = s.wallet.SpendFreeJewelryOnce(ctx, identity+":price", buyPrice)
-		case 4:
-			_, err = s.wallet.SpendGoldOnce(ctx, identity+":price", buyPrice)
-		case 12:
-			_, err = s.wallet.SpendCatalystOnce(ctx, identity+":price", buyPrice)
-		default:
-			return nil, fmt.Errorf("%w: unsupported pack purchase currency%d", ErrInvalidRequest, buyType)
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	items, err := s.grantPurchaseRewards(ctx, identity, buyRewards)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.collection.RecordGrantMarker(ctx, identity); err != nil {
-		return nil, err
-	}
-	var bundle []byte
-	if grant, found := s.collection.Grant(identity + ":costumes"); found {
-		bundle = append(bundle, roster.CollectionRewardBundle(s.collection, grant)...)
-	}
-	for _, reward := range buyRewards {
-		if purchaseCurrency(reward.Type) {
-			currency := wire.AppendVarint(wire.AppendVarint(nil, 3, reward.Type), 4, reward.Count)
-			bundle = wire.AppendBytes(bundle, 1, currency)
-		}
-	}
-	for _, item := range items {
-		bundle = wire.AppendBytes(bundle, 1, assets.ItemWire(item))
-	}
-	return bundle, nil
-}
-
-func (s *Service) handlePackDocking(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
-	packID, err := requestPack(request)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	if _, known := s.questsFor(ctx, packID); !known || !s.packUnlocked(ctx, packID) {
-		return 0, nil, true, fmt.Errorf("%w: unavailable docking pack %d", ErrInvalidRequest, packID)
-	}
-	if s.wallet == nil || s.packJamDesign == nil {
-		return 0, nil, true, fmt.Errorf("world: pack jam design or wallet unavailable")
-	}
-	identity := packJamIdentity(packID)
-	if path == "/PackPreviewInfo" {
-		var response []byte
-		titles, err := s.questTitleInfo(packID)
-		if err != nil {
-			return 0, nil, true, err
-		}
-		for _, title := range titles {
-			response = wire.AppendBytes(response, 2, title)
-		}
-		if active := s.firstUnclearedQuestFor(packID); active != 0 {
-			quest := wire.AppendVarint(nil, 1, uint64(active))
-			quest = wire.AppendVarint(quest, 6, uint64(packID))
-			response = wire.AppendBytes(response, 1, quest)
-		}
-		if s.wallet.WasGranted(identity) {
-			response = wire.AppendVarint(response, 3, 1)
-		}
-		return 104, response, true, nil
-	}
-	// Serialize the claim check and grant so concurrent domain callers cannot
-	// return the animation reward twice. The wallet commits balance and ledger together.
-
-	if s.wallet.WasGranted(identity) {
-		return 72, nil, true, nil
-	}
-	reward := s.packJamDesign.Reward
-	if s.packJamDesign.ValidateReward() != nil {
-		return 0, nil, true, fmt.Errorf("world: unsupported pack jam reward")
-	}
-	if _, err := s.wallet.GrantQuestOnce(ctx, identity, []gamedata.Reward{reward}); err != nil {
-		return 0, nil, true, fmt.Errorf("world: grant pack jam reward: %w", err)
-	}
-	item := wire.AppendVarint(nil, 3, reward.Type)
-	item = wire.AppendVarint(item, 4, reward.Count)
-	return 72, wire.AppendBytes(nil, 1, item), true, nil
-}
-
-func (s *Service) handlePackDetail(ctx command.Context, request []byte) (int, []byte, bool, error) {
-	seq, found, err := wire.Varint(request, 1)
-	if err != nil || !found || seq == 0 || seq > 0x7fffffff {
-		return 0, nil, true, fmt.Errorf("%w: PackDetailInfo invalid sequence", ErrInvalidRequest)
-	}
-	packID, err := requestPack(request)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	if !s.packUnlocked(ctx, packID) || !s.packSummaryTargets[packID] {
-		return 0, nil, true, fmt.Errorf("%w: PackDetailInfo unavailable pack %d", ErrInvalidRequest, packID)
-	}
-	ids, err := s.openedFieldObjects(ctx, packID)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	response := []byte{}
-	rows, err := s.packMonsterRows(ctx, packID)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	for _, row := range rows {
-		response = wire.AppendBytes(response, 1, row)
-	}
-	for _, id := range ids {
-		response = wire.AppendBytes(response, 2, wire.AppendVarint(nil, 1, uint64(id)))
-	}
-	research, e := s.state.ResearchObjects(ctx, packID)
-	if e != nil {
-		return 0, nil, true, e
-	}
-	for _, id := range research {
-		response = wire.AppendVarint(response, 3, uint64(id))
-	}
-	return 627, response, true, nil
-}
-
-func (s *Service) eventPackDBInfo(pack gamedata.EventFieldPack) []byte {
-	row := wire.AppendVarint(nil, 1, uint64(pack.ID))
-	if s.eventPackPurchased(pack.ID) {
-		row = wire.AppendVarint(row, 8, 1)
-	}
-	return row
-}
-
-func (s *Service) eventPackInfoRows(ctx command.Context) ([][]byte, error) {
-	if s.eventFieldPacks == nil {
-		return nil, nil
-	}
-	packs, err := s.eventFieldPacks.ListEventFieldPacks(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var rows [][]byte
-	for _, pack := range packs {
-		// PackManager buys a hidden pack only when PackInfo has no row for it.
-		if s.eventPackPurchased(pack.ID) {
-			rows = append(rows, s.eventPackDBInfo(pack))
-		}
-	}
-	return rows, nil
-}
-
-func (s *Service) enterEventFieldPack(ctx command.Context, pack gamedata.EventFieldPack) (int, []byte, bool, error) {
-	if !s.eventPackPurchased(pack.ID) {
-		return 0, nil, true, fmt.Errorf("%w: event pack %d is not purchased", ErrInvalidRequest, pack.ID)
-	}
-	position := pack.InitialPosition
-	if position == "" {
-		return 0, nil, true, fmt.Errorf("world: missing event pack initial position")
-	}
-	if saved, found := s.state.Position(); found && saved.PackID == pack.ID {
-		if !slices.Contains(pack.MapIDs, saved.Position.MapID) {
-			return 0, nil, true, fmt.Errorf("%w: map outside event pack", ErrInvalidRequest)
-		}
-		position = saved.RawJSON
-	}
-	response := wire.AppendString(nil, 4, position)
-	exploration, err := s.mapExplorationWire(ctx, pack.ID)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	response = append(response, exploration...)
-	buffs, err := s.fieldBuffInfo(ctx)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	response = append(response, buffs...)
-	// The common callback dereferences HuntingGroundInfo even in hidden packs.
-	// Use the domain-generated empty/current snapshot; never borrow the outside
-	// map's monsters or story progress.
-	var hunting []byte
-	if s.huntingGround != nil {
-		var err error
-		hunting, err = s.huntingGround.EnsureForPack(ctx, pack.ID)
-		if err != nil {
-			return 0, nil, true, err
-		}
-	}
-	response = wire.AppendBytes(response, 12, hunting)
-	// Hidden-pack entry must retain the outside field position: the client
-	// intentionally suppresses SaveUserPosition while playing these packs. The
-	// persistent active pack also stays outside, so relogin cannot be stranded
-	// in a hidden scene after its calendar closes.
-	s.setCurrentPack(pack.ID)
-	return 5, response, true, nil
-}
-
 func (s *Service) Handle(ctx command.Context, path string, request []byte) (int, []byte, bool, error) {
+	if code, body, handled, err := s.handlePacks(ctx, path, request); handled {
+		return code, body, handled, err
+	}
 	if code, out, handled, err := s.handleSkyWay(ctx, path, request); handled {
 		return code, out, handled, err
 	}
@@ -1037,32 +392,10 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		return s.handleFieldResearch(ctx, request)
 	case "/TrapDamage", "/FieldTrapInfo", "/InteractionTrigger":
 		return s.handleFieldTraps(ctx, path, request)
-	case "/PackRewardObjectCount":
-		return s.handlePackRewardCounts(ctx, request)
 	case "/QuestInfo", "/QuestAccept", "/QuestGiveUp":
 		return s.handleQuestSelection(ctx, path, request)
-	case "/PackBuy":
-		return s.handlePackBuy(ctx, request)
-	case "/PackDetailInfo":
-		return s.handlePackDetail(ctx, request)
-	case "/PackSummaryInfoList":
-		return s.handlePackSummary(ctx, request)
-	case "/PackPreviewInfo", "/PackJamEvent":
-		return s.handlePackDocking(ctx, path, request)
-	case "/PackInfo":
-		seq, found, err := wire.Varint(request, 1)
-		if err != nil || !found || seq == 0 {
-			return 0, nil, true, errors.New("world: PackInfo missing sequence")
-		}
-		response := s.accountPackInfo(ctx)
-		rows, err := s.eventPackInfoRows(ctx)
-		if err != nil {
-			return 0, nil, true, err
-		}
-		for _, row := range rows {
-			response = wire.AppendBytes(response, 1, row)
-		}
-		return 4, response, true, nil
+	case "/QuestRetryBattleSkipSave":
+		return s.saveQuestReplayBattleSkip(ctx, request)
 	case "/CharInfo":
 		seq, found, err := wire.Varint(request, 1)
 		if err != nil || !found || seq == 0 {
@@ -1142,87 +475,6 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			response = wire.AppendBytes(response, 1, encodeCostume(costume))
 		}
 		return 40, response, true, nil
-	case "/PackInGameInfo":
-		if err := s.ResumeFieldTime(ctx); err != nil {
-			return 0, nil, true, err
-		}
-		pack, err := requestPack(request)
-		if err != nil {
-			return 0, nil, true, err
-		}
-		activeBattle := s.battleActive != nil && s.battleActive(ctx)
-		if activeBattle {
-			current, err := s.CurrentPackID(ctx)
-			if err != nil {
-				return 0, nil, true, err
-			}
-			if pack != current {
-				return 0, nil, true, fmt.Errorf("%w: cannot change pack during active battle", ErrInvalidRequest)
-			}
-		}
-		if eventPack, found, err := s.resolveEventFieldPack(ctx, pack); err != nil {
-			return 0, nil, true, err
-		} else if found {
-			code, body, handled, e := s.enterEventFieldPack(ctx, eventPack)
-			if e == nil && s.talentPackInfo != nil {
-				extra, x := s.talentPackInfo(ctx, pack)
-				if x != nil {
-					return 0, nil, true, x
-				}
-				body = append(body, extra...)
-			}
-			if e == nil && activeBattle {
-				body = wire.AppendVarint(body, 17, 1)
-			}
-			return code, body, handled, e
-		}
-		if !s.packUnlocked(ctx, pack) {
-			return 0, nil, true, fmt.Errorf("%w: unsupported pack %d", ErrInvalidRequest, pack)
-		}
-		if s.skyway != nil && pack == s.skyway.design.Pack {
-			if _, purchased := s.collection.Grant(packPurchaseIdentity(pack)); !purchased {
-				return 0, nil, true, fmt.Errorf("world: SkyWay pack is not purchased")
-			}
-			v, e := s.skyway.load(ctx)
-			if e != nil {
-				return 0, nil, true, e
-			}
-			if !activeBattle {
-				v.Run = skyWayRun{Generation: v.Run.Generation}
-				if e = s.skyway.save(ctx, v); e != nil {
-					return 0, nil, true, e
-				}
-			}
-		}
-		if active := s.firstUnclearedQuestFor(pack); active != 0 {
-			if _, err := s.ensureQuestItems(ctx, pack, active); err != nil {
-				return 0, nil, true, err
-			}
-		}
-		response, err := s.packInfoFor(ctx, pack)
-		if err != nil {
-			return 0, nil, true, err
-		}
-		if activeBattle {
-			response = wire.AppendVarint(response, 17, 1)
-		}
-		if s.talentPackInfo != nil {
-			extra, e := s.talentPackInfo(ctx, pack)
-			if e != nil {
-				return 0, nil, true, e
-			}
-			response = append(response, extra...)
-		}
-		if err := s.state.SetActivePackID(ctx, pack); err != nil {
-			return 0, nil, true, err
-		}
-		if story := s.storyCatalog.Packs[pack]; story.Type == 0 && story.BuyPrice == 0 && s.collection != nil {
-			if err := s.collection.RecordGrantMarker(ctx, packEntryIdentity(pack)); err != nil {
-				return 0, nil, true, err
-			}
-		}
-		s.setCurrentPack(pack)
-		return 5, response, true, nil
 	case "/QuestClear":
 		quest, pack, err := requestQuest(request)
 		if err != nil {
@@ -1235,6 +487,42 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		if !s.canClear(ctx, pack, quest) {
 			return 0, nil, true, fmt.Errorf("%w: quest %d is not active", ErrInvalidRequest, quest)
+		}
+		quickPlay, _, err := wire.Varint(request, 5)
+		if err != nil || quickPlay > 1 {
+			return 0, nil, true, fmt.Errorf("%w: invalid quick-play flag", ErrInvalidRequest)
+		}
+		if quickPlay != 0 {
+			difficulty := s.questDifficultyFor(pack, quest)
+			if design.Type != 0 || difficulty < 1 || difficulty > 2 || !s.questDifficulties[pack][difficulty] {
+				return 0, nil, true, fmt.Errorf("%w: quest %d pack %d difficulty %d unavailable for quick play", ErrInvalidRequest, quest, pack, difficulty)
+			}
+			for _, id := range s.storyCatalog.Packs[pack].MainQuestIDs {
+				if !s.state.QuestCleared(id, pack, difficulty-1) {
+					return 0, nil, true, fmt.Errorf("%w: quick play requires previous difficulty completion", ErrInvalidRequest)
+				}
+			}
+			if design.ConditionType == 1 || design.ConditionType == 3 {
+				if design.ConditionType != 3 || design.ConditionCount != 1 || s.questBattleWon == nil {
+					return 0, nil, true, fmt.Errorf("%w: quick battle completion rule unavailable for quest %d", ErrInvalidRequest, quest)
+				}
+				won, err := s.questBattleWon(ctx, pack, quest, difficulty)
+				if err != nil {
+					return 0, nil, true, err
+				}
+				if !won {
+					return 0, nil, true, fmt.Errorf("%w: quick quest requires committed battle victory pack=%d quest=%d difficulty=%d", ErrInvalidRequest, pack, quest, difficulty)
+				}
+			}
+		}
+		if design.Type == 0 {
+			replay, replaying, err := s.state.QuestReplay(ctx, pack)
+			if err != nil {
+				return 0, nil, true, err
+			}
+			if replaying {
+				return s.clearQuestReplay(ctx, pack, quest, replay)
+			}
 		}
 		wasCleared := s.state.QuestCleared(quest, pack, s.questDifficultyFor(pack, quest))
 		var previousParty []roster.Character
@@ -1251,7 +539,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err := s.state.ClearQuest(ctx, quest, pack, s.questDifficultyFor(pack, quest)); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
 		}
-		if !wasCleared {
+		if !wasCleared && quickPlay == 0 {
 			if err := s.beginQuestCompletionPresentation(ctx, pack, quest, s.questDifficultyFor(pack, quest)); err != nil {
 				return 0, nil, true, err
 			}
@@ -1292,10 +580,15 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		saved, positionFound := s.state.Position()
 		slog.Info("quest transition prepared", "account", ctx.AccountID, "pack", pack, "quest", quest,
 			"difficulty", s.questDifficultyFor(pack, quest), "already_cleared", wasCleared,
+			"quick_play", quickPlay != 0,
 			"next_quest", s.nextQuestFor(ctx, pack, quest), "timeline", design.CompleteCinemaName,
 			"timeline_map", design.TimelineStartMapID, "position_found", positionFound,
 			"saved_position", saved.Position, "party_changes", len(nextChars), "items", len(items))
-		return 18, s.clearResponse(ctx, pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment, nextItems, nextChars), true, nil
+		out, err := s.clearResponse(ctx, pack, quest, s.questClearRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment), nextItems, nextChars)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		return 18, out, true, nil
 	default:
 		return 0, nil, false, nil
 	}

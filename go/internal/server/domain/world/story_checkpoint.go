@@ -1,6 +1,7 @@
 package world
 
 import (
+	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,12 @@ import (
 )
 
 var ErrStoryCheckpointConflict = errors.New("world: story checkpoint conflict")
+
+func storyCheckpointConflict(pending, requested StoryCheckpoint) error {
+	return fmt.Errorf("%w: pending={pack=%d quest=%d difficulty=%d phase=%s} requested={pack=%d quest=%d difficulty=%d phase=%s}",
+		ErrStoryCheckpointConflict, pending.PackID, pending.QuestID, pending.Difficulty, pending.Phase,
+		requested.PackID, requested.QuestID, requested.Difficulty, requested.Phase)
+}
 
 type StoryCheckpoint struct {
 	ID                string `json:"checkpoint_id"`
@@ -93,7 +100,7 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 			if candidate == *pending {
 				return reply, nil
 			}
-			return reply, ErrStoryCheckpointConflict
+			return reply, storyCheckpointConflict(*pending, request.StoryCheckpoint)
 		}
 		if err = s.validateStoryCheckpoint(ctx, request.StoryCheckpoint); err != nil {
 			return reply, err
@@ -108,6 +115,9 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 }
 
 func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryCheckpoint) error {
+	if field, exists := s.fieldPacks[checkpoint.PackID]; exists && field.IntroQuest != nil {
+		return s.validateFieldIntroCheckpoint(ctx, checkpoint, field)
+	}
 	pack, exists := s.storyCatalog.Packs[checkpoint.PackID]
 	if !exists || !s.packUnlocked(ctx, checkpoint.PackID) || checkpoint.Difficulty != s.questDifficultyFor(checkpoint.PackID, checkpoint.QuestID) {
 		return fmt.Errorf("%w: checkpoint pack or difficulty unavailable", ErrInvalidRequest)
@@ -153,6 +163,20 @@ func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryC
 	return nil
 }
 
+func (s *Service) validateFieldIntroCheckpoint(ctx command.Context, checkpoint StoryCheckpoint, pack gamedata.FieldPack) error {
+	intro := pack.IntroQuest
+	current, err := s.CurrentPackID(ctx)
+	if err != nil {
+		return err
+	}
+	if current != checkpoint.PackID || !s.packUnlocked(ctx, checkpoint.PackID) || intro == nil ||
+		checkpoint.QuestID != intro.ID || checkpoint.Difficulty != 0 || checkpoint.Phase != "accept" ||
+		checkpoint.Timeline != intro.AcceptCinemaName || checkpoint.ObjectID != 0 || checkpoint.SimpleTalkGroupID != 0 || !pack.MapIDs[checkpoint.MapID] {
+		return fmt.Errorf("%w: field introduction checkpoint unavailable", ErrInvalidRequest)
+	}
+	return nil
+}
+
 func (s *Service) beginQuestCompletionPresentation(ctx command.Context, pack, quest, difficulty int) error {
 	design := s.storyCatalog.Packs[pack].Quests[quest]
 	if design.CompleteCinemaName == "" {
@@ -171,7 +195,7 @@ func (s *Service) beginQuestCompletionPresentation(ctx command.Context, pack, qu
 		return err
 	}
 	if pending != nil && (pending.PackID != pack || pending.QuestID != quest || pending.Difficulty != difficulty || pending.Phase != "interaction" && pending.Phase != "complete") {
-		return ErrStoryCheckpointConflict
+		return storyCheckpointConflict(*pending, checkpoint)
 	}
 	return saveStoryCheckpoint(ctx, checkpoint)
 }

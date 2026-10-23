@@ -57,6 +57,16 @@ var mailItemSources = []mailItemSource{
 // directly; their reward ID is zero.
 var MailCurrencyTypes = []uint64{2, 3, 4, 12, 20}
 
+// MailEconomyCurrencyTypes are the other currencies a compensation mail can
+// carry: their claim is credited by the event economy (wallet hope powder and
+// refining traces, action points and the gameplay-entry balances such as the
+// Cafeteria and decoration coins). Their reward ID is zero as well.
+var MailEconomyCurrencyTypes = []uint64{15, 16, 18, 21, 22, 23, 24, 30, 31, 32, 33, 35, 38, 39, 40, 41, 42, 43, 44, 52, 53, 54, 60, 68, 70, 72}
+
+func mailCurrency(elementType uint64) bool {
+	return slices.Contains(MailCurrencyTypes, elementType) || slices.Contains(MailEconomyCurrencyTypes, elementType)
+}
+
 // LoadMailCatalog returns every safe direct-mail attachment in GameData.
 func LoadMailCatalog(root, version string) ([]MailCatalogItem, error) {
 	var items []MailCatalogItem
@@ -101,7 +111,7 @@ func loadMailCatalog(db *sql.DB) ([]MailCatalogItem, error) {
 		if elementType == 0 {
 			elementType = rowID
 		}
-		if slices.Contains(MailCurrencyTypes, elementType) {
+		if mailCurrency(elementType) {
 			items = append(items, MailCatalogItem{ElementType: elementType, Category: "currency", Name: names["NameTextTable"][singleVarint(proto, 5)]})
 		}
 		return nil
@@ -154,7 +164,7 @@ func fixedRandomBoxes(db *sql.DB, items []MailCatalogItem) (map[uint64]boxReward
 		if len(ids) != 1 || len(types) != 1 || len(counts) != 1 || types[0] == 0 || counts[0] == 0 {
 			return nil
 		}
-		currency := slices.Contains(MailCurrencyTypes, types[0])
+		currency := mailCurrency(types[0])
 		if currency != (ids[0] == 0) {
 			return nil
 		}

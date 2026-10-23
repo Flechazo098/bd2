@@ -3,9 +3,10 @@ package eventplay
 import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 )
 
-func (s *Service) AttachProgress(fn func(ctx command.Context, condition, sub, count uint64) error) {
+func (s *Service) AttachProgress(fn func(command.Context, conditions.Event) error) {
 	s.onProgress = fn
 }
 

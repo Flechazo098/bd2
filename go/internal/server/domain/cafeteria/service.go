@@ -49,6 +49,8 @@ type Service struct {
 	resetSeconds int64
 	owned        func() []uint64
 	hasEpisode   func(uint64) bool
+	datingTicket uint64
+	holdsTicket  func(command.Context, uint64) bool
 }
 
 func Open(ctx command.Context, store stateio.Store, d *gamedata.CafeteriaDesign, e Economy) (*Service, error) {
@@ -94,7 +96,14 @@ func Open(ctx command.Context, store stateio.Store, d *gamedata.CafeteriaDesign,
 }
 func (s *Service) AttachOwnedCostumes(f func() []uint64)      { s.owned = f }
 func (s *Service) AttachDatingHasEpisode(f func(uint64) bool) { s.hasEpisode = f }
-func (s *Service) SetResetSeconds(v int64)                    { s.resetSeconds = v }
+
+// AttachDatingTicket names the content ticket the client checks before
+// claiming the introduction (ContentUnlockDating) and how to test ownership.
+func (s *Service) AttachDatingTicket(ticket uint64, holds func(command.Context, uint64) bool) {
+	s.datingTicket, s.holdsTicket = ticket, holds
+}
+
+func (s *Service) SetResetSeconds(v int64) { s.resetSeconds = v }
 func (s *Service) day() string {
 	return s.now().UTC().Add(time.Duration(9*3600-s.resetSeconds) * time.Second).Format("2006-01-02")
 }
@@ -181,6 +190,9 @@ func noteWire(n *note) []byte {
 }
 func val(b []byte, n int) uint64 { v, _, _ := wire.Varint(b, n); return v }
 
+// contentTicketType is EElementType.ContentTicket.
+const contentTicketType = 19
+
 var codes = map[string]int{"/CafeteriaInfo": 351, "/CafeteriaSpawnReset": 352, "/CafeteriaLevelUp": 353, "/CafeteriaManageItemAdd": 354, "/CafeteriaRegularCostumeInteractionReward": 355, "/CafeteriaRegularCostumeInteractionAllReward": 356, "/CafeteriaCumulativeReward": 357, "/CafeteriaRegularCostumeNoteInfo": 358, "/CafeteriaRegularCostumeNoteReward": 359, "/CafeteriaRegularCostumeNoteAllReward": 360, "/CafeteriaIntroductionStoryReward": 371, "/CafeteriaDailyConnectionCostumeRefresh": 376, "/CafeteriaRareNpcInteractionReward": 413, "/CafeteriaEventNpcInteractionReward": 414}
 
 func (s *Service) Handle(ctx command.Context, path string, b []byte) (int, []byte, bool, error) {
@@ -266,14 +278,16 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		return out, nil
 	case "/CafeteriaIntroductionStoryReward":
 		if s.state.Introduction {
-			return nil, nil
+			bundle, e := s.restoreDatingTicket(ctx)
+			if e != nil || bundle == nil {
+				return nil, e
+			}
+			return wire.AppendBytes(nil, 1, bundle), nil
 		}
-		d := s.design.Default
-		bundle, e := s.economy.Apply(ctx, identity, nil, []gamedata.Reward{{Type: d.V(31), ID: d.V(30), Count: d.V(29)}})
+		bundle, e := s.grantIntroduction(ctx, identity)
 		if e != nil {
 			return nil, e
 		}
-		s.state.Introduction = true
 		return wire.AppendBytes(nil, 1, bundle), nil
 	case "/CafeteriaManageItemAdd":
 		id := s.state.Manage + 1
@@ -504,4 +518,38 @@ func sortedNotes(m map[uint64]*note) []uint64 {
 	}
 	slices.Sort(ids)
 	return ids
+}
+
+// restoreDatingTicket grants the dating unlock ticket to a player whose
+// introduction is complete but who does not hold it. The client claims the
+// introduction on every cafeteria entry until the ticket exists, so ownership,
+// not the introduction flag, decides; the fixed identity grants it once.
+func (s *Service) restoreDatingTicket(ctx command.Context) ([]byte, error) {
+	if s.datingTicket == 0 || s.holdsTicket == nil || s.holdsTicket(ctx, s.datingTicket) {
+		return nil, nil
+	}
+	return s.economy.Apply(ctx, fmt.Sprintf("cafeteria:introduction-ticket:%d", s.datingTicket), nil, []gamedata.Reward{{Type: contentTicketType, ID: s.datingTicket, Count: 1}})
+}
+
+// grantIntroduction pays the CafeteriaDefaultTable visual-novel end reward and
+// records the introduction as finished.
+func (s *Service) grantIntroduction(ctx command.Context, identity string) ([]byte, error) {
+	d := s.design.Default
+	bundle, err := s.economy.Apply(ctx, identity, nil, []gamedata.Reward{{Type: d.V(31), ID: d.V(30), Count: d.V(29)}})
+	if err != nil {
+		return nil, err
+	}
+	s.state.Introduction = true
+	return bundle, nil
+}
+
+// ReconcileIntroduction runs at login: a finished introduction regains a
+// missing dating ticket. Unfinished ones wait for the client's claim on the
+// first entry into the cafeteria game card.
+func (s *Service) ReconcileIntroduction(ctx command.Context) error {
+	if !s.state.Introduction {
+		return nil
+	}
+	_, err := s.restoreDatingTicket(ctx)
+	return err
 }

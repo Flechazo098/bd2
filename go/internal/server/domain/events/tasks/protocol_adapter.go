@@ -3,6 +3,7 @@ package eventtasks
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,9 @@ import (
 	"strconv"
 	"time"
 )
+
+// Define_ElementType _TYPE_RESOURCE; McResourceUse counts only this type.
+const resourceItemType uint64 = 8
 
 func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []byte, bool, error) {
 	codes := map[string]int{"/Attendance": 0, "/AttendanceInfo": 0, "/EventRewardHistory": 0, "/EventReward": 151, "/EventMissionInfo": 127, "/MissionClear": 120, "/MissionUpdate": 119, "/PassInfo": 124, "/PassReward": 126, "/PassBuy": 129, "/LoginEvent": 0}
@@ -73,6 +77,17 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 func scalar(b []byte, n int) uint64 { v, _, _ := wire.Varint(b, n); return v }
 
 func (s *Service) handle(ctx command.Context, path string, b []byte, identity string) ([]byte, error) {
+	if path == "/EventMissionInfo" || path == "/MissionUpdate" || path == "/MissionClear" {
+		if err := s.reconcileGachaProgress(ctx, nil, true); err != nil {
+			return nil, err
+		}
+		if err := s.reconcileRewardLevelProgress(ctx); err != nil {
+			return nil, err
+		}
+		if _, err := s.reconcileAccountState(ctx); err != nil {
+			return nil, err
+		}
+	}
 	switch path {
 	case "/Attendance", "/LoginEvent":
 		today := s.day()
@@ -286,9 +301,9 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 			}
 			m := s.mission(v, id)
 			progress := min(value, t.Target)
-			// Homescreen slots are saved in ClientLocalInfo; MissionUpdate is
-			// the native client's only server notification of this UI action.
-			if t.Type == 39 && t.SubType == 0 && (len(t.Params) == 0 || slices.Contains(t.Params, uint64(0))) {
+			// These UI actions (e.g. homescreen slots saved in ClientLocalInfo)
+			// reach the server only through the client's MissionUpdate.
+			if slices.Contains(conditions.ClientReported, t.Type) && t.SubType == 0 && conditions.AnyParam(t.Params) {
 				m.Value = max(m.Value, progress)
 			} else if progress > m.Value {
 				return fmt.Errorf("eventtasks: client progress exceeds authoritative gameplay event=%d group=%d mission=%d condition=%d subtype=%d client=%d authoritative=%d target=%d", event, t.Group, id, t.Type, t.SubType, value, m.Value, t.Target)
@@ -555,6 +570,15 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 }
 
 func (s *Service) Notify(ctx command.Context) ([]byte, error) {
+	if err := s.reconcileGachaProgress(ctx, nil, true); err != nil {
+		return nil, err
+	}
+	if err := s.reconcileRewardLevelProgress(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.ReconcileAccountState(ctx); err != nil {
+		return nil, err
+	}
 
 	var out []byte
 	for _, v := range s.taskSchedules() {
@@ -587,7 +611,7 @@ func (s *Service) Notify(ctx command.Context) ([]byte, error) {
 	return out, nil
 }
 
-func (s *Service) AfterDispatch(ctx command.Context, path string, request, response []byte) ([]byte, error) {
+func (s *Service) AfterDispatch(ctx command.Context, _ string, _, _ []byte) ([]byte, error) {
 	if s.provider != nil {
 		version := s.inventoryObservationVersion()
 		if s.inventoryReady && version != "" && version == s.observationVersion {
@@ -598,65 +622,27 @@ func (s *Service) AfterDispatch(ctx command.Context, path string, request, respo
 		if e != nil {
 			return nil, e
 		}
-		rk := fmt.Sprintf("observer:%s:%s:%d", ctx.SessionID, path, scalar(request, 1))
-
-		_, seen := s.state.Receipts[rk]
-
-		if !seen {
-			type delta struct{ condition, sub, count uint64 }
-			var deltas []delta
-			for kind, old := range s.before.Items {
-				current := after.Items[kind]
-				if current < old {
-					condition := uint64(12)
-					if kind[1] == 0 {
-						condition = 11
-					}
-					deltas = append(deltas, delta{condition, kind[0], old - current})
+		// Deltas come from the before/after views of this request, so a cached
+		// replay that changes nothing records nothing.
+		deltas := s.inventoryDeltas(after)
+		if len(deltas) > 0 {
+			before, e := json.Marshal(s.state)
+			if e != nil {
+				return nil, e
+			}
+			for _, d := range deltas {
+				if e = s.record(ctx, d); e != nil {
+					break
 				}
 			}
-			for kind, current := range after.Items {
-				old := s.before.Items[kind]
-				if current > old {
-					deltas = append(deltas, delta{32, kind[0], current - old})
-				}
+			if e != nil {
+				s.state = snapshot{}
+				_ = json.Unmarshal(before, &s.state)
+				return nil, e
 			}
-			for idx, current := range after.Equipment {
-				old, ok := s.before.Equipment[idx]
-				if ok && current.Level > old.Level {
-					deltas = append(deltas, delta{14, 0, current.Level - old.Level})
-				}
-			}
-			for idx, current := range after.Costumes {
-				old, ok := s.before.Costumes[idx]
-				if ok && current.Level > old.Level {
-					deltas = append(deltas, delta{104, current.ID, current.Level - old.Level})
-				}
-			}
-			if len(deltas) > 0 {
-
-				before, e := json.Marshal(s.state)
-				if e != nil {
-
-					return nil, e
-				}
-				changed := false
-				for _, d := range deltas {
-					changed = s.recordEventLocked(ctx, d.condition, d.sub, d.count, s.unlocked) || changed
-				}
-				if changed {
-					s.state.Receipts[rk] = receipt{Digest: "observer"}
-					e = s.save(ctx)
-				}
-				if e != nil {
-					s.state = snapshot{}
-					_ = json.Unmarshal(before, &s.state)
-				}
-
-				if e != nil {
-					return nil, e
-				}
-			}
+		}
+		if err := s.reconcileGachaProgress(ctx, &after, false); err != nil {
+			return nil, err
 		}
 		s.before = after
 		s.observationVersion = s.inventoryObservationVersion()
@@ -665,8 +651,45 @@ func (s *Service) AfterDispatch(ctx command.Context, path string, request, respo
 	return s.notifyMissionChanges(ctx)
 }
 
-func (s *Service) notifyMissionChanges(ctx command.Context) ([]byte, error) {
+// inventoryDeltas turns one request's inventory changes into mission events.
+func (s *Service) inventoryDeltas(after InventorySnapshot) []conditions.Event {
+	var deltas []conditions.Event
+	for kind, old := range s.before.Items {
+		current := after.Items[kind]
+		// McResourceUse names a Resource item; currencies are not inventory
+		// items and the event economy reports their spends.
+		if current < old && kind[0] == resourceItemType {
+			deltas = append(deltas, conditions.Event{Type: conditions.ResourceUse, Sub: kind[1], Count: old - current})
+		}
+	}
+	for kind, current := range after.Items {
+		old := s.before.Items[kind]
+		if current > old {
+			deltas = append(deltas, conditions.Event{Type: conditions.ItemCurrencyGet, Sub: kind[0], Count: current - old})
+		}
+	}
+	for idx, current := range after.Equipment {
+		old, ok := s.before.Equipment[idx]
+		if ok && current.Level > old.Level {
+			deltas = append(deltas, conditions.Event{Type: conditions.EquipmentUpgrade, Count: current.Level - old.Level})
+		}
+	}
+	for idx, current := range after.Costumes {
+		old, ok := s.before.Costumes[idx]
+		if ok && current.Level > old.Level {
+			deltas = append(deltas, conditions.Event{Type: conditions.CostumeUpgrade, Sub: current.ID, Count: current.Level - old.Level})
+		}
+	}
+	return deltas
+}
 
+func (s *Service) notifyMissionChanges(ctx command.Context) ([]byte, error) {
+	if err := s.reconcileRewardLevelProgress(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.ReconcileAccountState(ctx); err != nil {
+		return nil, err
+	}
 	if s.beforeMissions == nil {
 		return nil, nil
 	}

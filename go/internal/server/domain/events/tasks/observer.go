@@ -2,7 +2,7 @@ package eventtasks
 
 import (
 	"bd2server/internal/server/domain/command"
-	"encoding/json"
+	"bd2server/internal/server/domain/progression/conditions"
 )
 
 func (s *Service) BeginLogin(ctx command.Context) {
@@ -21,6 +21,9 @@ func (s *Service) inventorySnapshot(ctx command.Context) (InventorySnapshot, err
 }
 func (s *Service) BeforeDispatch(ctx command.Context, _ string, _ []byte) error {
 
+	if err := s.reconcileRewardLevelProgress(ctx); err != nil {
+		return err
+	}
 	s.beforeMissions = s.visibleMissionValues(ctx)
 
 	if s.provider == nil {
@@ -41,26 +44,15 @@ func (s *Service) BeforeDispatch(ctx command.Context, _ string, _ []byte) error 
 }
 func (s *Service) AttachInventoryProvider(p InventoryProvider) { s.provider = p }
 
-func (s *Service) CompleteSingleTargetEvent(ctx command.Context, condition uint64, unlocked func(command.Context, uint64, uint64) bool) error {
+// AttachProgress routes observed inventory deltas through the account-wide
+// mission recorder, so regular daily/weekly missions see them as well.
+func (s *Service) AttachProgress(record func(command.Context, conditions.Event) error) {
+	s.progress = record
+}
 
-	before, _ := json.Marshal(s.state)
-	for _, v := range s.taskSchedules() {
-		if !s.active(v) {
-			continue
-		}
-		for _, t := range s.design.Missions {
-			if t.Type != condition || t.SubType != 0 || t.Target != 1 || len(t.Params) != 0 || !s.availableTask(ctx, v, t) {
-				continue
-			}
-			if (t.UnlockPack > 0 || t.UnlockQuest > 0) && (unlocked == nil || !unlocked(ctx, t.UnlockPack, t.UnlockQuest)) {
-				continue
-			}
-			s.mission(v, t.ID).Value = 1
-		}
+func (s *Service) record(ctx command.Context, event conditions.Event) error {
+	if s.progress != nil {
+		return s.progress(ctx, event)
 	}
-	if e := s.save(ctx); e != nil {
-		_ = json.Unmarshal(before, &s.state)
-		return e
-	}
-	return nil
+	return s.RecordEvent(ctx, event, s.unlocked)
 }

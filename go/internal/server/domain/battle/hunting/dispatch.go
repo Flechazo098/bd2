@@ -33,6 +33,19 @@ func (s *Service) AttachDispatchProgress(progress func(command.Context, uint64) 
 	s.dispatchProgress = progress
 }
 
+// AttachAPSpent observes hunting AP a battle or a dispatch spends directly;
+// exchanges through the event economy report their own costs.
+func (s *Service) AttachAPSpent(spent func(command.Context, uint64) error) {
+	s.apSpent = spent
+}
+
+func (s *Service) recordAPSpent(ctx command.Context, cost uint64) error {
+	if s.apSpent == nil || cost == 0 {
+		return nil
+	}
+	return s.apSpent(ctx, cost)
+}
+
 func dispatchPlayed(j dispatchJob, seconds uint64) uint64 {
 	if seconds == 0 {
 		return j.Count

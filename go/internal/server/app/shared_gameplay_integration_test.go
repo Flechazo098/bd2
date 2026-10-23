@@ -161,7 +161,7 @@ func seedGuildQualification(t *testing.T, owner *playerInstance) {
 			t.Error(err)
 		}
 	}()
-	c := command.Context{Identity: command.Identity{AccountID: owner.accountID}, State: tx}
+	c := command.Context{Identity: command.Identity{AccountID: owner.accountID}, State: tx, InstanceIDs: owner.factory.instanceIDs()}
 	rule := owner.factory.design.guild.Open
 	grant := owner.factory.design.guild.Guild.CreateCost
 	grant.Count *= 4
@@ -578,6 +578,38 @@ func (g *guildGameplay) ownedPVPDeck() ([]byte, uint64) {
 }
 func TestNativePVPGameplayUsesOwnedSnapshotsAndTickets(t *testing.T) {
 	factory, accounts := newIntegrationFactory(t)
+	// Mirror seasons are calendar-driven and may be between rotations. Use an
+	// already-active season when the captured calendar has one; otherwise keep
+	// a single Mirror season and move its window to now so it cannot overlap.
+	now := time.Now()
+	nowMS := uint64(now.UnixMilli())
+	active := false
+	var kept pvp.Season
+	found := false
+	seasons := make([]pvp.Season, 0, len(factory.design.pvp.Seasons))
+	for _, season := range factory.design.pvp.Seasons {
+		if season.Mode != pvp.Mirror {
+			seasons = append(seasons, season)
+			continue
+		}
+		active = active || season.Start <= nowMS && nowMS < season.End
+		kept, found = season, true
+	}
+	if !found {
+		t.Fatal("GameData has no Mirror season")
+	}
+	if !active {
+		kept.Start = nowMS - uint64(time.Hour/time.Millisecond)
+		kept.End = nowMS + uint64(time.Hour/time.Millisecond)
+		kept.CalculateEnd = kept.End + factory.options.calendars.RegularService.CalculateMilliseconds
+		seasons = append(seasons, kept)
+		factory.design.pvp.Seasons = seasons
+		rules, err := pvp.NewRules(factory.design.pvp.Design, factory.design.pvp.Seasons, factory.design.pvp.Policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		factory.design.pvp = rules
+	}
 	state, err := openSharedRuntime(context.Background(), factory.options, factory.design)
 	if err != nil {
 		t.Fatal(err)

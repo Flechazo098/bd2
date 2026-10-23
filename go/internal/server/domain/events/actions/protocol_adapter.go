@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"crypto/sha256"
 	"encoding/hex"
@@ -565,7 +566,7 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 			s.state.DailyNormal++
 		}
 		if s.progress != nil {
-			if e = s.progress(ctx, 349, r.V(2), 1); e != nil {
+			if e = s.progress(ctx, conditions.Event{Type: conditions.FieldSpawnEventReward, Sub: r.V(2), Count: 1}); e != nil {
 				return nil, e
 			}
 		}
@@ -864,13 +865,13 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 		priorLines := s.tacticsLines(uid)
 		s.state.Tactics[uid] = append(s.state.Tactics[uid], stage)
 		if s.progress != nil {
-			if e := s.progress(ctx, 346, stage, 1); e != nil {
+			if e := s.progress(ctx, conditions.Event{Type: conditions.TacticsBingoBattleWin, Sub: stage, Count: 1}); e != nil {
 				_ = json.Unmarshal(before, &s.state)
 				return nil, e
 			}
 			lines := s.tacticsLines(uid)
 			if lines > priorLines {
-				if e := s.progress(ctx, 347, 0, lines-priorLines); e != nil {
+				if e := s.progress(ctx, conditions.Event{Type: conditions.TacticsBingoLineClear, Count: lines - priorLines}); e != nil {
 					_ = json.Unmarshal(before, &s.state)
 					return nil, e
 				}
@@ -879,7 +880,7 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, receipt string
 			g, _ := s.design.Row("TacticsBingoGroupTable", 3, v.ID)
 			n := uint64(5) - g.V(4)
 			if uint64(len(s.state.Tactics[uid])) == n*n {
-				if e := s.progress(ctx, 348, 0, 1); e != nil {
+				if e := s.progress(ctx, conditions.Event{Type: conditions.TacticsBingoAllClear, Count: 1}); e != nil {
 					_ = json.Unmarshal(before, &s.state)
 					return nil, e
 				}

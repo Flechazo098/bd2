@@ -16,6 +16,7 @@ type Manager struct {
 	config       Config
 	rules        Rules
 	mu           sync.Mutex
+	squareJoinMu sync.Mutex
 	rooms        map[string]*owner
 	instances    map[string]*owner
 	memberships  map[string]string
@@ -65,6 +66,7 @@ type member struct {
 	playerSnapshot     []byte
 	fishingState       []byte
 	fishingMotion      []byte
+	squareMotion       []byte
 	runGUID            string
 	acceptedRun        bool
 	projectionEvents   []string
@@ -100,6 +102,9 @@ func New(config Config, rules Rules) (*Manager, error) {
 	}
 	if config.MaxRooms <= 0 {
 		config.MaxRooms = 1024
+	}
+	if config.SquareChannels < 0 || config.SquareChannels > 10000 || config.SquareChannelCapacity < 0 || config.SquareChannelCapacity > 1000 || (config.SquareChannels == 0) != (config.SquareChannelCapacity == 0) {
+		return nil, errors.New("room: invalid square channel design")
 	}
 	if config.QueueCommands <= 0 {
 		config.QueueCommands = 256
@@ -297,6 +302,7 @@ func cloneView(v View) View {
 	for i := range v.Members {
 		v.Members[i].Profile.UserInfo = append([]byte(nil), v.Members[i].Profile.UserInfo...)
 		v.Members[i].Profile.AvatarUseInfo = append([]byte(nil), v.Members[i].Profile.AvatarUseInfo...)
+		v.Members[i].Profile.AvatarMotions = append([]uint64(nil), v.Members[i].Profile.AvatarMotions...)
 		v.Members[i].Profile.FishingMaps = append([]uint64(nil), v.Members[i].Profile.FishingMaps...)
 	}
 	return v
@@ -464,7 +470,7 @@ func (m *Manager) UpdateFishingProjection(ctx context.Context, p Principal, prof
 }
 func (m *Manager) Disconnect(ctx context.Context, c Connection) ([]Delivery, error) {
 	var all []Delivery
-	for _, k := range []Kind{Action, Defense, Fishing} {
+	for _, k := range []Kind{Action, Defense, Fishing, Square} {
 		o := m.lookup(c.Principal, k)
 		if o == nil {
 			continue
@@ -484,6 +490,9 @@ func (m *Manager) Disconnect(ctx context.Context, c Connection) ([]Delivery, err
 				u.gameConnection = ""
 				u.disconnected = m.config.Now()
 				u.networkState = 0
+				if k == Square {
+					return nil, s.broadcast(131, integer(nil, 2, u.principal.OwnerIndex), false, u.principal.OwnerIndex), nil
+				}
 				return nil, s.chooseHost(), nil
 			}
 			return nil, nil, nil
@@ -518,6 +527,7 @@ func (s *state) view() View {
 		p := u.profile
 		p.UserInfo = append([]byte(nil), p.UserInfo...)
 		p.AvatarUseInfo = append([]byte(nil), p.AvatarUseInfo...)
+		p.AvatarMotions = append([]uint64(nil), p.AvatarMotions...)
 		p.FishingMaps = append([]uint64(nil), p.FishingMaps...)
 		v.Members = append(v.Members, MemberView{Principal: u.principal, Profile: p, CharacterID: u.character, Ready: u.ready, ClientState: u.clientState, Connected: u.gameConnection != "", RunGUID: u.runGUID, AcceptedRun: u.acceptedRun, NativeGUID: u.guid, Wave: u.wave, Kills: u.kills})
 	}
@@ -544,6 +554,14 @@ func (s *state) chooseHost() []Delivery {
 	return nil
 }
 func (s *state) expire(now time.Time) []Delivery {
+	if s.selection.Kind == Square {
+		for _, u := range append([]*member(nil), s.members...) {
+			if !u.disconnected.IsZero() && now.Sub(u.disconnected) > s.reconnectWindow() {
+				s.leaveSquare(u)
+			}
+		}
+		return nil
+	}
 	var d []Delivery
 	if s.roomState == 0 && now.Sub(s.created) >= s.owner.manager.config.MatchingLimit {
 		s.closed = true
@@ -605,7 +623,7 @@ func (m *Manager) checkConnection(c Connection) error {
 	if !validPrincipal(c.Principal) || c.ID == "" {
 		return ErrUnauthorized
 	}
-	if c.Channel != Matching && c.Channel != Action && c.Channel != Defense && c.Channel != Fishing {
+	if c.Channel != Matching && c.Channel != Action && c.Channel != Defense && c.Channel != Fishing && c.Channel != Square {
 		return ErrUnauthorized
 	}
 	m.mu.Lock()

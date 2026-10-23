@@ -6,10 +6,12 @@ import (
 )
 
 // ContentOpeningDesign describes the rapport prologue's prerequisite and
-// completion marker. The client maps ContentOpenRequest type 1 to group 23,
-// detail 2; ticket identities and level requirements remain version data.
+// completion marker, and the dating unlock. The client maps ContentOpenRequest
+// type 1 to group 23, detail 2, and checks Define_ContentOpenType
+// ContentUnlockDating (group 19, detail 1) before granting the cafeteria
+// introduction; ticket identities and level requirements remain version data.
 type ContentOpeningDesign struct {
-	Prerequisite, Completion ContentOpenRule
+	Prerequisite, Completion, Dating ContentOpenRule
 }
 
 func LoadContentOpeningDesign(root, version string) (*ContentOpeningDesign, error) {
@@ -83,13 +85,20 @@ func loadContentOpeningDesign(db *sql.DB) (*ContentOpeningDesign, error) {
 			return nil, fmt.Errorf("gamedata: invalid content opening %d/%d identity or ticket", group, id)
 		}
 		seen[key] = true
+		rule := ContentOpenRule{TutorialID: values[3], SquadLevel: values[4], TicketID: ticket}
+		if key == [2]uint64{19, 1} {
+			if tickets[ticket] != 1 {
+				return nil, fmt.Errorf("gamedata: dating opening requires permanent content ticket")
+			}
+			d.Dating = rule
+			continue
+		}
 		if group != 23 || (id != 1 && id != 2) {
 			continue
 		}
 		if tickets[ticket] != 1 {
 			return nil, fmt.Errorf("gamedata: rapport opening %d requires permanent content ticket", id)
 		}
-		rule := ContentOpenRule{TutorialID: values[3], SquadLevel: values[4], TicketID: ticket}
 		if id == 1 {
 			d.Prerequisite = rule
 		} else {
@@ -98,6 +107,9 @@ func loadContentOpeningDesign(db *sql.DB) (*ContentOpeningDesign, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if !seen[[2]uint64{19, 1}] {
+		return nil, fmt.Errorf("gamedata: missing dating opening rule")
 	}
 	if !seen[[2]uint64{23, 1}] || !seen[[2]uint64{23, 2}] || d.Prerequisite.TicketID == d.Completion.TicketID {
 		return nil, fmt.Errorf("gamedata: missing or indistinguishable rapport opening rules")

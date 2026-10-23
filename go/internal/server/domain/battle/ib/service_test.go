@@ -73,7 +73,7 @@ func assertReservedOffer(t *testing.T, response, expected []byte) {
 }
 
 // LocalTextTable 7900025/26/84 and 7900122/23/29 (queried with gamedata_db.py,
-// 20261012190548) define loss retries, one first-clear reward, run inventory,
+// 20261021182514) define loss retries, one first-clear reward, run inventory,
 // post-battle shop refresh, and reservations. Request/response fields and base64
 // process payload are independently specified by 2.36.7 Proto.Net and IBPacket.
 func TestBoardLifecyclePreservesBattleReservationAndFirstClear(t *testing.T) {

@@ -18,11 +18,14 @@ type OwnedSnapshotBuilder struct {
 	Collection *roster.CollectionStore
 	Equipment  *assets.EquipmentInventory
 	Buffs      func(command.Context) ([]gamedata.PictorialBuffStat, error)
-	OwnerIndex uint64
+	// CostumeCosts returns the current colosseum price of every ranked
+	// costume; unranked costumes cost ColosseumDefaults.CostDefault.
+	CostumeCosts func(command.Context) (map[uint64]uint64, error)
+	OwnerIndex   uint64
 }
 
 func (b *OwnedSnapshotBuilder) Freeze(ctx command.Context, r FreezeRequest) (FullSnapshot, error) {
-	if b.Design == nil || b.Characters == nil || b.Collection == nil || b.Equipment == nil || b.Buffs == nil || b.OwnerIndex == 0 {
+	if b.Design == nil || b.Characters == nil || b.Collection == nil || b.Equipment == nil || b.Buffs == nil || b.CostumeCosts == nil || b.OwnerIndex == 0 {
 		return FullSnapshot{}, fmt.Errorf("pvp: incomplete snapshot builder")
 	}
 	previousContents := map[uint64][]byte{}
@@ -62,13 +65,23 @@ func (b *OwnedSnapshotBuilder) Freeze(ctx command.Context, r FreezeRequest) (Ful
 	for _, item := range allCostumes {
 		costumeByIndex[item.InvenIndex] = item
 	}
-	var banned []uint64
+	var banned, costLimit []uint64
+	var costs map[uint64]uint64
 	if r.Mode == Colosseum {
 		banned, e = b.Design.ColosseumRule(r.Season, 30)
 		if e != nil {
 			return FullSnapshot{}, e
 		}
+		if costLimit, e = b.Design.ColosseumRule(r.Season, 32); e != nil {
+			return FullSnapshot{}, e
+		}
+		if len(costLimit) != 0 {
+			if costs, e = b.CostumeCosts(ctx); e != nil {
+				return FullSnapshot{}, e
+			}
+		}
 	}
+	var totalCost uint64
 	var result FullSnapshot
 	var bindings []assets.PresetEquipmentBinding
 	usedEquipment := map[uint64]bool{}
@@ -94,6 +107,11 @@ func (b *OwnedSnapshotBuilder) Freeze(ctx command.Context, r FreezeRequest) (Ful
 		}
 		if slices.Contains(banned, costume.ID) {
 			return result, fmt.Errorf("pvp: selected costume banned this season")
+		}
+		if cost, ranked := costs[costume.ID]; ranked {
+			totalCost += cost
+		} else {
+			totalCost += b.Design.Colosseum.CostDefault
 		}
 		if e = b.validateSkills(index, entry, costumeByIndex); e != nil {
 			return result, e
@@ -187,6 +205,9 @@ func (b *OwnedSnapshotBuilder) Freeze(ctx command.Context, r FreezeRequest) (Ful
 				result.FullDeck = wire.AppendBytes(result.FullDeck, 3, roster.CostumeWire(owned))
 			}
 		}
+	}
+	if len(costLimit) != 0 && totalCost > costLimit[0] {
+		return result, fmt.Errorf("pvp: costume cost %d exceeds season limit %d", totalCost, costLimit[0])
 	}
 	for index := range requested {
 		if !deckCharacters[index] {

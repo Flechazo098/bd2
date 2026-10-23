@@ -6,7 +6,7 @@
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <AssemblyName>ExamplePlugin</AssemblyName>
-    <BD2GameVersion>2.36.7</BD2GameVersion>
+    <BD2GameVersion>2.37.13</BD2GameVersion>
     <BD2ManagedDir Condition="'$(BD2ManagedDir)' == ''">$(GameDir)/BrownDust II_Data/Managed</BD2ManagedDir>
     <!-- GameDir belongs in local Directory.Build.props or on the command line. -->
   </PropertyGroup>

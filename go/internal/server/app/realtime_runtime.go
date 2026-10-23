@@ -35,6 +35,7 @@ func openRealtime(c *configuration, registry *playerRegistry, game *session.Serv
 	results.endpoints = []eventplay.RelayEndpoint{{Region: "1", Host: config.PublicHost, TCPPort: strconv.Itoa(config.TCPPort)}}
 	var transport atomic.Pointer[realtime.Server]
 	rooms, err := room.New(room.Config{AdvertisedHost: config.PublicHost, TCPPort: config.TCPPort, UDPPort: config.UDPPort,
+		SquareChannels: int(registry.factory.design.avatarProfile.SquareChannels), SquareChannelCapacity: int(registry.factory.design.avatarProfile.SquareChannelCapacity),
 		Publish: func(frames []room.Delivery) {
 			if server := transport.Load(); server != nil {
 				server.Deliver(frames)

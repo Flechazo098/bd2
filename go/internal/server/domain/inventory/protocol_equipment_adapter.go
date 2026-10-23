@@ -3,6 +3,7 @@ package inventory
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/ownership"
 	"bd2server/internal/server/protocol/wire"
 	"encoding/binary"
@@ -300,6 +301,9 @@ func (s *EquipmentInventory) makeEquipment(ctx command.Context, request []byte) 
 	if err != nil {
 		return 0, nil, true, fmt.Errorf("player: persist made equipment: %w", err)
 	}
+	if err := s.recordMade(ctx, created); err != nil {
+		return 0, nil, true, err
+	}
 	if gain > 0 {
 		if _, err := s.characters.AddEquipmentTalentExperience(ctx, characterIndex, gain, maximum); err != nil {
 			return 0, nil, true, err
@@ -373,6 +377,9 @@ func (s *EquipmentInventory) breakEquipment(ctx command.Context, request []byte)
 	if granted == nil {
 		granted = s.inventory.GrantedItems(identity)
 	}
+	if err := s.recordMission(ctx, conditions.BreakEquipmentItem, uint64(len(indices))); err != nil {
+		return 0, nil, true, err
+	}
 	response := wire.AppendBytes(nil, 1, rewardItemBundle(granted))
 	s.cacheEquipmentReply(cacheKey, 56, response)
 	return 56, response, true, nil
@@ -394,6 +401,9 @@ func (s *EquipmentInventory) upgradeToBreakAuto(ctx command.Context, request []b
 	}
 	result, err := s.runUpgradeToBreak(ctx, indices, target, "equip-upgrade-break:"+ctx.SessionID+":"+strconv.FormatUint(seq, 10))
 	if err != nil {
+		return 0, nil, true, err
+	}
+	if err := s.recordMission(ctx, conditions.BreakEquipmentItem, uint64(len(result.Equipment))); err != nil {
 		return 0, nil, true, err
 	}
 	response := encodeUpgradeBreakResponse(result, 1, 2, 3, 4, 5, 6, 7)
@@ -444,6 +454,9 @@ func (s *EquipmentInventory) makeToBreakAuto(ctx command.Context, request []byte
 	if err != nil {
 		return 0, nil, true, fmt.Errorf("player: persist auto-break made equipment: %w", err)
 	}
+	if err := s.recordMade(ctx, created); err != nil {
+		return 0, nil, true, err
+	}
 	indices := make([]uint64, 0, len(created))
 	for _, entry := range created {
 		indices = append(indices, entry.InvenIndex)
@@ -455,6 +468,9 @@ func (s *EquipmentInventory) makeToBreakAuto(ctx command.Context, request []byte
 	}
 	result, err := s.runUpgradeToBreak(ctx, indices, target, "equip-making-break-reward:"+ctx.SessionID+":"+strconv.FormatUint(seq, 10))
 	if err != nil {
+		return 0, nil, true, err
+	}
+	if err := s.recordMission(ctx, conditions.BreakEquipmentItem, uint64(len(result.Equipment))); err != nil {
 		return 0, nil, true, err
 	}
 	var response []byte
@@ -599,6 +615,9 @@ func (s *EquipmentInventory) batchUse(ctx command.Context, request []byte) (int,
 	}
 	if err := s.commitLocked(ctx, next, "batch use"); err != nil {
 
+		return 0, nil, true, err
+	}
+	if err := s.recordMission(ctx, conditions.EquipEquipmentItem, 1); err != nil {
 		return 0, nil, true, err
 	}
 
@@ -995,6 +1014,9 @@ func (s *EquipmentInventory) optionRerollRequest(ctx command.Context, request []
 	for _, option := range candidate.SubOption {
 		response = wire.AppendBytes(response, 2, equipmentOptionWire(option))
 	}
+	if err := s.recordMission(ctx, conditions.EquipSmelting, 1); err != nil {
+		return 0, nil, true, err
+	}
 	s.smeltCache[cacheKey] = smeltingReply{code: 192, body: append([]byte(nil), response...)}
 	return 192, response, true, nil
 }
@@ -1330,6 +1352,9 @@ func (s *EquipmentInventory) smeltOnce(ctx command.Context, request []byte) (int
 	}
 	response = appendSmeltingMileage(response, 5, 6, currency.EquipMileageExchangeGage, s.smelting.Mileage, earned)
 
+	if err := s.recordMission(ctx, conditions.SmeltEquipmentItem, 1); err != nil {
+		return 0, nil, true, err
+	}
 	s.smeltCache[cacheKey] = smeltingReply{code: 105, body: append([]byte(nil), response...)}
 
 	return 105, response, true, nil
@@ -1468,6 +1493,9 @@ func (s *EquipmentInventory) smeltSequence(ctx command.Context, request []byte) 
 		response = wire.AppendVarint(response, 9, successes)
 	}
 
+	if err := s.recordMission(ctx, conditions.SmeltEquipmentItem, attempts); err != nil {
+		return 0, nil, true, err
+	}
 	s.smeltCache[cacheKey] = smeltingReply{code: 177, body: append([]byte(nil), response...)}
 
 	return 177, response, true, nil
@@ -1666,6 +1694,9 @@ func (s *EquipmentInventory) change(ctx command.Context, request []byte) (int, [
 
 		return 0, nil, true, err
 	}
+	if err := s.recordMission(ctx, conditions.ChangeEquipmentItem, 1); err != nil {
+		return 0, nil, true, err
+	}
 
 	// Max HP depends on the now-current equipment set, so build CharInfo only
 	// after the atomic equipment save is visible to the shared stat calculator.
@@ -1710,6 +1741,9 @@ func (s *EquipmentInventory) use(ctx command.Context, request []byte) (int, []by
 	next.Equipment[position].UseChar = characterIndex
 	if err := s.commitLocked(ctx, next, "use"); err != nil {
 		return 0, nil, true, fmt.Errorf("player: persist equipment use: %w", err)
+	}
+	if err := s.recordMission(ctx, conditions.EquipEquipmentItem, 1); err != nil {
+		return 0, nil, true, err
 	}
 	return 35, wire.AppendBytes(nil, 1, character.Response), true, nil
 }

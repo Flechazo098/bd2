@@ -27,6 +27,7 @@ type avatarState struct {
 type AvatarSource interface {
 	AvatarItems(command.Context) []assets.Item
 	AvatarCurrency(command.Context) assets.Currency
+	AvatarPriceBalance(command.Context, gamedata.Reward) (uint64, error)
 	AvatarUnlocked(command.Context, gamedata.AvatarProduct) (bool, error)
 }
 type AvatarEconomy interface {
@@ -187,6 +188,7 @@ func (s *AvatarService) buy(ctx command.Context, st *avatarState, products []ava
 	}
 	var costs, rewards []gamedata.Reward
 	var diamondCost uint64
+	var clientPriceRefund gamedata.Reward
 	seen := map[uint64]bool{}
 	for _, purchase := range products {
 		if seen[purchase.ID] {
@@ -246,7 +248,22 @@ func (s *AvatarService) buy(ctx command.Context, st *avatarState, products []ava
 			return nil, fmt.Errorf("avatar: purchase count overflow")
 		}
 		price.Count *= count
-		if price.Count > 0 {
+		firstSelection := !st.FirstChosen && product.Initial && product.Reward.Type == 61 && !purchase.Motion
+		if firstSelection && len(products) != 1 {
+			return nil, fmt.Errorf("avatar: initial selection requires one character")
+		}
+		freeSelection := firstSelection && count == 1 && purchase.Cost == product.Price
+		if freeSelection && price.Count > 0 {
+			balance, err := s.source.AvatarPriceBalance(ctx, price)
+			if err != nil {
+				return nil, err
+			}
+			// The native first-choice callback still subtracts the nominal price,
+			// clamping at zero. Restore that predicted debit in its response only.
+			clientPriceRefund = price
+			clientPriceRefund.Count = min(balance, price.Count)
+		}
+		if price.Count > 0 && !freeSelection {
 			if price.Type == 2 || price.Type == 3 {
 				if price.ID != 0 || price.Count > math.MaxInt32-diamondCost {
 					return nil, fmt.Errorf("avatar: combined diamond price overflow")
@@ -269,7 +286,10 @@ func (s *AvatarService) buy(ctx command.Context, st *avatarState, products []ava
 			owned[key] += r.Count
 			rewards = append(rewards, r)
 		}
-		if product.Initial && product.Reward.Type == 61 {
+		if firstSelection {
+			for _, id := range s.design.InitialUnlockTickets {
+				rewards = append(rewards, gamedata.Reward{Type: 19, ID: id, Count: 1})
+			}
 			st.FirstChosen = true
 		}
 	}
@@ -297,6 +317,14 @@ func (s *AvatarService) buy(ctx command.Context, st *avatarState, products []ava
 	}
 	if err = s.save(ctx, *st); err != nil {
 		return nil, err
+	}
+	if clientPriceRefund.Count != 0 {
+		item := wire.AppendVarint(nil, 3, clientPriceRefund.Type)
+		if clientPriceRefund.ID != 0 {
+			item = wire.AppendVarint(item, 2, clientPriceRefund.ID)
+		}
+		item = wire.AppendVarint(item, 4, clientPriceRefund.Count)
+		bundle = wire.AppendBytes(bundle, 1, item)
 	}
 	return wire.AppendBytes(nil, 1, bundle), nil
 }

@@ -70,7 +70,7 @@ func (t *realtimeTickets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid ticket request", http.StatusBadRequest)
 		return
 	}
-	if request.Channel != room.Matching && request.Channel != room.Action && request.Channel != room.Defense && request.Channel != room.Fishing {
+	if request.Channel != room.Matching && request.Channel != room.Action && request.Channel != room.Defense && request.Channel != room.Fishing && request.Channel != room.Square {
 		http.Error(w, "invalid channel", http.StatusBadRequest)
 		return
 	}
@@ -181,4 +181,8 @@ func (t *realtimeTickets) Consume(ctx context.Context, token, channel, instance 
 
 func (t *realtimeTickets) Validate(ctx context.Context, p room.Principal) error {
 	return t.game.ValidatePrincipal(ctx, session.Principal{AccountID: p.AccountID, SessionID: p.SessionID, Generation: p.Generation})
+}
+
+func (t *realtimeTickets) RecordActivity(p room.Principal) {
+	t.game.RecordActivity(session.Principal{AccountID: p.AccountID, SessionID: p.SessionID, Generation: p.Generation})
 }

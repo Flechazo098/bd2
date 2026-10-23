@@ -14,7 +14,7 @@ func TestRhythmAchievementsRequireCompletedHardAndAllChallengeSongs(t *testing.T
 		testRow(5, 2, 8, 30000, 2, 30000, 1, 30000, 10, 1, 4, 1),
 	}
 	h.design.Tables["RhythmGameCharTable"] = [][]byte{testRow(2, 1)}
-	// GameData 20261012190548 groups 2006/2014 require a HARD clear/all CHALLENGE
+	// GameData 20261021182514 groups 2006/2014 require a HARD clear/all CHALLENGE
 	// songs; groups 2023/2024 require a score of 30000/50000 in any difficulty.
 	design := &gamedata.AchievementCounterDesign{Conditions: map[int]gamedata.AchievementCondition{
 		2006: {Type: 125, SubType: 1}, 2014: {Type: 125, SubType: 2},
@@ -70,7 +70,7 @@ func TestHopscotchAchievementsCountClearsWithoutCountingPartialRunsOrRetries(t *
 	h := newPlayHarness(t)
 	h.design.Tables["HopscotchDefaultTable"] = [][]byte{testRow(4, 80, 9, 300)}
 	h.design.Tables["HopscotchStageTable"] = [][]byte{testRow(6, 1)}
-	// GameData 20261012190548 groups 2025..2028 count clear/full-completion/
+	// GameData 20261021182514 groups 2025..2028 count clear/full-completion/
 	// no-continue clears; a partial run after an earlier clear proves no new clear.
 	design := &gamedata.AchievementCounterDesign{Conditions: map[int]gamedata.AchievementCondition{
 		2025: {Type: 158}, 2026: {Type: 159}, 2027: {Type: 160},

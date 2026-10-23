@@ -14,6 +14,8 @@ import (
 type QuestDesign struct {
 	ID                 int
 	Type               int
+	ConditionType      int
+	ConditionCount     int
 	PriorQuestID       int
 	NextQuestID        int
 	AcceptCinemaName   string
@@ -101,7 +103,7 @@ func loadQuestDesignDB(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gamedata: quest%d give items: %w", id, err)
 		}
-		for field, dst := range map[int]*int{63: &entry.Type, 37: &entry.PriorQuestID, 35: &entry.NextQuestID, 62: &entry.TimelineStartMapID} {
+		for field, dst := range map[int]*int{63: &entry.Type, 11: &entry.ConditionType, 10: &entry.ConditionCount, 37: &entry.PriorQuestID, 35: &entry.NextQuestID, 62: &entry.TimelineStartMapID} {
 			values, err := packedInts(proto, field)
 			if err != nil || len(values) > 1 || (len(values) == 1 && values[0] > uint64(^uint32(0)>>1)) {
 				return nil, fmt.Errorf("gamedata: invalid quest %d field%d", id, field)

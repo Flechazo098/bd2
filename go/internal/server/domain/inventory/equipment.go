@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/common/versionconfig"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -45,7 +46,6 @@ type EquipmentOption struct {
 
 type equipmentSnapshot struct {
 	Version   string            `json:"version"`
-	NextIndex uint64            `json:"next_index"`
 	Equipment []Equipment       `json:"-"`
 	Storage   []Equipment       `json:"-"`
 	Granted   map[string]uint64 `json:"-"`
@@ -71,9 +71,12 @@ type EquipmentInventory struct {
 	wallet             *Wallet
 	inventory          *Inventory
 
-	smeltCache    map[string]smeltingReply
-	pendingReroll *equipmentOptionRerollPending
-	presets       map[equipmentPresetKey]equipmentPreset
+	smeltCache map[string]smeltingReply
+	// missionProgress and missionGrade report actions to mission conditions.
+	missionProgress func(command.Context, conditions.Event) error
+	missionGrade    func(uint64) uint64
+	pendingReroll   *equipmentOptionRerollPending
+	presets         map[equipmentPresetKey]equipmentPreset
 }
 
 type smeltingReply struct {
@@ -177,7 +180,7 @@ func OpenEquipmentInventory(ctx command.Context, store stateio.Store) (*Equipmen
 		return nil, errors.New("player: nil equipment store")
 	}
 	s := &EquipmentInventory{store: entries, smeltCache: make(map[string]smeltingReply), presets: make(map[equipmentPresetKey]equipmentPreset), owned: equipmentSnapshot{
-		Version: versionconfig.State(), NextIndex: 910000001, Granted: map[string]uint64{},
+		Version: versionconfig.State(), Granted: map[string]uint64{},
 	}}
 	data, err := store.Load(ctx.State, "equipment")
 	if err != nil {
@@ -185,7 +188,7 @@ func OpenEquipmentInventory(ctx command.Context, store stateio.Store) (*Equipmen
 	}
 	if data != nil {
 		s.corePresent = true
-		if err := stateio.RequireExactJSONObject(data, "version", "next_index"); err != nil {
+		if err := stateio.RequireExactJSONObject(data, "version"); err != nil {
 			return nil, fmt.Errorf("player: incompatible equipment layout: %w", err)
 		}
 		var shape map[string]json.RawMessage
@@ -203,7 +206,7 @@ func OpenEquipmentInventory(ctx command.Context, store stateio.Store) (*Equipmen
 	} else if err := stateio.RequireNoEntries(entries, ctx.State, "equipment", "equipment", "granted", "reroll_pending", "presets", "storage"); err != nil {
 		return nil, fmt.Errorf("player: invalid equipment storage: %w", err)
 	}
-	if s.owned.Version != versionconfig.State() || s.owned.NextIndex < 910000001 {
+	if s.owned.Version != versionconfig.State() {
 		return nil, errors.New("player: invalid saved equipment")
 	}
 	s.owned.Granted, err = loadUintEntries(ctx, entries, "equipment", "granted")
@@ -321,12 +324,12 @@ func (s *EquipmentInventory) grantLocked(ctx command.Context, identity string, e
 	if len(entry.Rank) != 3 {
 		return Equipment{}, errors.New("player: equipment requires exactly three rank slots")
 	}
-	if s.owned.NextIndex == math.MaxUint64 {
-		return Equipment{}, errors.New("inventory: equipment index exhausted")
+	index, err := ctx.NewInstanceID()
+	if err != nil {
+		return Equipment{}, err
 	}
-	entry.InvenIndex = s.owned.NextIndex
+	entry.InvenIndex = index
 	next := cloneEquipmentSnapshot(s.owned)
-	next.NextIndex++
 	next.Equipment = append(next.Equipment, entry)
 	next.Granted[identity] = entry.InvenIndex
 	if err := s.commitLocked(ctx, next, "grant"); err != nil {
@@ -776,7 +779,7 @@ func validEquipmentMark(raw []byte) bool {
 }
 
 func cloneEquipmentSnapshot(current equipmentSnapshot) equipmentSnapshot {
-	next := equipmentSnapshot{Version: current.Version, NextIndex: current.NextIndex,
+	next := equipmentSnapshot{Version: current.Version,
 		Equipment: append([]Equipment(nil), current.Equipment...), Storage: append([]Equipment(nil), current.Storage...), Granted: make(map[string]uint64, len(current.Granted))}
 	for i := range next.Equipment {
 		next.Equipment[i] = cloneEquipment(next.Equipment[i])
@@ -916,7 +919,7 @@ func (s *EquipmentInventory) persistEquipmentState(ctx command.Context, next equ
 		}
 		changes = append(changes, change)
 	}
-	if s.corePresent && next.Version == s.persisted.Version && next.NextIndex == s.persisted.NextIndex {
+	if s.corePresent && next.Version == s.persisted.Version {
 		data = nil
 	}
 	if err := s.store.SaveWithEntries(ctx.State, "equipment", data, changes); err != nil {

@@ -13,10 +13,11 @@ import (
 	"bd2server/internal/server/protocol/wire"
 )
 
-func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
+func TestFirstAvatarChoiceAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 	// AvatarPacket buys a character and its authored outfit before AvatarSave.
-	// Current GameData: shop 1 costs 1000 type44 and grants char 1 with
-	// hair 10001, outfit 40001, head accessory 20001. Motion 100001 is free.
+	// Current GameData: shop 1's nominal price is 1000 type44 and grants char1
+	// with hair10001, outfit40001, head20001. The server's first-choice policy
+	// waives that price once; later purchases retain the authored prices.
 	factory, accounts := newIntegrationFactory(t)
 	owner, err := factory.open(accounts[0])
 	if err != nil {
@@ -34,7 +35,7 @@ func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := command.Context{State: tx}
+	ctx := command.Context{State: tx, InstanceIDs: g.factory.instanceIDs()}
 	if _, err = g.owner.assembly.eventEconomy.Apply(ctx, "avatar-test-budget", nil, []gamedata.Reward{{Type: 44, Count: 2500}}); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -49,8 +50,8 @@ func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 	product = wire.AppendBytes(product, 2, price)
 	buy := g.request("/AvatarShopBuy", wire.AppendBytes(nil, 2, product))
 	g.execute(buy, false)
-	if got := g.wordCurrency(); got != budget-1000 {
-		t.Fatalf("avatar purchase balance=%d want %d", got, budget-1000)
+	if got := g.wordCurrency(); got != budget {
+		t.Fatalf("first choice changed balance=%d want %d", got, budget)
 	}
 	for _, asset := range [][2]uint64{{61, 1}, {49, 10001}, {49, 20001}, {49, 40001}} {
 		if g.itemCount(asset[0], asset[1]) != 1 {
@@ -58,7 +59,7 @@ func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 		}
 	}
 	g.execute(buy, false)
-	if g.wordCurrency() != budget-1000 || g.itemCount(61, 1) != 1 {
+	if g.wordCurrency() != budget || g.itemCount(61, 1) != 1 {
 		t.Fatal("replayed avatar purchase charged or granted again")
 	}
 	unowned := wire.AppendVarint(nil, 1, 1)
@@ -70,11 +71,11 @@ func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 	use = wire.AppendVarint(use, 5, 40001)
 	g.call("/AvatarSave", wire.AppendBytes(nil, 2, use))
 	g.call("/AvatarMotionShopBuy", wire.AppendVarint(nil, 2, 100001))
-	if g.itemCount(50, 100001) != 1 || g.wordCurrency() != budget-1000 {
+	if g.itemCount(50, 100001) != 1 || g.wordCurrency() != budget {
 		t.Fatal("free motion was not granted without currency consumption")
 	}
 	g.execute(g.request("/AvatarMotionShopBuy", wire.AppendVarint(nil, 2, 100001)), true)
-	if g.itemCount(50, 100001) != 1 || g.wordCurrency() != budget-1000 {
+	if g.itemCount(50, 100001) != 1 || g.wordCurrency() != budget {
 		t.Fatal("repeated free motion changed ownership or charged currency")
 	}
 	wishlist := wire.AppendVarint(nil, 2, 40015)
@@ -150,7 +151,7 @@ func TestPurchasedAvatarAndPartsBecomePersistentProfileEquipment(t *testing.T) {
 	if len(decodeWishlist(list)) != 0 {
 		t.Fatal("wishlist removal did not clear the persisted list")
 	}
-	if g.wordCurrency() != budget-1000 || g.itemCount(61, 1) != 1 || g.itemCount(50, 100001) != 1 {
+	if g.wordCurrency() != budget || g.itemCount(61, 1) != 1 || g.itemCount(50, 100001) != 1 {
 		t.Fatal("reopening or profile queries changed purchased assets")
 	}
 }
@@ -211,7 +212,7 @@ func TestAvatarDiamondPurchaseAndInvalidEquipmentBatchRemainAtomic(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = g.owner.assembly.eventEconomy.Apply(command.Context{State: tx}, "avatar-batch-and-collab-budget", nil, []gamedata.Reward{{Type: 44, Count: 2000}, {Type: 61, ID: 18, Count: 1}, {Type: 49, ID: 40015, Count: 1}}); err != nil {
+	if _, err = g.owner.assembly.eventEconomy.Apply(command.Context{State: tx, InstanceIDs: g.factory.instanceIDs()}, "avatar-batch-and-collab-budget", nil, []gamedata.Reward{{Type: 44, Count: 2000}, {Type: 61, ID: 18, Count: 1}, {Type: 49, ID: 40015, Count: 1}}); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

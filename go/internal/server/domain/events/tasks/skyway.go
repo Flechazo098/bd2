@@ -2,6 +2,7 @@ package eventtasks
 
 import (
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"slices"
 )
 
@@ -12,7 +13,7 @@ func (s *Service) RecordSkyWayClear(ctx command.Context, positionGroup, difficul
 			continue
 		}
 		for _, task := range s.design.Missions {
-			if task.Type != 24 || task.SubType != positionGroup || !slices.Contains(task.Params, difficulty) || !s.availableTask(ctx, schedule, task) {
+			if task.Type != conditions.SkywayPositionGroupClear || task.SubType != positionGroup || !slices.Contains(task.Params, difficulty) || !s.availableTask(ctx, schedule, task) {
 				continue
 			}
 			previous := s.state.Missions[scheduleKey(schedule)+"/"+key(task.ID)]

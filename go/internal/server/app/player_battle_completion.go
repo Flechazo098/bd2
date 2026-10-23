@@ -9,6 +9,9 @@ import (
 )
 
 func (p *playerAssembly) prepareBattle(ctx command.Context, result battle.Completion) error {
+	if err := p.recordBattleStart(ctx, result); err != nil {
+		return err
+	}
 	if len(result.Deck) == 0 {
 		return nil
 	}
@@ -22,6 +25,9 @@ func (p *playerAssembly) prepareBattle(ctx command.Context, result battle.Comple
 }
 
 func (p *playerAssembly) completeBattle(ctx command.Context, result battle.Completion) ([]byte, error) {
+	if err := p.recordBattleEnd(ctx, result); err != nil {
+		return nil, err
+	}
 	partners, err := p.rosterProgressService.ApplyBattlePartners(ctx, result.Identity, result.Participants, result.Win)
 	if err != nil {
 		return nil, err
@@ -34,6 +40,9 @@ func (p *playerAssembly) completeBattle(ctx command.Context, result battle.Compl
 }
 
 func (p *playerAssembly) completePVP(ctx command.Context, mode pvp.Mode, identity string, win bool, enteredDeck [][]byte) ([]byte, error) {
+	if err := p.recordPVPEnd(ctx, mode, win); err != nil {
+		return nil, err
+	}
 	if mode != pvp.Mirror {
 		return nil, nil
 	}

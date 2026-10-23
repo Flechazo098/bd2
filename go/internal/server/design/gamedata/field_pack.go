@@ -9,9 +9,12 @@ import (
 // enum; IDs and entry restrictions come from the installed GameData tables.
 type FieldPack struct {
 	ID, Type, BuyPrice, UseSchedule uint64
+	BuyType                         uint64
+	BuyRewards                      []Reward
 	TicketID, SquadLevel            uint64
 	HasOpenRule                     bool
 	MapIDs                          map[int]bool
+	IntroQuest                      *QuestDesign
 }
 
 func LoadFieldPacks(root, version string) (map[int]FieldPack, error) {
@@ -22,6 +25,11 @@ func LoadFieldPacks(root, version string) (map[int]FieldPack, error) {
 	defer closeDB()
 	return loadFieldPacks(db)
 }
+
+// fieldPackTypes are the Define_PackType values served as field packs: 1 Char,
+// 3 PVP, 4 EvilCastle, 5 SkyWay, 6 Event, 7 TotalWar, 8 GuildRaid, 9 Cafeteria, 10 Colosseum,
+// 11 Square, 12 Fishing, 13 Life, 14 Ib.
+var fieldPackTypes = map[uint64]bool{1: true, 3: true, 4: true, 5: true, 6: true, 7: true, 8: true, 9: true, 10: true, 11: true, 12: true, 13: true, 14: true}
 
 func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 	result := map[int]FieldPack{}
@@ -37,7 +45,7 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 			return nil, err
 		}
 		values := map[int]uint64{}
-		for _, field := range []int{7, 25, 55, 65} {
+		for _, field := range []int{7, 11, 25, 55, 65} {
 			v, e := packedInts(raw, field)
 			if e != nil || len(v) > 1 {
 				_ = rows.Close()
@@ -47,14 +55,23 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 				values[field] = v[0]
 			}
 		}
-		if values[55] != 3 && values[55] != 4 && values[55] != 5 && values[55] != 7 && values[55] != 10 {
+		if !fieldPackTypes[values[55]] {
 			continue
 		}
 		if id <= 0 || values[25] != uint64(id) {
 			_ = rows.Close()
 			return nil, fmt.Errorf("gamedata: invalid field pack identity %d", id)
 		}
-		result[id] = FieldPack{ID: uint64(id), Type: values[55], BuyPrice: values[7], UseSchedule: values[65], MapIDs: map[int]bool{}}
+		pack := FieldPack{ID: uint64(id), Type: values[55], BuyPrice: values[7], BuyType: values[11], UseSchedule: values[65], MapIDs: map[int]bool{}}
+		rewards, err := eventGameRewards(raw, 10, 9, 8)
+		if err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		for _, reward := range rewards {
+			pack.BuyRewards = append(pack.BuyRewards, Reward(reward))
+		}
+		result[id] = pack
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -123,6 +140,41 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		if len(pack.MapIDs) == 0 {
 			return nil, fmt.Errorf("gamedata: arena pack %d has no map", id)
 		}
+		intro, err := loadFieldIntroduction(db, id)
+		if err != nil {
+			return nil, err
+		}
+		pack.IntroQuest = intro
+		result[id] = pack
 	}
 	return result, nil
+}
+
+// Standalone field introductions have one accept movie and no quest chain,
+// completion movie or rewards. Ordinary field quest chains retain their own
+// acceptance and settlement rules, even when their first quest has a movie.
+func loadFieldIntroduction(db *sql.DB, packID int) (*QuestDesign, error) {
+	var exists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", fmt.Sprintf("QuestTable%d", packID)).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	quests, err := loadQuestDesignDB(db, packID)
+	if err != nil || len(quests) != 1 {
+		return nil, err
+	}
+	for _, quest := range quests {
+		if quest.Type != 0 || quest.PriorQuestID != 0 || quest.NextQuestID != 0 || quest.AcceptCinemaName == "" || quest.CompleteCinemaName != "" || len(quest.GiveQuestItemIDs) != 0 || len(quest.CollectionRewards) != 0 {
+			return nil, nil
+		}
+		for _, rewards := range quest.Rewards {
+			if len(rewards) != 0 {
+				return nil, nil
+			}
+		}
+		return &quest, nil
+	}
+	return nil, nil
 }

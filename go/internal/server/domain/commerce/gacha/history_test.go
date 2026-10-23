@@ -11,6 +11,7 @@ import (
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/protocol/wire"
 	accountstate "bd2server/internal/server/storage/account"
+	"bd2server/internal/server/storage/instanceid"
 	"bd2server/internal/server/storage/stateio"
 )
 
@@ -68,7 +69,7 @@ func (a *historyAccount) call(t *testing.T, path string, raw []byte) ([]byte, er
 		t.Fatal(e)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{Identity: command.Identity{AccountID: a.name, SessionID: "draw-session"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: a.name, SessionID: "draw-session"}, State: tx, InstanceIDs: instanceid.New(filepath.Join(filepath.Dir(a.path), "instance-ids.db"))}
 	collection, e := roster.OpenCollectionStore(ctx, stateio.RootStore{}, nil)
 	if e != nil {
 		t.Fatal(e)

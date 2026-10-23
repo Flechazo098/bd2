@@ -42,6 +42,8 @@ func startPacket(seq, turn, hp, sp uint64, blue bool) ([]byte, []byte) {
 	checkpoint = wire.AppendVarint(checkpoint, 10, 13)
 	checkpoint = wire.AppendVarint(checkpoint, 28, turn+20)
 	checkpoint = wire.AppendBytes(checkpoint, 29, wire.AppendVarint(nil, 1, turn+700))
+	checkpoint = wire.AppendVarint(checkpoint, 35, turn+30)
+	checkpoint = wire.AppendVarint(checkpoint, 36, boolNumber(turn == 1))
 	checkpoint = wire.AppendVarint(checkpoint, 101, boolNumber(blue))
 	req := wire.AppendVarint(packet(seq), 2, 80)
 	deck := wire.AppendVarint(nil, 1, 9001)
@@ -85,7 +87,7 @@ func TestCheckpointReopenResumesAndRetriesPreviousBlueTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(one(body, 1)) != base64.StdEncoding.EncodeToString(first) || value(body, 2) != 5 || value(body, 9) != 21 || value(one(body, 10), 1) != 701 || value(body, 7) != 0 {
+	if string(one(body, 1)) != base64.StdEncoding.EncodeToString(first) || value(body, 2) != 5 || value(body, 9) != 21 || value(one(body, 10), 1) != 701 || value(body, 7) != 0 || value(body, 15) != 31 || value(body, 16) != 1 {
 		t.Fatalf("retry did not restore previous BLUE boundary: %x", body)
 	}
 	play(t, s, ctx, 3, 1, 100, 5, true)

@@ -7,6 +7,7 @@ import (
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/protocol/wire"
 	accountstate "bd2server/internal/server/storage/account"
+	"bd2server/internal/server/storage/instanceid"
 	"bd2server/internal/server/storage/stateio"
 	"bytes"
 	"context"
@@ -139,7 +140,7 @@ func (f *totalWarFixture) command(t *testing.T, run func(command.Context, totalW
 	if e != nil {
 		t.Fatal(e)
 	}
-	ctx := command.Context{Identity: command.Identity{AccountID: "total-war-account", SessionID: "login"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: "total-war-account", SessionID: "login"}, State: tx, InstanceIDs: instanceid.New(filepath.Join(filepath.Dir(f.path), "instance-ids.db"))}
 	rt := f.open(t, ctx)
 	e = run(ctx, rt)
 	if wantError {

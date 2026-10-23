@@ -15,7 +15,7 @@ import (
 	"bd2server/internal/server/protocol/wire"
 )
 
-// Current 20261012190548 GameData binds Greed floor 1 to pack3003 deck10001.
+// GameData 20261021182514 binds Greed floor 1 to pack3003 deck10001.
 // Its win/no-death/8-turn challenges award material1000 x1, gold30000 and
 // bonus hunting AP5. These expectations come from the read-only GameData query,
 // independently of the castle loader and the runtime reward response.

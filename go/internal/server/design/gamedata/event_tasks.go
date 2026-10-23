@@ -17,9 +17,9 @@ type EventMissionGroup struct {
 	Groups                                        []uint64
 }
 type EventTask struct {
-	ID, Group, Type, SubType, Target, PassExp, UnlockPack, UnlockQuest uint64
-	Params                                                             []uint64
-	Rewards                                                            []Reward
+	ID, Group, Type, SubType, SubTypeMoreCheck, Target, PassExp, UnlockPack, UnlockQuest uint64
+	Params                                                                               []uint64
+	Rewards                                                                              []Reward
 }
 type EventPass struct {
 	ID, MissionGroup, LevelGroup, Type, ScheduleType, NewbieGroup, NewbieStep uint64
@@ -153,7 +153,7 @@ func loadEventTasksDesign(db *sql.DB) (*EventTasksDesign, error) {
 			return nil
 		}
 		r := EventTask{}
-		if e = read(p, map[int]*uint64{8: &r.ID, 6: &r.Group, 3: &r.Type, 1: &r.SubType, 4: &r.Target, 12: &r.PassExp, 19: &r.UnlockPack, 20: &r.UnlockQuest}); e != nil {
+		if e = read(p, map[int]*uint64{8: &r.ID, 6: &r.Group, 3: &r.Type, 1: &r.SubType, 9: &r.SubTypeMoreCheck, 4: &r.Target, 12: &r.PassExp, 19: &r.UnlockPack, 20: &r.UnlockQuest}); e != nil {
 			return e
 		}
 		r.Params, e = packedInts(p, 2)

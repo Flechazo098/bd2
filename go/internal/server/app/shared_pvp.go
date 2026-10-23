@@ -47,6 +47,11 @@ func (s *sharedRuntime) consumePVP(ctx context.Context, event outbox.Pending) er
 			if e := json.Unmarshal(event.Envelope.Event.Payload, &battle); e != nil {
 				return e
 			}
+			if battle.Mode == pvp.Colosseum {
+				return s.store.Consume(ctx, event, func(tx *shared.Tx, envelope outbox.Envelope) error {
+					return s.applyColosseumPopularity(tx, battle)
+				})
+			}
 			if battle.Mode != pvp.Mirror {
 				return nil
 			}

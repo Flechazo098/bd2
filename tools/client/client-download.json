@@ -1,7 +1,7 @@
 {
-  "game_version": "2.36.7",
-  "game_data_version": "20261012190548",
-  "bundle_version": "20261007175947",
+  "game_version": "2.37.13",
+  "game_data_version": "20261021182514",
+  "bundle_version": "20261022174708",
   "platform": "StandaloneWindows64",
   "server_origin": "https://bd2-test.45.76.195.129.sslip.io",
   "build_origins": [
@@ -13,12 +13,12 @@
     "https://cdn.bd2.pmang.cloud",
     "https://bd2-cdn.akamaized.net"
   ],
-  "game_path": "/Build/Windows/20261002/StandaloneWindows64.2.36.7.zip",
-  "game_sha256": "3ca28b7c94d65b2cb4e33784d843902758415a3a83870c5f6198f5cd90e3bff3",
-  "game_bytes": 413552979,
-  "data_sha256": "0f28881e08029a1a53f86d5b113ba80b70b6d904bec35175b54ecfe90c2b6715",
-  "data_bytes": 191790996,
-  "catalog_sha256": "c9ed216c66903bfa1e556f38cc02e2923a48164e8469767d7987f7989d86d385",
-  "catalog_bytes": 67338179,
-  "catalog_hash": "0f90a94601be05737f86a4ec7a1c889f"
+  "game_path": "/Build/Windows/20261023/StandaloneWindows64.2.37.13.zip",
+  "game_sha256": "8f65954eb323fcffb1c29be13205d373d4f8fba3354e2e8d431d263bb2a6ca56",
+  "game_bytes": 413694732,
+  "data_sha256": "f3313a066dd2637678f728136d448adfd413259ae7129a79e109e7332b61a57d",
+  "data_bytes": 194804246,
+  "catalog_sha256": "3e19c645e28b90d3601cd0ed7413dc516399ba2b658e0fa509686527048407b8",
+  "catalog_bytes": 67513445,
+  "catalog_hash": "ae57bde3e9e5cf6ac57f9b0c0ea39b2f"
 }

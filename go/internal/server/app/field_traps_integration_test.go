@@ -123,7 +123,7 @@ func (s *trapPlayerScenario) run(t *testing.T, commit bool, action func(command.
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "trap-client"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "trap-client"}, State: tx, InstanceIDs: s.factory.instanceIDs()}
 	action(ctx, s.owner.assembly)
 	problems, err := tx.Validate()
 	if err != nil || len(problems) != 0 {

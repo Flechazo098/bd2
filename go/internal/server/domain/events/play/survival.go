@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/common/util"
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"crypto/sha256"
 	"encoding/binary"
@@ -548,10 +549,14 @@ func (s *Service) survivalSkillUp(ctx command.Context, req []byte, a *Run, st *s
 	s.collectSurvival(st, *a, 0, id)
 	s.collectSurvival(st, *a, 1, id)
 	if a.SkillLevels[id] == num(group, 2) && s.onProgress != nil {
-		if err := s.onProgress(ctx, 318, a.Game, 1); err != nil {
+		maxed, err := s.maxedSurvivalSkills(*a)
+		if err != nil {
 			return nil, err
 		}
-		if err := s.onProgress(ctx, 321, id, 1); err != nil {
+		if err := s.onProgress(ctx, conditions.Event{Type: conditions.MiniGameSurvivalSkillMaxCount, Sub: maxed, Count: 1}); err != nil {
+			return nil, err
+		}
+		if err := s.onProgress(ctx, conditions.Event{Type: conditions.MiniGameSurvivalSkillMax, Sub: id, Count: 1}); err != nil {
 			return nil, err
 		}
 	}
@@ -642,4 +647,20 @@ func (s *Service) survivalFallback(a *Run, group []byte) ([]byte, error) {
 	}
 	a.HP += heal
 	return wire.AppendVarint(nil, 3, heal), nil
+}
+
+// maxedSurvivalSkills counts the skills of one run at their configured
+// FieldMiniGameSkillGroupTable maximum level.
+func (s *Service) maxedSurvivalSkills(a Run) (uint64, error) {
+	var maxed uint64
+	for id, level := range a.SkillLevels {
+		group, err := s.design.Row("FieldMiniGameSkillGroupTable", 1, id)
+		if err != nil {
+			return 0, err
+		}
+		if level >= num(group, 2) {
+			maxed++
+		}
+	}
+	return maxed, nil
 }

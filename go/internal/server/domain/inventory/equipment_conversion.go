@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"errors"
 	"fmt"
@@ -138,6 +139,9 @@ func (s *EquipmentInventory) fromMakingOrUpgrade(ctx command.Context, path strin
 			return 0, nil, true, err
 		}
 		index = created[0].InvenIndex
+		if err := s.recordMade(ctx, created); err != nil {
+			return 0, nil, true, err
+		}
 		if experience != 0 {
 			if _, err := s.characters.AddEquipmentTalentExperience(ctx, character, experience, maximum); err != nil {
 				return 0, nil, true, err
@@ -159,6 +163,9 @@ func (s *EquipmentInventory) fromMakingOrUpgrade(ctx command.Context, path strin
 		at := s.equipmentPositionLocked(index)
 		next.Equipment = slices.Delete(next.Equipment, at, at+1)
 		if err := s.commitLocked(ctx, next, "conversion break"); err != nil {
+			return 0, nil, true, err
+		}
+		if err := s.recordMission(ctx, conditions.BreakEquipmentItem, 1); err != nil {
 			return 0, nil, true, err
 		}
 		identity := fmt.Sprintf("equipment-conversion-break:%s:%s:%s:%d", ctx.SessionID, ctx.RequestID, path, seq)

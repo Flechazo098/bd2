@@ -150,6 +150,28 @@ func (s *Wallet) SpendJewelryOnce(ctx command.Context, identity string, amount u
 	return s.spendJewelryOnce(ctx, identity, amount, true)
 }
 
+func (s *Wallet) SpendTotalJewelryOnce(ctx command.Context, identity string, amount uint64) (Currency, error) {
+	if identity == "" || amount == 0 {
+		return Currency{}, errors.New("player: invalid wallet spend")
+	}
+	if s.state.Spent[identity] {
+		return s.state.Currency, nil
+	}
+	next := cloneWallet(s.state)
+	free := min(next.FreeJewelry, amount)
+	paid := amount - free
+	if next.Jewelry < paid {
+		return Currency{}, errors.New("player: insufficient jewelry")
+	}
+	next.FreeJewelry -= free
+	next.Jewelry -= paid
+	next.Spent[identity] = true
+	if err := s.commit(ctx, next, entry("spent", identity, []byte("true"))...); err != nil {
+		return Currency{}, err
+	}
+	return next.Currency, nil
+}
+
 func (s *Wallet) spendJewelryOnce(ctx command.Context, identity string, amount uint64, paid bool) (Currency, error) {
 	if identity == "" || amount == 0 {
 		return Currency{}, errors.New("player: invalid wallet spend")

@@ -32,7 +32,22 @@ func memberBests(tx Tx, guild, season uint64) ([]MemberBest, error) {
 	}
 	return out, nil
 }
-func standingRows(tx Tx, season uint64) ([]GuildStanding, error) {
+func sortMembers(members []MemberBest) {
+	sort.Slice(members, func(i, j int) bool {
+		a, b := members[i], members[j]
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Overkill != b.Overkill {
+			return a.Overkill > b.Overkill
+		}
+		return a.OwnerIndex < b.OwnerIndex
+	})
+}
+
+// standingRows ranks guilds by score; LocalText 2001674/30061021 break ties by
+// the overkill sum of the guild's overkillMembers highest-scoring members.
+func standingRows(tx Tx, season, overkillMembers uint64) ([]GuildStanding, error) {
 	var rows []GuildStanding
 	for after := ""; ; {
 		page, e := tx.Scan(seasonGuildBucket, numberKey(season)+":", after, 256)
@@ -64,10 +79,10 @@ func standingRows(tx Tx, season uint64) ([]GuildStanding, error) {
 			if e != nil {
 				return nil, e
 			}
-			sort.Slice(members, func(i, j int) bool { return members[i].Overkill > members[j].Overkill })
+			sortMembers(members)
 			overkill := uint64(0)
 			for i, m := range members {
-				if i >= 3 {
+				if uint64(i) >= overkillMembers {
 					break
 				}
 				if overkill > math.MaxUint64-m.Overkill {
@@ -117,7 +132,7 @@ func (o *Owner) Standings(ctx context.Context, season uint64) ([]GuildStanding, 
 		if e != nil || found {
 			return e
 		}
-		out, e = standingRows(tx, season)
+		out, e = standingRows(tx, season, o.design.Raid.OverkillMemberCount)
 		return e
 	})
 	return out, e
@@ -156,16 +171,7 @@ func (o *Owner) StatueRanking(ctx context.Context) (uint64, []GuildStanding, err
 func (o *Owner) MemberStandings(ctx context.Context, guild, season uint64) ([]MemberBest, error) {
 	var out []MemberBest
 	e := o.store.View(ctx, func(tx Tx) error { var e error; out, e = memberBests(tx, guild, season); return e })
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.Score != b.Score {
-			return a.Score > b.Score
-		}
-		if a.Overkill != b.Overkill {
-			return a.Overkill > b.Overkill
-		}
-		return a.OwnerIndex < b.OwnerIndex
-	})
+	sortMembers(out)
 	return out, e
 }
 func (o *Owner) Entitlements(ctx context.Context, account string) ([]Entitlement, error) {
@@ -213,7 +219,7 @@ func (o *Owner) FinalizeSeason(ctx context.Context, season uint64, at int64) err
 		if found, e := load(tx, boardBucket, numberKey(season), &prior); e != nil || found {
 			return e
 		}
-		rows, e := standingRows(tx, season)
+		rows, e := standingRows(tx, season, o.design.Raid.OverkillMemberCount)
 		if e != nil {
 			return e
 		}

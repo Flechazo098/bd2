@@ -90,6 +90,17 @@ func (s *Service) LastClear(group uint64) uint64 {
 	}
 	return 0
 }
+
+// ClearedEpisodeGroups counts the dating groups with a cleared episode.
+func (s *Service) ClearedEpisodeGroups() uint64 {
+	var count uint64
+	for _, p := range s.state.Episodes {
+		if p.Clear > 0 {
+			count++
+		}
+	}
+	return count
+}
 func (s *Service) day() string {
 	return s.now().UTC().Add(time.Duration(9*3600-s.resetSeconds) * time.Second).Format("2006-01-02")
 }
@@ -248,7 +259,14 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, identity st
 		}
 		text := val(b, 4)
 		if r.V(5) == 1 && r.V(9) == 1 {
-			if text == 0 || (text != r.V(3) && text != r.V(4)) {
+			// The client acknowledges a message with one text option using text
+			// id zero: its answer button reports zero when either option is
+			// empty (DatingChatOwnSelectAnswer.isSingleSelectOption).
+			if r.V(3) == 0 || r.V(4) == 0 {
+				if text != 0 {
+					return nil, errors.New("dating: invalid answer")
+				}
+			} else if text == 0 || (text != r.V(3) && text != r.V(4)) {
 				return nil, errors.New("dating: invalid answer")
 			}
 		} else if text != 0 {

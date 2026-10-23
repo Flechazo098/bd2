@@ -2,6 +2,7 @@ package fishing
 
 import (
 	"bd2server/internal/common/util"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -91,6 +92,19 @@ type Service struct {
 	now           func() time.Time
 	sample        func(uint64) (uint64, error)
 	publicProfile PublicProfileLookup
+	progress      func(command.Context, conditions.Event) error
+}
+
+// AttachProgress reports fishing actions to mission conditions.
+func (s *Service) AttachProgress(record func(command.Context, conditions.Event) error) {
+	s.progress = record
+}
+
+func (s *Service) recordProgress(ctx command.Context, event conditions.Event) error {
+	if s.progress == nil {
+		return nil
+	}
+	return s.progress(ctx, event)
 }
 
 func (s *Service) NativeRuns() []eventplay.NativeRun {
@@ -494,6 +508,16 @@ func (s *Service) apply(ctx command.Context, path string, req []byte, n *snapsho
 				return nil, err
 			}
 		}
+		if s.progress != nil {
+			// McFishingVoyageStart names the FishingMapTable group (region).
+			mapRow, err := s.design.Row("FishingMapTable", 1, mapID)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.progress(ctx, conditions.Event{Type: conditions.FishingVoyageStart, Sub: num(mapRow, 2), Count: 1}); err != nil {
+				return nil, err
+			}
+		}
 		n.Map = mapID
 		n.VoyageStarted = now
 		n.Cast = 0
@@ -519,6 +543,9 @@ func (s *Service) apply(ctx command.Context, path string, req []byte, n *snapsho
 					}
 					n.MultiAP--
 					out = wire.AppendVarint(nil, 1, 1)
+				}
+				if err := s.recordProgress(ctx, conditions.Event{Type: conditions.FishingMultiParticipation, Count: 1}); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -607,6 +634,11 @@ func (s *Service) apply(ctx command.Context, path string, req []byte, n *snapsho
 			c.Max = it.Size
 		}
 		n.Collection[it.ID] = c
+		if path == "/FishingBiteEnd" {
+			if err := s.recordProgress(ctx, conditions.Event{Type: conditions.FishingFishBiteEnd, Sub: it.ID, Count: 1}); err != nil {
+				return nil, err
+			}
+		}
 		fish, err := s.design.Row("FishingFishTable", 12, it.ID)
 		if err != nil {
 			return nil, err

@@ -2,38 +2,122 @@ package world
 
 import (
 	"errors"
+	"slices"
 
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/world/progress"
+	"bd2server/internal/server/protocol/wire"
 )
 
-// LastPlayedPackID prevents LoginUser from selecting a field that this server
-// cannot restore. A fresh account keeps the versioned login seed's pack.
+type FieldPackEconomy interface {
+	Apply(command.Context, string, []gamedata.Reward, []gamedata.Reward) ([]byte, error)
+}
+
+func (s *Service) AttachFieldPackEconomy(economy FieldPackEconomy) {
+	s.fieldPackEconomy = economy
+}
+
+func (s *Service) fieldPackDBInfo(pack gamedata.FieldPack) []byte {
+	row := wire.AppendVarint(nil, 1, pack.ID)
+	if s.collection != nil {
+		if _, purchased := s.collection.Grant(packPurchaseIdentity(int(pack.ID))); purchased {
+			row = wire.AppendVarint(row, 8, 1)
+		}
+	}
+	return row
+}
+
+// LastPlayedPackID returns the pack LoginUser should restore. ActivePackID
+// records the last selected content, but only a saved position proves that the
+// scene can be restored; an arena entered without save can therefore fall back
+// to the field that owns the position. Login falls back to the entry chapter
+// instead of failing when no selected pack can restore the saved scene.
 func (s *Service) LastPlayedPackID(ctx command.Context) (uint64, error) {
 	id := uint64(s.state.ActivePackID())
 	if id == 0 {
-		var err error
-		id, err = s.state.LastPlayedPackID(ctx)
-		if err != nil {
-			return id, err
+		if saved, found := s.state.Position(); found && saved.PackID > 0 {
+			id = uint64(saved.PackID)
 		}
 	}
 	if id == 0 {
 		id = uint64(s.startingPack())
 	}
-	if !s.packUnlocked(ctx, int(id)) {
-		return 0, errors.New("world: saved login pack is unavailable")
+	if s.packResumable(ctx, int(id)) {
+		return id, nil
 	}
-	if pack, field := s.fieldPacks[int(id)]; field {
+	if saved, found := s.state.Position(); found && saved.PackID > 0 && uint64(saved.PackID) != id && s.packResumable(ctx, saved.PackID) {
+		return uint64(saved.PackID), nil
+	}
+	if start := s.startingPack(); start > 0 && uint64(start) != id && s.packResumable(ctx, start) {
+		return uint64(start), nil
+	}
+	return 0, errors.New("world: saved login pack is unavailable")
+}
+
+// packResumable reports whether login can restore this pack. A field pack
+// other than a hunting ground needs a saved position of its own because the
+// scene cannot be reconstructed otherwise.
+func (s *Service) packResumable(ctx command.Context, id int) bool {
+	if id <= 0 || !s.packUnlocked(ctx, id) {
+		return false
+	}
+	if s.storyCatalog != nil {
+		if _, story := s.storyCatalog.Packs[id]; story {
+			return true
+		}
+	}
+	if pack, field := s.fieldPacks[id]; field {
 		if pack.Type == 5 {
-			return id, nil
+			return true
 		}
-		saved, _ := s.state.Position()
-		if !pack.MapIDs[saved.Position.MapID] {
-			return 0, errors.New("world: saved arena map does not belong to pack")
+		saved, found := s.state.Position()
+		return found && fieldPackAcceptsMap(pack, saved)
+	}
+	return true
+}
+
+// fieldPackAcceptsMap reports whether a saved position belongs to the pack.
+func fieldPackAcceptsMap(pack gamedata.FieldPack, saved progress.SavedPosition) bool {
+	return saved.PackID == int(pack.ID) && pack.MapIDs[saved.Position.MapID]
+}
+
+// ClaimOpenFieldPacks completes the free purchase of field content packs once
+// their ContentOpen rule is satisfied. The client cannot buy a pack it does not
+// list yet, so without this the pack card stays locked after the main quests
+// that grant its ticket. The cafeteria card opens through its introduction.
+func (s *Service) ClaimOpenFieldPacks(ctx command.Context) error {
+	if s.collection == nil {
+		return nil
+	}
+	ids := make([]int, 0, len(s.fieldPacks))
+	for id := range s.fieldPacks {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		pack := s.fieldPacks[id]
+		if pack.BuyPrice != 0 || pack.Type == 9 {
+			continue
+		}
+		if s.packPurchased(id) {
+			continue
+		}
+		definition, err := s.resolvePack(ctx, id)
+		if err != nil {
+			return err
+		}
+		if definition.kind != fieldCard || !s.packRequirementsMet(ctx, definition) {
+			continue
+		}
+		if pack.Type == 5 && s.skyway == nil || pack.Type != 5 && s.fieldPackEconomy == nil {
+			continue
+		}
+		if _, err := s.purchaseResolvedPack(ctx, definition, false); err != nil {
+			return err
 		}
 	}
-	return id, nil
+	return nil
 }
 
 func (s *Service) AttachSquadLevel(ctx command.Context, provider func() (uint64, error)) error {
@@ -44,15 +128,16 @@ func (s *Service) AttachSquadLevel(ctx command.Context, provider func() (uint64,
 	return nil
 }
 
-func (s *Service) fieldPackUnlocked(ctx command.Context, pack gamedata.FieldPack) bool {
+func (s *Service) fieldPackRequirementsMet(ctx command.Context, pack gamedata.FieldPack) bool {
+	// A static scheduled card needs authorization from the active calendar.
+	// A saved position must never reopen a card after that calendar expires.
+	if pack.UseSchedule != 0 {
+		return false
+	}
 	// A valid committed field position is the existing account's entry marker.
 	// Restoration does not repeat a purchase or an unlock check.
 	if saved, found := s.state.Position(); found && saved.PackID == int(pack.ID) && pack.MapIDs[saved.Position.MapID] {
 		return true
-	}
-	// Scheduled arena availability needs its own persisted event domain.
-	if pack.UseSchedule != 0 {
-		return false
 	}
 	if pack.SquadLevel != 0 {
 		if s.squadLevel == nil {
@@ -77,11 +162,6 @@ func (s *Service) fieldPackUnlocked(ctx command.Context, pack gamedata.FieldPack
 		if !found {
 			return false
 		}
-	}
-	// Paid packs require a durable purchase marker. An existing saved position
-	// proves this account already entered it; this does not implement purchase.
-	if pack.BuyPrice != 0 {
-		return false
 	}
 	return true
 }

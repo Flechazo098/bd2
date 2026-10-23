@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
 
@@ -70,7 +71,7 @@ func supporterRelation(tx Tx, a, b uint64) (bool, error) {
 	return rel.Accepted, err
 }
 
-func supporterDeck(tx Tx, p FriendProfile, borrower uint64, day string, content uint64) ([]byte, error) {
+func (f *Friends) supporterDeck(tx Tx, p FriendProfile, borrower uint64, day string, content uint64) ([]byte, error) {
 	friends, err := supporterRelation(tx, borrower, p.OwnerIndex)
 	if err != nil {
 		return nil, err
@@ -87,7 +88,7 @@ func supporterDeck(tx Tx, p FriendProfile, borrower uint64, day string, content 
 	if friends {
 		out = wire.AppendVarint(out, 6, 1)
 	}
-	base, err := friendWire(tx, p, 0)
+	base, err := f.friendWire(tx, p, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +210,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 		if err != nil {
 			return nil, err
 		}
-		allowed := (content == 0 || content == 1 || content == 5 || content == 6 || content == 1000) && (mode >= 1 && mode <= 5 || mode >= 9 && mode <= 15 || mode == 17)
+		allowed := (content == 0 || content == 1 || content == 5 || content == 6 || content == 1000) && (mode <= 5 || mode >= 9 && mode <= 15 || mode == 17)
 		selection := supporterSelection{Content: content, Allowed: allowed}
 		if err := save(tx, "friend.supporter_selection", accountPrefix(self.AccountID)+session, selection); err != nil {
 			return nil, err
@@ -248,7 +249,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 					field = 2
 					count++
 				}
-				deck, err := supporterDeck(tx, v, self.OwnerIndex, day, content)
+				deck, err := f.supporterDeck(tx, v, self.OwnerIndex, day, content)
 				if err != nil {
 					return nil, err
 				}
@@ -263,7 +264,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 		return nil, err
 	}
 	if !found || !selection.Allowed || selection.Content != content {
-		return nil, friendError(437, 9003, "Supporter selection is unavailable for this content")
+		return nil, friendError(437, 1, fmt.Sprintf("Supporter selection is unavailable: owner=%d content=%d selected_content=%d found=%t allowed=%t", self.OwnerIndex, content, selection.Content, found, selection.Allowed))
 	}
 	lender, err := p.integer(2)
 	if err != nil || lender == 0 || lender == self.OwnerIndex {
@@ -279,11 +280,11 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 		return nil, err
 	}
 	if !found {
-		return nil, friendError(437, 9003, "Player not found")
+		return nil, friendError(437, 2, fmt.Sprintf("Supporter owner not found: lender=%d", lender))
 	}
 	row, found, err := wire.Bytes(other.SupporterDetails[slot], 1)
 	if err != nil || !found {
-		return nil, friendError(437, 9003, "Supporter slot is unavailable")
+		return nil, friendError(437, 1, fmt.Sprintf("Supporter slot is unavailable: lender=%d slot=%d", lender, slot))
 	}
 	bundle, found, err := wire.Bytes(row, 6)
 	if err != nil || !found {
@@ -309,7 +310,11 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 		return nil, err
 	}
 	if count >= limit {
-		return nil, friendError(437, 9003, "Daily supporter uses exhausted")
+		code := 5
+		if friends {
+			code = 3
+		}
+		return nil, friendError(437, code, fmt.Sprintf("Daily supporter uses exhausted: borrower=%d lender=%d content=%d used=%d limit=%d friend=%t", self.OwnerIndex, lender, content, count, limit, friends))
 	}
 	if err := save(tx, "friend.supporter_uses", useKey, count+1); err != nil {
 		return nil, err
@@ -355,7 +360,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 	if err := addGameplayCount(tx, self.OwnerIndex, 1, 0); err != nil {
 		return nil, err
 	}
-	deck, err := supporterDeck(tx, other, self.OwnerIndex, day, content)
+	deck, err := f.supporterDeck(tx, other, self.OwnerIndex, day, content)
 	if err != nil {
 		return nil, err
 	}

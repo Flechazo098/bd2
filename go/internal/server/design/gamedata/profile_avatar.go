@@ -1,8 +1,11 @@
 package gamedata
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
-type AvatarPartRule struct{ Category, Character, Maximum uint64 }
+type AvatarPartRule struct{ Category, Character, Maximum, UnlockTextID uint64 }
 type AvatarCharacterRule struct {
 	Maximum          uint64
 	Collaboration    bool
@@ -15,11 +18,14 @@ type AvatarProduct struct {
 	Visibility, UnlockType, UnlockValue, UnlockSub uint64
 }
 type AvatarProfileDesign struct {
-	Characters       map[uint64]AvatarCharacterRule
-	Parts            map[uint64]AvatarPartRule
-	MotionMaximum    map[uint64]uint64
-	Shop, MotionShop map[uint64]AvatarProduct
-	Bundles          *AvatarRewardDesign
+	InitialUnlockTickets                  []uint64
+	SquareChannels, SquareChannelCapacity uint64
+	Characters                            map[uint64]AvatarCharacterRule
+	Parts                                 map[uint64]AvatarPartRule
+	MotionMaximum                         map[uint64]uint64
+	Shop, MotionShop                      map[uint64]AvatarProduct
+	Bundles                               *AvatarRewardDesign
+	PrestigeSets                          map[uint64][]Reward
 }
 
 func LoadAvatarProfileDesign(root, version string) (*AvatarProfileDesign, error) {
@@ -31,6 +37,51 @@ func LoadAvatarProfileDesign(root, version string) (*AvatarProfileDesign, error)
 	d := &AvatarProfileDesign{Characters: map[uint64]AvatarCharacterRule{}, Parts: map[uint64]AvatarPartRule{}, MotionMaximum: map[uint64]uint64{}, Shop: map[uint64]AvatarProduct{}, MotionShop: map[uint64]AvatarProduct{}}
 	d.Bundles, err = loadAvatarRewardDesign(db)
 	if err != nil {
+		return nil, err
+	}
+	d.PrestigeSets = map[uint64][]Reward{}
+	if err := readCashMetadata(db, "AvatarSetTable", func(raw []byte) error {
+		skin, err := optionalScalar(raw, 1)
+		if err != nil || skin == 0 {
+			return err
+		}
+		id, err := optionalScalar(raw, 6)
+		if err != nil {
+			return err
+		}
+		if len(d.PrestigeSets[skin]) != 0 {
+			return fmt.Errorf("gamedata: duplicate prestige avatar set for skin %d", skin)
+		}
+		for _, reward := range d.Bundles.Sets[id] {
+			if reward.Type != 49 || reward.Count != 1 {
+				return fmt.Errorf("gamedata: invalid prestige avatar member")
+			}
+			d.PrestigeSets[skin] = append(d.PrestigeSets[skin], Reward(reward))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := readCashMetadata(db, "SquareDefaultTable", func(raw []byte) error {
+		channels, err := optionalScalar(raw, 2)
+		if err != nil {
+			return err
+		}
+		capacity, err := optionalScalar(raw, 5)
+		if err != nil || channels == 0 || channels > 10000 || capacity == 0 || capacity > 1000 {
+			return fmt.Errorf("gamedata: invalid square channel rules")
+		}
+		d.SquareChannels, d.SquareChannelCapacity = channels, capacity
+		tickets, err := packedInts(raw, 1)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(tickets, uint64(0)) {
+			return fmt.Errorf("gamedata: invalid avatar setup ticket")
+		}
+		d.InitialUnlockTickets = append(d.InitialUnlockTickets, tickets...)
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	if err = readCashMetadata(db, "AvatarCharTable", func(raw []byte) error {
@@ -84,7 +135,11 @@ func LoadAvatarProfileDesign(root, version string) (*AvatarProfileDesign, error)
 		if err != nil {
 			return err
 		}
-		d.Parts[id] = AvatarPartRule{category, character, maximum}
+		unlockText, err := optionalScalar(raw, 8)
+		if err != nil {
+			return err
+		}
+		d.Parts[id] = AvatarPartRule{Category: category, Character: character, Maximum: maximum, UnlockTextID: unlockText}
 		return nil
 	}); err != nil {
 		return nil, err

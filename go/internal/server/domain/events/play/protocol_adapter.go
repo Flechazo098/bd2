@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"bytes"
 	"encoding/binary"
@@ -170,9 +171,9 @@ func (s *Service) progress(ctx command.Context, path string, req []byte, rk stri
 			for _, count := range a.Killed {
 				total += count
 			}
-			total -= previousKills
-			if total > 0 {
-				if e = s.onProgress(ctx, 319, a.Game, total); e != nil {
+			// McMiniGameSurvivalKillMonsterCount compares the kills of one run.
+			if total > previousKills {
+				if e = s.onProgress(ctx, conditions.Event{Type: conditions.MiniGameSurvivalKillCount, Sub: total, Count: 1}); e != nil {
 					return nil, e
 				}
 			}
@@ -712,10 +713,10 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		}
 		next.Runs[runKey] = a
 		if s.onProgress != nil {
-			if e = s.onProgress(ctx, 343, c.ID, 1); e != nil {
+			if e = s.onProgress(ctx, conditions.Event{Type: conditions.MiniGamePlay, Sub: c.ID, Count: 1}); e != nil {
 				return nil, e
 			}
-			if e = s.onProgress(ctx, 315, c.ID, 1); e != nil {
+			if e = s.onProgress(ctx, conditions.Event{Type: conditions.EventFieldMiniGamePlay, Sub: c.ID, Count: 1}); e != nil {
 				return nil, e
 			}
 		}
@@ -774,30 +775,32 @@ func (s *Service) game(ctx command.Context, path string, req []byte, session str
 		if s.onProgress != nil {
 			switch f {
 			case "Survival":
-				for condition, count := range map[uint64]uint64{316: a.Level, 317: score} {
-					if count == 0 {
-						continue
-					}
-					if e = s.onProgress(ctx, condition, c.ID, count); e != nil {
-						return nil, e
-					}
-				}
 				mapRow, err := s.survivalMap(a.MapGroup, a.Stage)
 				if err != nil {
 					return nil, err
 				}
+				// FieldMiniGameMapTable field 10 is the difficulty that
+				// McMiniGameSurvivalMapClear lists in its params; the survived
+				// seconds are the score McMiniGameSurvivalLifeTime compares.
+				events := []conditions.Event{
+					{Type: conditions.MiniGameSurvivalCharLevel, Sub: a.Level, Count: 1},
+					{Type: conditions.MiniGameSurvivalLifeTime, Sub: a.MapGroup, Param: score, Count: 1},
+				}
 				if num(req, 2) == 0 && score >= num(mapRow, 9) {
-					if e = s.onProgress(ctx, 320, a.Stage, 1); e != nil {
+					events = append(events, conditions.Event{Type: conditions.MiniGameSurvivalMapClear, Sub: a.MapGroup, Param: num(mapRow, 10), Count: 1})
+				}
+				for _, event := range events {
+					if e = s.onProgress(ctx, event); e != nil {
 						return nil, e
 					}
 				}
 			case "Defense":
-				if e = s.onProgress(ctx, 322, c.ID, score); e != nil {
+				if e = s.onProgress(ctx, conditions.Event{Type: conditions.MiniGameDefenseWaveClear, Sub: score, Count: 1}); e != nil {
 					return nil, e
 				}
 			case "Action":
 				if nativeResult.Clear {
-					if e = s.onProgress(ctx, 323, a.Char, 1); e != nil {
+					if e = s.onProgress(ctx, conditions.Event{Type: conditions.MiniGameActionMonster, Sub: a.Char, Count: 1}); e != nil {
 						return nil, e
 					}
 				}

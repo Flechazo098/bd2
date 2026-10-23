@@ -36,11 +36,3 @@ func (s *Service) resolveEventFieldPack(ctx command.Context, id int) (gamedata.E
 	}
 	return s.eventFieldPacks.ResolveEventFieldPack(ctx, id)
 }
-
-func (s *Service) eventPackPurchased(id int) bool {
-	if s.collection == nil {
-		return false
-	}
-	_, found := s.collection.Grant(packPurchaseIdentity(id))
-	return found
-}

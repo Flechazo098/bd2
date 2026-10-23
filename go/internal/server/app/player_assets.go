@@ -18,6 +18,9 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("server starting chapter policy: %w", err)
 	}
+	if err := p.seedInstances(ctx); err != nil {
+		return fmt.Errorf("initialize account instance identities: %w", err)
+	}
 	p.progressState, err = progress.OpenStore(ctx, p.scope)
 	if err != nil {
 		return err
@@ -39,11 +42,13 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err := p.ownedItems.AttachItemStacks(p.design.itemStacks); err != nil {
 		return err
 	}
-	p.ownedItems.AttachPrestigeIllustrations(p.design.prestigeCatalog.Illustrations)
 	if p.initializeAccount {
 		if err := p.ownedItems.InitializeItems(ctx, p.starter.OwnedItems); err != nil {
 			return fmt.Errorf("initialize owned item seed: %w", err)
 		}
+	}
+	if err := p.ownedItems.AttachPrestigeIllustrations(ctx, p.design.prestigeCatalog.Illustrations); err != nil {
+		return fmt.Errorf("attach prestige illustration instances: %w", err)
 	}
 	p.recipeService, err = assets.NewRecipeService(p.design.recipeDesign, p.starter.CookingRecipes, p.ownedItems)
 	if err != nil {

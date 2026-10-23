@@ -81,9 +81,10 @@ func TestRunReopenBattleSettlementAndFirstClearCannotPayTwice(t *testing.T) {
 	period := Period{Season: 1, Regular: 1, Active: true}
 	economy := &testEconomy{}
 	tickets := uint64(0)
+	battles := 0
 	proof := battle.SettlementEvidence{}
 	open := func() *Service {
-		s, e := Open(stateio.EntrySnapshotStore{Domain: "battle", Bucket: "gameplay"}, d, Options{Access: func(command.Context) error { return nil }, Economy: economy, Owner: 1, Period: func(command.Context) (Period, error) { return period, nil }, Tickets: func(_ command.Context, _ string, count uint64) error { tickets += count; return nil }, Evidence: func(command.Context) battle.SettlementEvidence { return proof }})
+		s, e := Open(stateio.EntrySnapshotStore{Domain: "battle", Bucket: "gameplay"}, d, Options{Access: func(command.Context) error { return nil }, Economy: economy, Owner: 1, Period: func(command.Context) (Period, error) { return period, nil }, Tickets: func(_ command.Context, _ string, count uint64) error { tickets += count; return nil }, Evidence: func(command.Context) battle.SettlementEvidence { return proof }, OnBattle: func(command.Context) error { battles++; return nil }})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -197,8 +198,12 @@ func TestRunReopenBattleSettlementAndFirstClearCannotPayTwice(t *testing.T) {
 		proof = battle.SettlementEvidence{Receipt: identity, Mode: mode, Deck: deck, Round: 0}
 		end := req(seq, 1)
 		seq++
+		beforeBattles := battles
 		if _, e = s.CompleteBattle(ctx, end, identity); e == nil {
 			t.Fatal("settled a room without any started battle")
+		}
+		if battles != beforeBattles {
+			t.Fatal("rejected settlement counted a battle")
 		}
 		var blue [][]byte
 		for i, c := range r.Characters {
@@ -226,8 +231,14 @@ func TestRunReopenBattleSettlementAndFirstClearCannotPayTwice(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
+		if battles != beforeBattles+1 {
+			t.Fatalf("settled battle reported %d times", battles-beforeBattles)
+		}
 		if _, e = s.CompleteBattle(ctx, end, identity); e == nil {
 			t.Fatal("domain paid a settled room twice")
+		}
+		if battles != beforeBattles+1 {
+			t.Fatal("settled room reported a battle twice")
 		}
 		if len(out) == 0 {
 			t.Fatal("battle omitted client state")

@@ -9,6 +9,7 @@ type requestTiming struct {
 	queue, decode, auth, execute, observer time.Duration
 	begin, commit, rollback, encode        time.Duration
 	items                                  int
+	rejected                               bool
 }
 
 func (t *requestTiming) log(path string, total time.Duration, responseBytes int, err error, completed bool) {
@@ -17,6 +18,8 @@ func (t *requestTiming) log(path string, total time.Duration, responseBytes int,
 		status = "panic"
 	} else if err != nil {
 		status = "error"
+	} else if t.rejected {
+		status = "rejected"
 	}
 	other := total - t.queue - t.decode - t.auth - t.execute - t.observer - t.begin - t.commit - t.rollback - t.encode
 	slog.Info("session request phases", "path", path, "status", status,

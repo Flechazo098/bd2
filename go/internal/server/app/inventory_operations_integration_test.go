@@ -39,7 +39,7 @@ func inventorySetup(t *testing.T, g *puzzleGameplay, fn func(command.Context, *p
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	fn(command.Context{Identity: command.Identity{AccountID: g.account, SessionID: "setup"}, State: tx}, g.owner.assembly)
+	fn(command.Context{Identity: command.Identity{AccountID: g.account, SessionID: "setup"}, State: tx, InstanceIDs: g.factory.instanceIDs()}, g.owner.assembly)
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}

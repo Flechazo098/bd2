@@ -294,7 +294,7 @@ func seedNicknameTickets(t *testing.T, owner *playerInstance, count uint64) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{State: tx, Identity: command.Identity{AccountID: owner.accountID}}
+	ctx := command.Context{State: tx, InstanceIDs: owner.factory.instanceIDs(), Identity: command.Identity{AccountID: owner.accountID}}
 	if _, err = owner.assembly.ownedItems.GrantOnce(ctx, "nickname-ticket-fixture", []gamedata.BattleReward{{Type: 14, ID: 1, Count: count}}); err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 // Native FieldPacket addresses rewards by pack/group/object, not current map.
-// GameData 20261012190548: pack9 green pot33011/group303 has buff19,
+// GameData 20261021182514: pack9 green pot33011/group303 has buff19,
 // restoring 30% of maximum HP; its map92 metadata is also used by the HUD.
 func TestGreenPotClaimAfterMapChangeHealsOnlyOnce(t *testing.T) {
 	ctx, service, items, setMap := eventMonsterIntegration(t, 9)

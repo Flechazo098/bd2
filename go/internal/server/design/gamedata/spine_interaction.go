@@ -74,7 +74,8 @@ func LoadSpineInteractionDesign(root, version string) (*SpineInteractionDesign, 
 	if err := read("SpineInteractionPointTable", func(raw []byte) error {
 		v := func(field int) uint64 { n, _, _ := wire.Varint(raw, field); return n }
 		key := InteractionPointKey{v(8), v(5), v(6)}
-		if key[0] == 0 || key[1] == 0 || key[2] == 0 {
+		// GameData 20261021182514 has point 16/2/0: proto3 omits a zero point id.
+		if key[0] == 0 || key[1] == 0 {
 			return fmt.Errorf("gamedata: invalid interaction point")
 		}
 		d.Points[key] = InteractionPoint{Achievement: v(1) != 0, Connected: InteractionPointKey{key[0], v(3), v(4)}, RewardGroup: v(21), Motions: map[uint64]bool{}}

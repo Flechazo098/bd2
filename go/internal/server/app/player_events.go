@@ -12,7 +12,7 @@ import (
 	"bd2server/internal/server/domain/events/tasks"
 	"bd2server/internal/server/domain/fishing"
 	"bd2server/internal/server/domain/progression/achievements"
-	"bd2server/internal/server/domain/progression/missions"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/roster"
 	loginprotocol "bd2server/internal/server/protocol/login"
 	"fmt"
@@ -64,6 +64,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load fishing state: %w", err)
 	}
+	p.fishingService.AttachProgress(p.recordMission)
 	if err := p.login.AttachFishing(func() loginprotocol.FishingState {
 		state := p.fishingService.Profile()
 		return loginprotocol.FishingState{AP: state.MultiAP, FishSlots: state.FishSlots, RodSlots: state.RodSlots, ItemSlots: state.ItemSlots}
@@ -111,12 +112,8 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		}
 		return rows, nil
 	})
-	p.eventActionsService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
-		return p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
-	})
-	p.eventPlayService.AttachProgress(func(ctx command.Context, condition, sub, count uint64) error {
-		return p.missionService.RecordEvent(ctx, condition, sub, count, p.worldService.MissionsUnlocked)
-	})
+	p.eventActionsService.AttachProgress(p.recordMission)
+	p.eventPlayService.AttachProgress(p.recordMission)
 	p.eventPlayService.AttachRhythmResult(p.eventTasksService.RecordRhythmResult)
 	p.eventTasksService.AttachAssociatedMissionGroup(func(schedule events.Schedule) uint64 {
 		if group := p.eventActionsService.AssociatedMissionGroup(schedule); group != 0 {
@@ -131,6 +128,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	p.battleService.AttachEventBattle(p.eventActionsService)
 	p.battleService.AttachCurrentDifficulty(p.worldService.CurrentQuestDifficulty)
 	p.battleService.AttachQuestBattleValidation(p.worldService.ValidateQuestBattle)
+	p.worldService.AttachQuestVictory(p.battleService.HasWonQuest)
 	p.battleService.AttachRewards(func(ctx command.Context, identity string, rewards []gamedata.Reward) ([]byte, error) {
 		return p.eventEconomy.Apply(ctx, identity, nil, rewards)
 	})
@@ -186,7 +184,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return err
 	}
 	p.battleService.AttachMonsterWinMission(func(ctx command.Context) error {
-		return p.missionService.CompleteSingleTargetEvent(ctx, missions.ConditionMonsterKill, p.worldService.MissionsUnlocked)
+		return p.recordMission(ctx, conditions.Event{Type: conditions.MonsterKill, Count: 1})
 	})
 	p.battleService.AttachPictorialBuffs(func(ctx command.Context) ([]gamedata.PictorialBuffStat, error) {
 		_, buffs, err := p.pictorialService.Snapshot(ctx)
@@ -200,8 +198,10 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("attach achievement completion validation: %w", err)
 	}
 	p.commissionService.CompleteAchievement = func(ctx command.Context, identity string) error {
-		_, err := p.achievementCounters.RecordEvent(ctx, identity, 17, 0, 1)
-		return err
+		if _, err := p.achievementCounters.RecordEvent(ctx, identity, 17, 0, 1); err != nil {
+			return err
+		}
+		return p.recordMission(ctx, conditions.Event{Type: conditions.TodayQuestClear, Count: 1})
 	}
 	if err := p.login.AttachAchievementExperience(p.missionService); err != nil {
 		return fmt.Errorf("attach persisted achievement experience: %w", err)
@@ -215,11 +215,18 @@ func (p *playerAssembly) events(ctx command.Context) error {
 		return fmt.Errorf("initialize achievement gameplay observer: %w", err)
 	}
 	p.eventTasksService.AttachInventoryProvider(&eventtasks.InventoryProjection{Items: p.ownedItems, Equipment: p.ownedEquipment, Costumes: p.collection, StateVersion: p.stateRepository.ObservationVersion})
+	p.eventTasksService.AttachGachaHistory(p.collection.GachaHistory)
+	p.eventTasksService.AttachAchievementLevelReward(p.missionService.LevelRewardCount)
 	p.worldService.AttachSkyWayProgress(p.eventTasksService.RecordSkyWayClear, func(ctx command.Context, group uint64) error {
-		return p.missionService.RecordEvent(ctx, 227, group, 1, p.worldService.MissionsUnlocked)
+		return p.recordMission(ctx, conditions.Event{Type: conditions.SkywayGroupBattle, Sub: group, Count: 1})
+	})
+	p.worldService.AttachMissionProgress(p.recordMission)
+	p.eventEconomy.AttachProgress(p.recordMission)
+	p.huntingService.AttachAPSpent(func(ctx command.Context, cost uint64) error {
+		return p.recordMission(ctx, conditions.Event{Type: conditions.ItemCurrencyUse, Sub: 21, Count: cost}) // EElementType FreeHuntingAP
 	})
 	p.huntingService.AttachDispatchProgress(func(ctx command.Context, count uint64) error {
-		return p.missionService.RecordEvent(ctx, 23, 0, count, p.worldService.MissionsUnlocked)
+		return p.recordMission(ctx, conditions.Event{Type: conditions.HuntDispatch, Count: count})
 	})
 	return nil
 }

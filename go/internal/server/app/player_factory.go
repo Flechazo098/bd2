@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bd2server/internal/common/util"
 	"bd2server/internal/server/domain/battle"
 	"bd2server/internal/server/domain/battle/castle"
 	"bd2server/internal/server/domain/battle/hunting"
@@ -41,6 +42,7 @@ import (
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/account"
 	identitystore "bd2server/internal/server/storage/identity"
+	"bd2server/internal/server/storage/instanceid"
 	"bd2server/internal/server/storage/stateio"
 	"context"
 	"errors"
@@ -48,21 +50,31 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 )
 
 type PlayerFactory struct {
-	roomResults *roomResults
-	shared      *sharedRuntime
-	pvpSource   pvp.Source
-	wakeOutbox  func(string)
-	options     *configuration
-	design      *designCatalog
-	seeds       *seedCatalog
-	profiles    interface {
+	instanceOnce   sync.Once
+	instanceSource util.InstanceIDSource
+	roomResults    *roomResults
+	shared         *sharedRuntime
+	pvpSource      pvp.Source
+	wakeOutbox     func(string)
+	options        *configuration
+	design         *designCatalog
+	seeds          *seedCatalog
+	profiles       interface {
 		GameIdentity(context.Context, string) (identitystore.GameProfile, error)
 		RecordGameLogin(context.Context, string, time.Time) error
 	}
+}
+
+func (f *PlayerFactory) instanceIDs() util.InstanceIDSource {
+	f.instanceOnce.Do(func() {
+		f.instanceSource = instanceid.New(filepath.Join(f.options.stateDirectory, "instance-ids.db"))
+	})
+	return f.instanceSource
 }
 
 type playerAssembly struct {
@@ -236,7 +248,7 @@ func (f *PlayerFactory) assemble(ctx context.Context, accountID string, reposito
 		}
 	}()
 
-	identity := command.Context{Identity: command.Identity{AccountID: accountID, SessionID: "startup", RequestID: "initialize"}, Cancellation: ctx, State: startupTransaction}
+	identity := command.Context{Identity: command.Identity{AccountID: accountID, SessionID: "startup", RequestID: "initialize"}, Cancellation: ctx, State: startupTransaction, InstanceIDs: f.instanceIDs()}
 	for _, assemble := range []func(command.Context) error{p.assets, p.worldRoster, p.gameplay, p.commerce, p.events, p.optionalGameplay, p.openIB, p.rogueLike, p.session} {
 		if err := assemble(identity); err != nil {
 			return nil, err

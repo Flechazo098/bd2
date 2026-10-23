@@ -14,6 +14,7 @@ import (
 	"bd2server/internal/server/domain/world/progress"
 	"bd2server/internal/server/protocol/wire"
 	accountstate "bd2server/internal/server/storage/account"
+	"bd2server/internal/server/storage/instanceid"
 	"bd2server/internal/server/storage/stateio"
 )
 
@@ -33,7 +34,8 @@ func fieldQuestIntegration(t *testing.T, pack int) (command.Context, *Service, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := accountstate.Open(filepath.Join(t.TempDir(), "state.db"))
+	statePath := filepath.Join(t.TempDir(), "state.db")
+	repo, err := accountstate.Open(statePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +53,7 @@ func fieldQuestIntegration(t *testing.T, pack int) (command.Context, *Service, *
 			t.Error(err)
 		}
 	})
-	ctx := command.Context{Identity: command.Identity{AccountID: t.Name(), SessionID: "authenticated"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: t.Name(), SessionID: "authenticated"}, State: tx, InstanceIDs: instanceid.New(filepath.Join(filepath.Dir(statePath), "instance-ids.db"))}
 	state, err := progress.OpenStore(ctx, stateio.RootStore{})
 	if err != nil {
 		t.Fatal(err)

@@ -211,7 +211,7 @@ func TestUserContentsInfoReflectsCommittedProfileAndRejectsOtherOwners(t *testin
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback() }()
-		if _, err := action(command.Context{Identity: command.Identity{AccountID: accounts[0], SessionID: "profile-combat"}, State: tx}); err != nil {
+		if _, err := action(command.Context{Identity: command.Identity{AccountID: accounts[0], SessionID: "profile-combat"}, State: tx, InstanceIDs: factory.instanceIDs()}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

@@ -283,7 +283,7 @@ func (s *Server) serveConnection(socket net.Conn) {
 	if decoder.Decode(new(any)) != io.EOF {
 		return
 	}
-	if auth.Channel != string(room.Matching) && auth.Channel != string(room.Action) && auth.Channel != string(room.Defense) && auth.Channel != string(room.Fishing) {
+	if auth.Channel != string(room.Matching) && auth.Channel != string(room.Action) && auth.Channel != string(room.Defense) && auth.Channel != string(room.Fishing) && auth.Channel != string(room.Square) {
 		return
 	}
 	principal, release, e := s.tickets.Consume(handshake, auth.Ticket, auth.Channel, auth.InstanceID)
@@ -382,6 +382,12 @@ func (s *Server) serveConnection(socket net.Conn) {
 			return
 		}
 		first = false
+		if s.tickets.Validate(c.ctx, c.native.Principal) != nil {
+			return
+		}
+		if activity, ok := s.tickets.(interface{ RecordActivity(room.Principal) }); ok {
+			activity.RecordActivity(c.native.Principal)
+		}
 		d, e := s.rooms.Handle(c.ctx, c.native, f)
 		if e != nil {
 			slog.Warn("native realtime packet rejected", "channel", c.native.Channel, "account_id", c.native.Principal.AccountID, "frame_type", f.Type, "reason", e.Error())

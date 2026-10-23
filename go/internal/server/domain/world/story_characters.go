@@ -31,6 +31,9 @@ func (s *Service) currentBattleParty(ctx command.Context) ([]roster.Character, e
 // character and talent UI. Availability is independent of battle selection;
 // StoryCharGroup supplies cosmetic field actors, not inventory identities.
 func (s *Service) resolveStoryCharacters(ctx command.Context, packID, questID int) ([]roster.Character, error) {
+	if packID <= 0 {
+		return nil, fmt.Errorf("world: invalid story pack")
+	}
 	if s.storyRoster == nil {
 		return nil, nil
 	}
@@ -61,10 +64,10 @@ func (s *Service) resolveStoryCharacters(ctx command.Context, packID, questID in
 			authoredOrder = append(authoredOrder, existing.InvenIndex)
 			continue
 		}
-		if packID <= 0 || packID >= 65536 || d.CharacterID == 0 || d.CharacterID >= 1<<32 || d.Level == 0 || d.Level >= 256 {
-			return nil, fmt.Errorf("world: story instance namespace overflow")
+		index, err := s.characters.StoryCharacterIndex(ctx, uint64(packID), d.CharacterID, d.Level)
+		if err != nil {
+			return nil, err
 		}
-		index := roster.StoryCharacterIndexBase | uint64(packID)<<40 | d.CharacterID<<8 | d.Level
 		authoredOrder = append(authoredOrder, index)
 		temporary = append(temporary, roster.Character{InvenIndex: index, ID: d.CharacterID, HP: d.HP, Level: d.Level, CostumeID: d.CostumeID, TalentLevel: d.InitialTalentLevel})
 	}

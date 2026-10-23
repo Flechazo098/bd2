@@ -92,8 +92,8 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load event tasks state: %w", err)
 	}
-	if err := p.mailService.AttachAttendanceRewardEconomy(ctx, p.eventEconomy); err != nil {
-		return fmt.Errorf("attach attendance mail rewards: %w", err)
+	if err := p.mailService.AttachAttachmentRewardEconomy(ctx, p.eventEconomy); err != nil {
+		return fmt.Errorf("attach mail attachment rewards: %w", err)
 	}
 	p.eventTasksService.AttachAttendanceMail(p.mailService)
 	newbieStep, _, err := wire.Varint(p.login.UserInfo, 39)
@@ -135,6 +135,9 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 	}
 	p.loginPasses.SetClock(time.Now, p.design.eventAPReset.ResetSeconds-9*3600)
 	p.eventTasksService.AttachUnlockResolver(p.worldService.MissionsUnlocked)
+	p.eventTasksService.AttachProgress(p.recordMission)
+	p.eventTasksService.AttachAccountState(p.missionAccountState)
+	p.ownedEquipment.AttachMissionProgress(p.recordMission, func(id uint64) uint64 { return p.design.achievementGrades.Equipment[id] })
 	if err = p.missionService.AttachEventHandler(ctx, p.eventTasksService); err != nil {
 		return fmt.Errorf("attach mission event handler: %w", err)
 	}

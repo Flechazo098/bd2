@@ -50,7 +50,10 @@ type Friends struct {
 	now        func() time.Time
 	rooms      *gamedata.RoomDesign
 	supporters gamedata.SupporterRules
+	online     func(string) bool
 }
+
+func (f *Friends) AttachPresence(online func(string) bool) { f.online = online }
 
 func NewFriends(store Store, rules gamedata.FriendRules, supporters gamedata.SupporterRules, rooms *gamedata.RoomDesign, now func() time.Time) (*Friends, error) {
 	if store == nil || rules.Friends == 0 || rules.Sent == 0 || rules.Received == 0 || rules.Recommended == 0 || rules.ExpireDays == 0 {
@@ -99,7 +102,7 @@ func (f *Friends) Profile(ctx context.Context, owner uint64) (FriendProfile, err
 		if _, err = load(tx, "friend.like_counts", numberKey(owner), &out.Snapshot.LikeCount); err != nil {
 			return err
 		}
-		row, err := friendWire(tx, out, 0)
+		row, err := f.friendWire(tx, out, 0)
 		if err != nil {
 			return err
 		}
@@ -181,7 +184,7 @@ func deleteFriend(tx Tx, a, b uint64) error {
 	}
 	return remove(tx, "friend.relations", key)
 }
-func friendWire(tx Tx, p FriendProfile, date int64) ([]byte, error) {
+func (f *Friends) friendWire(tx Tx, p FriendProfile, date int64) ([]byte, error) {
 	out := wire.AppendVarint(nil, 1, p.OwnerIndex)
 	out = wire.AppendVarint(out, 2, p.Snapshot.PortraitCostumeID)
 	out = wire.AppendVarint(out, 3, p.Snapshot.PortraitDesignID)
@@ -203,7 +206,11 @@ func friendWire(tx Tx, p FriendProfile, date int64) ([]byte, error) {
 		base = wire.AppendString(base, 4, guild.IconColor)
 		out = wire.AppendBytes(out, 7, base)
 	}
-	out = wire.AppendVarint(out, 8, uint64(p.LastLoginMS))
+	lastLogin := p.LastLoginMS
+	if f.online != nil && f.online(p.AccountID) {
+		lastLogin = f.now().Add(90 * time.Second).UnixMilli()
+	}
+	out = wire.AppendVarint(out, 8, uint64(lastLogin))
 	for _, costume := range p.Snapshot.Supporters {
 		b := wire.AppendVarint(nil, 1, costume.ID)
 		b = wire.AppendVarint(b, 2, costume.Level)
@@ -336,7 +343,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 				if !found {
 					return ErrNotFound
 				}
-				row, err := friendWire(tx, profile, rel.CreatedMS)
+				row, err := f.friendWire(tx, profile, rel.CreatedMS)
 				if err != nil {
 					return err
 				}
@@ -367,7 +374,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 					if excluded[profile.OwnerIndex] {
 						continue
 					}
-					friend, err := friendWire(tx, profile, 0)
+					friend, err := f.friendWire(tx, profile, 0)
 					if err != nil {
 						return err
 					}
@@ -392,7 +399,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 			return friendError(code, 1, "Player not found")
 		}
 		if path == "/FriendSearch" {
-			row, err := friendWire(tx, other, 0)
+			row, err := f.friendWire(tx, other, 0)
 			if err != nil {
 				return err
 			}
@@ -469,7 +476,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 					return err
 				}
 			}
-			row, err := friendWire(tx, other, relation.CreatedMS)
+			row, err := f.friendWire(tx, other, relation.CreatedMS)
 			if err != nil {
 				return err
 			}

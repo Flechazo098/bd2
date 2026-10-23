@@ -221,6 +221,9 @@ func (s *Service) CompleteBattle(ctx command.Context, pack int, mode, monster, d
 		next.Bonus -= cost - next.Free
 		next.Free = 0
 	}
+	if err := s.recordAPSpent(ctx, cost); err != nil {
+		return nil, nil, err
+	}
 	st := next.Packs[strconv.Itoa(pack)]
 	if monster == g.BossID {
 		if st.Highest < g.ID {
@@ -547,6 +550,9 @@ func (s *Service) handleDispatch(ctx command.Context, path string, req []byte, s
 		} else {
 			next.Free -= free
 			next.Bonus -= bonus
+			if e = s.recordAPSpent(ctx, free+bonus); e != nil {
+				return code, nil, true, e
+			}
 		}
 		if path == "/HuntDispatchStart" {
 			now := uint64(time.Now().UnixMilli())

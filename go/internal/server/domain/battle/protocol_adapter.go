@@ -390,6 +390,8 @@ func (s *Service) handle(ctx command.Context, path string, request []byte) (int,
 		var resultCharacters [][]byte
 		finishedHealth := make(map[uint64]uint64)
 		participants := make(map[uint64]bool)
+		borrowed := make(map[uint64]bool)
+		seenResult := make(map[uint64]bool)
 		if s.commitHealth != nil {
 			for _, character := range state.InitialBlue {
 				Index, _, err := wire.Varint(character, 2)
@@ -398,6 +400,7 @@ func (s *Service) handle(ctx command.Context, path string, request []byte) (int,
 				}
 				if Index != 0 {
 					participants[Index] = true
+					borrowed[Index] = value(character, 38) != 0
 				}
 			}
 		}
@@ -408,12 +411,16 @@ func (s *Service) handle(ctx command.Context, path string, request []byte) (int,
 					if err != nil || !present || !participants[Index] {
 						return errors.New("battle: result character was not a battle participant")
 					}
-					if _, duplicate := finishedHealth[Index]; duplicate {
+					if seenResult[Index] {
 						return errors.New("battle: duplicate result character")
 					}
+					seenResult[Index] = true
 					hp, _, err := wire.Varint(field.Value, 3)
 					if err != nil || hp > math.MaxInt64 {
 						return errors.New("battle: invalid result health")
+					}
+					if borrowed[Index] {
+						return nil
 					}
 					finishedHealth[Index] = hp
 				}

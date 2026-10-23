@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/roster/deck"
 	"bd2server/internal/server/domain/world/progress"
@@ -155,6 +156,7 @@ type Service struct {
 	packJamDesign      *gamedata.PackJamDesign
 
 	fieldPacks        map[int]gamedata.FieldPack
+	fieldPackEconomy  FieldPackEconomy
 	eventFieldPacks   EventFieldPackSource
 	fieldObjects      map[int]gamedata.FieldObjectDesign
 	fieldObjectLoader func(int) (gamedata.FieldObjectDesign, error)
@@ -183,20 +185,22 @@ type Service struct {
 	researchEconomy    interface {
 		Apply(ctx command.Context, _ string, _ []gamedata.Reward, _ []gamedata.Reward) ([]byte, error)
 	}
-	squadLevel  func() (uint64, error)
-	seed        Seed
-	state       *progress.Store
-	starter     *roster.Starter
-	equipment   *assets.EquipmentInventory
-	inventory   *assets.Inventory
-	wallet      *assets.Wallet
-	characters  *roster.CharacterStore
-	collection  *roster.CollectionStore
-	decks       *deck.Store
-	quests      map[int]gamedata.QuestDesign
-	transition  gamedata.PackTransition
-	packs       map[int]map[int]gamedata.QuestDesign
-	transitions map[int]gamedata.PackTransition
+	squadLevel      func() (uint64, error)
+	missionProgress func(command.Context, conditions.Event) error
+	seed            Seed
+	state           *progress.Store
+	questBattleWon  func(command.Context, int, int, int) (bool, error)
+	starter         *roster.Starter
+	equipment       *assets.EquipmentInventory
+	inventory       *assets.Inventory
+	wallet          *assets.Wallet
+	characters      *roster.CharacterStore
+	collection      *roster.CollectionStore
+	decks           *deck.Store
+	quests          map[int]gamedata.QuestDesign
+	transition      gamedata.PackTransition
+	packs           map[int]map[int]gamedata.QuestDesign
+	transitions     map[int]gamedata.PackTransition
 
 	activePack         int
 	transientVersion   uint64
@@ -231,32 +235,25 @@ func (s *Service) AttachDecks(ctx command.Context, decks *deck.Store) error {
 }
 
 func (s *Service) questsFor(ctx command.Context, packID int) (map[int]gamedata.QuestDesign, bool) {
-	if _, found, err := s.resolveEventFieldPack(ctx, packID); err == nil && found {
-		return map[int]gamedata.QuestDesign{}, true
+	pack, err := s.resolvePack(ctx, packID)
+	if err != nil {
+		return nil, false
+	}
+	if pack.kind == eventCard {
+		return nil, true
 	}
 	if s.storyCatalog != nil {
-		pack, found := s.storyCatalog.Packs[packID]
-		if found {
-			return pack.Quests, true
+		if story, found := s.storyCatalog.Packs[packID]; found {
+			return story.Quests, true
 		}
 	}
-	if _, exists := s.fieldPacks[packID]; exists {
-		return map[int]gamedata.QuestDesign{}, true
-	}
-	return nil, false
+	return nil, true
 }
 
 // packUnlocked uses installed ContentOpen rules and real account tickets.
 func (s *Service) packUnlocked(ctx command.Context, packID int) bool {
-	if pack, found, err := s.resolveEventFieldPack(ctx, packID); err != nil {
-		return false
-	} else if found {
-		return s.eventPackPurchased(pack.ID)
-	}
-	if pack, exists := s.fieldPacks[packID]; exists {
-		return s.fieldPackUnlocked(ctx, pack)
-	}
-	return s.storyCatalog != nil && s.storyPackUnlocked(ctx, packID)
+	pack, err := s.resolvePack(ctx, packID)
+	return err == nil && s.packAccessible(ctx, pack)
 }
 
 func (s *Service) canClear(ctx command.Context, packID, quest int) bool {

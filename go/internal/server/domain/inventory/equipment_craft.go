@@ -131,9 +131,6 @@ func (s *EquipmentInventory) grantGeneratedBatch(ctx command.Context, identityPr
 			return existing, nil
 		}
 	}
-	if uint64(len(entries)) > math.MaxUint64-s.owned.NextIndex {
-		return nil, errors.New("inventory: equipment batch indices exhausted")
-	}
 	next := cloneEquipmentSnapshot(s.owned)
 	created := make([]Equipment, 0, len(entries))
 	for i, source := range entries {
@@ -141,8 +138,11 @@ func (s *EquipmentInventory) grantGeneratedBatch(ctx command.Context, identityPr
 		if entry.ID == 0 || len(entry.Rank) != 3 {
 			return nil, errors.New("player: invalid generated equipment in batch")
 		}
-		entry.InvenIndex = next.NextIndex
-		next.NextIndex++
+		index, err := ctx.NewInstanceID()
+		if err != nil {
+			return nil, err
+		}
+		entry.InvenIndex = index
 		next.Equipment = append(next.Equipment, entry)
 		created = append(created, cloneEquipment(entry))
 		if trackReplay {

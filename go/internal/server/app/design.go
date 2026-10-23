@@ -347,6 +347,17 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load cash products: %w", err)
 	}
+	for i := range d.cashDesign.Packages {
+		pack := &d.cashDesign.Packages[i]
+		if pack.ResourceName == "" || pack.ContentsGroupID == 0 || pack.PackageType != 2 && pack.PackageType != 8 {
+			continue
+		}
+		layout, found := seeds.packageLayouts.Layouts[pack.ResourceName]
+		if !found {
+			return nil, fmt.Errorf("missing cash package layout %q", pack.ResourceName)
+		}
+		pack.Sequential = layout == "relay"
+	}
 	d.cashEntitlementDesign, err = gamedata.LoadCashEntitlementDesign(gameData, gameDataVersion)
 	if err != nil {
 		return nil, fmt.Errorf("load cash entitlement design: %w", err)

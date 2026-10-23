@@ -9,6 +9,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/mail"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -556,7 +557,72 @@ func (s *Service) commit(ctx command.Context, next snapshot) error {
 	if next.DailyPeriod == s.state.DailyPeriod && next.WeeklyPeriod == s.state.WeeklyPeriod && equalStrings(next.Completed, s.state.Completed) && equalStrings(next.Claimed, s.state.Claimed) && equalProgress(next.Progress, s.state.Progress) {
 		return nil
 	}
-	return s.persist(ctx, next)
+	completed := s.newlyCompletedGroups(next)
+	if err := s.persist(ctx, next); err != nil {
+		return err
+	}
+	return s.forwardCompletions(ctx, completed)
+}
+
+// newlyCompletedGroups counts, per regular GroupId, the missions that next
+// completes for the first time in the current period.
+func (s *Service) newlyCompletedGroups(next snapshot) map[uint64]uint64 {
+	completed := map[uint64]uint64{}
+	for name, value := range next.Progress {
+		var key gamedata.MissionKey
+		if _, err := fmt.Sscanf(name, "%d/%d/%d", &key.GroupType, &key.GroupID, &key.ID); err != nil {
+			continue
+		}
+		condition, ok := s.design.Conditions[key]
+		if !ok || key.GroupType > 1 {
+			continue
+		}
+		target := conditions.Target(condition.TargetValue)
+		if s.state.Progress[name] < target && value >= target {
+			completed[key.GroupID]++
+		}
+	}
+	return completed
+}
+
+// forwardCompletions lets regular and scheduled missions count completed
+// missions in the same group (McSamGroupIdMissionUpdateCompleteCount) or in
+// another group (McOtherGroupIdMissionUpdateCompleteCount, SubType = GroupId).
+func (s *Service) forwardCompletions(ctx command.Context, completed map[uint64]uint64) error {
+	observer, ok := s.eventHandler.(interface {
+		RecordEvent(command.Context, conditions.Event, func(command.Context, uint64, uint64) bool) error
+	})
+	if !ok {
+		return nil
+	}
+	groups := slices.Sorted(maps.Keys(completed))
+	for _, group := range groups {
+		events := []conditions.Event{
+			{Type: conditions.SameGroupMissionComplete, Sub: group, Count: completed[group]},
+			{Type: conditions.OtherGroupMissionComplete, Sub: group, Count: completed[group]},
+		}
+		for _, event := range events {
+			if err := observer.RecordEvent(ctx, event, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// CompletedMissionCount is the number of regular missions of a GroupId whose
+// current-period progress reached its target.
+func (s *Service) CompletedMissionCount(groupID uint64) uint64 {
+	var count uint64
+	for key, condition := range s.design.Conditions {
+		if key.GroupType > 1 || key.GroupID != groupID || !s.missionActive(key) {
+			continue
+		}
+		if s.state.Progress[missionName(key)] >= conditions.Target(condition.TargetValue) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Service) persist(ctx command.Context, next snapshot) error {

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"time"
 
 	"bd2server/internal/server/gateway/transport"
 )
@@ -45,6 +46,34 @@ func (s *Server) ValidatePrincipal(ctx context.Context, p Principal) error {
 		return transport.ErrGameSessionExpired
 	}
 	return nil
+}
+
+func (s *Server) RecordActivity(p Principal) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for _, game := range s.sessions {
+		if game.accountID == p.AccountID && game.id == p.SessionID && game.generation == p.Generation && now.Before(game.expiresAt) {
+			game.lastUsed = now
+			return
+		}
+	}
+}
+
+const presenceActivityWindow = 90 * time.Second
+
+// AccountOnline uses authenticated HTTP activity and native relay heartbeats;
+// an idle session cookie alone does not keep a disconnected player online.
+func (s *Server) AccountOnline(account string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	for _, game := range s.sessions {
+		if game.accountID == account && now.Before(game.expiresAt) && now.Sub(game.lastUsed) < presenceActivityWindow {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) containsPrincipal(p Principal) bool {

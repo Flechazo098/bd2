@@ -5,6 +5,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"fmt"
 	"math"
@@ -141,10 +142,10 @@ func (s *Service) singlePlayerGame(ctx command.Context, path string, req []byte,
 		}
 		st.Runs[f] = a
 		if s.onProgress != nil {
-			if err := s.onProgress(ctx, 343, c.ID, 1); err != nil {
+			if err := s.onProgress(ctx, conditions.Event{Type: conditions.MiniGamePlay, Sub: c.ID, Count: 1}); err != nil {
 				return nil, err
 			}
-			if err := s.onProgress(ctx, 315, c.ID, 1); err != nil {
+			if err := s.onProgress(ctx, conditions.Event{Type: conditions.EventFieldMiniGamePlay, Sub: c.ID, Count: 1}); err != nil {
 				return nil, err
 			}
 		}

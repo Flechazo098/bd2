@@ -79,6 +79,10 @@ func (s *Inventory) Handle(ctx command.Context, path string, request []byte) (in
 	}
 	var response []byte
 	for _, item := range items {
+		// PrestigeSkinInfo owns the login snapshot; Type45 item rows are acquisition deltas.
+		if item.Type == 45 {
+			continue
+		}
 		response = wire.AppendBytes(response, 1, ItemWire(item))
 	}
 	return 21, response, true, nil
@@ -144,7 +148,7 @@ func (s *Inventory) useRandomBox(ctx command.Context, request []byte) (int, []by
 		if reward.Type == 0 || reward.ID == 0 || reward.Count == 0 {
 			return 0, nil, true, errors.New("player: UseRandomBox invalid GameData reward")
 		}
-		items, err := s.addItems(&next, Item{ID: reward.ID, Type: reward.Type, Count: reward.Count, TimeValue: uint64(time.Now().UnixMilli())})
+		items, err := s.addItems(ctx, &next, Item{ID: reward.ID, Type: reward.Type, Count: reward.Count, TimeValue: uint64(time.Now().UnixMilli())})
 		if err != nil {
 			return 0, nil, true, err
 		}

@@ -25,10 +25,8 @@ const openPacketCode = 132
 const historyPacketCode = 138
 
 const (
-	mailHistoryPeriod             = 30 * 24 * time.Hour
-	mailHistoryPageMax            = 100
-	starterLimitedCostumeIdentity = "starter:limited-costumes:not-current-pickup:v1"
-	starterPrestigeSkinIdentity   = "starter:prestige-skins:not-current-purchase:v1"
+	mailHistoryPeriod  = 30 * 24 * time.Hour
+	mailHistoryPageMax = 100
 )
 
 // itemDBInfoTypes are ElementType values whose successful mail claim is
@@ -161,7 +159,7 @@ type stateSnapshot struct {
 // state alongside the bounded core snapshot.
 type Service struct {
 	contentTickets    *gamedata.GachaContentTicketDesign
-	attendanceEconomy AttendanceRewardEconomy
+	attachmentEconomy AttachmentRewardEconomy
 	cashEconomy       CashRewardEconomy
 	cashTemplates     map[uint64]bool
 	beforeMailID      uint64
@@ -170,6 +168,7 @@ type Service struct {
 	seedPath       string
 	seedStamp      fileStamp
 	grantSpoolPath string
+	starterGifts   starterGiftProvider
 	storage        stateio.ScopedEntryStore
 	inventory      *assets.Inventory
 	wallet         *assets.Wallet
@@ -262,15 +261,8 @@ func OpenService(ctx command.Context, storage stateio.Store, starter *Starter, i
 		}
 		s.issued[identity] = id
 	}
-	if id, exists := s.issued[starterLimitedCostumeIdentity]; exists {
-		if err := validateStarterLimitedCostumeMail(s.dynamic[id], nil); err != nil {
-			return nil, fmt.Errorf("mail: invalid persisted starter limited-costume gift: %w", err)
-		}
-	}
-	if id, exists := s.issued[starterPrestigeSkinIdentity]; exists {
-		if err := validateStarterPrestigeSkinMail(s.dynamic[id]); err != nil {
-			return nil, fmt.Errorf("mail: invalid persisted starter prestige-skin gift: %w", err)
-		}
+	if err := s.validateStarterGifts(); err != nil {
+		return nil, err
 	}
 	rawHistory, err := entries.ListEntries(ctx.State, "mail", "history")
 	if err != nil {
@@ -439,111 +431,6 @@ func (s *Service) EnqueueCompensation(ctx command.Context, identity, title, body
 	}
 
 	return s.enqueueCompensations(ctx, []compensation{grant})
-}
-
-// EnsureStarterLimitedCostumes issues the new-player limited-costume gift at
-// most once for this account. The durable issued-identity row is written in the
-// same transaction as the mail, so retries and restarts return without
-// allocating another mail ID. Six copies mean one acquisition plus five
-// duplicate upgrades, producing enhancement +5 when claimed.
-func (s *Service) EnsureStarterLimitedCostumes(ctx command.Context, costumeIDs []uint64, sentAt time.Time) error {
-	if s == nil {
-		return errors.New("mail: unavailable starter limited-costume service")
-	}
-
-	if id, issued := s.issued[starterLimitedCostumeIdentity]; issued {
-		return validateStarterLimitedCostumeMail(s.dynamic[id], s.costumeDesign)
-	}
-	if len(costumeIDs) == 0 || s.costumeDesign == nil {
-		return errors.New("mail: starter limited-costume gift is empty or unavailable")
-	}
-	seen := make(map[uint64]bool, len(costumeIDs))
-	rewards := make([]gamedata.Reward, 0, len(costumeIDs))
-	for _, costumeID := range costumeIDs {
-		design, ok := s.costumeDesign.Character(costumeID)
-		if costumeID == 0 || seen[costumeID] || !ok || design.CostumeMaxLevel != 5 {
-			return fmt.Errorf("mail: invalid starter limited costume %d", costumeID)
-		}
-		seen[costumeID] = true
-		rewards = append(rewards, gamedata.Reward{Type: 11, ID: costumeID, Count: 6})
-	}
-	grant := compensation{
-		identity: starterLimitedCostumeIdentity,
-		title:    "New Player Limited Costumes",
-		body:     "Limited costumes not featured in the current pickup banners. Each costume is enhanced to +5 when claimed.",
-		rewards:  rewards,
-		sentAt:   sentAt,
-	}
-	if err := grant.validate(); err != nil {
-		return err
-	}
-	return s.enqueueCompensations(ctx, []compensation{grant})
-}
-
-func validateStarterLimitedCostumeMail(entry MailDBInfo, design roster.CostumeDesignSource) error {
-	if entry.MailID == 0 || len(entry.RewardTypes) == 0 || len(entry.RewardTypes) != len(entry.RewardIDs) || len(entry.RewardTypes) != len(entry.RewardCounts) {
-		return errors.New("invalid starter gift reward arrays")
-	}
-	seen := make(map[uint64]bool, len(entry.RewardTypes))
-	for i, typ := range entry.RewardTypes {
-		id := entry.RewardIDs[i]
-		if typ != 11 || id == 0 || entry.RewardCounts[i] != 6 || seen[id] {
-			return errors.New("starter gift must contain unique six-copy costumes")
-		}
-		seen[id] = true
-		if design != nil {
-			costume, ok := design.Character(id)
-			if !ok || costume.CostumeMaxLevel != 5 {
-				return fmt.Errorf("starter gift costume %d is unavailable or not enhancement +5", id)
-			}
-		}
-	}
-	return nil
-}
-
-// EnsureStarterPrestigeSkins gives an account its prestige-skin gift if it has
-// never been issued. Existing and new accounts use the same durable identity;
-// unclaimed or claimed mail never causes a second gift on restart.
-func (s *Service) EnsureStarterPrestigeSkins(ctx command.Context, designIDs []uint64, sentAt time.Time) error {
-	if s == nil {
-		return errors.New("mail: unavailable starter prestige-skin service")
-	}
-
-	if id, issued := s.issued[starterPrestigeSkinIdentity]; issued {
-		return validateStarterPrestigeSkinMail(s.dynamic[id])
-	}
-	if len(designIDs) == 0 {
-		return errors.New("mail: starter prestige-skin gift is empty")
-	}
-	seen := make(map[uint64]bool, len(designIDs))
-	rewards := make([]gamedata.Reward, 0, len(designIDs))
-	for _, designID := range designIDs {
-		if designID == 0 || seen[designID] {
-			return fmt.Errorf("mail: invalid starter prestige skin %d", designID)
-		}
-		seen[designID] = true
-		rewards = append(rewards, gamedata.Reward{Type: 45, ID: designID, Count: 1})
-	}
-	grant := compensation{identity: starterPrestigeSkinIdentity, title: "Prestige Skin Gift", body: "Prestige skins not currently available on the cash purchase page.", rewards: rewards, sentAt: sentAt}
-	if err := grant.validate(); err != nil {
-		return err
-	}
-	return s.enqueueCompensations(ctx, []compensation{grant})
-}
-
-func validateStarterPrestigeSkinMail(entry MailDBInfo) error {
-	if entry.MailID == 0 || len(entry.RewardTypes) == 0 || len(entry.RewardTypes) != len(entry.RewardIDs) || len(entry.RewardTypes) != len(entry.RewardCounts) {
-		return errors.New("invalid starter prestige-skin reward arrays")
-	}
-	seen := make(map[uint64]bool, len(entry.RewardTypes))
-	for i, typ := range entry.RewardTypes {
-		id := entry.RewardIDs[i]
-		if typ != 45 || id == 0 || entry.RewardCounts[i] != 1 || seen[id] {
-			return errors.New("starter prestige-skin gift must contain unique Type45 designs")
-		}
-		seen[id] = true
-	}
-	return nil
 }
 
 // enqueueCompensations shares the EnqueueCompensation allocator and durable

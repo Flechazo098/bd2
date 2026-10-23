@@ -23,7 +23,7 @@ var collectionEntryBuckets = [...]string{
 }
 
 func rejectInlineCollectionEntries(raw []byte) error {
-	if err := stateio.RequireExactJSONObject(raw, "version", "next_character_index", "next_costume_index", "latest_preview", "preview_event_index", "preview_locked", "base_costume_levels", "gacha_count_corrected"); err != nil {
+	if err := stateio.RequireExactJSONObject(raw, "version", "latest_preview", "preview_event_index", "preview_locked", "base_costume_levels", "gacha_count_corrected"); err != nil {
 		return fmt.Errorf("player: incompatible collection core: %w", err)
 	}
 	var fields map[string]json.RawMessage

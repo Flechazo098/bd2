@@ -28,7 +28,7 @@ type Service struct {
 	equipmentCatalog   *gamedata.EquipmentGachaCatalog
 	equipmentInventory *assets.EquipmentInventory
 	onPreview          func(ctx command.Context) error
-	onDraw             func(ctx command.Context, _ uint64) error
+	onDraw             func(ctx command.Context, groupID, count uint64) error
 	schedule           *ScheduleSeed
 	previewEventIndex  uint64
 
@@ -42,7 +42,7 @@ func (s *Service) TransientVersion() uint64 {
 	return s.transientVersion
 }
 
-func (s *Service) AttachDrawMission(callback func(ctx command.Context, _ uint64) error) {
+func (s *Service) AttachDrawMission(callback func(ctx command.Context, groupID, count uint64) error) {
 	s.onDraw = callback
 }
 
@@ -96,7 +96,7 @@ func NewService(design *gamedata.InfiniteGachaDesign, regular *gamedata.RegularG
 	return &Service{design: design, regular: regular, collection: collection, wallet: wallet, now: time.Now}, nil
 }
 
-func (s *Service) dailyFreeAllowance(groupID, base uint64) (uint64, bool, error) {
+func (s *Service) dailyAllowance(groupID, base uint64, paid bool) (uint64, bool, error) {
 	if s.schedule == nil {
 		return 0, false, nil
 	}
@@ -105,10 +105,15 @@ func (s *Service) dailyFreeAllowance(groupID, base uint64) (uint64, bool, error)
 		if entry.GroupID != groupID || now < 0 || uint64(now) < entry.StartTime || uint64(now) > entry.EndTime {
 			continue
 		}
-		if entry.FreeCountBonus {
-			bonus := s.regular.GachaEventAddFreeCount()
+		bonus := uint64(0)
+		if paid && entry.CashCountBonus {
+			bonus = s.regular.GachaEventAddDailyPayCount()
+		} else if !paid && entry.FreeCountBonus {
+			bonus = s.regular.GachaEventAddFreeCount()
+		}
+		if bonus != 0 {
 			if ^uint64(0)-base < bonus {
-				return 0, false, errors.New("gacha: daily free allowance overflows")
+				return 0, false, errors.New("gacha: daily allowance overflows")
 			}
 			base += bonus
 		}

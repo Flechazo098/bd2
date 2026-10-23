@@ -6,7 +6,7 @@ import (
 )
 
 // LoadQuestDifficulties reads the pack-specific selectable difficulties;
-// normal (zero) is the base story chain and is absent from this table.
+// normal (zero) is the base story chain and is selectable in every listed pack.
 func LoadQuestDifficulties(root, version string) (map[int]map[int]bool, error) {
 	db, release, err := OpenDatabase(root, version, "common")
 	if err != nil {
@@ -27,7 +27,7 @@ func loadQuestDifficultiesDB(db *sql.DB) (map[int]map[int]bool, error) {
 		if err := rows.Scan(&pack, &level); err != nil {
 			return nil, err
 		}
-		if pack <= 0 || level < 1 || level > 4 {
+		if pack <= 0 || level < 0 || level > 4 {
 			return nil, fmt.Errorf("gamedata: invalid difficulty pack%d level%d", pack, level)
 		}
 		if result[pack] == nil {

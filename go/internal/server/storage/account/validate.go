@@ -31,10 +31,6 @@ type validationSnapshot struct {
 	characterIndices           []uint64
 	collectionCharacterIndices []uint64
 	costumeIndices             []uint64
-	itemNextIndex              uint64
-	equipmentNextIndex         uint64
-	characterNextIndex         uint64
-	costumeNextIndex           uint64
 	equipmentGrants            []namedIndex
 	equipmentUsers             []namedIndex
 	quests                     []questKey
@@ -73,20 +69,12 @@ func validateSnapshot(snapshot validationSnapshot) []Problem {
 	problems = append(problems, duplicateIndexProblems("equipment.duplicate_index", []string{"equipment", "equipment"}, snapshot.equipmentIndices)...)
 	problems = append(problems, duplicateIndexProblems("characters.duplicate_index", []string{"characters"}, snapshot.characterIndices)...)
 	problems = append(problems, duplicateIndexProblems("costumes.duplicate_index", []string{"collection", "costumes"}, snapshot.costumeIndices)...)
-	problems = append(problems, nextIndexProblems("inventory.next_index", []string{"inventory", "next_index"}, snapshot.itemNextIndex, snapshot.itemIndices)...)
-	problems = append(problems, nextIndexProblems("equipment.next_index", []string{"equipment", "next_index"}, snapshot.equipmentNextIndex, snapshot.equipmentIndices)...)
-	problems = append(problems, nextIndexProblems("collection.next_character_index", []string{"collection", "next_character_index"}, snapshot.characterNextIndex, snapshot.collectionCharacterIndices)...)
-	problems = append(problems, nextIndexProblems("collection.next_costume_index", []string{"collection", "next_costume_index"}, snapshot.costumeNextIndex, snapshot.costumeIndices)...)
 
 	for _, grant := range snapshot.equipmentGrants {
-		// Equipment can be dismantled after it was granted. The grant entry is
-		// an issuance/idempotency ledger, just like items.grant_items, so the
-		// historical index need only be nonzero and below the monotonic next
-		// index; it does not have to remain in the current ownership set.
-		if grant.index == 0 || grant.index >= snapshot.equipmentNextIndex {
+		if grant.index == 0 || grant.index >= 1<<59 {
 			problems = append(problems, Problem{
 				Code: "equipment.grant_missing_equipment", Path: []string{"equipment", "grants", grant.identity},
-				Message: "equipment grant index must be nonzero and below next_index", RelatedIDs: []uint64{grant.index},
+				Message: "equipment grant must reference a valid permanent instance", RelatedIDs: []uint64{grant.index},
 			})
 		}
 	}
@@ -112,8 +100,8 @@ func validateSnapshot(snapshot validationSnapshot) []Problem {
 			problems = append(problems, Problem{Code: "inventory.grant_without_marker", Path: path, Message: "historical grant must have an idempotency marker"})
 		}
 		for _, index := range grant.indices {
-			if index == 0 || index >= snapshot.itemNextIndex {
-				problems = append(problems, Problem{Code: "inventory.grant_invalid_index", Path: path, Message: "issued index must be nonzero and below next_index", RelatedIDs: []uint64{index}})
+			if index == 0 || index >= 1<<59 {
+				problems = append(problems, Problem{Code: "inventory.grant_invalid_index", Path: path, Message: "issued index must be a valid permanent instance", RelatedIDs: []uint64{index}})
 			}
 		}
 		problems = append(problems, duplicateIndexProblems("inventory.grant_duplicate_index", path, grant.indices)...)
@@ -138,20 +126,6 @@ func duplicateIndexProblems(code string, path []string, values []uint64) []Probl
 		problems = append(problems, Problem{Code: code, Path: path, Message: "duplicate inventory identity", RelatedIDs: []uint64{value}})
 	}
 	return problems
-}
-
-func nextIndexProblems(code string, path []string, next uint64, values []uint64) []Problem {
-	if len(values) == 0 {
-		return nil
-	}
-	maximum := values[0]
-	for _, value := range values[1:] {
-		maximum = max(maximum, value)
-	}
-	if next > maximum {
-		return nil
-	}
-	return []Problem{{Code: code, Path: path, Message: "next index must be greater than every existing index", RelatedIDs: []uint64{next}}}
 }
 
 func keyProblems(code string, path []string, values []questKey) []Problem {
@@ -217,15 +191,6 @@ func (t *CommandStore) Validate() ([]Problem, error) {
 func validateState(tx *sql.Tx) ([]Problem, error) {
 	snapshot := validationSnapshot{formatVersion: 1, clientVersion: "sqlite", gameDataVersion: "sqlite", granted: make(map[string]bool)}
 	var err error
-	if snapshot.itemNextIndex, err = coreUint(tx, "items", "next_index"); err != nil {
-		return nil, err
-	}
-	if snapshot.equipmentNextIndex, err = coreUint(tx, "equipment", "next_index"); err != nil {
-		return nil, err
-	}
-	if snapshot.characterNextIndex, snapshot.costumeNextIndex, err = collectionNextIndices(tx); err != nil {
-		return nil, err
-	}
 	if snapshot.itemIndices, _, err = indexedEntries(tx, "items", "items", false); err != nil {
 		return nil, err
 	}
@@ -241,9 +206,7 @@ func validateState(tx *sql.Tx) ([]Problem, error) {
 		return nil, err
 	}
 	snapshot.characterIndices = append(baseCharacters, acquiredCharacters...)
-	// Collection allocation owns acquired characters. Base, story and timed
-	// companions have separate instance namespaces; they still participate in
-	// duplicate identity and equipment owner validation above.
+	// Both starter and acquired characters participate in ownership validation.
 	snapshot.collectionCharacterIndices = acquiredCharacters
 	if snapshot.costumeIndices, _, err = indexedEntries(tx, "collection", "costumes", false); err != nil {
 		return nil, err
@@ -277,30 +240,6 @@ func loadCore(tx *sql.Tx, domain string) (map[string]json.RawMessage, bool, erro
 		return nil, false, fmt.Errorf("accountstate: decode %s for validation", domain)
 	}
 	return fields, true, nil
-}
-
-func coreUint(tx *sql.Tx, domain, field string) (uint64, error) {
-	fields, found, err := loadCore(tx, domain)
-	if err != nil || !found {
-		return 0, err
-	}
-	var value uint64
-	if raw, ok := fields[field]; !ok || json.Unmarshal(raw, &value) != nil {
-		return 0, fmt.Errorf("accountstate: invalid %s.%s", domain, field)
-	}
-	return value, nil
-}
-
-func collectionNextIndices(tx *sql.Tx) (uint64, uint64, error) {
-	fields, found, err := loadCore(tx, "collection")
-	if err != nil || !found {
-		return 0, 0, err
-	}
-	var characters, costumes uint64
-	if json.Unmarshal(fields["next_character_index"], &characters) != nil || json.Unmarshal(fields["next_costume_index"], &costumes) != nil {
-		return 0, 0, errors.New("accountstate: invalid collection next indices")
-	}
-	return characters, costumes, nil
 }
 
 func indexedEntries(tx *sql.Tx, domain, bucket string, readUseChar bool) ([]uint64, []namedIndex, error) {

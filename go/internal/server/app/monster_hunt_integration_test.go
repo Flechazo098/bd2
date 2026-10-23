@@ -161,7 +161,7 @@ func (s *monsterHuntScenario) command(t *testing.T, action func(command.Context)
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	response, err := action(command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "hunt-client"}, State: tx})
+	response, err := action(command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "hunt-client"}, State: tx, InstanceIDs: s.factory.instanceIDs()})
 	if err != nil {
 		t.Fatal(err)
 	}

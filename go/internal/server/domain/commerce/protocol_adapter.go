@@ -279,7 +279,8 @@ func (s *Service) buy(ctx command.Context, session string, request []byte) (int,
 	quotes := make([]Product, len(lines))
 	for i, l := range lines {
 		if !s.predecessorBought(ctx, v, l.Key) {
-			return 61, nil, true, fmt.Errorf("commerce: preceding package purchase required")
+			return 61, nil, true, fmt.Errorf("commerce: preceding package purchase required: product=%d:%d:%d predecessors=%v",
+				l.Key.GroupID, l.Key.ProductID, l.Key.SaleGroup, s.predecessors[l.Key])
 		}
 		d, ok := s.catalog.Design(l.Key)
 		if !ok {

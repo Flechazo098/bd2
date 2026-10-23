@@ -21,9 +21,11 @@ type GuildRaidRules struct {
 	FlagVersions                                                              []GuildRaidFlagVersion
 	TurnAddScore, TurnScoreValue, SupportScore                                float64
 	DailySupporterUses, BasicSupportReward, RentalSupportReward, RewardMailID uint64
-	Bosses                                                                    map[uint64]map[uint64]GuildRaidBoss
-	ScoreRewards                                                              []GuildRaidScoreReward
-	RankRewards                                                               []GuildRaidRankReward
+	// OverkillLevel 0 disables overkill, matching BattleProcessor.IsOverKillMode.
+	OverkillLevel, OverkillMemberCount uint64
+	Bosses                             map[uint64]map[uint64]GuildRaidBoss
+	ScoreRewards                       []GuildRaidScoreReward
+	RankRewards                        []GuildRaidRankReward
 }
 
 type GuildRaidFlagVersion struct{ GroupID, MinSeason, MaxSeason uint64 }
@@ -130,18 +132,19 @@ func LoadGuildDesign(root, version string) (*GuildDesign, error) {
 	if err = db.QueryRow("SELECT ProtoBuf FROM GuildRaidDefaultTable WHERE id=0").Scan(&raw); err != nil {
 		return nil, err
 	}
-	v, err = cashScalars(raw, 3, 21, 22, 15)
+	v, err = cashScalars(raw, 3, 23, 24, 15, 17, 18)
 	if err != nil {
 		return nil, err
 	}
 	d.Raid.DailySupporterUses, d.Raid.BasicSupportReward, d.Raid.RentalSupportReward, d.Raid.RewardMailID = v[0], v[1], v[2], v[3]
-	if d.Raid.TurnAddScore, err = optionalDouble(raw, 24); err != nil {
+	d.Raid.OverkillLevel, d.Raid.OverkillMemberCount = v[4], v[5]
+	if d.Raid.TurnAddScore, err = optionalDouble(raw, 26); err != nil {
 		return nil, err
 	}
-	if d.Raid.TurnScoreValue, err = optionalDouble(raw, 25); err != nil {
+	if d.Raid.TurnScoreValue, err = optionalDouble(raw, 27); err != nil {
 		return nil, err
 	}
-	if d.Raid.SupportScore, err = optionalDouble(raw, 23); err != nil {
+	if d.Raid.SupportScore, err = optionalDouble(raw, 25); err != nil {
 		return nil, err
 	}
 	if err = db.QueryRow("SELECT ProtoBuf FROM SupportCharacterDefaultTable WHERE id=0").Scan(&raw); err != nil {

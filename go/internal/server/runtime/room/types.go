@@ -13,6 +13,7 @@ const (
 	Action   Kind = "action"
 	Defense  Kind = "defense"
 	Fishing  Kind = "fishing"
+	Square   Kind = "square"
 	Matching Kind = "matching"
 )
 
@@ -55,6 +56,8 @@ type Delivery struct {
 type Profile struct {
 	UserInfo      []byte
 	AvatarUseInfo []byte
+	AvatarMotions []uint64
+	SquareUnlocked bool
 	RodID         int64
 	BoatLevel     int64
 	BoatSkinID    int64
@@ -71,6 +74,7 @@ type Selection struct {
 	MapID           int64
 	BoatLevel       int64
 	BoatSkinID      int64
+	SquareChannel   int64
 	Capacity        int
 	DefenseLastWave int64
 	Solo            bool
@@ -93,19 +97,21 @@ type ParticipantRules interface {
 }
 
 type Config struct {
-	AdvertisedHost  string
-	TCPPort         int
-	UDPPort         int
-	Region          int
-	MaxRooms        int
-	QueueCommands   int
-	QueueBytes      int64
-	ReconnectWindow time.Duration
-	LoadingLimit    time.Duration
-	MatchingLimit   time.Duration
-	RoomDuration    time.Duration
-	ResultRetention time.Duration
-	Now             func() time.Time
+	AdvertisedHost        string
+	TCPPort               int
+	UDPPort               int
+	Region                int
+	SquareChannels        int
+	SquareChannelCapacity int
+	MaxRooms              int
+	QueueCommands         int
+	QueueBytes            int64
+	ReconnectWindow       time.Duration
+	LoadingLimit          time.Duration
+	MatchingLimit         time.Duration
+	RoomDuration          time.Duration
+	ResultRetention       time.Duration
+	Now                   func() time.Time
 	// Publish must enqueue without blocking; false drops a slow connection.
 	Publish func([]Delivery)
 	// PublishResult queues a terminal projection. Acknowledgment follows durable commit.

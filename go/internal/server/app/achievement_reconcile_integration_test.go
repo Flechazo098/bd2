@@ -50,7 +50,7 @@ func TestAchievementReconcileHistoricalCompoundTitleRequiresClaim(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	c := command.Context{State: tx}
+	c := command.Context{State: tx, InstanceIDs: g.factory.instanceIDs()}
 	var costume roster.Costume
 	for _, owned := range p.collection.Costumes() {
 		if p.design.costumePotentialDesign.CostumeUnique[owned.ID] == 1 {
@@ -180,7 +180,7 @@ func TestAchievementReconcilePreservesLargerHistoryAndCountsNewGrantOnce(t *test
 			t.Fatal(err)
 		}
 		defer func() { _ = tx.Rollback() }()
-		c := command.Context{Identity: command.Identity{AccountID: g.account, SessionID: "history-grant"}, State: tx}
+		c := command.Context{Identity: command.Identity{AccountID: g.account, SessionID: "history-grant"}, State: tx, InstanceIDs: g.factory.instanceIDs()}
 		request := wire.AppendVarint(nil, 1, 77)
 		observer := g.owner.assembly.achievementObserver
 		if err := observer.BeforeDispatch(c, "/GachaBuy", request); err != nil {

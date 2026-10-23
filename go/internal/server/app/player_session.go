@@ -4,7 +4,6 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
-	"bd2server/internal/server/domain/commerce/gacha"
 	"bd2server/internal/server/domain/events"
 	"bd2server/internal/server/domain/notice"
 	"bd2server/internal/server/domain/profile"
@@ -17,7 +16,6 @@ import (
 	"bd2server/internal/server/storage/account"
 	"context"
 	"fmt"
-	"time"
 )
 
 func (p *playerAssembly) session(ctx command.Context) error {
@@ -32,6 +30,11 @@ func (p *playerAssembly) session(ctx command.Context) error {
 	if err := p.nickname(ctx); err != nil {
 		return err
 	}
+	masterTitle, err := roster.OpenMasterTitleService(ctx, p.scope, p.nicknameService.CurrentNickname())
+	if err != nil {
+		return fmt.Errorf("load master title: %w", err)
+	}
+	p.masterTitleService = masterTitle
 	if err := p.avatar(ctx); err != nil {
 		return err
 	}
@@ -126,19 +129,9 @@ func (p *playerAssembly) session(ctx command.Context) error {
 	if p.pvpService != nil {
 		p.handlers = append([]session.Handler{p.pvpService}, p.handlers...)
 	}
-	p.observers = []session.ResponseObserver{p.achievementObserver, p.eventTasksService, p.mailService}
-	featured := gacha.ActivePickupCostumes(p.design.regularGacha, p.options.calendars.GachaSeed, uint64(time.Now().UTC().UnixMilli()))
-	limitedIDs := p.design.limitedCostumes.Excluding(featured)
-	if len(limitedIDs) != 0 {
-		if err := p.mailService.EnsureStarterLimitedCostumes(ctx, limitedIDs, time.Now().UTC()); err != nil {
-			return fmt.Errorf("ensure account limited-costume entitlement: %w", err)
-		}
-	}
-	prestigeIDs := p.design.prestigeCatalog.Giftable(func(key gamedata.CashProductKey) bool { return p.cashService.IsAvailable(ctx, key) })
-	if len(prestigeIDs) != 0 {
-		if err := p.mailService.EnsureStarterPrestigeSkins(ctx, prestigeIDs, time.Now().UTC()); err != nil {
-			return fmt.Errorf("ensure account prestige-skin entitlement: %w", err)
-		}
+	p.observers = []session.ResponseObserver{p.achievementObserver, missionActionObserver{p}, p.eventTasksService, p.mailService}
+	if err := p.mailService.AttachStarterGifts(ctx, p.starterGifts); err != nil {
+		return fmt.Errorf("ensure account starter gifts: %w", err)
 	}
 	if p.initializeAccount {
 		if err := ensureAccountStateInitialized(ctx,

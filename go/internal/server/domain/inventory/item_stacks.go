@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/command"
 	"errors"
 	"math"
 )
@@ -16,9 +17,22 @@ func (s *Inventory) AttachItemStacks(design *gamedata.ItemStackDesign) error {
 
 // Reward ItemDBInfo.Count is a delta: CommonPacket.AddItemInfo adds it to an
 // existing instance. Inventory state holds totals; replies hold only this grant.
-func (s *Inventory) addItems(next *ownedSnapshot, reward Item) ([]Item, error) {
+func (s *Inventory) addItems(ctx command.Context, next *ownedSnapshot, reward Item) ([]Item, error) {
 	if reward.ID == 0 || reward.Type == 0 || reward.Count == 0 || reward.Count > math.MaxInt32 {
 		return nil, errors.New("inventory: invalid item reward")
+	}
+	if reward.Type == 45 {
+		for _, items := range [][]Item{s.starter, next.Items} {
+			for _, item := range items {
+				if item.Type == 45 && item.ID == reward.ID && item.Count > 0 {
+					return nil, nil
+				}
+			}
+		}
+		reward.Count = 1
+	}
+	if err := s.ensurePrestigeIllustrations(ctx, next, []Item{reward}); err != nil {
+		return nil, err
 	}
 	limit := uint64(math.MaxInt32)
 	stackable := reward.Type == 5 || reward.Type == 8 || reward.Type == 9 || reward.Type == 14
@@ -53,13 +67,13 @@ func (s *Inventory) addItems(next *ownedSnapshot, reward Item) ([]Item, error) {
 		}
 	}
 	for remaining > 0 {
-		if next.NextIndex == math.MaxUint64 {
-			return nil, errors.New("inventory: item index exhausted")
+		index, err := ctx.NewInstanceID()
+		if err != nil {
+			return nil, err
 		}
 		item := reward
-		item.InvenIndex = next.NextIndex
+		item.InvenIndex = index
 		item.Count = min(remaining, limit)
-		next.NextIndex++
 		next.Items = append(next.Items, item)
 		deltas = append(deltas, item)
 		remaining -= item.Count

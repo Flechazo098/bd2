@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/storage/stateio"
 	"crypto/sha256"
@@ -51,6 +52,7 @@ type Economy struct {
 	graph            rewardResolver
 	hunting          HuntingAP
 	prestige         map[uint64]uint64
+	progress         func(command.Context, conditions.Event) error
 	prestigePortrait func() uint64
 	datingCap        uint64
 	apCaps           map[uint64]uint64
@@ -151,4 +153,36 @@ func (e *Economy) resolveGranted(rewards []gamedata.BattleReward) ([]gamedata.Ba
 		return g.ResolveGranted(rewards)
 	}
 	return e.graph.Resolve(rewards)
+}
+
+// freeStackPairs pairs each free AP currency with its stacked counterpart.
+// The client spends either one from the free balance first and takes the rest
+// from the stack (CommonPacket's currency subtraction and
+// GetHavePayPriceElementCount).
+var freeStackPairs = map[uint64][2]uint64{
+	30: {30, 31}, 31: {30, 31}, // event AP
+	32: {32, 33}, 33: {32, 33}, // torch light AP
+	35: {35, 38}, 38: {35, 38}, // roguelike tickets
+	41: {41, 42}, 42: {41, 42}, // dating AP
+	52: {52, 53}, 53: {52, 53}, // colosseum tickets
+}
+
+// spendCurrency deducts n of typ the way the client does and reports whether
+// the balances covered it; balances are unchanged when they did not.
+func spendCurrency(balances map[uint64]uint64, typ, n uint64) bool {
+	pair, ok := freeStackPairs[typ]
+	if !ok {
+		if balances[typ] < n {
+			return false
+		}
+		balances[typ] -= n
+		return true
+	}
+	free, stack := balances[pair[0]], balances[pair[1]]
+	if free+stack < n {
+		return false
+	}
+	fromFree := min(free, n)
+	balances[pair[0]], balances[pair[1]] = free-fromFree, stack-(n-fromFree)
+	return true
 }

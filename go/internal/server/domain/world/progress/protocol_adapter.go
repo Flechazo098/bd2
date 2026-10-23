@@ -12,18 +12,8 @@ import (
 	"strconv"
 )
 
-// UpdateQuest consumes QuestUpdateRequest: field 1 seq, field 2 quest_id,
-// field 3 pack_id, and repeated packed/unpacked int32 field 4 quest_value.
-// It returns the quest id that the response must echo as update_quest_id.
-func (s *Store) UpdateQuest(ctx command.Context, request []byte) (int, error) {
-	questID, found, err := wire.Varint(request, 2)
-	if err != nil || !found || questID == 0 || questID > uint64(^uint32(0)>>1) {
-		return 0, fmt.Errorf("%w: quest id", ErrInvalidQuest)
-	}
-	packID, found, err := wire.Varint(request, 3)
-	if err != nil || !found || packID == 0 || packID > uint64(^uint32(0)>>1) {
-		return 0, fmt.Errorf("%w: pack id", ErrInvalidQuest)
-	}
+// QuestValues reads QuestUpdateRequest.quest_value, packed or unpacked.
+func QuestValues(request []byte) ([]int, error) {
 	values := make([]int, 0, 4)
 	if err := wire.Walk(request, func(field wire.Field) error {
 		if field.Number != 4 {
@@ -50,7 +40,26 @@ func (s *Store) UpdateQuest(ctx command.Context, request []byte) (int, error) {
 		}
 		return nil
 	}); err != nil {
-		return 0, fmt.Errorf("%w: quest values", ErrInvalidQuest)
+		return nil, fmt.Errorf("%w: quest values", ErrInvalidQuest)
+	}
+	return values, nil
+}
+
+// UpdateQuest consumes QuestUpdateRequest: field 1 seq, field 2 quest_id,
+// field 3 pack_id, and repeated packed/unpacked int32 field 4 quest_value.
+// It returns the quest id that the response must echo as update_quest_id.
+func (s *Store) UpdateQuest(ctx command.Context, request []byte) (int, error) {
+	questID, found, err := wire.Varint(request, 2)
+	if err != nil || !found || questID == 0 || questID > uint64(^uint32(0)>>1) {
+		return 0, fmt.Errorf("%w: quest id", ErrInvalidQuest)
+	}
+	packID, found, err := wire.Varint(request, 3)
+	if err != nil || !found || packID == 0 || packID > uint64(^uint32(0)>>1) {
+		return 0, fmt.Errorf("%w: pack id", ErrInvalidQuest)
+	}
+	values, err := QuestValues(request)
+	if err != nil {
+		return 0, err
 	}
 
 	progress := QuestProgress{QuestID: int(questID), PackID: int(packID), Values: append([]int(nil), values...)}

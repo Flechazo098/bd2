@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bd2server/internal/server/domain/progression/conditions"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -41,6 +42,14 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 	}
 	p.datingService.SetResetSeconds(p.design.eventAPReset.ResetSeconds)
 	p.cafeteriaService.SetResetSeconds(p.design.eventAPReset.ResetSeconds)
+	p.cafeteriaService.AttachDatingTicket(p.design.contentOpeningDesign.Dating.TicketID, func(ctx command.Context, ticket uint64) bool {
+		for _, item := range p.ownedItems.All(ctx) {
+			if item.Type == 19 && item.ID == ticket && item.Count > 0 {
+				return true
+			}
+		}
+		return false
+	})
 	p.cafeteriaService.AttachOwnedCostumes(func() []uint64 {
 		var ids []uint64
 		for _, costume := range p.collection.Costumes() {
@@ -49,6 +58,7 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 		return ids
 	})
 	p.cafeteriaService.AttachDatingHasEpisode(p.datingService.HasEpisode)
+	p.worldService.AttachFieldPackEconomy(p.eventEconomy)
 	p.datingService.AttachFirstMeeting(p.cafeteriaService.CanMeet)
 	p.castleService = castle.NewService(p.design.castle)
 	p.castleService.AttachTotalWarTextCheck(p.checkProfileText)
@@ -68,6 +78,9 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 			return err
 		}
 		return ctx.Publish(command.Event{ID: "totalwar:" + identity, Topic: deck.PopularityTopic, Payload: payload})
+	})
+	p.castleService.AttachTotalWarSettled(func(ctx command.Context, total uint64) error {
+		return p.recordMissions(ctx, []conditions.Event{{Type: conditions.TotalWarTryCount, Count: 1}, {Type: conditions.TotalWarResultScore, Sub: total, Count: 1}})
 	})
 	p.castleService.AttachCurrentPack(p.worldService.CurrentPackID)
 	p.castleService.AttachEvidence(p.battleService.SettlementEvidence)

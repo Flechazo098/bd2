@@ -27,7 +27,7 @@ func (s *Inventory) GrantCommerceOnce(ctx command.Context, identity string, rewa
 	next := cloneOwnedSnapshot(s.owned)
 	var out []Item
 	for _, r := range rewards {
-		if r.ID == 0 || (r.Type != 62 && r.Type != 19) || r.Count == 0 || r.Count > math.MaxInt32 || r.Type == 19 && r.ExpiryTime == 0 || next.NextIndex == math.MaxUint64 {
+		if r.ID == 0 || (r.Type != 62 && r.Type != 19) || r.Count == 0 || r.Count > math.MaxInt32 || r.Type == 19 && r.ExpiryTime == 0 {
 			return nil, fmt.Errorf("player: invalid commerce item")
 		}
 		if r.Type == 19 {
@@ -48,8 +48,11 @@ func (s *Inventory) GrantCommerceOnce(ctx command.Context, identity string, rewa
 			}
 			r.Count = 1
 		}
-		r.InvenIndex = next.NextIndex
-		next.NextIndex++
+		index, err := ctx.NewInstanceID()
+		if err != nil {
+			return nil, err
+		}
+		r.InvenIndex = index
 		next.Items = append(next.Items, r)
 		next.GrantItems[identity] = append(next.GrantItems[identity], r.InvenIndex)
 		out = append(out, r)

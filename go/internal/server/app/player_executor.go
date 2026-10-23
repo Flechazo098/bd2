@@ -112,7 +112,7 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		}
 	}()
 
-	identity := command.Context{Identity: request.Identity, Cancellation: request.Cancellation, State: tx}
+	identity := command.Context{Identity: request.Identity, Cancellation: request.Cancellation, State: tx, InstanceIDs: p.factory.instanceIDs()}
 	published := false
 	var chatPolicyPayload []byte
 	identity.Emit = func(event command.Event) error {
@@ -344,6 +344,15 @@ func (p *playerAssembly) beginLogin(ctx command.Context) error {
 		}
 	}
 	if err := p.eventTasksService.ReconcileRhythmResults(ctx, p.eventPlayService.CompletedRhythmResults()); err != nil {
+		return err
+	}
+	if err := p.eventTasksService.ReconcileAccountState(ctx); err != nil {
+		return err
+	}
+	if err := p.cafeteriaService.ReconcileIntroduction(ctx); err != nil {
+		return err
+	}
+	if err := p.worldService.ClaimOpenFieldPacks(ctx); err != nil {
 		return err
 	}
 	return p.missionService.RecordLogin(ctx, p.worldService.MissionsUnlocked)

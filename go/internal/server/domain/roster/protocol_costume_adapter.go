@@ -1061,7 +1061,7 @@ func OpenCollectionStore(ctx command.Context, store stateio.Store, base []Costum
 		return nil, errors.New("player: collection store requires atomic entry storage")
 	}
 	s := &CollectionStore{store: entries, base: append([]Costume(nil), base...), data: collectionSnapshot{
-		Version: versionconfig.State(), NextCharacterIndex: 920000001, NextCostumeIndex: 930000001,
+		Version:           versionconfig.State(),
 		BaseCostumeLevels: map[string]uint64{}, GachaSelections: map[string][]GachaSelection{}, GachaSelectionChanges: map[string]uint64{},
 		CostumePotential: map[string][]uint64{}, CostumePotentialLocks: map[string][]uint64{},
 		CostumeBurstLevels: map[string]uint64{}, CostumeBurstUpgrades: map[string]CostumeBurstUpgradeRecord{},
@@ -1090,7 +1090,7 @@ func OpenCollectionStore(ctx command.Context, store stateio.Store, base []Costum
 	if err := loadCollectionEntries(ctx, entries, &s.data); err != nil {
 		return nil, err
 	}
-	if s.data.Version != versionconfig.State() || s.data.NextCharacterIndex < 920000001 || s.data.NextCostumeIndex < 930000001 {
+	if s.data.Version != versionconfig.State() {
 		return nil, errors.New("player: invalid collection save")
 	}
 	if s.data.BaseCostumeLevels == nil {

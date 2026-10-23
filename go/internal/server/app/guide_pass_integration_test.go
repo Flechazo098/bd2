@@ -51,7 +51,7 @@ func TestGuidePassClaimsAndExperienceSurviveWithoutEventCalendarEntry(t *testing
 	assertExperience(10)
 	// Reproduce the previous server's missing derived pass ledger while retaining
 	// the mission reward receipt that independently proves the earned EXP.
-	s := &trapPlayerScenario{owner: g.owner, account: g.account}
+	s := &trapPlayerScenario{factory: g.factory, owner: g.owner, account: g.account}
 	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
 		raw, err := p.gameplayStore.Load(ctx.State, "eventtasks")
 		if err != nil {

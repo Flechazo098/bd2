@@ -49,7 +49,7 @@ func (s *EquipmentInventory) loadEquipmentStorage(ctx command.Context) error {
 	for key, payload := range raw {
 		var entry Equipment
 		index, err := strconv.ParseUint(key, 10, 64)
-		if err != nil || json.Unmarshal(payload, &entry) != nil || entry.InvenIndex != index || index == 0 || index >= s.owned.NextIndex || seen[index] || entry.ID == 0 || entry.UseChar != 0 || len(entry.Rank) != 3 {
+		if err != nil || json.Unmarshal(payload, &entry) != nil || entry.InvenIndex != index || index == 0 || index >= 1<<59 || seen[index] || entry.ID == 0 || entry.UseChar != 0 || len(entry.Rank) != 3 {
 			return fmt.Errorf("inventory: invalid stored equipment %q", key)
 		}
 		for _, rank := range entry.Rank {

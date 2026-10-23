@@ -66,18 +66,18 @@ func (s *Service) AttachDelegate(d PurchaseDelegate)  { s.delegate = d }
 func (s *Service) AttachPurchaseHook(h PurchaseHook)  { s.hook = h }
 func (s *Service) AttachLegacyCounts(p CountProvider) { s.legacy = p }
 
-// AttachPackageRules enforces the client's type-2/type-8 step and relay
-// ordering using versioned contentsGroupId/contentsSortId, never SKU numbers.
+// Only the relay prefab enforces an order. BundleGroupPackageUI uses the
+// contents sort index for display and allows each product independently.
 func (s *Service) AttachPackageRules(packages []gamedata.CashPackageDesign) error {
 	rules := map[gamedata.CashProductKey][]gamedata.CashProductKey{}
 	for _, p := range packages {
-		if (p.PackageType != 2 && p.PackageType != 8) || p.ContentsGroupID == 0 || p.ContentsSortID <= 1 {
+		if !p.Sequential || p.ContentsGroupID == 0 || p.ContentsSortID <= 1 {
 			continue
 		}
 		key := gamedata.CashProductKey{GroupID: p.GroupID, ProductID: p.ID, SaleGroup: p.SaleGroup}
 		var prior []gamedata.CashProductKey
 		for _, q := range packages {
-			if q.PackageType == p.PackageType && q.ContentsGroupID == p.ContentsGroupID && q.ContentsSortID == p.ContentsSortID-1 {
+			if q.GroupID == p.GroupID && q.PackageType == p.PackageType && q.ContentsGroupID == p.ContentsGroupID && q.ContentsSortID == p.ContentsSortID-1 {
 				prior = append(prior, gamedata.CashProductKey{GroupID: q.GroupID, ProductID: q.ID, SaleGroup: q.SaleGroup})
 			}
 		}

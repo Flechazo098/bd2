@@ -7,7 +7,7 @@
     <RootNamespace>Bd2LocalIdentity</RootNamespace>
     <BD2UsesGameSdk>true</BD2UsesGameSdk>
     <BD2PluginVersionKey>local_identity</BD2PluginVersionKey>
-    <BD2GameVersion>2.36.7</BD2GameVersion>
+    <BD2GameVersion>2.37.13</BD2GameVersion>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Shared/ClientSettings.cs" Link="ClientSettings.cs" />

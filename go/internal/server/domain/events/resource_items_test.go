@@ -43,7 +43,7 @@ type resourceRuntime struct {
 
 func openResourceRuntime(t *testing.T, state stateio.AtomicEntryStore, initial bool) resourceRuntime {
 	t.Helper()
-	ctx := command.Context{Identity: command.Identity{AccountID: "selector", SessionID: "login"}, State: state}
+	ctx := command.Context{Identity: command.Identity{AccountID: "selector", SessionID: "login"}, State: state, InstanceIDs: stateio.NewMemory()}
 	store := stateio.RootStore{}
 	items, err := assets.OpenInventory(ctx, store, nil)
 	if err != nil {

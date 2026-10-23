@@ -61,7 +61,7 @@ func (s *Inventory) loadItemStorage(ctx command.Context) error {
 	for key, payload := range raw {
 		var item Item
 		index, err := strconv.ParseUint(key, 10, 64)
-		if err != nil || json.Unmarshal(payload, &item) != nil || index != item.InvenIndex || index == 0 || seen[index] || index >= s.owned.NextIndex || item.ID == 0 || item.Type == 0 || item.Count == 0 || item.KeepFlag > 1 {
+		if err != nil || json.Unmarshal(payload, &item) != nil || index != item.InvenIndex || index == 0 || seen[index] || index >= 1<<59 || item.ID == 0 || item.Type == 0 || item.Count == 0 || item.KeepFlag > 1 {
 			return fmt.Errorf("inventory: invalid storage item %q", key)
 		}
 		seen[index] = true
@@ -228,8 +228,8 @@ func (s *Inventory) itemStorageMove(ctx command.Context, path string, want Item)
 	}
 	// The destination has its own stack identity. Replies are count deltas,
 	// consumed by CommonPacket.AddKeepItem and AddItemInfo.
-	destination := ownedSnapshot{Items: *target, NextIndex: next.NextIndex}
-	deltas, err := s.addItems(&destination, moved)
+	destination := ownedSnapshot{Items: *target}
+	deltas, err := s.addItems(ctx, &destination, moved)
 	if err != nil {
 		return 0, nil, true, err
 	}
@@ -241,7 +241,6 @@ func (s *Inventory) itemStorageMove(ctx command.Context, path string, want Item)
 		return 0, nil, true, errors.New("inventory: destination capacity exceeded")
 	}
 	*target = destination.Items
-	next.NextIndex = destination.NextIndex
 	if err := s.commitOwned(ctx, next); err != nil {
 		return 0, nil, true, err
 	}

@@ -23,7 +23,11 @@ type CashProductDesign struct {
 }
 type CashShopDesign struct{ GroupID, ID, ProductGroupID, BulkOrderShow uint64 }
 type EventShopDesign struct{ ID, ProductGroupID uint64 }
-type CashPackageDesign struct{ GroupID, ID, SaleGroup, PackageType, PaidShopGroupID, PaidShopID, ContentsGroupID, ContentsSortID uint64 }
+type CashPackageDesign struct {
+	GroupID, ID, SaleGroup, PackageType, PaidShopGroupID, PaidShopID, ContentsGroupID, ContentsSortID uint64
+	ResourceName                                                                                      string
+	Sequential                                                                                        bool
+}
 type CashCatalog struct {
 	Products   []CashProductDesign
 	Shops      []CashShopDesign
@@ -111,7 +115,15 @@ func loadCashCatalog(db *sql.DB) (*CashCatalog, error) {
 		if e != nil {
 			return e
 		}
-		c.Packages = append(c.Packages, CashPackageDesign{v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]})
+		resource, _, e := wire.Bytes(raw, 16)
+		if e != nil {
+			return e
+		}
+		c.Packages = append(c.Packages, CashPackageDesign{
+			GroupID: v[0], ID: v[1], SaleGroup: v[2], PackageType: v[3],
+			PaidShopGroupID: v[4], PaidShopID: v[5], ContentsGroupID: v[6], ContentsSortID: v[7],
+			ResourceName: string(resource),
+		})
 		return nil
 	}); err != nil {
 		return nil, err

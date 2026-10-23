@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +120,8 @@ func (s *Server) dispatchRaw(ctx context.Context, path string, body []byte, cook
 	if err != nil {
 		if path != "/BatchRequest" {
 			if rejection, handled, encodeErr := s.gameErrorReply(game, err); handled {
+				timing.rejected = true
+				slog.WarnContext(ctx, "session game request rejected", "path", path, "error", rejectedRequestError(game.accountID, requests, err))
 				return rejection, encodeErr
 			}
 		}

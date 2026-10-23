@@ -1,0 +1,32 @@
+{
+  "version": "2.37.13",
+  "gamedata_version": "20261021182514",
+  "gifts": [
+    {
+      "identity": "starter:limited-costumes:not-current-pickup:v1",
+      "title": "New Player Limited Costumes",
+      "body": "Limited costumes not featured in the current pickup banners. Each costume is enhanced to +5 when claimed."
+    },
+    {
+      "identity": "starter:prestige-skins:not-current-purchase:v1",
+      "title": "Prestige Skin Gift",
+      "body": "Prestige skins not currently available on the cash purchase page."
+    },
+    {
+      "identity": "starter:limited-avatars:external-sources:v1",
+      "title": "Limited Avatar Accessories Gift",
+      "body": "Avatar accessories originally obtained from seasonal events or external promotions. Default outfits and achievement rewards are excluded.",
+      "external_avatar_parts": [
+        {"id": 20018, "unlock_text_id": 1500239, "source": "April Fools commemorative dice event"},
+        {"id": 50007, "unlock_text_id": 1500232, "source": "Valentine commemorative roulette event"},
+        {"id": 60015, "unlock_text_id": 1500248, "source": "Artbook bonus redemption code"},
+        {"id": 60018, "unlock_text_id": 1500268, "source": "Coffee truck thank-you voucher"}
+      ]
+    },
+    {
+      "identity": "starter:prestige-avatar:",
+      "title": "Prestige Avatar Outfit Gift",
+      "body": "The avatar outfit linked to a prestige skin you own. Only outfit pieces you do not already own are granted when claimed."
+    }
+  ]
+}

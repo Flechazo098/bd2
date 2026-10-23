@@ -114,7 +114,7 @@ func TestNativeFriendRequestsAreBilateralDurableAndRetrySafe(t *testing.T) {
 			t.Fatal(err)
 		}
 		costumeID := []uint64{101, 201}[i]
-		if _, err := owner.assembly.collection.GrantCostumes(command.Context{State: tx}, "friend-supporter-fixture", []uint64{costumeID}, factory.design.rewardCostumes); err != nil {
+		if _, err := owner.assembly.collection.GrantCostumes(command.Context{State: tx, InstanceIDs: factory.instanceIDs()}, "friend-supporter-fixture", []uint64{costumeID}, factory.design.rewardCostumes); err != nil {
 			_ = tx.Rollback()
 			t.Fatal(err)
 		}
@@ -380,7 +380,7 @@ func TestNativeFriendRequestsAreBilateralDurableAndRetrySafe(t *testing.T) {
 	for range 2 {
 		a.send("/SupporterBorrow", append(appScalar(2, b.owner), appScalar(3, 1)...), 437, 0)
 	}
-	a.send("/SupporterBorrow", append(appScalar(2, b.owner), appScalar(3, 1)...), 437, 9003)
+	a.send("/SupporterBorrow", append(appScalar(2, b.owner), appScalar(3, 1)...), 437, 3)
 	status = b.send("/SupporterStatus", appScalar(2, 50), 438, 0)
 	history = appRows(status, 1)
 	if len(history) != 3 {

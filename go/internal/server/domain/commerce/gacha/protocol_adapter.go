@@ -251,7 +251,7 @@ func (s *Service) multiBuy(ctx command.Context, request []byte, seq uint64) (int
 		}
 		var open bool
 		var allowanceErr error
-		allowance, open, allowanceErr = s.dailyFreeAllowance(groupID, allowance)
+		allowance, open, allowanceErr = s.dailyAllowance(groupID, allowance, false)
 		if allowanceErr != nil {
 			return 146, nil, true, allowanceErr
 		}
@@ -362,11 +362,15 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 	if !knownGroup {
 		group = gamedata.GachaGroupDesign{ID: id, PointCount: 1}
 	}
+	if identity == "" {
+		identity = s.requestIdentity(ctx, id, seq)
+	}
+	grant, already := s.collection.Grant(identity)
 	isDailyFree := buyType == 0 && design.Count == 1 && design.FreeCountDay != 0 && knownGroup
 	var freeDailyLimit uint64
-	if isDailyFree {
+	if isDailyFree && !already {
 		var open bool
-		freeDailyLimit, open, err = s.dailyFreeAllowance(group.ID, design.FreeCountDay)
+		freeDailyLimit, open, err = s.dailyAllowance(group.ID, design.FreeCountDay, false)
 		if err != nil {
 			return 146, nil, true, err
 		}
@@ -375,6 +379,17 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 		}
 	}
 	isDailyPaid := buyType == 2 && design.Count == 1 && design.DailyPayGachaCount != 0 && design.DailyPayGachaPriceCount != 0 && knownGroup
+	var paidDailyLimit uint64
+	if isDailyPaid && !already {
+		var open bool
+		paidDailyLimit, open, err = s.dailyAllowance(group.ID, design.DailyPayGachaCount, true)
+		if err != nil {
+			return 146, nil, true, err
+		}
+		if !open {
+			return 146, nil, true, fmt.Errorf("gacha: daily paid schedule is closed for group %d", group.ID)
+		}
+	}
 	isMoonrise := buyType == 3 && design.PriceType == 19 && design.PriceID != 0 && knownGroup && group.GachaSubType == 1 && group.SelectCount != 0 && group.CashProductID != 0
 	completionGrant := fmt.Sprintf("special-gacha:%d:%d", group.ID, id)
 	validOrdinary := buyType == 1 && (design.PriceType == 2 || design.PriceType == 3)
@@ -392,10 +407,6 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 			return 146, nil, true, fmt.Errorf("gacha: ticket %d is not valid for gacha %d", ticket.ID, id)
 		}
 	}
-	if identity == "" {
-		identity = s.requestIdentity(ctx, id, seq)
-	}
-	grant, already := s.collection.Grant(identity)
 	if isMoonrise && !already {
 		if _, completed := s.collection.Grant(completionGrant); completed {
 			return 146, nil, true, errors.New("gacha: Moonrise product already drawn")
@@ -429,13 +440,16 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 		if isDailyFree {
 			dailyLimit = freeDailyLimit
 		} else if isDailyPaid {
-			dailyLimit = design.DailyPayGachaCount
+			dailyLimit = paidDailyLimit
 		}
 		if dailyLimit != 0 && s.collection.GachaDailyCount(day, group.ID, buyType) >= dailyLimit {
 			return 146, nil, true, fmt.Errorf("gacha: daily draw exhausted group=%d buyType=%d", group.ID, buyType)
 		}
 		var ticketCount uint64
 		for _, ticket := range tickets {
+			if ticket.Count > uint64(design.Count)-ticketCount {
+				return 146, nil, true, errors.New("gacha: invalid ticket count")
+			}
 			ticketCount += ticket.Count
 		}
 		if ticketCount > uint64(design.Count) || (buyType != 1 && ticketCount != 0) || (design.PriceType != 3 && ticketCount != 0) {
@@ -509,13 +523,20 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 			charge = design.Price / uint64(design.Count) * remaining
 			chargePaid = design.PriceType == 2
 		}
+		var freeCharge, paidCharge uint64
 		if charge != 0 {
 			currency := s.wallet.Snapshot(ctx)
 			if chargePaid && currency.Jewelry < charge {
 				return 146, nil, true, errors.New("gacha: insufficient paid jewelry")
 			}
-			if !chargePaid && currency.FreeJewelry < charge {
-				return 146, nil, true, errors.New("gacha: insufficient free jewelry")
+			if chargePaid {
+				paidCharge = charge
+			} else {
+				freeCharge = min(currency.FreeJewelry, charge)
+				paidCharge = charge - freeCharge
+				if currency.Jewelry < paidCharge {
+					return 146, nil, true, errors.New("gacha: insufficient jewelry")
+				}
 			}
 		}
 		if len(tickets) != 0 {
@@ -541,19 +562,18 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 						return 146, nil, true, err
 					}
 				} else {
-					if _, err := s.wallet.SpendFreeJewelryOnce(ctx, identity, charge); err != nil {
+					if _, err := s.wallet.SpendTotalJewelryOnce(ctx, identity, charge); err != nil {
 						return 146, nil, true, err
 					}
 				}
 			}
 		}
 		historyCost = append(historyConsumedTickets(tickets), historyConsumedTickets(moonriseCost)...)
-		if charge != 0 {
-			kind := uint64(3)
-			if chargePaid {
-				kind = 2
-			}
-			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: kind, Count: charge}})...)
+		if freeCharge != 0 {
+			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 3, Count: freeCharge}})...)
+		}
+		if paidCharge != 0 {
+			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 2, Count: paidCharge}})...)
 		}
 		purchase := roster.GachaPurchase{Group: group, BuyType: buyType, Fixed: fixedStates, SelectionApplySortIDs: selectionApplySortIDs}
 		if isMoonrise {
@@ -589,7 +609,7 @@ func (s *Service) buyWithIdentity(ctx command.Context, request []byte, seq uint6
 		}
 	}
 	if !already && s.onDraw != nil {
-		if err := s.onDraw(ctx, uint64(design.Count)); err != nil {
+		if err := s.onDraw(ctx, group.ID, uint64(design.Count)); err != nil {
 			return 146, nil, true, fmt.Errorf("gacha: draw mission: %w", err)
 		}
 	}
@@ -604,7 +624,8 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 		return 146, nil, true, errors.New("gacha: equipment inventory not attached")
 	}
 	isDailyFree := buyType == 0 && !design.TicketOnly && design.Count == 1 && design.FreeCountDay != 0
-	if (buyType != 1 && !isDailyFree) || (!design.TicketOnly && design.PriceType != 3) {
+	isDailyPaid := buyType == 2 && !design.TicketOnly && design.Count == 1 && design.DailyPayGachaCount != 0 && design.DailyPayGachaPriceCount != 0
+	if (buyType != 1 && !isDailyFree && !isDailyPaid) || (!design.TicketOnly && design.PriceType != 3) {
 		return 146, nil, true, fmt.Errorf("gacha: unsupported equipment buy type %d", buyType)
 	}
 	if design.TicketOnly && len(tickets) == 0 {
@@ -620,26 +641,30 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 	if !hasGroup && !design.TicketOnly {
 		return 146, nil, true, fmt.Errorf("gacha: equipment gacha %d has no group", design.ID)
 	}
-	if isDailyFree && len(tickets) != 0 {
-		return 146, nil, true, errors.New("gacha: daily free equipment draw cannot use tickets")
-	}
-	var freeDailyLimit uint64
-	if isDailyFree {
-		var open bool
-		var err error
-		freeDailyLimit, open, err = s.dailyFreeAllowance(group.ID, design.FreeCountDay)
-		if err != nil {
-			return 146, nil, true, err
-		}
-		if !open {
-			return 146, nil, true, fmt.Errorf("gacha: daily free equipment schedule is closed for group %d", group.ID)
-		}
+	if (isDailyFree || isDailyPaid) && len(tickets) != 0 {
+		return 146, nil, true, errors.New("gacha: discounted equipment draw cannot use tickets")
 	}
 	if identity == "" {
 		identity = s.requestIdentity(ctx, design.ID, seq)
 	}
-	historyCost := historyConsumedTickets(tickets)
 	grant, already := s.collection.Grant(identity)
+	var dailyLimit uint64
+	if (isDailyFree || isDailyPaid) && !already {
+		var open bool
+		var err error
+		base := design.FreeCountDay
+		if isDailyPaid {
+			base = design.DailyPayGachaCount
+		}
+		dailyLimit, open, err = s.dailyAllowance(group.ID, base, isDailyPaid)
+		if err != nil {
+			return 146, nil, true, err
+		}
+		if !open {
+			return 146, nil, true, fmt.Errorf("gacha: daily equipment schedule is closed for group %d", group.ID)
+		}
+	}
+	historyCost := historyConsumedTickets(tickets)
 	var entries []assets.Equipment
 	if already {
 		for sort := 0; sort < design.Count; sort++ {
@@ -650,11 +675,14 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 			entries = append(entries, entry)
 		}
 	} else {
-		if isDailyFree && s.collection.GachaDailyCount(dailyResetKey(s.now()), group.ID, 0) >= freeDailyLimit {
+		if dailyLimit != 0 && s.collection.GachaDailyCount(dailyResetKey(s.now()), group.ID, buyType) >= dailyLimit {
 			return 146, nil, true, fmt.Errorf("gacha: daily equipment draw exhausted group=%d", group.ID)
 		}
 		var ticketCount uint64
 		for _, ticket := range tickets {
+			if ticket.Count > uint64(design.Count)-ticketCount {
+				return 146, nil, true, errors.New("gacha: invalid equipment ticket count")
+			}
 			ticketCount += ticket.Count
 		}
 		if ticketCount > uint64(design.Count) || (design.TicketOnly && ticketCount != uint64(design.Count)) {
@@ -672,10 +700,25 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 			if design.TicketOnly {
 				return 146, nil, true, errors.New("gacha: ticket-only equipment draw cannot use diamonds")
 			}
-			if _, err := s.wallet.SpendFreeJewelryOnce(ctx, identity, design.Price/uint64(design.Count)*remain); err != nil {
-				return 146, nil, true, err
+			charge := design.Price / uint64(design.Count) * remain
+			var freeCharge uint64
+			if isDailyPaid {
+				charge = design.DailyPayGachaPriceCount
+				if _, err := s.wallet.SpendJewelryOnce(ctx, identity, charge); err != nil {
+					return 146, nil, true, err
+				}
+			} else {
+				freeCharge = min(s.wallet.Snapshot(ctx).FreeJewelry, charge)
+				if _, err := s.wallet.SpendTotalJewelryOnce(ctx, identity, charge); err != nil {
+					return 146, nil, true, err
+				}
 			}
-			historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 3, Count: design.Price / uint64(design.Count) * remain}})...)
+			if freeCharge != 0 {
+				historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 3, Count: freeCharge}})...)
+			}
+			if paidCharge := charge - freeCharge; paidCharge != 0 {
+				historyCost = append(historyCost, historyConsumedTickets([]assets.Item{{Type: 2, Count: paidCharge}})...)
+			}
 		}
 		var fixed gamedata.EquipmentFixedDesign
 		var priorSR, priorUR uint64
@@ -725,8 +768,8 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 			grant, err = s.collection.GrantEquipmentDraw(ctx, identity)
 		} else {
 			purchase := roster.GachaPurchase{Group: gamedata.GachaGroupDesign{ID: group.ID, PointCount: group.PointCount}, BuyType: buyType, Fixed: fixedStates}
-			if isDailyFree {
-				purchase.DailyKey, purchase.DailyLimit = dailyResetKey(s.now()), freeDailyLimit
+			if dailyLimit != 0 {
+				purchase.DailyKey, purchase.DailyLimit = dailyResetKey(s.now()), dailyLimit
 			}
 			grant, err = s.collection.GrantEquipmentPurchase(ctx, identity, uint64(len(entries)), purchase)
 		}
@@ -749,7 +792,7 @@ func (s *Service) buyEquipmentWithIdentity(ctx command.Context, seq, buyType uin
 		}
 	}
 	if !already && s.onDraw != nil {
-		if err := s.onDraw(ctx, uint64(design.Count)); err != nil {
+		if err := s.onDraw(ctx, group.ID, uint64(design.Count)); err != nil {
 			return 146, nil, true, fmt.Errorf("gacha: equipment draw mission: %w", err)
 		}
 	}
@@ -1004,6 +1047,7 @@ func (s *Service) confirm(ctx command.Context, request []byte) (int, []byte, boo
 	if s.design == nil || group != s.design.ProductGroupID || productID != s.design.ProductID || saleGroup != s.design.SaleGroup {
 		return 0, nil, true, fmt.Errorf("gacha: unsupported cash product group=%d product=%d", group, productID)
 	}
+	_, already := s.collection.Grant(s.infiniteGrant())
 	grant, err := s.collection.ConfirmInfinite(ctx, s.infiniteGrant(), s.design)
 	if err != nil {
 		return 0, nil, true, err
@@ -1014,6 +1058,11 @@ func (s *Service) confirm(ctx command.Context, request []byte) (int, []byte, boo
 	response := wire.AppendBytes(nil, 1, s.rewardBundle(grant))
 	if err := s.recordHistory(ctx, s.infiniteGrant(), s.design.GroupID, s.design.GachaID, 1, uint64(s.design.Count), 1, 0, response, grant, nil); err != nil {
 		return 61, nil, true, err
+	}
+	if !already && s.onDraw != nil {
+		if err := s.onDraw(ctx, s.design.GroupID, uint64(s.design.Count)); err != nil {
+			return 61, nil, true, fmt.Errorf("gacha: draw mission: %w", err)
+		}
 	}
 	return 61, response, true, nil
 }
@@ -1306,6 +1355,11 @@ func (s *Service) confirmFirstGacha(ctx command.Context, _ []byte, seq, buyType 
 	}
 	if err := s.collection.RecordGachaBatch(ctx, responseIdentity, firstGachaResponseDigest, response); err != nil {
 		return 146, nil, true, err
+	}
+	if s.onDraw != nil {
+		if err := s.onDraw(ctx, s.first.Group.ID, uint64(s.first.Count)); err != nil {
+			return 146, nil, true, fmt.Errorf("gacha: draw mission: %w", err)
+		}
 	}
 	if s.onPreview != nil {
 		if err := s.onPreview(ctx); err != nil {

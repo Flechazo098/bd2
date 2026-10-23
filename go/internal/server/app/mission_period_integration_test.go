@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bd2server/internal/server/domain/progression/conditions"
 	"context"
 	"fmt"
 	"testing"
@@ -111,10 +112,14 @@ func (g *missionGameplay) itemCount(typ, id uint64) uint64 {
 func (g *missionGameplay) assertMission(groupType, group, id, value uint64, claimed bool) {
 	g.t.Helper()
 	var row []byte
+	found := false
 	for _, candidate := range appRows(g.call("/MissionInfo", nil), 1) {
 		if appValue(candidate, 1) == group && appValue(candidate, 2) == id && appValue(candidate, 3) == groupType {
-			row = candidate
+			row, found = candidate, true
 		}
+	}
+	if !found {
+		g.t.Fatalf("mission %d/%d/%d missing from MissionInfo", groupType, group, id)
 	}
 	if appValue(row, 4) != value || (appValue(row, 5) == 1) != claimed {
 		g.t.Fatalf("mission %d/%d/%d: value=%d claimed=%v, want value=%d claimed=%v", groupType, group, id, appValue(row, 4), appValue(row, 5) == 1, value, claimed)
@@ -287,7 +292,7 @@ func TestMissionExpiredRowCannotReceiveCurrentGameplayEvents(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	ctx := command.Context{State: tx}
-	if err := g.owner.assembly.missionService.RecordEvent(ctx, 3, 0, 1, g.owner.assembly.worldService.MissionsUnlocked); err != nil {
+	if err := g.owner.assembly.missionService.RecordEvent(ctx, conditions.Event{Type: 3, Count: 1}, g.owner.assembly.worldService.MissionsUnlocked); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

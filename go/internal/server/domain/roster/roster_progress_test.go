@@ -11,6 +11,7 @@ import (
 	"bd2server/internal/server/domain/roster/deck"
 	"bd2server/internal/server/protocol/wire"
 	accountstate "bd2server/internal/server/storage/account"
+	"bd2server/internal/server/storage/instanceid"
 	"bd2server/internal/server/storage/outbox"
 	"bd2server/internal/server/storage/stateio"
 	"context"
@@ -43,7 +44,7 @@ func openProgress(t *testing.T, path string, d *gamedata.RosterProgressDesign, p
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { _ = tx.Rollback(); _ = r.Close() })
-	ctx := command.Context{Identity: command.Identity{AccountID: "roster-contract", SessionID: "session"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: "roster-contract", SessionID: "session"}, State: tx, InstanceIDs: instanceid.New(filepath.Join(filepath.Dir(path), "instance-ids.db"))}
 	ctx.Emit = func(event command.Event) error { return outbox.Publish(tx, ctx.AccountID, event) }
 	scope := stateio.RootStore{}
 	i, e := assets.OpenInventory(ctx, scope, nil)

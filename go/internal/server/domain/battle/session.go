@@ -242,6 +242,11 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (resu
 				return code, nil, true, err
 			}
 		}
+		if path == "/BattleEnd" && value(request, 2) == 1 {
+			if err = s.recordQuestVictory(ctx, &before); err != nil {
+				return code, nil, true, err
+			}
+		}
 		if s.completion != nil {
 			completion := before.completion(value(request, 2) == 1)
 			var extra []byte
@@ -353,6 +358,8 @@ func (s *Service) resume(ctx command.Context) (int, []byte, bool, error) {
 			out = wire.AppendVarint(out, 13, value(user, 4))
 			out = wire.AppendVarint(out, 14, value(user, 4))
 			out = wire.AppendVarint(out, 17, value(user, 1))
+			// The client opens the armor-break gate at battle start; proto3 would otherwise read false.
+			out = wire.AppendVarint(out, 36, 1)
 		}
 		if (state.Mode == 23 || state.Mode == 26) && s.externalResume != nil {
 			extra, err := s.externalResume(ctx, state.Mode, state.EnterReceipt)
@@ -397,7 +404,7 @@ func (s *Service) previous(ctx command.Context, request []byte) (int, []byte, bo
 	}
 	snapshot := state.previousSnapshot()
 	var out []byte
-	for from, to := range map[int]int{8: 1, 9: 2, 10: 3, 12: 4, 15: 5, 16: 6, 28: 9, 29: 10, 30: 11, 31: 12, 32: 13} {
+	for from, to := range map[int]int{8: 1, 9: 2, 10: 3, 12: 4, 15: 5, 16: 6, 28: 9, 29: 10, 30: 11, 31: 12, 32: 13, 35: 15, 36: 16} {
 		if err := wire.Walk(snapshot, func(f wire.Field) error {
 			if f.Number != from {
 				return nil

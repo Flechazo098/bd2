@@ -15,7 +15,7 @@ import (
 	"bd2server/internal/server/runtime/player"
 )
 
-// GameData 20261012190548 LocalText 7900026 promises a single reward per
+// GameData 20261021182514 LocalText 7900026 promises a single reward per
 // board first clear; 7900084 requires every stage win; 7900122 resets run items.
 // IbStageEndResponse and RewardDBInfoBundle field numbers are from the current
 // extracted Proto.Net classes. This exercises the actual account transaction,

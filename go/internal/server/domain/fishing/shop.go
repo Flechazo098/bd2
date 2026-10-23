@@ -3,6 +3,7 @@ package fishing
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"encoding/binary"
 	"fmt"
@@ -113,6 +114,10 @@ func (s *Service) shop(ctx command.Context, path string, req []byte, n *snapshot
 		}
 		bundle, e := s.economy.Apply(ctx, "fishing:"+key, []gamedata.Reward{{Type: num(r, 8), ID: num(r, 7), Count: num(r, 6) * count}}, nil)
 		if e != nil {
+			return nil, e
+		}
+		// McFishingShopBuy names the FishingBuyItemTable shop and the bought item.
+		if e = s.recordProgress(ctx, conditions.Event{Type: conditions.FishingShopBuy, Sub: num(req, 2), Param: id, Count: count}); e != nil {
 			return nil, e
 		}
 		if typ == 57 {

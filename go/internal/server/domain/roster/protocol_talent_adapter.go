@@ -1117,10 +1117,13 @@ func (s *TalentUseService) applyCharm(ctx command.Context, _ string, _ Character
 		if d.CharacterID == 0 || d.CostumeID == 0 || d.HP == 0 {
 			return nil, fmt.Errorf("player: invalid charm companion design")
 		}
-		if pack <= 0 || pack >= 65536 || d.CharacterID >= 1<<32 {
-			return nil, fmt.Errorf("player: charm instance namespace overflow")
+		if pack <= 0 {
+			return nil, fmt.Errorf("player: invalid charm pack")
 		}
-		index := CharmCharacterIndexBase | uint64(pack)<<32 | d.CharacterID
+		index, err := s.characters.CharmCharacterIndex(ctx, uint64(pack), d.CharacterID)
+		if err != nil {
+			return nil, err
+		}
 		chars = append(chars, Character{InvenIndex: index, ID: d.CharacterID, Level: d.Level, HP: d.HP, CostumeID: d.CostumeID, TalentLevel: 1, ExpiryTime: expiry})
 	}
 	if err = s.characters.ensureCharmCharacters(ctx, chars); err != nil {

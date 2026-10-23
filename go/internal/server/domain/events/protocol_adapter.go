@@ -276,10 +276,9 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 			}
 			apCosts = append(apCosts, r)
 		case extraCurrency(c.Type):
-			if c.ID != 0 || c.InvenIndex != 0 || s.Balances[c.Type] < c.Count {
+			if c.ID != 0 || c.InvenIndex != 0 || !spendCurrency(s.Balances, c.Type, c.Count) {
 				return nil, fmt.Errorf("events: insufficient currency %d", c.Type)
 			}
-			s.Balances[c.Type] -= c.Count
 		default:
 			if !inventoryType(c.Type) {
 				return nil, fmt.Errorf("events: unsupported consumed item type %d", c.Type)
@@ -485,6 +484,9 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 		return nil, err
 	}
 	if err = e.store.Save(ctx.State, "event_economy", data); err != nil {
+		return nil, err
+	}
+	if err = e.recordCurrencies(ctx, consumed, expanded); err != nil {
 		return nil, err
 	}
 	return bundle, nil

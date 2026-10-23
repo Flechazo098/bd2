@@ -184,7 +184,7 @@ func TestChatReportQuotaResetsAtNextServerDay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx := command.Context{State: tx, Identity: command.Identity{AccountID: accounts[0]}, Emit: func(command.Event) error { return nil }}
+		ctx := command.Context{State: tx, Identity: command.Identity{AccountID: accounts[0]}, Emit: func(command.Event) error { return nil }, InstanceIDs: factory.instanceIDs()}
 		_, body, handled, err := owner.assembly.chatService.Handle(ctx, path, append(appScalar(1, 1), fields...))
 		if err != nil || !handled {
 			_ = tx.Rollback()

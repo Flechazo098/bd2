@@ -102,6 +102,7 @@ func Serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	shared.friends.AttachPresence(game.AccountOnline)
 
 	var authHandler http.Handler
 	if authService != nil {

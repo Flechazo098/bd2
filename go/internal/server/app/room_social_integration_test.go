@@ -20,11 +20,11 @@ func TestNativeRoomVisitPrivacyOwnedLayoutAndPopularityAreDurable(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := actor.assembly.collection.GrantCostumes(command.Context{State: tx}, "room-costume-fixture", []uint64{101}, factory.design.rewardCostumes); err != nil {
+	if _, err := actor.assembly.collection.GrantCostumes(command.Context{State: tx, InstanceIDs: factory.instanceIDs()}, "room-costume-fixture", []uint64{101}, factory.design.rewardCostumes); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
-	items, err := actor.assembly.ownedItems.GrantOnce(command.Context{State: tx}, "room-decoration-fixture", []gamedata.BattleReward{{Type: 27, ID: 101, Count: 1}})
+	items, err := actor.assembly.ownedItems.GrantOnce(command.Context{State: tx, InstanceIDs: factory.instanceIDs()}, "room-decoration-fixture", []gamedata.BattleReward{{Type: 27, ID: 101, Count: 1}})
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)

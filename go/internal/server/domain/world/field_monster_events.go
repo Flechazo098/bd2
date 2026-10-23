@@ -3,6 +3,7 @@ package world
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"fmt"
 )
 
@@ -25,5 +26,12 @@ func (s *Service) grantFieldMonster(ctx command.Context, pack int, m gamedata.Fi
 			rewards = append(rewards, gamedata.Reward{Type: r.Type, ID: r.ID, Count: r.Count}) //nolint:staticcheck // S1016
 		}
 	}
-	return s.researchEconomy.Apply(ctx, identity, nil, rewards)
+	bundle, err := s.researchEconomy.Apply(ctx, identity, nil, rewards)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recordMission(ctx, conditions.Event{Type: conditions.FieldRewardMonsterCatch, Count: 1}); err != nil {
+		return nil, err
+	}
+	return bundle, nil
 }

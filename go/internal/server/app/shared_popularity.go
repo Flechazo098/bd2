@@ -375,7 +375,7 @@ func (s *sharedRuntime) popularInfo(ctx command.Context, path string, raw []byte
 	if s.statistics == nil {
 		return code, nil, fmt.Errorf("missing popularity design")
 	}
-	if path == "/PopularCostumeInfo" && (v[2] > 5 || v[3] > 1 || v[4] > 4) {
+	if path == "/PopularCostumeInfo" && (v[2] > 6 || v[3] > 1 || v[4] > 4) {
 		return code, nil, fmt.Errorf("invalid popularity filter")
 	}
 	if path == "/PopularEquipInfo" {
@@ -393,6 +393,11 @@ func (s *sharedRuntime) popularInfo(ctx command.Context, path string, raw []byte
 	}
 	var body []byte
 	e = s.store.View(cancel, func(tx *shared.Tx) error {
+		if path == "/PopularCostumeInfo" && v[2] == 6 {
+			table, e := s.colosseumCosts(tx, uint64(now.UnixMilli()))
+			body = colosseumPopularityBody(table)
+			return e
+		}
 		if path == "/PopularEquipInfo" {
 			prefix := fmt.Sprintf("equip:%010d:", v[2])
 			type winner struct{ id, count uint64 }

@@ -126,5 +126,11 @@ func (p *playerAssembly) roomProfile(ctx command.Context) ([]byte, error) {
 		use = wire.AppendVarint(use, index+3, value)
 	}
 	fish := p.fishingService.Profile()
-	return json.Marshal(room.Profile{UserInfo: user, AvatarUseInfo: use, RodID: int64(fish.RodID), BoatLevel: int64(fish.BoatLevel), BoatSkinID: int64(fish.BoatSkinID), FishingMaps: fish.Maps})
+	var motions []uint64
+	for _, item := range p.ownedItems.All(ctx) {
+		if item.Type == 50 && item.Count > 0 {
+			motions = append(motions, item.ID)
+		}
+	}
+	return json.Marshal(room.Profile{UserInfo: user, AvatarUseInfo: use, AvatarMotions: motions, SquareUnlocked: p.worldService.CanEnterFieldPackType(ctx, 11), RodID: int64(fish.RodID), BoatLevel: int64(fish.BoatLevel), BoatSkinID: int64(fish.BoatSkinID), FishingMaps: fish.Maps})
 }

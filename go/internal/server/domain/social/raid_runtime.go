@@ -535,7 +535,8 @@ func (s *Service) CompleteBattle(ctx command.Context, request []byte, receipt st
 		}
 	}
 	overkill := uint64(0)
-	if result == 1 && level == 10 {
+	// LocalText 2001675: only clears at overkillLevel or above record damage beyond the boss HP.
+	if threshold := s.config.Owner.design.Raid.OverkillLevel; result == 1 && threshold > 0 && level >= threshold {
 		total, e := raidTotalDamage(p)
 		if e != nil {
 			return nil, e

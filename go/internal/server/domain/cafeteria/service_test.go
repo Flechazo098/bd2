@@ -221,3 +221,45 @@ func TestCafeteriaInteractionCapIsSharedAndResets(t *testing.T) {
 		t.Fatal("missed days generated retroactive rewards")
 	}
 }
+
+// Login never pays an unfinished introduction: it belongs to the first entry
+// into the cafeteria game card. A finished one only regains a spent ticket.
+func TestCafeteriaLoginOnlyRestoresTheTicketOfAFinishedIntroduction(t *testing.T) {
+	d := liveDesign(t)
+	store := stateio.NewMemory()
+	ctx := command.Context{Identity: command.Identity{SessionID: "introduction"}, State: store}
+	money := &ledger{balances: map[[2]uint64]uint64{}}
+	intro := [2]uint64{d.Default.V(31), d.Default.V(30)}
+	const ticket = 3007 // ContentOpenTable group19/detail1 (dating) ticket in current GameData
+	held := false
+	open := func() *Service {
+		t.Helper()
+		s, e := Open(ctx, stateio.RootStore{}, d, money)
+		if e != nil {
+			t.Fatal(e)
+		}
+		s.AttachDatingTicket(ticket, func(command.Context, uint64) bool { return held })
+		s.AttachOwnedCostumes(func() []uint64 { return []uint64{d.Costumes.Groups[0][0]} })
+		s.AttachDatingHasEpisode(func(uint64) bool { return true })
+		return s
+	}
+	if e := open().ReconcileIntroduction(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if money.balances[intro] != 0 || money.balances[[2]uint64{19, ticket}] != 0 {
+		t.Fatalf("login paid an unfinished introduction: introduction %d ticket %d", money.balances[intro], money.balances[[2]uint64{19, ticket}])
+	}
+	if _, _, _, e := open().Handle(ctx, "/CafeteriaIntroductionStoryReward", wire.AppendVarint(nil, 1, 1)); e != nil {
+		t.Fatal(e)
+	}
+	if money.balances[intro] != d.Default.V(29) {
+		t.Fatalf("introduction reward %d, want %d", money.balances[intro], d.Default.V(29))
+	}
+	// The ledger does not expand the box, so the ticket counts as spent.
+	if e := open().ReconcileIntroduction(ctx); e != nil {
+		t.Fatal(e)
+	}
+	if money.balances[intro] != d.Default.V(29) || money.balances[[2]uint64{19, ticket}] != 1 {
+		t.Fatalf("finished introduction login: introduction %d ticket %d, want %d and 1", money.balances[intro], money.balances[[2]uint64{19, ticket}], d.Default.V(29))
+	}
+}

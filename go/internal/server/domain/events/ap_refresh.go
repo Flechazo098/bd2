@@ -96,6 +96,7 @@ func (e *Economy) CanApply(ctx command.Context, costs []gamedata.Reward) error {
 	}
 	var wallet, ap, life []gamedata.Reward
 	var items []assets.Item
+	balances := maps.Clone(s.Balances)
 	totals := map[[2]uint64]uint64{}
 	for _, r := range costs {
 		k := [2]uint64{r.Type, r.ID}
@@ -114,8 +115,8 @@ func (e *Economy) CanApply(ctx command.Context, costs []gamedata.Reward) error {
 		case apCurrency(r.Type):
 			ap = append(ap, r)
 		case extraCurrency(r.Type):
-			if r.ID != 0 || s.Balances[r.Type] < n {
-				return fmt.Errorf("events: insufficient currency")
+			if r.ID != 0 || !spendCurrency(balances, r.Type, n) {
+				return fmt.Errorf("events: insufficient currency %d", r.Type)
 			}
 		case inventoryType(r.Type):
 			selected, err := e.items.SelectMutable(ctx, r.Type, r.ID, n)

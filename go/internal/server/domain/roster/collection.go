@@ -135,8 +135,6 @@ const FirstGachaCompletedIdentity = "account:first-gacha-completed"
 
 type collectionSnapshot struct {
 	Version               string                               `json:"version"`
-	NextCharacterIndex    uint64                               `json:"next_character_index"`
-	NextCostumeIndex      uint64                               `json:"next_costume_index"`
 	LatestPreview         []uint64                             `json:"latest_preview"`
 	PreviewEventIndex     uint64                               `json:"preview_event_index"`
 	PreviewLocked         bool                                 `json:"preview_locked"`
@@ -624,11 +622,15 @@ func (s *CollectionStore) grantCostumesSorted(ctx command.Context, identity stri
 		if err != nil {
 			return CollectionGrant{}, err
 		}
-		costumeIndex := next.NextCostumeIndex
-		next.NextCostumeIndex++
+		costumeIndex, err := ctx.NewInstanceID()
+		if err != nil {
+			return CollectionGrant{}, err
+		}
 		if !characterExists {
-			characterIndex = next.NextCharacterIndex
-			next.NextCharacterIndex++
+			characterIndex, err = ctx.NewInstanceID()
+			if err != nil {
+				return CollectionGrant{}, err
+			}
 			ownedCharacter := Character{InvenIndex: characterIndex, ID: characterDesign.ID, HP: characterDesign.HP, Level: 1,
 				CostumeID: costumeID, UseCostume: costumeIndex, TalentLevel: 1, SolidarityReward: 1,
 				ExpiryTime: ^uint64(0) - 32399999, ConnectPotentialCostume: costumeID}

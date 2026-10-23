@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -59,6 +60,8 @@ type snapshot struct {
 }
 type Service struct {
 	provider           InventoryProvider
+	gachaHistory       func(command.Context, uint64) ([]byte, error)
+	achievementLevel   func() (uint64, error)
 	before             InventorySnapshot
 	observationVersion string
 	inventoryReady     bool
@@ -78,6 +81,8 @@ type Service struct {
 	attendancePremium func(command.Context, uint64) bool
 	attendanceMail    AttendanceMailIssuer
 	associated        func(events.Schedule) uint64
+	progress          func(command.Context, conditions.Event) error
+	accountState      AccountState
 }
 
 func Open(ctx command.Context, store stateio.Store, d *gamedata.EventTasksDesign, r events.Resolver, e Economy) (*Service, error) {
@@ -324,6 +329,18 @@ func (s *Service) pass(v events.Schedule) *pass {
 	}
 	return p
 }
+func (s *Service) missionPeriod(v events.Schedule) string {
+	switch s.design.MissionGroups[v.ID].Type {
+	case 1:
+		return s.day()
+	case 2:
+		y, w := s.now().UTC().ISOWeek()
+		return fmt.Sprintf("%d-%d", y, w)
+	default:
+		return ""
+	}
+}
+
 func (s *Service) mission(v events.Schedule, id uint64) *mission {
 	k := scheduleKey(v) + "/" + key(id)
 	m := s.state.Missions[k]
@@ -331,15 +348,7 @@ func (s *Service) mission(v events.Schedule, id uint64) *mission {
 		m = &mission{}
 		s.state.Missions[k] = m
 	}
-	g := s.design.MissionGroups[v.ID]
-	period := ""
-	if g.Type == 1 {
-		period = s.day()
-	}
-	if g.Type == 2 {
-		y, w := s.now().UTC().ISOWeek()
-		period = fmt.Sprintf("%d-%d", y, w)
-	}
+	period := s.missionPeriod(v)
 	if m.Period != period {
 		*m = mission{Period: period}
 	}
@@ -360,40 +369,42 @@ func (s *Service) availableTask(ctx command.Context, v events.Schedule, t gameda
 
 // RecordEvent is called by authoritative gameplay. It returns no rewards and
 // caps every matching task at its design threshold.
-func (s *Service) RecordEvent(ctx command.Context, condition, sub, count uint64, unlocked func(command.Context, uint64, uint64) bool) error {
-
-	if !s.recordEventLocked(ctx, condition, sub, count, unlocked) {
+func (s *Service) RecordEvent(ctx command.Context, event conditions.Event, unlocked func(command.Context, uint64, uint64) bool) error {
+	if !s.recordEventLocked(ctx, event, unlocked) {
 		return nil
 	}
 	return s.save(ctx)
 }
 
+func taskSpec(t gamedata.EventTask) conditions.Spec {
+	return conditions.Spec{Type: t.Type, SubType: t.SubType, SubTypeMoreCheck: t.SubTypeMoreCheck, Params: t.Params}
+}
+
 // recordEventLocked reports every persistent mutation, including initializing
 // a matching task or rolling its period. Irrelevant and already capped events
 // leave the account snapshot untouched.
-func (s *Service) recordEventLocked(ctx command.Context, condition, sub, count uint64, unlocked func(command.Context, uint64, uint64) bool) bool {
+func (s *Service) recordEventLocked(ctx command.Context, event conditions.Event, unlocked func(command.Context, uint64, uint64) bool) bool {
 	changed := false
-	if count == 0 {
+	if event.Count == 0 {
 		return false
+	}
+	if unlocked == nil {
+		unlocked = s.unlocked
 	}
 	for _, v := range s.taskSchedules() {
 		if v.Type != 4 || !s.active(v) {
 			continue
 		}
 		for _, t := range s.design.Missions {
-			if t.Type != condition || t.SubType != 0 && t.SubType != sub || condition == 349 && t.SubType != sub || !s.availableTask(ctx, v, t) {
+			// McSamGroupIdMissionUpdateCompleteCount only counts completed
+			// missions in the same group.
+			if event.Type == conditions.SameGroupMissionComplete && t.Group != event.Sub {
+				continue
+			}
+			if !taskSpec(t).Matches(event) || !s.availableTask(ctx, v, t) {
 				continue
 			}
 			if (t.UnlockPack > 0 || t.UnlockQuest > 0) && (unlocked == nil || !unlocked(ctx, t.UnlockPack, t.UnlockQuest)) {
-				continue
-			}
-			match := len(t.Params) == 0
-			for _, n := range t.Params {
-				if n == sub {
-					match = true
-				}
-			}
-			if !match {
 				continue
 			}
 			previous := s.state.Missions[scheduleKey(v)+"/"+key(t.ID)]
@@ -408,14 +419,11 @@ func (s *Service) recordEventLocked(ctx command.Context, condition, sub, count u
 			if m.Claimed {
 				continue
 			}
-			if m.Value >= t.Target {
+			target := missionTarget(t)
+			if m.Value >= target {
 				continue
 			}
-			if count >= t.Target-m.Value {
-				m.Value = t.Target
-			} else {
-				m.Value += count
-			}
+			m.Value += min(event.Count, target-m.Value)
 			changed = true
 		}
 	}
@@ -426,13 +434,10 @@ func (s *Service) recordEventLocked(ctx command.Context, condition, sub, count u
 // reconnects from inflating event login tasks. Main should invoke this once
 // through the regular mission observer before serving attendance queries.
 func (s *Service) RecordLogin(ctx command.Context, unlocked func(command.Context, uint64, uint64) bool) error {
-
 	marker := "mission-login:" + s.day()
 	if _, ok := s.state.LoginDays[marker]; ok {
-
 		return nil
 	}
 	s.state.LoginDays[marker] = s.now().UnixMilli()
-
-	return s.RecordEvent(ctx, 0, 0, 1, unlocked)
+	return s.RecordEvent(ctx, conditions.Event{Type: conditions.Connect, Count: 1}, unlocked)
 }

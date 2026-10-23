@@ -164,6 +164,9 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 			code = 3
 		case errors.Is(err, ErrNotReady):
 			code = 6
+			if f.Type == 185 {
+				code = 10
+			}
 		case errors.Is(err, ErrMailboxFull):
 			code = 8
 		}
@@ -196,7 +199,7 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 			return []Delivery{{c.ID, Frame{Type: 173, Sequence: f.Sequence, OwnerIndex: c.Principal.OwnerIndex, Payload: message(m.config.Now(), 2, nil)}}}, nil
 		}
 	}
-	if c.Channel == Fishing && (f.Type == 70 || f.Type == 72) {
+	if (c.Channel == Fishing || c.Channel == Square) && (f.Type == 70 || f.Type == 72) {
 		field := 3
 		if f.Type == 72 {
 			field = 4
@@ -211,6 +214,12 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 	if f.Type == 1 || f.Type == 5 || f.Type == 11 {
 		body := message(m.config.Now(), 0, nil)
 		return []Delivery{{c.ID, Frame{Type: f.Type + 1, Sequence: f.Sequence, OwnerIndex: c.Principal.OwnerIndex, Payload: body}}}, nil
+	}
+	if c.Channel == Matching && (f.Type == 142 || f.Type == 124 || f.Type == 205) {
+		return m.handleSquareChannel(ctx, c, f)
+	}
+	if c.Channel == Square {
+		return m.handleSquare(ctx, c, f)
 	}
 	if c.Channel == Matching {
 		if f.UDP {
@@ -258,6 +267,8 @@ func (m *Manager) allowRoomText(ctx context.Context, principal Principal, text s
 func responseType(typ int32) int32 {
 	switch typ {
 	case 23, 25, 32, 34, 37, 43, 52, 55, 64, 66, 68, 74, 76, 78, 80, 82, 84, 87, 90, 93, 95, 97, 102, 104, 109, 114, 117, 120, 149, 151, 153, 155, 157, 169, 172, 192, 195, 198, 201, 212, 215, 217, 219:
+		return typ + 1
+	case 124, 126, 129, 137, 140, 142, 144, 147, 182, 185, 205:
 		return typ + 1
 	}
 	return 0

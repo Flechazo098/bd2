@@ -160,6 +160,24 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	if !known || !exists {
 		return 0, nil, true, ErrInvalidRequest
 	}
+	if design.Type == 0 {
+		replay, replaying, err := s.state.QuestReplay(ctx, pack)
+		if err != nil {
+			return 0, nil, true, err
+		}
+		if path == "/QuestGiveUp" && replaying {
+			return s.giveUpQuestReplay(ctx, pack, quest, replay)
+		}
+	}
+	if path == "/QuestAccept" {
+		retry, _, err := wire.Varint(request, 6)
+		if err != nil || retry > 1 || retry == 1 && design.Type != 0 {
+			return 0, nil, true, ErrInvalidRequest
+		}
+		if retry == 1 {
+			return s.acceptQuestReplay(ctx, pack, quest, request)
+		}
+	}
 	if path == "/QuestGiveUp" {
 		if design.Type != 0 {
 			if _, ok := s.state.QuestInPack(quest, pack); !ok {

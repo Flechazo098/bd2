@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/world/progress"
 	"bd2server/internal/server/protocol/wire"
@@ -677,6 +678,9 @@ func (s *Service) openFieldObjectResponse(ctx command.Context, pack, group, id i
 		if err := s.state.MarkFieldRewardOpened(ctx, pack, id, period); err != nil {
 			return nil, err
 		}
+		if err := s.recordMission(ctx, conditions.Event{Type: conditions.CollectionGet, Count: 1}); err != nil {
+			return nil, err
+		}
 		return append(wire.AppendBytes(nil, 1, nil), effects...), nil
 	}
 	bundle, err := s.openFieldObject(ctx, pack, group, id)
@@ -887,7 +891,10 @@ func (s *Service) openFieldObject(ctx command.Context, pack, group, id int) ([]b
 		if obj.BuffID == 0 && obj.MonsterID == 0 && obj.QuestID == 0 && obj.Type != 5 && obj.Type != 6 {
 			return nil, fmt.Errorf("%w: empty field object", ErrInvalidRequest)
 		}
-		return nil, s.state.MarkFieldRewardOpened(ctx, pack, id, period)
+		if err = s.state.MarkFieldRewardOpened(ctx, pack, id, period); err != nil {
+			return nil, err
+		}
+		return nil, s.recordMission(ctx, conditions.Event{Type: conditions.CollectionGet, Count: 1})
 	}
 	if s.wallet == nil || s.inventory == nil {
 		return nil, fmt.Errorf("world: field reward stores unavailable")
@@ -978,6 +985,9 @@ func (s *Service) openFieldObject(ctx command.Context, pack, group, id int) ([]b
 		}
 	}
 	if err = s.state.MarkFieldRewardOpened(ctx, pack, id, period); err != nil {
+		return nil, err
+	}
+	if err = s.recordMission(ctx, conditions.Event{Type: conditions.CollectionGet, Count: 1}); err != nil {
 		return nil, err
 	}
 	var bundle []byte

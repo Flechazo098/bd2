@@ -21,14 +21,15 @@ type EquipmentGachaCatalog struct {
 	equipment    map[uint64]EquipmentDesign
 }
 type EquipmentGacha struct {
-	ID               uint64
-	Count            int
-	FreeCountDay     uint64
-	PriceType, Price uint64
-	TicketIDs        []uint64
-	Pool             []WeightedEquipment
-	TicketOnly       bool
-	Grades           map[uint64]uint64
+	ID                                          uint64
+	Count                                       int
+	FreeCountDay                                uint64
+	DailyPayGachaCount, DailyPayGachaPriceCount uint64
+	PriceType, Price                            uint64
+	TicketIDs                                   []uint64
+	Pool                                        []WeightedEquipment
+	TicketOnly                                  bool
+	Grades                                      map[uint64]uint64
 }
 type EquipmentGachaGroup struct {
 	ID, FixedID, PointCount, OneTimeGachaID, TenTimeGachaID uint64
@@ -280,6 +281,14 @@ func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
 	if len(freeCounts) == 1 {
 		freeCount = freeCounts[0]
 	}
+	dailyPayCount, err := optionalScalar(raw, 1)
+	if err != nil {
+		return EquipmentGacha{}, fmt.Errorf("gamedata: equipment paid allowance %d: %w", id, err)
+	}
+	dailyPayPrice, err := optionalScalar(raw, 2)
+	if err != nil || (dailyPayCount == 0) != (dailyPayPrice == 0) {
+		return EquipmentGacha{}, fmt.Errorf("gamedata: malformed equipment paid discount %d", id)
+	}
 	// Partial ticket consumption bills remaining draws individually; the local
 	// billing path currently requires an integral price per draw.
 	if len(count) != 1 || len(reward) != 1 || len(price) != 1 || len(kind) != 1 || kind[0] != 3 || count[0] == 0 || price[0] == 0 || price[0]%count[0] != 0 {
@@ -289,7 +298,7 @@ func loadEquipmentGacha(db *sql.DB, id uint64) (EquipmentGacha, error) {
 	if err != nil {
 		return EquipmentGacha{}, fmt.Errorf("gamedata: equipment gacha %d: %w", id, err)
 	}
-	return EquipmentGacha{ID: id, Count: int(count[0]), FreeCountDay: freeCount, PriceType: kind[0], Price: price[0], TicketIDs: append([]uint64(nil), tickets...), Pool: pool}, nil
+	return EquipmentGacha{ID: id, Count: int(count[0]), FreeCountDay: freeCount, DailyPayGachaCount: dailyPayCount, DailyPayGachaPriceCount: dailyPayPrice, PriceType: kind[0], Price: price[0], TicketIDs: append([]uint64(nil), tickets...), Pool: pool}, nil
 }
 func loadEquipmentRewardPool(db *sql.DB, groupID uint64) ([]WeightedEquipment, error) {
 	var raw []byte

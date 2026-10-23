@@ -5,6 +5,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/ranking"
 	"bd2server/internal/server/protocol/staticdata"
 	"bd2server/internal/server/storage/stateio"
@@ -79,7 +80,7 @@ type Service struct {
 	arcadeRanks             *ranking.Arcade
 	arcadeProfile           func(command.Context) (ranking.ArcadeProfile, error)
 	arcadeGuilds            func(command.Context, []uint64) (map[uint64][]byte, error)
-	onProgress              func(command.Context, uint64, uint64, uint64) error
+	onProgress              func(command.Context, conditions.Event) error
 	onRhythmResult          func(command.Context, events.RhythmResult) error
 	achievementDesign       *gamedata.AchievementCounterDesign
 	achievementProgress     map[[2]uint64]uint64

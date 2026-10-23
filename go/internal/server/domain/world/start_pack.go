@@ -43,11 +43,14 @@ func (s *Service) ConfigureStartPack(ctx command.Context, packID int, initialize
 		return fmt.Errorf("world: invalid persisted starting chapter %d", entry)
 	}
 	s.startingPackID = entry
-	active := s.state.ActivePackID()
-	if active == 0 {
-		return fmt.Errorf("world: account has no active chapter")
+	// Configure the in-memory pack from the same source as LoginUser, so an
+	// arena without its own saved position cannot make the session start in a
+	// pack the client will not restore.
+	active, err := s.LastPlayedPackID(ctx)
+	if err != nil {
+		return err
 	}
-	s.setCurrentPack(active)
+	s.setCurrentPack(int(active))
 	return nil
 }
 

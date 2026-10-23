@@ -126,6 +126,9 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 	}
 
 	if path == "/MailInfo" {
+		if err := s.refreshStarterGifts(ctx); err != nil {
+			return 0, nil, true, err
+		}
 		grants, err := readGrantSpool(s.grantSpoolPath, ctx.AccountID)
 		if err != nil {
 			return 0, nil, true, err
@@ -223,7 +226,7 @@ func (s *Service) open(ctx command.Context, request []byte) ([]byte, error) {
 			}
 		}
 		if s.isAttendanceMail(entry.MailID) {
-			if s.attendanceEconomy == nil {
+			if s.attachmentEconomy == nil {
 				return nil, errors.New("mail: attendance reward economy unavailable")
 			}
 			if !containsID(s.state.Opened, entry.MailID) && uint64(s.now().UnixMilli()) >= entry.ExpiresAt {
@@ -231,6 +234,14 @@ func (s *Service) open(ctx command.Context, request []byte) ([]byte, error) {
 			}
 			if err := s.validateAttendanceAttachments(mailAttachments(entry)); err != nil {
 				return nil, err
+			}
+		}
+		if !entry.IsCash && s.requiresAttachmentEconomy(entry) {
+			if s.attachmentEconomy == nil {
+				return nil, errors.New("mail: attachment reward economy unavailable")
+			}
+			if !containsID(s.state.Opened, entry.MailID) && uint64(s.now().UnixMilli()) >= entry.ExpiresAt {
+				return nil, errors.New("mail: compensation mail expired")
 			}
 		}
 	}
@@ -242,6 +253,9 @@ func (s *Service) open(ctx command.Context, request []byte) ([]byte, error) {
 	newHistory := make([]MailDBInfo, 0, len(selected))
 	for _, entry := range selected {
 		identity := fmt.Sprintf("mail:%d", entry.MailID)
+		if containsID(next.Opened, entry.MailID) && s.isStarterAvatarGift(entry.MailID) {
+			continue
+		}
 		if entry.IsCash {
 			granted, err := s.cashEconomy.ApplyResolved(ctx, identity+":cash", nil, mailAttachments(entry))
 			if err != nil {
@@ -249,7 +263,13 @@ func (s *Service) open(ctx command.Context, request []byte) ([]byte, error) {
 			}
 			bundle = append(bundle, granted...)
 		} else if s.isAttendanceMail(entry.MailID) {
-			granted, err := s.attendanceEconomy.Apply(ctx, identity+":attendance", nil, mailAttachments(entry))
+			granted, err := s.attachmentEconomy.Apply(ctx, identity+":attendance", nil, mailAttachments(entry))
+			if err != nil {
+				return nil, err
+			}
+			bundle = append(bundle, granted...)
+		} else if s.requiresAttachmentEconomy(entry) {
+			granted, err := s.attachmentEconomy.Apply(ctx, identity+":compensation", nil, s.unownedStarterAttachments(ctx, entry))
 			if err != nil {
 				return nil, err
 			}

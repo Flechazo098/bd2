@@ -32,13 +32,13 @@ type Inventory struct {
 }
 
 type ownedSnapshot struct {
-	Version      string              `json:"version"`
-	NextIndex    uint64              `json:"next_index"`
-	Items        []Item              `json:"-"`
-	Storage      []Item              `json:"-"`
-	Granted      map[string]bool     `json:"-"`
-	GrantItems   map[string][]uint64 `json:"-"`
-	GrantRewards map[string][]Item   `json:"-"`
+	Version               string              `json:"version"`
+	Items                 []Item              `json:"-"`
+	Storage               []Item              `json:"-"`
+	Granted               map[string]bool     `json:"-"`
+	GrantItems            map[string][]uint64 `json:"-"`
+	GrantRewards          map[string][]Item   `json:"-"`
+	PrestigeIllustrations map[uint64]uint64   `json:"-"`
 }
 
 func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*Inventory, error) {
@@ -46,14 +46,15 @@ func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*I
 	if !ok {
 		return nil, errors.New("player: invalid inventory configuration")
 	}
-	s := &Inventory{store: entries, starter: append([]Item(nil), starter...), owned: ownedSnapshot{Version: versionconfig.State(), NextIndex: 900000001, Granted: map[string]bool{}, GrantItems: map[string][]uint64{}, GrantRewards: map[string][]Item{}}}
+	s := &Inventory{store: entries, starter: append([]Item(nil), starter...), owned: ownedSnapshot{Version: versionconfig.State(), Granted: map[string]bool{}, GrantItems: map[string][]uint64{}, GrantRewards: map[string][]Item{}}}
+	s.owned.PrestigeIllustrations = make(map[uint64]uint64)
 	data, err := store.Load(ctx.State, "items")
 	if err != nil {
 		return nil, err
 	}
 	if data != nil {
 		s.corePresent = true
-		if err := stateio.RequireExactJSONObject(data, "version", "next_index"); err != nil {
+		if err := stateio.RequireExactJSONObject(data, "version"); err != nil {
 			return nil, fmt.Errorf("player: incompatible inventory layout: %w", err)
 		}
 		var shape map[string]json.RawMessage
@@ -68,10 +69,10 @@ func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*I
 		if err := json.Unmarshal(data, &s.owned); err != nil {
 			return nil, fmt.Errorf("player: decode inventory: %w", err)
 		}
-	} else if err := stateio.RequireNoEntries(entries, ctx.State, "items", "items", "granted", "grant_items", "grant_rewards", "storage"); err != nil {
+	} else if err := stateio.RequireNoEntries(entries, ctx.State, "items", "items", "granted", "grant_items", "grant_rewards", "storage", "prestige_illustrations"); err != nil {
 		return nil, fmt.Errorf("player: invalid inventory storage: %w", err)
 	}
-	if s.owned.Version != versionconfig.State() || s.owned.NextIndex < 900000001 {
+	if s.owned.Version != versionconfig.State() {
 		return nil, errors.New("player: invalid saved inventory")
 	}
 	s.owned.Granted, err = loadBoolEntries(ctx, entries, "items", "granted")
@@ -115,6 +116,9 @@ func OpenInventory(ctx command.Context, store stateio.Store, starter []Item) (*I
 	}
 	sort.Slice(s.owned.Items, func(i, j int) bool { return s.owned.Items[i].InvenIndex < s.owned.Items[j].InvenIndex })
 	if err := s.loadItemStorage(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.loadPrestigeIllustrations(ctx); err != nil {
 		return nil, err
 	}
 	s.persisted = cloneOwnedSnapshot(s.owned)
@@ -189,27 +193,11 @@ func (s *Inventory) GrantOnce(ctx command.Context, identity string, rewards []ga
 	}
 	next := cloneOwnedSnapshot(s.owned)
 	newItems := make([]Item, 0, len(rewards))
-	// Skin rewards represent ownership; returning an existing skin would also
-	// replay the client's acquisition UI. Include the immutable starter seed.
-	ownedSkins := make(map[uint64]bool)
-	for _, items := range [][]Item{s.starter, next.Items} {
-		for _, item := range items {
-			if item.Type == 45 && item.Count > 0 {
-				ownedSkins[item.ID] = true
-			}
-		}
-	}
 	for _, r := range rewards {
 		if r.ID == 0 || r.Type == 0 || r.Count == 0 {
 			return nil, errors.New("player: invalid battle reward")
 		}
-		if r.Type == 45 {
-			if ownedSkins[r.ID] {
-				continue
-			}
-			ownedSkins[r.ID] = true
-		}
-		items, err := s.addItems(&next, Item{ID: r.ID, Type: r.Type, Count: r.Count, TimeValue: uint64(time.Now().UnixMilli())})
+		items, err := s.addItems(ctx, &next, Item{ID: r.ID, Type: r.Type, Count: r.Count, TimeValue: uint64(time.Now().UnixMilli())})
 		if err != nil {
 			return nil, err
 		}
@@ -225,8 +213,9 @@ func (s *Inventory) GrantOnce(ctx command.Context, identity string, rewards []ga
 }
 
 func cloneOwnedSnapshot(current ownedSnapshot) ownedSnapshot {
-	next := ownedSnapshot{Version: current.Version, NextIndex: current.NextIndex,
+	next := ownedSnapshot{Version: current.Version,
 		Items: append([]Item(nil), current.Items...), Storage: append([]Item(nil), current.Storage...), Granted: make(map[string]bool, len(current.Granted)+1), GrantItems: make(map[string][]uint64, len(current.GrantItems)+1), GrantRewards: make(map[string][]Item, len(current.GrantRewards)+1)}
+	next.PrestigeIllustrations = maps.Clone(current.PrestigeIllustrations)
 	maps.Copy(next.Granted, current.Granted)
 	for k, v := range current.GrantItems {
 		next.GrantItems[k] = append([]uint64(nil), v...)
@@ -244,6 +233,16 @@ func (s *Inventory) commitOwned(ctx command.Context, next ownedSnapshot) error {
 		return err
 	}
 	changes := make([]stateio.EntryMutation, 0)
+	for id, index := range next.PrestigeIllustrations {
+		if s.persisted.PrestigeIllustrations[id] == index {
+			continue
+		}
+		payload, err := json.Marshal(index)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, stateio.EntryMutation{Bucket: "prestige_illustrations", Key: strconv.FormatUint(id, 10), Payload: payload})
+	}
 	for key, value := range next.Granted {
 		if value && !s.persisted.Granted[key] {
 			changes = append(changes, stateio.EntryMutation{Bucket: "granted", Key: key, Payload: []byte("true")})
@@ -291,7 +290,7 @@ func (s *Inventory) commitOwned(ctx command.Context, next ownedSnapshot) error {
 		return err
 	}
 	changes = append(changes, storageChanges...)
-	if s.corePresent && next.Version == s.persisted.Version && next.NextIndex == s.persisted.NextIndex {
+	if s.corePresent && next.Version == s.persisted.Version {
 		data = nil
 	}
 	if err := s.store.SaveWithEntries(ctx.State, "items", data, changes); err != nil {
@@ -411,7 +410,7 @@ func (s *Inventory) ConsumeAndRefund(ctx command.Context, requested []Item, refu
 		if refund.ID == 0 || refund.Count == 0 {
 			return nil, errors.New("player: invalid growth refund")
 		}
-		items, err := s.addItems(&next, Item{ID: refund.ID, Type: 8, Count: refund.Count, TimeValue: uint64(time.Now().UnixMilli())})
+		items, err := s.addItems(ctx, &next, Item{ID: refund.ID, Type: 8, Count: refund.Count, TimeValue: uint64(time.Now().UnixMilli())})
 		if err != nil {
 			return nil, err
 		}

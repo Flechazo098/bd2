@@ -43,7 +43,7 @@ func profileGrant(g *puzzleGameplay, rewards ...gamedata.Reward) {
 		g.t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := g.owner.assembly.eventEconomy.Apply(command.Context{State: tx}, fmt.Sprintf("profile-test:%d", g.seq), nil, rewards); err != nil {
+	if _, err := g.owner.assembly.eventEconomy.Apply(command.Context{State: tx, InstanceIDs: g.factory.instanceIDs()}, fmt.Sprintf("profile-test:%d", g.seq), nil, rewards); err != nil {
 		g.t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -416,7 +416,7 @@ func TestSupporterRegistrationPreservesSlotsAndReturnsOwnedBattleCharacter(t *te
 	}
 	// Current CostumeTable101 is permanent character UniqueChar1. The
 	// integration starter only has story characters, so grant actual ownership.
-	if _, err := g.owner.assembly.collection.GrantCostumes(command.Context{State: tx}, "profile-supporter-fixture", []uint64{101}, g.factory.design.rewardCostumes); err != nil {
+	if _, err := g.owner.assembly.collection.GrantCostumes(command.Context{State: tx, InstanceIDs: g.factory.instanceIDs()}, "profile-supporter-fixture", []uint64{101}, g.factory.design.rewardCostumes); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

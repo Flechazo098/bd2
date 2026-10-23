@@ -36,6 +36,7 @@ type Service struct {
 	equipment          *assets.EquipmentInventory
 	wallet             *assets.Wallet
 	totalWarCompletion func(command.Context, string, uint64, []uint64) error
+	totalWarSettled    func(command.Context, uint64) error
 	totalWarTextCheck  func(command.Context, string, string) error
 }
 

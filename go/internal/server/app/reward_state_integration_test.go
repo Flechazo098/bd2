@@ -17,7 +17,9 @@ import (
 
 func TestCostumeOverflowPaysCompensationWithoutRepeatingCollectionNotice(t *testing.T) {
 	factory, accounts := newIntegrationFactory(t)
-	for _, scenario := range []struct {
+	// Each scenario owns its account: trap commands restart their request IDs,
+	// so sharing one account would replay the previous scenario's receipts.
+	for i, scenario := range []struct {
 		name              string
 		costume           uint64
 		goldThreadPerCopy uint64
@@ -26,7 +28,7 @@ func TestCostumeOverflowPaysCompensationWithoutRepeatingCollectionNotice(t *test
 		{"earned", 1401, 2},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			s := &trapPlayerScenario{factory: factory, account: accounts[0], owner: openNicknamePlayer(t, factory, accounts[0])}
+			s := &trapPlayerScenario{factory: factory, account: accounts[i], owner: openNicknamePlayer(t, factory, accounts[i])}
 			t.Cleanup(func() { closeNicknamePlayer(t, s.owner) })
 			grant := func(key string, count uint64) []byte {
 				t.Helper()
@@ -114,7 +116,7 @@ func TestCommunityRewardCreditsOnceAndRestoresPerAccountClaims(t *testing.T) {
 			displayed += appValue(reward, 4)
 		}
 	}
-	// CommunityWebLinkTable 0 in GameData 20261012190548 advertises 100 free diamonds.
+	// CommunityWebLinkTable 0 in GameData 20261021182514 advertises 100 free diamonds.
 	if displayed != 100 || a.owner.assembly.wallet.Snapshot(command.Context{}).FreeJewelry != before+100 {
 		t.Fatal("community reward shown by the client was not credited to spendable diamonds")
 	}

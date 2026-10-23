@@ -4,13 +4,11 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce/gacha"
-	"bd2server/internal/server/domain/progression/missions"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/progression/pictorial"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/roster/deck"
 	"bd2server/internal/server/domain/world"
-	"bd2server/internal/server/protocol/wire"
-	"errors"
 	"fmt"
 )
 
@@ -71,8 +69,11 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 	if err := p.gachaService.AttachStatistics(p.design.collectionStatistics); err != nil {
 		return err
 	}
-	p.gachaService.AttachDrawMission(func(ctx command.Context, count uint64) error {
-		return p.missionService.RecordEvent(ctx, missions.ConditionGachaBuy, 0, count, p.worldService.MissionsUnlocked)
+	p.gachaService.AttachDrawMission(func(ctx command.Context, groupID, count uint64) error {
+		if err := p.recordMission(ctx, conditions.Event{Type: conditions.GachaBuy, Count: count}); err != nil {
+			return err
+		}
+		return p.recordMission(ctx, conditions.Event{Type: conditions.GachaGroupTry, Sub: groupID, Count: count})
 	})
 	var permanentBaseCharacters []roster.Character
 	for _, c := range p.worldService.CharacterService().RawAll() {
@@ -183,14 +184,6 @@ func (p *playerAssembly) worldRoster(ctx command.Context) error {
 	}
 	if err := p.login.AttachFriendshipAP(p.friendshipService); err != nil {
 		return err
-	}
-	accountName, found, err := wire.Bytes(p.login.UserInfo, 2)
-	if err != nil || !found || len(accountName) == 0 {
-		return errors.New("account seed requires its existing display name for master title")
-	}
-	p.masterTitleService, err = roster.OpenMasterTitleService(ctx, p.scope, string(accountName))
-	if err != nil {
-		return fmt.Errorf("load master title: %w", err)
 	}
 	return nil
 }

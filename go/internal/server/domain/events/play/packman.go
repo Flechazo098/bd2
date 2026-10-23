@@ -2,6 +2,7 @@ package eventplay
 
 import (
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/protocol/wire"
 	"fmt"
 	"math"
@@ -159,23 +160,23 @@ func (s *Service) endPackMan(ctx command.Context, req []byte, a Run, st *snapsho
 	}
 	st.Records[recKey(a.UID, 0, a.Mode, a.Family)] = r
 	if s.onProgress != nil {
-		if err := s.onProgress(ctx, 364, a.Game, 1); err != nil {
-			return nil, err
-		}
-		condition := uint64(360)
-		if a.Mode == 2 {
-			condition = 362
-		}
-		if err := s.onProgress(ctx, condition, a.Game, 1); err != nil {
-			return nil, err
+		events := []conditions.Event{{Type: conditions.PackManPlayCount, Count: 1}}
+		// Request field 3 is the chaser that caught the player; zero otherwise.
+		if chaser := num(req, 3); chaser > 0 {
+			caught := conditions.PackManNormalGameOver
+			if a.Mode == 2 {
+				caught = conditions.PackManChallengeGameOver
+			}
+			events = append(events, conditions.Event{Type: caught, Sub: chaser, Count: 1})
 		}
 		if endType == 3 {
-			if err := s.onProgress(ctx, 361, a.Game, 1); err != nil {
-				return nil, err
-			}
+			events = append(events, conditions.Event{Type: conditions.PackManNormalClear, Count: 1})
 		}
 		if a.Mode == 2 && endType == 2 {
-			if err := s.onProgress(ctx, 363, a.Game, score); err != nil {
+			events = append(events, conditions.Event{Type: conditions.PackManChallengeTimeoutScore, Sub: score, Count: 1})
+		}
+		for _, event := range events {
+			if err := s.onProgress(ctx, event); err != nil {
 				return nil, err
 			}
 		}

@@ -58,7 +58,8 @@ func LoadFieldMonsterMaps(root, version string, pack int) (map[int][]int, error)
 		}
 		mapID, ok := maps[string(scene)]
 		if !ok {
-			return nil, fmt.Errorf("gamedata: monster scene without map")
+			// A scene with no MapTable row is unreachable, so it places nothing.
+			continue
 		}
 		out[int(id)] = append(out[int(id)], mapID)
 	}

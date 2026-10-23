@@ -100,10 +100,13 @@ func (s *Service) exchangeAP(costs, rewards []gamedata.Reward) (snapshot, error)
 				p = &st.Bonus
 			}
 			if cost {
-				if *p < r.Count {
+				// The client spends free AP first and takes the rest from bonus AP,
+				// whichever of the two the cost names.
+				if st.Free+st.Bonus < r.Count {
 					return fmt.Errorf("hunting: insufficient AP")
 				}
-				*p -= r.Count
+				fromFree := min(st.Free, r.Count)
+				st.Free, st.Bonus = st.Free-fromFree, st.Bonus-(r.Count-fromFree)
 			} else {
 				if r.Count > 2147483647-*p {
 					return fmt.Errorf("hunting: AP overflow")

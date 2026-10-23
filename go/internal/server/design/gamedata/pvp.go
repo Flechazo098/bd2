@@ -24,10 +24,28 @@ type ColosseumDefaults struct {
 	HistoryHours, HistoryLimit, TicketBuyType, TicketBuyID, TicketBuyCost  uint64
 	MatchExclude, CandidateCount                                           uint64
 	MatchRanges                                                            []uint64
+	// Costume cost brackets: popularity ranks up to CostRankBoundaries[i]
+	// cost CostRankValues[i]; other costumes cost CostDefault.
+	CostDefault                    uint64
+	CostRankBoundaries             [4]uint64
+	CostRankValues                 [4]uint64
+	PopularCostumeMinimumRankGroup uint64
+}
+
+// CostumeCost prices a costume by its 1-based colosseum popularity rank;
+// zero means the costume was not ranked.
+func (c ColosseumDefaults) CostumeCost(rank uint64) uint64 {
+	for i, boundary := range c.CostRankBoundaries {
+		if rank != 0 && rank <= boundary {
+			return c.CostRankValues[i]
+		}
+	}
+	return c.CostDefault
 }
 
 type ColosseumRank struct {
 	Group, ID  uint64
+	RankGroup  uint64
 	TopPercent float64
 	Rewards    []BattleReward
 }
@@ -161,10 +179,12 @@ func LoadPvpDesign(root, version string) (*PvpDesign, error) {
 		}},
 		{"ColosseumDefaultTable", func(raw []byte) error {
 			m := &d.Colosseum
-			if err := pvpScalars(raw, map[int]*uint64{3: &m.MinimumVP, 4: &m.TicketBuyCost, 5: &m.TicketBuyID, 6: &m.TicketBuyType, 8: &m.HistoryHours, 9: &m.HistoryLimit, 16: &m.DefaultChange, 17: &m.MaximumChange, 18: &m.MinimumChange, 19: &m.VariableChange, 22: &m.MatchExclude, 30: &m.CandidateCount}); err != nil {
+			if err := pvpScalars(raw, map[int]*uint64{3: &m.MinimumVP, 4: &m.TicketBuyCost, 5: &m.TicketBuyID, 6: &m.TicketBuyType, 8: &m.HistoryHours, 9: &m.HistoryLimit, 16: &m.DefaultChange, 17: &m.MaximumChange, 18: &m.MinimumChange, 19: &m.VariableChange, 31: &m.MatchExclude, 40: &m.CandidateCount,
+				20: &m.CostDefault, 21: &m.CostRankBoundaries[0], 22: &m.CostRankBoundaries[1], 23: &m.CostRankBoundaries[2], 24: &m.CostRankBoundaries[3],
+				25: &m.CostRankValues[0], 26: &m.CostRankValues[1], 27: &m.CostRankValues[2], 28: &m.CostRankValues[3], 34: &m.PopularCostumeMinimumRankGroup}); err != nil {
 				return err
 			}
-			m.MatchRanges, err = packedInts(raw, 23)
+			m.MatchRanges, err = packedInts(raw, 32)
 			return err
 		}},
 		{"ColosseumSeasonTable", func(raw []byte) error {
@@ -200,7 +220,7 @@ func LoadPvpDesign(root, version string) (*PvpDesign, error) {
 		}},
 		{"ColosseumRankTable", func(raw []byte) error {
 			var r ColosseumRank
-			if err := pvpScalars(raw, map[int]*uint64{1: &r.Group, 3: &r.ID}); err != nil {
+			if err := pvpScalars(raw, map[int]*uint64{1: &r.Group, 3: &r.ID, 4: &r.RankGroup}); err != nil {
 				return err
 			}
 			if r.TopPercent, err = optionalDouble(raw, 10); err != nil {
@@ -226,7 +246,7 @@ func LoadPvpDesign(root, version string) (*PvpDesign, error) {
 			return nil, err
 		}
 	}
-	if d.Mirror.StartVP == 0 || d.Mirror.TicketCost == 0 || len(d.MirrorRanks) == 0 || len(d.ColosseumRules) == 0 {
+	if d.Mirror.StartVP == 0 || d.Mirror.TicketCost == 0 || len(d.MirrorRanks) == 0 || len(d.ColosseumRules) == 0 || d.Colosseum.CostDefault == 0 || d.Colosseum.PopularCostumeMinimumRankGroup == 0 {
 		return nil, fmt.Errorf("gamedata: incomplete PVP design")
 	}
 	for group := range d.MirrorRanks {
@@ -284,7 +304,7 @@ func (d *PvpDesign) ColosseumRule(season, kind uint64) ([]uint64, error) {
 	}
 	values, ok := d.ColosseumRules[group][kind]
 	if !ok {
-		if kind == 30 || kind == 31 {
+		if kind == 30 || kind == 31 || kind == 32 {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("gamedata: missing colosseum rule %d", kind)

@@ -271,6 +271,11 @@ func (s *Service) CompleteBattle(ctx command.Context, b []byte, key string) ([]b
 		out = wire.AppendVarint(out, 23, f)
 		out = wire.AppendBytes(out, 24, roomWire(*cleared))
 	}
+	if s.options.OnBattle != nil {
+		if e = s.options.OnBattle(ctx); e != nil {
+			return nil, e
+		}
+	}
 	if e = s.save(ctx, v); e != nil {
 		return nil, e
 	}

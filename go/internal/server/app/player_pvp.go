@@ -5,7 +5,10 @@ import (
 	"bd2server/internal/server/domain/battle/pvp"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/storage/shared"
+	"context"
 	"fmt"
+	"time"
 )
 
 func (p *playerAssembly) multiplayerPVP(ctx command.Context) error {
@@ -29,7 +32,8 @@ func (p *playerAssembly) multiplayerPVP(ctx command.Context) error {
 		Buffs: func(ctx command.Context) ([]gamedata.PictorialBuffStat, error) {
 			_, buffs, err := p.pictorialService.Snapshot(ctx)
 			return buffs, err
-		}}
+		},
+		CostumeCosts: p.colosseumCostumeCosts}
 	p.pvpService, err = pvp.Open(ctx, p.design.pvp, public, p.pvpSource, builder,
 		func(ctx command.Context, id string, cost []gamedata.BattleReward) error {
 			_, err := p.eventEconomy.Apply(ctx, id, pvpRewards(cost), nil)
@@ -83,4 +87,20 @@ func pvpRewards(in []gamedata.BattleReward) []gamedata.Reward {
 		out[i] = gamedata.Reward(reward)
 	}
 	return out
+}
+
+func (p *playerAssembly) colosseumCostumeCosts(ctx command.Context) (map[uint64]uint64, error) {
+	cancel := ctx.Cancellation
+	if cancel == nil {
+		cancel = context.Background()
+	}
+	costs := map[uint64]uint64{}
+	err := p.shared.store.View(cancel, func(tx *shared.Tx) error {
+		table, err := p.shared.colosseumCosts(tx, uint64(time.Now().UnixMilli()))
+		for _, row := range table.Costumes {
+			costs[row.ID] = row.Cost
+		}
+		return err
+	})
+	return costs, err
 }

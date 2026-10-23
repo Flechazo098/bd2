@@ -584,6 +584,12 @@ func (s *state) relay(c Connection, f Frame, u *member) ([]Delivery, error) {
 		} else {
 			return nil, ErrUnauthorized
 		}
+	case Square:
+		if innerType < 9002 || innerType > 9007 || number(payload, 1) != u.principal.OwnerIndex || len(payload) > 2048 {
+			return nil, ErrUnauthorized
+		}
+	default:
+		return nil, ErrUnauthorized
 	}
 	b := integer(nil, 2, u.principal.OwnerIndex)
 	b = blob(b, 3, data)

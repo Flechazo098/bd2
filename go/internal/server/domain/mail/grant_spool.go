@@ -60,12 +60,34 @@ func (g compensation) validate() error {
 	}
 	for _, reward := range g.rewards {
 		costumeReward := reward.Type == 11 && reward.ID != 0 && reward.Count <= 6
-		if reward.Count == 0 || reward.Count > math.MaxInt32 || reward.ID > math.MaxInt32 || (!currencyRewardTypes[reward.Type] && !supportedItemDBInfoReward(reward) && !costumeReward) ||
-			(currencyRewardTypes[reward.Type] && reward.ID != 0) {
+		if reward.Count == 0 || reward.Count > math.MaxInt32 || reward.ID > math.MaxInt32 || (!currencyRewardTypes[reward.Type] && !supportedItemDBInfoReward(reward) && !costumeReward && !extendedCompensationReward(reward)) ||
+			((currencyRewardTypes[reward.Type] || compensationCurrencies[reward.Type]) && reward.ID != 0) {
 			return fmt.Errorf("mail: compensation %q has unsupported reward type=%d id=%d count=%d", g.identity, reward.Type, reward.ID, reward.Count)
 		}
 	}
 	return nil
+}
+
+var compensationCurrencies = func() map[uint64]bool {
+	out := map[uint64]bool{}
+	for _, t := range gamedata.MailEconomyCurrencyTypes {
+		out[t] = true
+	}
+	return out
+}()
+
+func extendedCompensationReward(reward gamedata.Reward) bool {
+	return compensationCurrencies[reward.Type] && reward.ID == 0 ||
+		(reward.Type == 49 || reward.Type == 50) && reward.ID != 0 && reward.Count == 1
+}
+
+func (s *Service) requiresAttachmentEconomy(entry MailDBInfo) bool {
+	for _, reward := range mailAttachments(entry) {
+		if extendedCompensationReward(reward) || reward.Type == 19 && !s.supportedItemDBInfoReward(reward) {
+			return true
+		}
+	}
+	return false
 }
 
 // AttachGrantSpoolPath enables reads before each /MailInfo. An absent file is

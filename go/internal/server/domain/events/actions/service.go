@@ -7,6 +7,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -57,7 +58,7 @@ type Service struct {
 
 	friendship  func(uint64) uint64
 	chargeInfo  func(ctx command.Context) ([]byte, error)
-	progress    func(ctx command.Context, _ uint64, _ uint64, _ uint64) error
+	progress    func(command.Context, conditions.Event) error
 	voteTotals  func(uint64, uint64) (map[uint64]uint64, error)
 	miniContent MiniContentResolver
 	miniDesign  *gamedata.MiniContentDesign
@@ -131,7 +132,7 @@ func (s *Service) init() {
 
 func (s *Service) AttachFriendshipLevel(f func(uint64) uint64)                  { s.friendship = f }
 func (s *Service) AttachChargeInfo(f func(ctx command.Context) ([]byte, error)) { s.chargeInfo = f }
-func (s *Service) AttachProgress(f func(ctx command.Context, _ uint64, _ uint64, _ uint64) error) {
+func (s *Service) AttachProgress(f func(command.Context, conditions.Event) error) {
 	s.progress = f
 }
 

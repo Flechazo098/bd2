@@ -49,7 +49,7 @@ func newSkyWayPlayerScenario(t *testing.T) *skyWayPlayerScenario {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx, InstanceIDs: s.factory.instanceIDs()}
 	for _, character := range owner.assembly.worldService.CharacterService().RawAll() {
 		costume, owned := owner.assembly.collection.CostumeByIndex(character.UseCostume)
 		if !owned || costume.UseChar != character.InvenIndex || character.HP == 0 {
@@ -157,7 +157,7 @@ func (s *skyWayPlayerScenario) assets(t *testing.T) skyWayAssets {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx, InstanceIDs: s.factory.instanceIDs()}
 	free, bonus, err := s.owner.assembly.huntingService.HuntingAP(ctx)
 	if err != nil {
 		t.Fatal(err)

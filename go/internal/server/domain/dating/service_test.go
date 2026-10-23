@@ -136,8 +136,9 @@ func TestDatingFullConversationPurchaseAndReconnect(t *testing.T) {
 		t.Helper()
 		for _, id := range d.Messages.Groups[messageGroup] {
 			r, _ := d.Messages.Row(messageGroup, id)
+			// The client sends zero when either answer text id is empty.
 			text := uint64(0)
-			if r.V(5) == 1 && r.V(9) == 1 {
+			if r.V(5) == 1 && r.V(9) == 1 && r.V(3) != 0 && r.V(4) != 0 {
 				text = r.V(3)
 			}
 			must("/DatingMessageUpdate", messageGroup, id, text)
@@ -303,8 +304,9 @@ func TestNewRelationshipRejectsPurchasedEncounterAP(t *testing.T) {
 		}
 		for _, id := range d.Messages.Groups[msg] {
 			m, _ := d.Messages.Row(msg, id)
+			// The client sends zero when either answer text id is empty.
 			text := uint64(0)
-			if m.V(5) == 1 && m.V(9) == 1 {
+			if m.V(5) == 1 && m.V(9) == 1 && m.V(3) != 0 && m.V(4) != 0 {
 				text = m.V(3)
 			}
 			must("/DatingMessageUpdate", msg, id, text)

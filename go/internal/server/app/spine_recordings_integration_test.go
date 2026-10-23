@@ -24,7 +24,7 @@ import (
 
 // This encodes the 2.36.7 client's RecordData.Serialize/Compress format,
 // independently of the server parser: click events on prestige illustration
-// 1065193, point 1/1, tool 0 from GameData 20261012190548.
+// 1065193, point 1/1, tool 0 from GameData 20261021182514.
 func nativeInteractionRecording(t *testing.T, delays ...int32) []byte {
 	t.Helper()
 	raw := binary.LittleEndian.AppendUint32(nil, uint32(len(delays)))

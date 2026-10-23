@@ -5,6 +5,10 @@ import (
 	"fmt"
 )
 
+func (s *Service) AttachQuestVictory(source func(command.Context, int, int, int) (bool, error)) {
+	s.questBattleWon = source
+}
+
 // ValidateQuestBattle checks ownership after GameData resolves the monster's
 // quest range and battle deck. A side quest remains normal difficulty even
 // when the player has selected a harder main story.

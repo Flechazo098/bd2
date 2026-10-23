@@ -104,6 +104,11 @@ func (s *Service) totalWarEnd(ctx command.Context, v *state, req []byte) ([]byte
 	if len(items) != 0 && len(items) != len(v.TotalWarRun.Costumes) {
 		return nil, fmt.Errorf("castle: missing total war attacker score")
 	}
+	if len(scores) > 0 && s.totalWarSettled != nil {
+		if e = s.totalWarSettled(ctx, total); e != nil {
+			return nil, e
+		}
+	}
 	if len(scores) > 0 && (len(v.TotalWarScores) == 0 || total > sum(v.TotalWarScores)) {
 		if s.totalWarCompletion != nil {
 			if e = s.totalWarCompletion(ctx, v.TotalWarRun.Identity, total, v.TotalWarRun.Costumes); e != nil {
@@ -205,6 +210,11 @@ func (s *Service) validateSavedTotalWarBattle(ctx command.Context, v *state, blu
 		}
 	}
 	return nil
+}
+
+// AttachTotalWarSettled observes every settled attempt with its total damage.
+func (s *Service) AttachTotalWarSettled(f func(command.Context, uint64) error) {
+	s.totalWarSettled = f
 }
 
 func (s *Service) AttachTotalWarCompletion(f func(command.Context, string, uint64, []uint64) error) {

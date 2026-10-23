@@ -117,7 +117,7 @@ func TestClearPackageClaimsSurviveSessionAndDayChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	ctx := command.Context{Identity: command.Identity{AccountID: account}, State: tx}
+	ctx := command.Context{Identity: command.Identity{AccountID: account}, State: tx, InstanceIDs: factory.instanceIDs()}
 	for _, quest := range factory.design.world.Story.Packs[1].MainQuestIDs {
 		if err := owner.assembly.progressState.ClearQuest(ctx, quest, 1, 0); err != nil {
 			t.Fatal(err)

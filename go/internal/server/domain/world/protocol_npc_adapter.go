@@ -88,6 +88,16 @@ func (s *Service) handleQuestUpdate(ctx command.Context, request []byte) (int, [
 	if err != nil || current != pack || !s.canClear(ctx, pack, quest) {
 		return 0, nil, true, ErrInvalidRequest
 	}
+	replay, replaying, err := s.state.QuestReplay(ctx, pack)
+	if err != nil {
+		return 0, nil, true, err
+	}
+	if replaying && quest == replay.QuestID {
+		if err := s.updateQuestReplay(ctx, pack, replay, request); err != nil {
+			return 0, nil, true, err
+		}
+		return 19, wire.AppendBytes(wire.AppendVarint(nil, 1, uint64(quest)), 2, nil), true, nil
+	}
 	if s.state.QuestCleared(quest, pack, s.questDifficultyFor(pack, quest)) {
 		// A delayed replay must not reinsert a cleared quest into active progress.
 		return 19, wire.AppendBytes(wire.AppendVarint(nil, 1, uint64(quest)), 2, nil), true, nil

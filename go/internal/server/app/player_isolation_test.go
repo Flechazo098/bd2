@@ -9,6 +9,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/events/calendar"
 	"bd2server/internal/server/domain/identity"
+	"bd2server/internal/server/domain/mail"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/platform/textmoderation"
 	"bd2server/internal/server/runtime/player"
@@ -208,6 +209,27 @@ func appItemTotals(body []byte) map[[2]uint64]uint64 {
 }
 func TestTwoRealPlayerBundlesKeepEquipmentFormationAndWorldSeparate(t *testing.T) {
 	factory, accounts := newIntegrationFactory(t)
+	// The captured starter mailbox has fixed expirations; keep one resource
+	// gift claimable so this isolation test does not become time-dependent.
+	isResourceMail := func(entry *mail.MailDBInfo) bool {
+		if len(entry.RewardTypes) == 0 {
+			return false
+		}
+		for i, kind := range entry.RewardTypes {
+			if kind != 8 || entry.RewardIDs[i] == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	now := uint64(time.Now().UnixMilli())
+	for i := range factory.seeds.mailbox.Mails {
+		entry := &factory.seeds.mailbox.Mails[i]
+		if isResourceMail(entry) && entry.ExpiresAt <= now {
+			entry.ExpiresAt = now + 24*60*60*1000
+			break
+		}
+	}
 	aID, bID := accounts[0], accounts[1]
 	instances := map[string]*playerInstance{}
 	runtimes := map[string]*player.Runtime{}
@@ -231,13 +253,12 @@ func TestTwoRealPlayerBundlesKeepEquipmentFormationAndWorldSeparate(t *testing.T
 			t.Fatal("assemble actual account", accountID, err)
 		}
 		instances[accountID] = instance
-		// Establish one owned weapon as an explicit test grant before the actor is
-		// exposed. Both players may legitimately use equal inventory numbers.
+		// Establish one owned weapon as an explicit grant before exposing the actor.
 		tx, err := instance.repository.BeginCommand(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx := command.Context{Identity: command.Identity{AccountID: accountID, SessionID: "fixture", RequestID: "weapon"}, State: tx}
+		ctx := command.Context{Identity: command.Identity{AccountID: accountID, SessionID: "fixture", RequestID: "weapon"}, State: tx, InstanceIDs: factory.instanceIDs()}
 		equipment, err := instance.assembly.ownedEquipment.GrantOnce(ctx, "test-owned-weapon", equipmentID)
 		if err != nil {
 			_ = tx.Rollback()
@@ -385,13 +406,7 @@ func TestTwoRealPlayerBundlesKeepEquipmentFormationAndWorldSeparate(t *testing.T
 	var starterMail uint64
 	expectedItems := map[[2]uint64]uint64{}
 	for _, entry := range factory.seeds.mailbox.Mails {
-		valid := len(entry.RewardTypes) > 0
-		for i, kind := range entry.RewardTypes {
-			if kind != 8 || entry.RewardIDs[i] == 0 {
-				valid = false
-			}
-		}
-		if valid && entry.ExpiresAt > uint64(time.Now().UnixMilli()) {
+		if isResourceMail(&entry) && entry.ExpiresAt > now {
 			starterMail = entry.MailID
 			for i, kind := range entry.RewardTypes {
 				expectedItems[[2]uint64{kind, entry.RewardIDs[i]}] += entry.RewardCounts[i]
@@ -470,7 +485,7 @@ func TestTwoRealPlayerBundlesKeepEquipmentFormationAndWorldSeparate(t *testing.T
 	}
 	bEquipment := appRows(query(bID, "/EquipInfo", 21), 1)
 	if len(bEquipment) != 1 || appValue(bEquipment[0], 2) != 0 {
-		t.Fatal("A equipped B's equal-index weapon")
+		t.Fatal("A equipped B's weapon")
 	}
 	aEquipment := appRows(query(aID, "/EquipInfo", 22), 1)
 	if len(aEquipment) != 1 || appValue(aEquipment[0], 2) != characterIndex[aID] {

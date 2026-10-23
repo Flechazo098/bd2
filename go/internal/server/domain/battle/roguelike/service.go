@@ -48,6 +48,7 @@ type Options struct {
 	Evidence       func(command.Context) battle.SettlementEvidence
 	Ranking        Ranking
 	Publish        func(command.Context, uint64, uint64, uint64, uint64) error
+	OnBattle       func(command.Context) error
 	Owner          uint64
 }
 type Service struct {

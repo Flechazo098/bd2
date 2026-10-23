@@ -85,7 +85,7 @@ func (r *Repository) InitializationState(accountDomains ...string) (Initializati
 // written only after every account domain and first-login entitlement exists;
 // a rollback therefore leaves a schema-only database that can be retried.
 func (t *CommandStore) MarkInitializationComplete() error {
-	payload, err := json.Marshal(bootstrapSnapshot{Version: 1})
+	payload, err := json.Marshal(bootstrapSnapshot{Version: 2})
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func validateBootstrap(payload []byte) error {
 		return fmt.Errorf("accountstate: invalid bootstrap marker: %w", err)
 	}
 	var snapshot bootstrapSnapshot
-	if err := json.Unmarshal(payload, &snapshot); err != nil || snapshot.Version != 1 {
+	if err := json.Unmarshal(payload, &snapshot); err != nil || snapshot.Version != 2 {
 		return errors.New("accountstate: malformed bootstrap completion marker")
 	}
 	canonical, _ := json.Marshal(snapshot)

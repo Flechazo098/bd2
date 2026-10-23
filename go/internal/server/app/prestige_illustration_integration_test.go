@@ -21,7 +21,9 @@ func TestOwnedPrestigeUnlocksInteractionOnLoginAndWhenClaimed(t *testing.T) {
 	s := &trapPlayerScenario{factory: factory, account: accounts[0], owner: openNicknamePlayer(t, factory, accounts[0])}
 	var sourceTime uint64
 	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
-		p.ownedItems.AttachPrestigeIllustrations(nil)
+		if err := p.ownedItems.AttachPrestigeIllustrations(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
 		items, err := p.ownedItems.GrantOnce(ctx, "historical-prestige", []gamedata.BattleReward{{Type: 45, ID: 65193, Count: 1}})
 		if err != nil || len(items) != 1 {
 			t.Fatalf("seed historical external ownership: %v", err)

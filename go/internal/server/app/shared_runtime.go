@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/battle/pvp"
 	"bd2server/internal/server/domain/ranking"
 	"bd2server/internal/server/domain/social"
 	"bd2server/internal/server/runtime/delivery"
@@ -26,6 +27,8 @@ type sharedRuntime struct {
 	rooms       *roomResults
 	store       *shared.Store
 	pvp         *ranking.PVP
+	pvpDesign   *gamedata.PvpDesign
+	pvpSeasons  []pvp.Season
 	huntRanks   *ranking.MonsterHunt
 	castleRanks *ranking.Castle
 	rogueRanks  *ranking.RogueLike
@@ -78,7 +81,7 @@ func openSharedRuntime(ctx context.Context, c *configuration, design *designCata
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	return &sharedRuntime{statistics: design.collectionStatistics, store: store, pvp: pvp, huntRanks: huntRanks, castleRanks: castleRanks, rogueRanks: rogueRanks, arcadeRanks: arcadeRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
+	return &sharedRuntime{statistics: design.collectionStatistics, store: store, pvp: pvp, pvpDesign: design.pvp.Design, pvpSeasons: design.pvp.Seasons, huntRanks: huntRanks, castleRanks: castleRanks, rogueRanks: rogueRanks, arcadeRanks: arcadeRanks, guild: guild, friends: friends, rooms: rooms, directory: directory}, nil
 }
 
 func (s *sharedRuntime) wake(account string) {

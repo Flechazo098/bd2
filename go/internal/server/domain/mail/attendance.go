@@ -12,18 +12,18 @@ import (
 	"bd2server/internal/server/domain/command"
 )
 
-// AttendanceRewardEconomy resolves attachment wrappers only when claimed and
+// AttachmentRewardEconomy resolves attachment wrappers only when claimed and
 // applies every reward to its owning domain under the account transaction.
-type AttendanceRewardEconomy interface {
+type AttachmentRewardEconomy interface {
 	Apply(ctx command.Context, _ string, _ []gamedata.Reward, _ []gamedata.Reward) ([]byte, error)
 }
 
-func (s *Service) AttachAttendanceRewardEconomy(ctx command.Context, e AttendanceRewardEconomy) error {
+func (s *Service) AttachAttachmentRewardEconomy(ctx command.Context, e AttachmentRewardEconomy) error {
 	if s == nil || e == nil {
-		return errors.New("mail: invalid attendance reward economy")
+		return errors.New("mail: invalid attachment reward economy")
 	}
 
-	s.attendanceEconomy = e
+	s.attachmentEconomy = e
 	return nil
 }
 
@@ -34,7 +34,7 @@ func (s *Service) IssueAttachmentsOnce(ctx command.Context, identity, title, bod
 		return errors.New("mail: attendance issuer unavailable")
 	}
 
-	if s.attendanceEconomy == nil {
+	if s.attachmentEconomy == nil {
 		return errors.New("mail: attendance reward economy unavailable")
 	}
 	if strings.TrimSpace(identity) == "" || identity != strings.TrimSpace(identity) || len(identity) > 450 || strings.TrimSpace(title) == "" || len(title) > 2000 || strings.TrimSpace(body) == "" || len(body) > 20000 || sentAt.UnixMilli() <= 0 || sentAt.UnixMilli() > math.MaxInt64-int64(30*24*time.Hour/time.Millisecond) {

@@ -29,7 +29,7 @@ import (
 type integrationRules struct{}
 
 func (integrationRules) Profile(_ context.Context, p room.Principal) (room.Profile, error) {
-	return room.Profile{UserInfo: wire.AppendVarint(nil, 1, uint64(p.OwnerIndex))}, nil
+	return room.Profile{UserInfo: wire.AppendVarint(nil, 1, uint64(p.OwnerIndex)), SquareUnlocked: true}, nil
 }
 func (integrationRules) ValidateSelection(_ room.Profile, s room.Selection) (room.Selection, error) {
 	s.Capacity = 1
@@ -42,9 +42,17 @@ type integrationTickets struct {
 	used     map[string]bool
 	p        room.Principal
 	instance string
+	revoked  bool
 }
 
-func (t *integrationTickets) Validate(context.Context, room.Principal) error { return nil }
+func (t *integrationTickets) Validate(context.Context, room.Principal) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.revoked {
+		return room.ErrUnauthorized
+	}
+	return nil
+}
 func (t *integrationTickets) Consume(_ context.Context, token, channel, instance string) (room.Principal, func(), error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -60,7 +68,7 @@ func TestNativeTCPHandshakeMatchingAndEntry(t *testing.T) {
 	defer cancel()
 	results := make(chan room.FinalResult, 1)
 	var s *Server
-	m, err := room.New(room.Config{AdvertisedHost: "127.0.0.1", TCPPort: 9000,
+	m, err := room.New(room.Config{AdvertisedHost: "127.0.0.1", TCPPort: 9000, SquareChannels: 35, SquareChannelCapacity: 100,
 		PublishResult: func(result room.FinalResult) bool { results <- result; return true },
 		Publish:       func(d []room.Delivery) { s.Deliver(d) },
 	}, integrationRules{})
@@ -153,6 +161,48 @@ func TestNativeTCPHandshakeMatchingAndEntry(t *testing.T) {
 		return socket
 	}
 	matching := connect("matching", "boot")
+	// 2.37.13 NetworkContext first queries channels on Chat, then opens Field.
+	for _, typ := range []int32{142, 205} {
+		if e := writeAll(matching, EncodeFrame(room.Frame{Type: typ, Sequence: 17, OwnerIndex: 91})); e != nil {
+			t.Fatal(e)
+		}
+		reply, e := ReadFrame(matching, 4096)
+		if e != nil || reply.Type != typ+1 || reply.Sequence != 17 {
+			t.Fatalf("square matching reply %+v %v", reply, e)
+		}
+		if typ == 142 {
+			count, _, _ := wire.Varint(reply.Payload, 3)
+			if count != 35 {
+				t.Fatal("native channel directory omitted configured maximum")
+			}
+			continue
+		}
+		code, _, _ := wire.Bytes(reply.Payload, 2)
+		guid, _, _ := wire.Bytes(reply.Payload, 6)
+		view, e := m.View(ctx, tickets.p, room.Square)
+		if e != nil || len(code) == 0 || len(guid) == 0 {
+			t.Fatalf("square assignment lacks membership: %v", e)
+		}
+		field := connect("square", view.InstanceID)
+		for _, req := range []room.Frame{
+			{Type: 23, Sequence: 18, OwnerIndex: 91, Payload: wire.AppendBytes(nil, 2, code)},
+			{Type: 126, Sequence: 19, OwnerIndex: 91, Payload: wire.AppendBytes(wire.AppendBytes(wire.AppendBytes(nil, 2, guid), 3, code), 4, wire.AppendVarint(nil, 1, 91))},
+		} {
+			if e := writeAll(field, EncodeFrame(req)); e != nil {
+				t.Fatal(e)
+			}
+			reply, e := ReadFrame(field, 4096)
+			if e != nil || reply.Type != req.Type+1 || reply.Sequence != req.Sequence {
+				t.Fatalf("square relay entry reply %+v %v", reply, e)
+			}
+		}
+		if e := writeAll(matching, EncodeFrame(room.Frame{Type: 1, Sequence: 20, OwnerIndex: 91})); e != nil {
+			t.Fatal(e)
+		}
+		if reply, e := ReadFrame(matching, 4096); e != nil || reply.Type != 2 {
+			t.Fatalf("channel query/entry broke the shared matching connection: %+v %v", reply, e)
+		}
+	}
 	request := wire.AppendVarint(wire.AppendVarint(nil, 4, 4), 5, 1)
 	if err = writeAll(matching, EncodeFrame(room.Frame{Type: 82, Sequence: 2, OwnerIndex: 91, Payload: request})); err != nil {
 		t.Fatal(err)
@@ -242,6 +292,16 @@ func TestNativeTCPHandshakeMatchingAndEntry(t *testing.T) {
 	}
 	if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatalf("forged owner header did not close the authenticated connection: %v", err)
+	}
+	tickets.mu.Lock()
+	tickets.revoked = true
+	tickets.mu.Unlock()
+	if err = writeAll(matching, EncodeFrame(room.Frame{Type: 1, Sequence: 21, OwnerIndex: 91})); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ReadFrame(matching, 4096)
+	if !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("revoked login could still issue realtime commands before the validation timer: %v", err)
 	}
 }
 

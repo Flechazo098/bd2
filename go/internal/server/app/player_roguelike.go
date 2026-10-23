@@ -5,6 +5,7 @@ import (
 	"bd2server/internal/server/design/schedule"
 	"bd2server/internal/server/domain/battle/roguelike"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/progression/conditions"
 	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/outbox"
@@ -26,6 +27,17 @@ func (s *sharedRuntime) consumeRogueRanking(ctx context.Context, event outbox.Pe
 	}
 	return s.rogueRanks.Publish(ctx, p)
 }
+
+// rogueLikeBattleEvent names the roguelike pack from GameData and the
+// ROGUE_LIKE battle mode for McPackBattle.
+func (p *playerAssembly) rogueLikeBattleEvent() conditions.Event {
+	return conditions.Event{Type: conditions.PackBattle, Sub: p.design.roguelike.Pack, Param: battleModeRogueLike, Count: 1}
+}
+
+func (p *playerAssembly) recordRogueLikeBattle(ctx command.Context) error {
+	return p.recordMission(ctx, p.rogueLikeBattleEvent())
+}
+
 func (p *playerAssembly) rogueLike(ctx command.Context) error {
 	owner, e := p.ProfileOwner(ctx)
 	if e != nil {
@@ -131,7 +143,8 @@ func (p *playerAssembly) rogueLike(ctx command.Context) error {
 			hp := gamedata.AggregateStats(gamedata.BaseStats{Health: float64(c.Health)}, contributions).Health
 			return uint64(hp), nil
 		},
-		Ranking: p.rogueRanking(),
+		Ranking:  p.rogueRanking(),
+		OnBattle: p.recordRogueLikeBattle,
 		Publish: func(ctx command.Context, season, score, damage, version uint64) error {
 			profile, e := p.PublicProfile(ctx, owner)
 			if e != nil {
