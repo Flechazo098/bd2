@@ -84,6 +84,9 @@ type Options struct {
 	Client             *http.Client
 	Development        bool
 	DevelopmentPlugins plugin.Set
+	// ProjectDirectory is the development repository whose versions.json and
+	// UPDATE_FINGERPRINT.json describe the prepared game; it is unused in releases.
+	ProjectDirectory string
 	// Games returns the main game directory the launcher manages.
 	Games func() string
 }
@@ -100,6 +103,8 @@ type Manager struct {
 	manifest       *release.Manifest
 	fingerprint    *release.Fingerprint
 	fingerprintErr error
+	project        *release.Fingerprint
+	projectErr     error
 	gamePending    map[string]bool
 	pending        map[string]bool
 }
@@ -112,6 +117,12 @@ func New(options Options) *Manager {
 	m := &Manager{options: options, manifestURL: address, keys: release.BuiltinChannel().TrustedKeys, pending: map[string]bool{}, gamePending: map[string]bool{}, operation: make(chan struct{}, 1)}
 	m.status.Enabled = address != "" && !options.Development
 	m.loadPackagedFingerprint()
+	if options.Development && options.ProjectDirectory != "" {
+		m.project, m.projectErr = release.LoadFingerprint(filepath.Join(options.ProjectDirectory, release.FingerprintFileName), m.keys)
+		if errors.Is(m.projectErr, os.ErrNotExist) {
+			m.project, m.projectErr = nil, nil
+		}
+	}
 	if result := TakeResult(options.Directory); result != nil {
 		if result.OK {
 			m.status.Message = message("update.launcher.switched", result.From, result.To)

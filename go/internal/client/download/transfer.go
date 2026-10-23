@@ -176,7 +176,7 @@ func (d *downloader) receiveOnce(ctx context.Context, item file, origin string) 
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("full GET requires HTTP 200, got %s", response.Status)
+		return fmt.Errorf("download %s: %w", item.target, util.ResponseError(response))
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(item.target), ".bd2-download-*.part")
 	if err != nil {
@@ -302,7 +302,7 @@ func (d *downloader) fastest(ctx context.Context, origins []string, relative, la
 			}
 			defer func() { _ = response.Body.Close() }()
 			if response.StatusCode != http.StatusOK {
-				results[i] = result{origin: origin, err: fmt.Errorf("HTTP %s", response.Status)}
+				results[i] = result{origin: origin, err: util.ResponseError(response)}
 				return
 			}
 			n, err := io.Copy(io.Discard, io.LimitReader(response.Body, 4<<20))

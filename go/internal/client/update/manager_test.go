@@ -265,6 +265,11 @@ func TestWithLaunchKeepsUpdatesExcludedThroughProcessStartAndReturnsLaunchError(
 	game := filepath.Join(root, "game")
 	writeFixture(t, filepath.Join(game, "BrownDust II.exe"), "fixture")
 	writeFixture(t, filepath.Join(game, "BrownDust II_Data", "resources.assets"), "fixture")
+	manifest, err := json.Marshal(map[string]any{"schema_version": 1, "id": filepath.Base(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(root, "instance.json"), string(manifest))
 	file := releaseFile("BD2LoginUI.dll", "installed login")
 	writeFixture(t, filepath.Join(root, "plugins", file.Name), "installed login")
 	writeFixture(t, filepath.Join(game, "BepInEx", "plugins", file.Name), "installed login")

@@ -79,7 +79,9 @@ func copyTree(source, destination string) error {
 	})
 }
 
-func archiveDirectory(source, destination string) error {
+// archiveDirectory zips source. With flat, the archive holds source's
+// contents at its root; otherwise everything sits below source's own name.
+func archiveDirectory(source, destination string, flat bool) error {
 	file, err := os.CreateTemp(filepath.Dir(destination), ".bd2-archive-*.tmp")
 	if err != nil {
 		return err
@@ -102,9 +104,16 @@ func archiveDirectory(source, destination string) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(filepath.Dir(source), path)
+		base := filepath.Dir(source)
+		if flat {
+			base = source
+		}
+		rel, err := filepath.Rel(base, path)
 		if err != nil {
 			return err
+		}
+		if rel == "." {
+			return nil
 		}
 		header.Name = filepath.ToSlash(rel)
 		if entry.IsDir() {

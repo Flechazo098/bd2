@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	clientconfig "bd2server/internal/client/config"
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/release"
+	"bd2server/internal/common/versionconfig"
 )
 
 func TestGameReceiptRechecksContentWhenInstalledMetadataChanges(t *testing.T) {
@@ -81,5 +83,25 @@ func TestServerOnlyFingerprintChangeReusesVerifiedGameResources(t *testing.T) {
 	}
 	if actual.Fingerprint != m.fingerprint.ID || actual.ResourceFingerprint != resourceID || actual.GameVersion != previous.GameVersion || len(actual.Files) != 1 {
 		t.Fatalf("server-only update lost verified game state: %+v", actual)
+	}
+}
+
+func TestDevelopmentGameUsesProjectFingerprintAndNeverInstallsServerRequirement(t *testing.T) {
+	game := t.TempDir()
+	versions := versionconfig.Config{ServerVersion: "2.37.13+server.0.2.0", ClientVersion: "2.37.13+client.0.2.7", GameVersion: "2.37.13", BundleVersion: "20261022174708", GameDataVersion: "20261021182514"}
+	m := New(Options{Directory: t.TempDir(), Versions: versions, Development: true})
+	m.project = &release.Fingerprint{ID: "project", ServerVersion: versions.ServerVersion, ClientVersion: versions.ClientVersion, GameFingerprint: "project-resources"}
+	m.fingerprint = &release.Fingerprint{ID: "server", RequireGameUpdate: true}
+	err := m.ensureGame(context.Background(), game)
+	if err == nil || !strings.Contains(err.Error(), "update the project's") {
+		t.Fatalf("development launch accepted a server requirement the project does not describe: %v", err)
+	}
+	if entries, err := os.ReadDir(game); err != nil || len(entries) != 0 {
+		t.Fatalf("development preparation wrote into the game directory: %v %v", entries, err)
+	}
+	got := m.Runtime(game)
+	want := clientconfig.Runtime{ClientVersion: versions.ClientVersion, GameVersion: versions.GameVersion, BundleVersion: versions.BundleVersion, GameDataVersion: versions.GameDataVersion, UpdateFingerprint: "project", ResourceFingerprint: "project-resources"}
+	if *got != want {
+		t.Fatalf("development runtime = %+v, want project configuration %+v", *got, want)
 	}
 }

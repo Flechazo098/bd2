@@ -43,8 +43,9 @@ func get(ctx context.Context, client *http.Client, address string) (*http.Respon
 		return nil, err
 	}
 	if response.StatusCode != http.StatusOK {
+		err := fmt.Errorf("GET %s: %w", request.URL.Redacted(), util.ResponseError(response))
 		_ = response.Body.Close()
-		return nil, fmt.Errorf("GET %s: HTTP %d", request.URL.Redacted(), response.StatusCode)
+		return nil, err
 	}
 	return response, nil
 }

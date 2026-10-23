@@ -69,6 +69,9 @@ func (m *Manager) Versions(game string) versionconfig.Config {
 }
 
 func (m *Manager) Runtime(game string) *clientconfig.Runtime {
+	if m.options.Development {
+		return m.developmentRuntime()
+	}
 	v := m.Versions(game)
 	runtime := &clientconfig.Runtime{ClientVersion: v.ClientVersion, GameVersion: v.GameVersion, BundleVersion: v.BundleVersion, GameDataVersion: v.GameDataVersion}
 	m.mu.Lock()
@@ -93,7 +96,57 @@ func (m *Manager) configureGame(game string) error {
 	return err
 }
 
+// developmentRuntime describes the game prepared from the repository's own
+// versions.json and UPDATE_FINGERPRINT.json instead of a launcher receipt.
+func (m *Manager) developmentRuntime() *clientconfig.Runtime {
+	v := m.options.Versions
+	runtime := &clientconfig.Runtime{ClientVersion: v.ClientVersion, GameVersion: v.GameVersion, BundleVersion: v.BundleVersion, GameDataVersion: v.GameDataVersion}
+	if m.project != nil {
+		runtime.UpdateFingerprint, runtime.ResourceFingerprint = m.project.ID, m.project.GameFingerprint
+	}
+	return runtime
+}
+
+// prepareDevelopmentGame never downloads: development games are prepared by the
+// project tools, so a mismatch is reported instead of reinstalled.
+func (m *Manager) prepareDevelopmentGame(game string) error {
+	if m.projectErr != nil {
+		return fmt.Errorf("project update fingerprint: %w", m.projectErr)
+	}
+	v := m.options.Versions
+	if m.project != nil {
+		if err := m.project.MatchesVersions(v); err != nil {
+			return fmt.Errorf("project %s does not match versions.json: %w", release.FingerprintFileName, err)
+		}
+	}
+	m.mu.Lock()
+	server := m.fingerprint
+	m.mu.Unlock()
+	if server != nil && (m.project == nil || server.ID != m.project.ID) {
+		return fmt.Errorf("server requires update %s for game %s; update the project's %s before launching", server.ID, gameVersion(server), release.FingerprintFileName)
+	}
+	if _, err := setup.Inspect(game, v); err != nil {
+		return fmt.Errorf("development game does not match versions.json: %w", err)
+	}
+	settings, err := clientconfig.Load(game)
+	if err != nil {
+		return err
+	}
+	if _, err := setup.Patch(game); err != nil {
+		return fmt.Errorf("apply development client patch: %w", err)
+	}
+	if settings.CDNMode == clientconfig.CDNLocal {
+		if err := setup.InstallLocalCatalog(game, settings.LocalResourceDirectory, v.BundleVersion); err != nil {
+			return fmt.Errorf("prepare development resource catalog: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) ensureGame(ctx context.Context, game string) error {
+	if m.options.Development {
+		return m.prepareDevelopmentGame(game)
+	}
 	m.mu.Lock()
 	fp := m.fingerprint
 	fingerprintErr := m.fingerprintErr
@@ -314,7 +367,7 @@ func (m *Manager) fetchServerFingerprint(ctx context.Context, client *http.Clien
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("server update fingerprint: HTTP %d", response.StatusCode)
+		return fmt.Errorf("fetch server update fingerprint: %w", util.ResponseError(response))
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, (32<<20)+1))
 	if err != nil {

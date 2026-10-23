@@ -248,6 +248,15 @@ func (t task) releasePublish(args []string) error {
 	if err != nil {
 		return err
 	}
+	if !opts.silent {
+		signature, err := os.ReadFile(filepath.Join(t.root, releasepkg.ChangelogSignatureName))
+		if err != nil {
+			return err
+		}
+		if err := releasepkg.VerifyChangelog(changelog, signature, releasepkg.BuiltinChannel().TrustedKeys); err != nil {
+			return fmt.Errorf("release changelog must be signed independently before publication: %w", err)
+		}
+	}
 	entries, err := releasepkg.ParseChangelog(changelog)
 	if err != nil {
 		return fmt.Errorf("CHANGELOG.md: %w", err)
@@ -348,6 +357,12 @@ func (t task) releasePublish(args []string) error {
 			return err
 		}
 		plugins.Files = append(plugins.Files, f)
+	}
+
+	// The one-step launcher download is the flat client archive the build made.
+	download := "bd2client-" + versions.ClientVersion + "-" + t.target.platform + "-" + t.target.architecture + ".zip"
+	if err := copyFile(filepath.Join(t.root, ".build", download), filepath.Join(site, "downloads", download)); err != nil {
+		return err
 	}
 
 	schedules, err := t.stageSchedules(site, versions)

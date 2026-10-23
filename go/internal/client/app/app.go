@@ -94,7 +94,7 @@ func NewStudio(options Options, host NativeHost) *Studio {
 
 		s.updates = clientupdate.New(clientupdate.Options{
 			Versions: options.Versions, Directory: filepath.Dir(executable), Logger: options.Logger, Development: options.Development,
-			DevelopmentPlugins: options.Plugins,
+			DevelopmentPlugins: options.Plugins, ProjectDirectory: options.PackageDirectory,
 			Games: func() string {
 				preferences, err := clientconfig.LoadPreferences()
 				if err != nil {

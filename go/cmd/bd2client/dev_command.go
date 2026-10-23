@@ -115,6 +115,8 @@ func runClientDevelopmentCommand(args []string) (bool, error) {
 					return err
 				}
 				gameDir = config.GameDirectory
+				// Development launches the project's configured game, never a stale launcher preference.
+				clientArgs = append(clientArgs, "--game-dir", gameDir)
 			}
 			return nil
 		}},

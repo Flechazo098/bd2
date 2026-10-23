@@ -241,10 +241,11 @@ func (r *release) writePluginStore() error {
 }
 
 func (r *release) archive() error {
-	if err := archiveDirectory(r.server, r.serverZip); err != nil {
+	if err := archiveDirectory(r.server, r.serverZip, false); err != nil {
 		return err
 	}
-	if err := archiveDirectory(r.client, r.clientZip); err != nil {
+	// The launcher download unpacks straight into the folder the player chose.
+	if err := archiveDirectory(r.client, r.clientZip, true); err != nil {
 		return err
 	}
 	fmt.Println("Built server archive:", r.serverZip)
