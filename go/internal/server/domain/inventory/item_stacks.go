@@ -15,6 +15,127 @@ func (s *Inventory) AttachItemStacks(design *gamedata.ItemStackDesign) error {
 	return nil
 }
 
+// AttachStackOverride supplies the account's switch that lifts every stack limit.
+func (s *Inventory) AttachStackOverride(unlimited func(command.Context) (bool, error)) {
+	s.unlimitedStacks = unlimited
+}
+
+func (s *Inventory) stacksUnlimited(ctx command.Context) (bool, error) {
+	if s.unlimitedStacks == nil {
+		return false, nil
+	}
+	return s.unlimitedStacks(ctx)
+}
+
+// NormalizeItemStacks reshapes stacks to match the override and reports
+// whether anything changed. While it is on, scattered stacks of one item merge
+// into one. While it is off, stacks above their limit split back into
+// limit-sized stacks as long as free slots remain; whatever does not fit is
+// deleted. It is idempotent, so it may run before every request.
+func (s *Inventory) NormalizeItemStacks(ctx command.Context) (bool, error) {
+	if s.itemStacks == nil {
+		return false, errors.New("inventory: item stack design not attached")
+	}
+	unlimited, err := s.stacksUnlimited(ctx)
+	if err != nil {
+		return false, err
+	}
+	next := cloneOwnedSnapshot(s.owned)
+	var itemsChanged, storageChanged bool
+	if unlimited {
+		next.Items, itemsChanged = s.mergeStacks(next.Items)
+		next.Storage, storageChanged = s.mergeStacks(next.Storage)
+	} else {
+		itemSlots, storageSlots := uint64(math.MaxUint64), uint64(math.MaxUint64)
+		if s.capacity != nil {
+			counts, err := s.capacity.InventorySlotCounts(ctx)
+			if err != nil {
+				return false, err
+			}
+			itemSlots, storageSlots = counts.Items-min(counts.Items, inventorySlotsUsed(s.starter)), counts.Storage
+		}
+		if next.Items, itemsChanged, err = s.splitStacks(ctx, next.Items, itemSlots); err != nil {
+			return false, err
+		}
+		if next.Storage, storageChanged, err = s.splitStacks(ctx, next.Storage, storageSlots); err != nil {
+			return false, err
+		}
+	}
+	if !itemsChanged && !storageChanged {
+		return false, nil
+	}
+	if err := s.commitOwned(ctx, next); err != nil {
+		return false, err
+	}
+	s.owned = next
+	return true, nil
+}
+
+// stackLimit is the GameData limit of an item that addItems merges.
+func (s *Inventory) stackLimit(item Item) (uint64, bool) {
+	if item.Type != 5 && item.Type != 8 && item.Type != 9 && item.Type != 14 || item.Pictorialbook != nil {
+		return 0, false
+	}
+	limit, found := s.itemStacks.Limits[[2]uint64{item.Type, item.ID}]
+	return limit, found && limit > 0
+}
+
+type stackKey struct{ typ, id, expiry, keep, uses uint64 }
+
+func keyOfStack(item Item) stackKey {
+	return stackKey{item.Type, item.ID, item.ExpiryTime, item.KeepFlag, item.UseCount}
+}
+
+// mergeStacks folds every stack into the first stack of the same item,
+// keeping its instance; the absorbed instances are removed.
+func (s *Inventory) mergeStacks(items []Item) ([]Item, bool) {
+	first := map[stackKey]int{}
+	out := make([]Item, 0, len(items))
+	changed := false
+	for _, item := range items {
+		if _, ok := s.stackLimit(item); ok {
+			if at, found := first[keyOfStack(item)]; found && out[at].Count <= math.MaxInt32-item.Count {
+				out[at].Count += item.Count
+				changed = true
+				continue
+			}
+			first[keyOfStack(item)] = len(out)
+		}
+		out = append(out, item)
+	}
+	return out, changed
+}
+
+// splitStacks cuts stacks above their limit into limit-sized stacks while
+// slots remain free and deletes the rest.
+func (s *Inventory) splitStacks(ctx command.Context, items []Item, slots uint64) ([]Item, bool, error) {
+	out := append([]Item(nil), items...)
+	used := inventorySlotsUsed(out)
+	changed := false
+	for i := range items {
+		limit, ok := s.stackLimit(out[i])
+		if !ok || out[i].Count <= limit {
+			continue
+		}
+		remaining := out[i].Count - limit
+		out[i].Count = limit
+		changed = true
+		for remaining > 0 && used < slots {
+			index, err := ctx.NewInstanceID()
+			if err != nil {
+				return nil, false, err
+			}
+			piece := out[i]
+			piece.InvenIndex = index
+			piece.Count = min(remaining, limit)
+			out = append(out, piece)
+			used++
+			remaining -= piece.Count
+		}
+	}
+	return out, changed, nil
+}
+
 // Reward ItemDBInfo.Count is a delta: CommonPacket.AddItemInfo adds it to an
 // existing instance. Inventory state holds totals; replies hold only this grant.
 func (s *Inventory) addItems(ctx command.Context, next *ownedSnapshot, reward Item) ([]Item, error) {
@@ -44,6 +165,13 @@ func (s *Inventory) addItems(ctx command.Context, next *ownedSnapshot, reward It
 		limit, found = s.itemStacks.Limits[[2]uint64{reward.Type, reward.ID}]
 		if !found || limit == 0 || limit > math.MaxInt32 {
 			return nil, errors.New("inventory: item stack limit unavailable")
+		}
+		unlimited, err := s.stacksUnlimited(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if unlimited {
+			limit = math.MaxInt32
 		}
 	}
 	remaining := reward.Count

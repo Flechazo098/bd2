@@ -110,7 +110,7 @@ func (s *Service) handleSupporters(ctx command.Context, path string, request []b
 			return nil, false, err
 		}
 		if target == 0 {
-			return nil, false, ErrNotFound
+			return nil, false, fmt.Errorf("%w: SupporterDetail names no owner", ErrNotFound)
 		}
 		if _, err := s.source.PublicProfile(ctx, target); err != nil {
 			return nil, false, err
@@ -121,7 +121,7 @@ func (s *Service) handleSupporters(ctx command.Context, path string, request []b
 		}
 		supporter, ok := settings.Supporters[strconv.FormatUint(index, 10)]
 		if !ok {
-			return nil, false, ErrNotFound
+			return nil, false, fmt.Errorf("%w: no supporter in slot %d", ErrNotFound, index)
 		}
 		details, err := s.source.SupporterDetails(ctx, supporter.CharacterIndex, supporter.CostumeIndex)
 		if err != nil {

@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 func (o *Owner) Guild(ctx context.Context, id uint64) (Guild, error) {
@@ -11,7 +12,7 @@ func (o *Owner) Guild(ctx context.Context, id uint64) (Guild, error) {
 		var err error
 		out, err = readGuild(tx, id)
 		if err == nil && out.PendingOperation != "" {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild %d is being created by operation %q", ErrNotFound, id, out.PendingOperation)
 		}
 		if err == nil {
 			err = projectMemberProfiles(tx, &out)
@@ -33,7 +34,7 @@ func (o *Owner) Reservation(ctx context.Context, id string) (Reservation, error)
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild operation %q", ErrNotFound, id)
 		}
 		out = r.Reservation
 		return nil
@@ -48,7 +49,7 @@ func (o *Owner) Season(ctx context.Context, guild, season uint64) (Season, error
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild %d raid season %d", ErrNotFound, guild, season)
 		}
 		return nil
 	})
@@ -62,7 +63,7 @@ func (o *Owner) MemberBest(ctx context.Context, guild, season uint64, account st
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: best raid record of %s in guild %d season %d", ErrNotFound, account, guild, season)
 		}
 		return nil
 	})
@@ -71,7 +72,7 @@ func (o *Owner) MemberBest(ctx context.Context, guild, season uint64, account st
 
 func (o *Owner) Operations(ctx context.Context, after string, limit int) ([]Reservation, string, error) {
 	if limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: operation page limit %d, want 1..256", ErrInvalid, limit)
 	}
 	var out []Reservation
 	var next string
@@ -95,7 +96,7 @@ func (o *Owner) Operations(ctx context.Context, after string, limit int) ([]Rese
 
 func (o *Owner) PendingOperations(ctx context.Context, after string, limit int) ([]Reservation, string, error) {
 	if limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: pending operation page limit %d, want 1..256", ErrInvalid, limit)
 	}
 	var out []Reservation
 	var next string
@@ -110,7 +111,7 @@ func (o *Owner) PendingOperations(ctx context.Context, after string, limit int) 
 				return err
 			}
 			if !found || record.Reservation.Status != Prepared {
-				return ErrInvalid
+				return fmt.Errorf("%w: pending index names operation %q which is missing or %v", ErrInvalid, row.Key, record.Reservation.Status)
 			}
 			out = append(out, record.Reservation)
 			next = row.Key
@@ -122,7 +123,7 @@ func (o *Owner) PendingOperations(ctx context.Context, after string, limit int) 
 
 func (o *Owner) PendingRaidEntries(ctx context.Context, after string, limit int) ([]RaidEntry, string, error) {
 	if limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: pending raid entry page limit %d, want 1..256", ErrInvalid, limit)
 	}
 	var out []RaidEntry
 	var next string
@@ -138,7 +139,7 @@ func (o *Owner) PendingRaidEntries(ctx context.Context, after string, limit int)
 				return e
 			}
 			if !found || entry.Status != "confirmed" {
-				return ErrInvalid
+				return fmt.Errorf("%w: pending index names raid entry %q which is missing or %q", ErrInvalid, row.Key, entry.Status)
 			}
 			out = append(out, entry)
 			next = row.Key
@@ -150,7 +151,7 @@ func (o *Owner) PendingRaidEntries(ctx context.Context, after string, limit int)
 
 func (o *Owner) Guilds(ctx context.Context, after string, limit int) ([]Guild, string, error) {
 	if limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: guild page limit %d, want 1..256", ErrInvalid, limit)
 	}
 	var out []Guild
 	var next string

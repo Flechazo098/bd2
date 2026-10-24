@@ -67,6 +67,9 @@ func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, erro
 	for _, quest := range s.activeSideQuestWires(packID) {
 		out = wire.AppendBytes(out, 2, quest)
 	}
+	for _, quest := range s.lifeQuestWires(packID) {
+		out = wire.AppendBytes(out, 2, quest)
+	}
 	cleared := s.completedQuestIDs(packID)
 	// CommonPacket requests TodayQuestInfo after parsing this response, before
 	// the waypoint callback calls PackManager.Enter. That separate response owns

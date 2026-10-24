@@ -51,7 +51,7 @@ func (p *playerAssembly) PublicProfile(ctx command.Context, target uint64) (prof
 				return profile.Snapshot{}, err
 			}
 		}
-		return profile.Snapshot{}, profile.ErrNotFound
+		return profile.Snapshot{}, fmt.Errorf("%w: public profile of owner %d", profile.ErrNotFound, target)
 	}
 	settings, err := p.profileService.Settings(ctx)
 	if err != nil {

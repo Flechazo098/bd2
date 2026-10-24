@@ -64,17 +64,17 @@ func (s *NicknameService) Handle(ctx command.Context, path string, request []byt
 			return nil
 		}
 		if seen[field.Number-1] {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: nickname field %d repeats", wire.ErrMalformed, field.Number)
 		}
 		seen[field.Number-1] = true
 		if field.Number == 1 {
 			if field.Type != 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: nickname sequence has wire type %d", wire.ErrMalformed, field.Type)
 			}
 			seq, _ = binary.Uvarint(field.Value)
 		} else {
 			if field.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: nickname field %d has wire type %d", wire.ErrMalformed, field.Number, field.Type)
 			}
 			name = string(field.Value)
 		}

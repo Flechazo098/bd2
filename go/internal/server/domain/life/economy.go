@@ -21,10 +21,10 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 	case "/LifeCrafting":
 		d := s.design.Row("LifeCraftingObjectTable", id)
 		if d == nil || count == 0 || count > math.MaxInt32 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: crafting recipe %d has no LifeCraftingObjectTable row or count %d is out of range", ErrInvalid, id, count)
 		}
 		if !s.hasFunction(v, 11) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: crafting needs a finished workshop (building function 11)", ErrInvalid)
 		}
 		cost, err := costs(d, 5, 4, 3, count)
 		if err != nil {
@@ -38,16 +38,16 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 	case "/LifeCooking":
 		d := s.design.Row("LifeCookTable", id)
 		if d == nil || count == 0 || count > math.MaxInt32 || !s.hasFunction(v, 13) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: cooking recipe %d has no LifeCookTable row, count %d is out of range or no kitchen (function 13) is finished", ErrInvalid, id, count)
 		}
 		unique, quantity := ints(d, 3), ints(d, 2)
 		if len(unique) != len(quantity) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: cooking recipe %d lists %d ingredients and %d quantities", ErrInvalid, id, len(unique), len(quantity))
 		}
 		required := map[uint64]uint64{}
 		for i, u := range unique {
 			if quantity[i] > math.MaxInt32/count {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: cooking recipe %d ingredient %d quantity %d times %d overflows", ErrInvalid, id, u, quantity[i], count)
 			}
 			required[u] += quantity[i] * count
 		}
@@ -64,7 +64,7 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 		group := id
 		current, ok := v.Tools[group]
 		if !ok || !s.hasFunction(v, 14) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: tool group %d is not owned (%t) or no tool shop (function 14) is finished", ErrInvalid, group, ok)
 		}
 		ids := s.design.ToolGroups[group]
 		var next uint64
@@ -75,7 +75,7 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 		}
 		d := s.design.Row("LifeToolTable", group, next)
 		if d == nil || next == 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: tool group %d has no upgrade after tool %d", ErrInvalid, group, current)
 		}
 		cost, err := costs(d, 15, 14, 13, 1)
 		if err != nil {
@@ -90,49 +90,28 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 		v.Tools[group] = next
 		return row(1, group, 2, next), nil
 	case "/LifeEatFood":
-		used := messages(req, 2)
-		if len(used) != 1 {
-			return nil, ErrInvalid
-		}
-		it := used[0]
-		id = num(it, 2)
-		if num(it, 3) != 66 || num(it, 4) != 1 {
-			return nil, ErrInvalid
-		}
-		d := s.design.Row("LifeItemTable", id)
-		duration := uint64(0)
-		for _, buff := range ints(d, 1) {
-			duration = max(duration, num(s.design.Row("LifeBuffTable", buff), 1))
-		}
-		if duration == 0 {
-			return nil, ErrInvalid
-		}
-		if err := s.spend(v, []gamedata.Reward{{Type: 66, ID: id, Count: 1}}); err != nil {
-			return nil, err
-		}
-		v.Foods[id] = s.options.Now().Unix() + int64(duration)
-		return wire.AppendBytes(nil, 1, row(1, id, 2, uint64(v.Foods[id]*1000))), nil
+		return s.eatFood(v, req)
 	case "/LifeShopBuy":
 		return s.buy(v, req)
 	case "/LifeShopSell":
 		lines := messages(req, 2)
 		if len(lines) == 0 || len(lines) > 128 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: shop sale has %d lines, want 1..128", ErrInvalid, len(lines))
 		}
 		var cost, gain []gamedata.Reward
 		for _, line := range lines {
 			group, id, count := num(line, 2), num(line, 3), num(line, 4)
 			d := s.design.Row("LifeSellItemTable", group, id)
 			if d == nil || count == 0 || count > math.MaxInt32 {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: sale item %d:%d has no LifeSellItemTable row or count %d is out of range", ErrInvalid, group, id, count)
 			}
 			amount, price := num(d, 3), num(d, 6)
 			if amount == 0 || amount > math.MaxInt32/count || price > math.MaxInt32/count {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: sale item %d:%d amount %d or price %d times %d overflows", ErrInvalid, group, id, amount, price, count)
 			}
 			it := v.Items[itemKey(num(d, 5), num(d, 4))]
 			if num(line, 1) != it.Index {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: sale item %d:%d names inventory index %d, owned stack is %d", ErrInvalid, group, id, num(line, 1), it.Index)
 			}
 			cost = append(cost, gamedata.Reward{Type: num(d, 5), ID: num(d, 4), Count: amount * count})
 			if price > 0 {
@@ -145,7 +124,7 @@ func (s *Service) economy(v *snapshot, path string, req []byte) (body []byte, er
 		bundle, err := s.grant(v, gain)
 		return wire.AppendBytes(nil, 1, bundle), err
 	}
-	return nil, ErrInvalid
+	return nil, fmt.Errorf("%w: unknown life economy operation %s", ErrInvalid, path)
 }
 func (s *Service) hasFunction(v *snapshot, function uint64) bool {
 	for id, count := range v.ActiveCounts {
@@ -162,18 +141,18 @@ func (s *Service) uniqueCosts(v *snapshot, required map[uint64]uint64, selected 
 		d := s.design.Row("LifeItemTable", id)
 		unique := num(d, 10)
 		if typ != 66 || d == nil || count == 0 || count > required[unique] {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: ingredient %d:%d count %d is not a needed life item (unique %d needs %d)", ErrInvalid, typ, id, count, unique, required[unique])
 		}
 		it := v.Items[itemKey(typ, id)]
 		if num(raw, 1) != it.Index {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: ingredient %d names inventory index %d, owned stack is %d", ErrInvalid, id, num(raw, 1), it.Index)
 		}
 		required[unique] -= count
 		cost = append(cost, gamedata.Reward{Type: typ, ID: id, Count: count})
 	}
 	for _, n := range required {
 		if n != 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: ingredients leave %d of a required unique item uncovered", ErrInvalid, n)
 		}
 	}
 	return cost, nil
@@ -197,24 +176,24 @@ func (s *Service) buy(v *snapshot, req []byte) ([]byte, error) {
 	group, id, count := num(req, 2), num(req, 3), num(req, 4)
 	d := s.design.Row("LifeBuyItemTable", group, id)
 	if d == nil || count == 0 || count > math.MaxInt32 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: shop item %d:%d has no LifeBuyItemTable row or count %d is out of range", ErrInvalid, group, id, count)
 	}
 	quantity, price := num(d, 3), num(d, 6)
 	if quantity == 0 || quantity > math.MaxInt32/count || price > math.MaxInt32/count {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: shop item %d:%d quantity %d or price %d times %d overflows", ErrInvalid, group, id, quantity, price, count)
 	}
 	key := itemKey(group, id)
 	p := v.Purchases[key]
 	period := s.period(num(d, 10))
 	if period == "invalid" {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: shop item %d:%d has reset period %d", ErrInvalid, group, id, num(d, 10))
 	}
 	if p.Period != period {
 		p = purchase{Period: period}
 	}
 	limit := num(d, 9)
 	if limit > 0 && (p.Count >= limit || count > limit-p.Count) {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: shop item %d:%d bought %d of %d this period, asked %d more", ErrInvalid, group, id, p.Count, limit, count)
 	}
 	if price > 0 {
 		if err := s.spend(v, []gamedata.Reward{{Type: num(d, 8), ID: num(d, 7), Count: price * count}}); err != nil {

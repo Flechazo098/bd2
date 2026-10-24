@@ -9,21 +9,21 @@ import (
 func TestDevelopmentSettingsRejectMalformedAccountConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dev-tools.json")
 	for _, document := range []string{
-		`{"version":1,"inventory":{"unlimited":true}}`,
-		`{"version":2}`,
-		`{"version":2,"accounts":null}`,
-		`{"version":2,"accounts":{"A":null}}`,
-		`{"version":2,"accounts":{"A":{"inventory":null}}}`,
-		`{"version":2,"accounts":{"A":{"inventory":{}}}}`,
-		`{"version":2,"accounts":{"A":{"inventory":{"unlimited":null}}}}`,
-		`{"version":2,"accounts":{"A":{"inventory":{"unlimited":"true"}}}}`,
-		`{"version":2,"accounts":{"A":{"inventory":{"unlimited":true,"other":false}}}}`,
-		`{"version":2,"accounts":{"A":{"inventory":{"unlimited":true}}}} {}`,
+		`{"version":2,"accounts":{"A":{"inventory":{"unlimited":true}}}}`,
+		`{"version":3}`,
+		`{"version":3,"accounts":null}`,
+		`{"version":3,"accounts":{"A":null}}`,
+		`{"version":3,"accounts":{"A":{"items":null}}}`,
+		`{"version":3,"accounts":{"A":{"items":{}}}}`,
+		`{"version":3,"accounts":{"A":{"items":{"unlimited_stacks":null}}}}`,
+		`{"version":3,"accounts":{"A":{"items":{"unlimited_stacks":"true"}}}}`,
+		`{"version":3,"accounts":{"A":{"items":{"unlimited_stacks":true,"other":false}}}}`,
+		`{"version":3,"accounts":{"A":{"items":{"unlimited_stacks":true}}}} {}`,
 	} {
 		if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadUnlimitedInventory(path, "B"); err == nil {
+		if _, err := UnlimitedItemStacks(path, "B"); err == nil {
 			t.Fatalf("malformed settings accepted for unrelated account: %s", document)
 		}
 	}
@@ -31,14 +31,17 @@ func TestDevelopmentSettingsRejectMalformedAccountConfiguration(t *testing.T) {
 
 func TestMissingDevelopmentSettingsDisableOverride(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dev-tools.json")
-	if unlimited, err := loadUnlimitedInventory(path, "A"); err != nil || unlimited {
+	if unlimited, err := UnlimitedItemStacks(path, "A"); err != nil || unlimited {
 		t.Fatalf("missing settings: unlimited=%v error=%v", unlimited, err)
 	}
-	if err := os.WriteFile(path, []byte(`{"version":2,"accounts":{"A":{"inventory":{"unlimited":true}}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"version":3,"accounts":{"A":{"items":{"unlimited_stacks":true}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if unlimited, err := UnlimitedItemStacks(path, "A"); err != nil || !unlimited {
+		t.Fatalf("enabled account: unlimited=%v error=%v", unlimited, err)
+	}
 	for _, account := range []string{"B", ""} {
-		if unlimited, err := loadUnlimitedInventory(path, account); err != nil || unlimited {
+		if unlimited, err := UnlimitedItemStacks(path, account); err != nil || unlimited {
 			t.Fatalf("missing account %q: unlimited=%v error=%v", account, unlimited, err)
 		}
 	}

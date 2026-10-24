@@ -23,7 +23,7 @@ func (b seasonBoard) Snapshot(_ command.Context, _ uint64, mine RankEntry) ([]Ra
 // Event semantics are read from RogueLikeInfo.ERogueLikeEventType and
 // RogueLikeEventUI; upgrades, recipe matching, and payout are exercised through
 // protocol requests against real current rules, with state persisted between them.
-func TestEventShopRelicGrowthAndSeasonPayoutLifecycle(t *testing.T) {
+func TestEventShopRelicGrowthAndUnfinishedSeasonLifecycle(t *testing.T) {
 	d := currentDesign(t)
 	store := stateio.NewMemory()
 	ctx := command.Context{Identity: command.Identity{AccountID: "branch-player", SessionID: "branch-login"}, State: store}
@@ -275,16 +275,8 @@ func TestEventShopRelicGrowthAndSeasonPayoutLifecycle(t *testing.T) {
 	beforeRewards := economy.rewards
 	claim := req(seq)
 	seq++
-	seasonReply := rpc(t, s, ctx, "SeasonReward", claim)
-	if economy.rewards <= beforeRewards || n(seasonReply, 1) != 2 {
-		t.Fatal("completed season did not use real global threshold rewards and personal rank")
-	}
-	if !bytes.Equal(seasonReply, rpc(t, s, ctx, "SeasonReward", claim)) {
-		t.Fatal("season reward retry changed receipt")
-	}
-	paid := economy.rewards
-	assertRejected(t, s, ctx, "SeasonReward", req(seq))
-	if economy.rewards != paid {
-		t.Fatal("completed season paid twice")
+	assertRejected(t, s, ctx, "SeasonReward", claim)
+	if economy.rewards != beforeRewards {
+		t.Fatal("unfinished runs received a completed-season reward")
 	}
 }

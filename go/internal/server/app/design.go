@@ -477,7 +477,7 @@ func loadDesign(c *configuration, seeds *seedCatalog) (*designCatalog, error) {
 			for rest := day.Value; len(rest) > 0; {
 				v, n := binary.Uvarint(rest)
 				if n <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: SkyWay day seed varint is truncated", wire.ErrMalformed)
 				}
 				row.Days = append(row.Days, v)
 				rest = rest[n:]

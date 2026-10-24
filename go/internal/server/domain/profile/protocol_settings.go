@@ -237,12 +237,12 @@ func profileScalar(raw []byte, field int, max uint64) (uint64, error) {
 			return nil
 		}
 		if f.Type != 0 || seen {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		seen = true
 		n, _ = binary.Uvarint(f.Value)
 		if n > max {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d value %d is above %d", wire.ErrMalformed, field, n, max)
 		}
 		return nil
 	})
@@ -261,12 +261,12 @@ func profileNumbers(raw []byte, field int) ([]uint64, error) {
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		for b := f.Value; len(b) > 0; {
 			n, k := binary.Uvarint(b)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, n)
 			b = b[k:]

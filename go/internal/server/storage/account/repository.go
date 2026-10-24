@@ -313,7 +313,7 @@ func (t *CommandStore) Commit() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.done {
-		return ErrClosed
+		return fmt.Errorf("%w: command store is finished", ErrClosed)
 	}
 	t.done = true
 	t.repository.observationVersion.Add(1)
@@ -362,7 +362,7 @@ func (r *Repository) storageError(err error) {
 
 func (t *CommandStore) available() error {
 	if t.done {
-		return ErrClosed
+		return fmt.Errorf("%w: command store is finished", ErrClosed)
 	}
 	if t.statementErr != nil {
 		return t.statementErr

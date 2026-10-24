@@ -252,3 +252,115 @@ func extractFields(t *testing.T, b []byte) []wire.Field {
 	}
 	return out
 }
+
+func TestCurrentLifeEveryFoodCanBeBoughtEatenInBulkAndRestored(t *testing.T) {
+	versions, err := versionconfig.Find()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := gamedata.LoadLifeCatalog(versions.Resolve("data/resources/GameData"), versions.GameDataVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := scenario(t)
+	g.d = d
+	g.reopen()
+	foods := map[uint64]uint64{}
+	for _, r := range d.Tables["LifeItemTable"] {
+		if scalar(t, r, 9) == 3 {
+			id := scalar(t, r, 5)
+			buffs := plainInts(t, r, 1)
+			if len(buffs) == 0 {
+				t.Fatalf("food %d has no buffs", id)
+			}
+			for _, buff := range buffs {
+				duration := scalar(t, d.Row("LifeBuffTable", buff), 1)
+				if duration == 0 {
+					t.Fatalf("food %d buff %d has no duration", id, buff)
+				}
+				if duration > foods[id] {
+					foods[id] = duration
+				}
+			}
+		}
+	}
+	if len(foods) == 0 {
+		t.Fatal("current design contains no food")
+	}
+	cookable := map[uint64]bool{}
+	for _, r := range d.Tables["LifeCookTable"] {
+		cookable[scalar(t, r, 4)] = true
+	}
+	bought := map[uint64]bool{}
+	for _, r := range d.Tables["LifeBuyItemTable"] {
+		id := scalar(t, r, 4)
+		if _, ok := foods[id]; !ok || scalar(t, r, 5) != 66 || bought[id] {
+			continue
+		}
+		if !cookable[id] {
+			t.Fatalf("food %d is absent from cooking outputs", id)
+		}
+		if scalar(t, r, 3) != 1 || scalar(t, r, 8) != 64 {
+			t.Fatalf("food %d shop units/currency changed", id)
+		}
+		price := scalar(t, r, 6) * 3
+		if price > 0 {
+			if _, err := g.s.Apply(g.ctx, fmt.Sprintf("food-budget-%d", id), nil, []gamedata.Reward{{Type: 64, Count: price}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		g.call("/LifeShopBuy", proto(2, scalar(t, r, 1), 3, scalar(t, r, 2), 4, 3))
+		bought[id] = true
+	}
+	if len(bought) != len(foods) {
+		t.Fatalf("only %d/%d foods purchasable", len(bought), len(foods))
+	}
+	selected := map[uint64][]byte{}
+	var batch []byte
+	for _, it := range repeated(t, g.call("/LifeInfo", nil), 3) {
+		id := scalar(t, it, 2)
+		if _, ok := foods[id]; !ok {
+			continue
+		}
+		selected[id] = proto(1, scalar(t, it, 1), 2, id, 3, 66, 4, 1)
+		batch = child(batch, 2, proto(1, scalar(t, it, 1), 2, id, 3, 66, 4, 2))
+	}
+	if len(selected) != len(foods) {
+		t.Fatal("purchased food missing from inventory")
+	}
+	start := g.now
+	out := g.call("/LifeEatFood", batch)
+	if len(repeated(t, out, 1)) != len(foods) {
+		t.Fatal("bulk food response omitted selected food")
+	}
+	for _, f := range repeated(t, out, 1) {
+		id := scalar(t, f, 1)
+		if scalar(t, f, 2) != uint64(start.UnixMilli())+foods[id]*2*1000 {
+			t.Fatalf("food %d multi-serving duration wrong", id)
+		}
+		if balance, _ := g.s.Balance(g.ctx, 66, id); balance != 1 {
+			t.Fatalf("food %d remaining=%d", id, balance)
+		}
+	}
+	g.now = g.now.Add(time.Minute)
+	batch = nil
+	for _, it := range selected {
+		batch = child(batch, 2, it)
+	}
+	g.call("/LifeEatFood", batch)
+	g.reopen()
+	g.ctx.SessionID = "all-food-relogin"
+	restored := repeated(t, g.call("/LifeInfo", nil), 6)
+	if len(restored) != len(foods) {
+		t.Fatal("relogin lost food effects")
+	}
+	for _, f := range restored {
+		id := scalar(t, f, 1)
+		if scalar(t, f, 2) != uint64(start.UnixMilli())+foods[id]*3*1000 {
+			t.Fatalf("food %d repeat truncated remaining time", id)
+		}
+		if balance, _ := g.s.Balance(g.ctx, 66, id); balance != 0 {
+			t.Fatalf("food %d was not fully consumed: %d", id, balance)
+		}
+	}
+}

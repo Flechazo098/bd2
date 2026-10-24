@@ -1,6 +1,7 @@
 package world
 
 import (
+	"fmt"
 	"slices"
 
 	"bd2server/internal/server/protocol/wire"
@@ -8,7 +9,7 @@ import (
 
 func (s *Service) questMaxClearInfo(request []byte) (int, []byte, bool, error) {
 	if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
-		return 137, nil, true, ErrInvalidRequest
+		return 137, nil, true, fmt.Errorf("%w: QuestMaxClearInfo sequence %d (present=%t): %v", ErrInvalidRequest, seq, found, err)
 	}
 	maxima := make(map[int]int, len(s.packs))
 	for pack := range s.packs {

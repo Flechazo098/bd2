@@ -65,7 +65,7 @@ func Walk(data []byte, visit func(Field) error) error {
 			pos += n
 		case 1:
 			if len(data)-pos < 8 {
-				return ErrMalformed
+				return fmt.Errorf("%w: fixed64 at %d", ErrMalformed, pos)
 			}
 			field.Value = data[pos : pos+8]
 			pos += 8
@@ -79,7 +79,7 @@ func Walk(data []byte, visit func(Field) error) error {
 			pos += int(length)
 		case 5:
 			if len(data)-pos < 4 {
-				return ErrMalformed
+				return fmt.Errorf("%w: fixed32 at %d", ErrMalformed, pos)
 			}
 			field.Value = data[pos : pos+4]
 			pos += 4

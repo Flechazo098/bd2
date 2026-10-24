@@ -119,7 +119,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	if path == "/QuestInfo" {
 		pack, err := requestPack(request)
 		if err != nil || !s.packUnlocked(ctx, pack) {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: quest info for pack %d is unavailable: %v", ErrInvalidRequest, pack, err)
 		}
 		var out []byte
 		if active := s.firstUnclearedQuestFor(pack); active != 0 {
@@ -153,12 +153,12 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	}
 	quest, pack, err := requestQuest(request)
 	if err != nil || !s.packUnlocked(ctx, pack) {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: %s quest %d in pack %d is unavailable: %v", ErrInvalidRequest, path, quest, pack, err)
 	}
 	designs, known := s.questsFor(ctx, pack)
 	design, exists := designs[quest]
 	if !known || !exists {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: %s pack %d has no quest %d (pack known=%t)", ErrInvalidRequest, path, pack, quest, known)
 	}
 	if design.Type == 0 {
 		replay, replaying, err := s.state.QuestReplay(ctx, pack)
@@ -172,7 +172,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	if path == "/QuestAccept" {
 		retry, _, err := wire.Varint(request, 6)
 		if err != nil || retry > 1 || retry == 1 && design.Type != 0 {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: quest %d retry flag %d for quest type %d: %v", ErrInvalidRequest, quest, retry, design.Type, err)
 		}
 		if retry == 1 {
 			return s.acceptQuestReplay(ctx, pack, quest, request)
@@ -181,7 +181,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	if path == "/QuestGiveUp" {
 		if design.Type != 0 {
 			if _, ok := s.state.QuestInPack(quest, pack); !ok {
-				return 0, nil, true, ErrInvalidRequest
+				return 0, nil, true, fmt.Errorf("%w: cannot give up quest %d in pack %d: it is not active", ErrInvalidRequest, quest, pack)
 			}
 			if err := s.state.RemoveQuest(ctx, quest, pack, 0); err != nil {
 				return 0, nil, true, err
@@ -190,7 +190,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 		}
 		selection, ok := s.state.Selection(pack)
 		if !ok || selection.QuestID != quest || selection.Difficulty == 0 {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: cannot give up quest %d in pack %d: selected quest %d at difficulty %d", ErrInvalidRequest, quest, pack, selection.QuestID, selection.Difficulty)
 		}
 		// Abandoning a difficulty retains its independently committed clears.
 		if err := s.state.SelectQuest(ctx, pack, progress.QuestSelection{}); err != nil {
@@ -200,21 +200,21 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	}
 	level, _, err := wire.Varint(request, 4)
 	if err != nil || level > 4 {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: quest %d difficulty %d, want 0..4: %v", ErrInvalidRequest, quest, level, err)
 	}
 	opt, _, err := wire.Varint(request, 5)
 	if err != nil || opt != 0 {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: quest %d option %d, want 0: %v", ErrInvalidRequest, quest, opt, err)
 	}
 	if level > 0 && !s.questDifficulties[pack][int(level)] {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: pack %d has no difficulty %d", ErrInvalidRequest, pack, level)
 	}
 	if design.Type != 0 {
 		if design.Type != 1 {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: quest %d of type %d cannot be accepted", ErrInvalidRequest, quest, design.Type)
 		}
 		if level != 0 || (design.PriorQuestID != 0 && !s.state.QuestCleared(design.PriorQuestID, pack)) || s.state.QuestCleared(quest, pack) {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: side quest %d at difficulty %d is cleared or waits for quest %d", ErrInvalidRequest, quest, level, design.PriorQuestID)
 		}
 		if err := s.state.AcceptQuest(ctx, quest, pack, 0); err != nil {
 			return 0, nil, true, err
@@ -248,7 +248,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 		}
 	}
 	if quest != first || first == 0 {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: quest %d is not the first unfinished main quest %d of pack %d", ErrInvalidRequest, quest, first, pack)
 	}
 	if err := s.state.SelectQuest(ctx, pack, progress.QuestSelection{QuestID: quest, Difficulty: int(level), Option: int(opt)}); err != nil {
 		return 0, nil, true, err

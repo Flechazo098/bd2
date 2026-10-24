@@ -92,8 +92,8 @@ type run struct {
 	DeferredEffects                          []uint64
 }
 type seasonRecord struct {
-	Score, Damage uint64
-	Claimed       bool
+	Score, Damage    uint64
+	Claimed, Cleared bool
 }
 type state struct {
 	Version                                                                          string
@@ -167,7 +167,7 @@ func messages(b []byte, f int) (a [][]byte, e error) {
 	e = wire.Walk(b, func(x wire.Field) error {
 		if x.Number == f {
 			if x.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, x.Number, x.Type)
 			}
 			a = append(a, slices.Clone(x.Value))
 		}

@@ -223,20 +223,20 @@ func ints(b []byte, n int) (out []uint64, err error) {
 		case 0:
 			v, k := binary.Uvarint(f.Value)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, v)
 		case 2:
 			for p := f.Value; len(p) > 0; {
 				v, k := binary.Uvarint(p)
 				if k <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				out = append(out, v)
 				p = p[k:]
 			}
 		default:
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		return nil
 	})
@@ -387,7 +387,7 @@ func (s *Service) apply(ctx command.Context, path string, req []byte, n *snapsho
 				return nil
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			index, locked := num(f.Value, 1), num(f.Value, 2)
 			if index == 0 || seen[index] || locked > 1 {

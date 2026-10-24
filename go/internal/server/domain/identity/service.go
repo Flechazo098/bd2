@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/common/util"
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -183,12 +184,12 @@ func (s *Service) CompleteDevice(deviceID, provider string, id ProviderIdentity)
 			return e
 		}
 		if !updated {
-			return ErrConsumed
+			return fmt.Errorf("%w: device %q was already resolved", ErrConsumed, deviceID)
 		}
 		if e = tx.Commit(); e != nil {
 			return e
 		}
-		return ErrNotAllowed
+		return fmt.Errorf("%w: %s identity is not on the allow list", ErrNotAllowed, provider)
 	}
 	if !found {
 		count, e := tx.AccountCount()
@@ -241,7 +242,7 @@ func (s *Service) CompleteDevice(deviceID, provider string, id ProviderIdentity)
 		return e
 	}
 	if !updated {
-		return ErrConsumed
+		return fmt.Errorf("%w: device %q was already resolved", ErrConsumed, deviceID)
 	}
 	return tx.Commit()
 }
@@ -400,11 +401,11 @@ func (s *Service) Revoke(token string) error {
 }
 func (s *Service) ValidateAccess(token string) (string, error) {
 	if token == "" {
-		return "", ErrUnauthorized
+		return "", fmt.Errorf("%w: no access token", ErrUnauthorized)
 	}
 	row, e := s.store.AccessToken(token)
 	if e != nil || row.AccountStatus != "active" || row.Revoked || s.Now().Unix() >= row.Expires {
-		return "", ErrUnauthorized
+		return "", fmt.Errorf("%w: access token is unknown, revoked, expired or its account is not active: %v", ErrUnauthorized, e)
 	}
 	return row.AccountID, nil
 }
@@ -424,7 +425,7 @@ func (s *Service) AuthorizeAdministrator(token string) (string, error) {
 	}
 	owner, err := s.store.AdministratorAccountID()
 	if err != nil || owner == "" || owner != accountID {
-		return "", ErrUnauthorized
+		return "", fmt.Errorf("%w: %s is not the administrator account: %v", ErrUnauthorized, accountID, err)
 	}
 	return accountID, nil
 }

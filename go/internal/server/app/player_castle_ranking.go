@@ -23,17 +23,11 @@ func (p *playerAssembly) publishCastleRanking(ctx command.Context) error {
 	if err != nil || len(records) == 0 {
 		return err
 	}
-	profile, err := p.PublicProfile(ctx, owner)
+	profile, err := p.castleRankProfile(ctx, owner)
 	if err != nil {
 		return err
 	}
-	xp, err := p.missionService.AchievementExperience()
-	if err != nil {
-		return err
-	}
-	next := castle.RankPublication{Account: ctx.AccountID, Records: records, Profile: castle.RankProfile{
-		Owner: owner, Name: profile.UserID, XP: xp, Portrait: profile.PortraitCostumeID, PortraitDesign: profile.PortraitDesignID, Title: profile.TitleID, Guild: profile.GuildBase,
-	}}
+	next := castle.RankPublication{Account: ctx.AccountID, Records: records, Profile: profile}
 	oldRaw, found, err := ctx.State.LoadEntry("directory", "castle_publication", "current")
 	if err != nil {
 		return err
@@ -64,6 +58,20 @@ func (p *playerAssembly) publishCastleRanking(ctx command.Context) error {
 		return err
 	}
 	return ctx.State.PutEntry("directory", "castle_publication", "current", raw)
+}
+
+func (p *playerAssembly) castleRankProfile(ctx command.Context, owner uint64) (castle.RankProfile, error) {
+	profile, err := p.PublicProfile(ctx, owner)
+	if err != nil {
+		return castle.RankProfile{}, err
+	}
+	xp, err := p.missionService.AchievementExperience()
+	if err != nil {
+		return castle.RankProfile{}, err
+	}
+	return castle.RankProfile{
+		Owner: owner, Name: profile.UserID, XP: xp, Portrait: profile.PortraitCostumeID, PortraitDesign: profile.PortraitDesignID, Title: profile.TitleID, Guild: profile.GuildBase,
+	}, nil
 }
 
 func (s *sharedRuntime) consumeCastleRanking(ctx context.Context, event outbox.Pending) error {

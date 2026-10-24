@@ -127,20 +127,20 @@ func OpenStore(ctx command.Context, storage stateio.Store) (*Store, error) {
 	}
 	s.activePackID = state.ActivePackID
 	if s.activePackID < 0 {
-		return nil, ErrInvalidQuest
+		return nil, fmt.Errorf("%w: saved active pack %d", ErrInvalidQuest, s.activePackID)
 	}
 	s.startingPackID = state.StartPackID
 	if s.startingPackID < 0 {
-		return nil, ErrInvalidQuest
+		return nil, fmt.Errorf("%w: saved starting pack %d", ErrInvalidQuest, s.startingPackID)
 	}
 	if state.Position.Difficulty < 0 || state.Position.Difficulty > 4 {
-		return nil, ErrInvalidPosition
+		return nil, fmt.Errorf("%w: saved position difficulty %d, want 0..4", ErrInvalidPosition, state.Position.Difficulty)
 	}
 	s.position = state.Position
 	for key, selection := range state.Selections {
 		pack, err := strconv.Atoi(key)
 		if err != nil || pack <= 0 || selection.QuestID < 0 || selection.Difficulty < 0 || selection.Difficulty > 4 || selection.Option < 0 {
-			return nil, ErrInvalidQuest
+			return nil, fmt.Errorf("%w: saved selection for pack %q is %+v: %v", ErrInvalidQuest, key, selection, err)
 		}
 		s.selections[key] = selection
 	}
@@ -222,7 +222,7 @@ func (s *Store) LastPlayedPackID(ctx command.Context) (uint64, error) {
 		return 0, nil
 	}
 	if s.position.PackID < 0 || s.position.PackID > int(^uint32(0)>>1) || s.position.Position.MapID <= 0 || s.position.RawJSON == "" {
-		return 0, ErrInvalidPosition
+		return 0, fmt.Errorf("%w: saved position pack %d map %d (raw %d bytes)", ErrInvalidPosition, s.position.PackID, s.position.Position.MapID, len(s.position.RawJSON))
 	}
 	return uint64(s.position.PackID), nil
 }
@@ -273,7 +273,7 @@ func (s *Store) QuestInPack(questID, packID int, level ...int) (QuestProgress, b
 // (pack, quest) pair because every story pack starts numbering from one.
 func (s *Store) ClearQuest(ctx command.Context, questID, packID int, level ...int) error {
 	if questID <= 0 || packID <= 0 || questDifficulty(level) < 0 || questDifficulty(level) > 4 {
-		return ErrInvalidQuest
+		return fmt.Errorf("%w: clear quest %d in pack %d at difficulty %d", ErrInvalidQuest, questID, packID, questDifficulty(level))
 	}
 
 	key := questKey(packID, questID, level...)
@@ -338,7 +338,7 @@ func (s *Store) Selection(packID int) (QuestSelection, bool) {
 }
 func (s *Store) SelectQuest(ctx command.Context, packID int, selection QuestSelection) error {
 	if packID <= 0 || selection.QuestID < 0 || selection.Difficulty < 0 || selection.Difficulty > 4 || selection.Option < 0 {
-		return ErrInvalidQuest
+		return fmt.Errorf("%w: select %+v in pack %d", ErrInvalidQuest, selection, packID)
 	}
 
 	old := s.selections
@@ -356,7 +356,7 @@ func (s *Store) SelectQuest(ctx command.Context, packID int, selection QuestSele
 func (s *Store) StartPackID() int { return s.startingPackID }
 func (s *Store) SetStartPack(ctx command.Context, packID int) error {
 	if packID <= 0 {
-		return ErrInvalidQuest
+		return fmt.Errorf("%w: starting pack %d", ErrInvalidQuest, packID)
 	}
 
 	previous := s.startingPackID
@@ -371,7 +371,7 @@ func (s *Store) SetStartPack(ctx command.Context, packID int) error {
 // AcceptQuest commits an explicit active quest without replacing main selection.
 func (s *Store) AcceptQuest(ctx command.Context, questID, packID, difficulty int) error {
 	if questID <= 0 || packID <= 0 || difficulty < 0 || difficulty > 4 {
-		return ErrInvalidQuest
+		return fmt.Errorf("%w: accept quest %d in pack %d at difficulty %d", ErrInvalidQuest, questID, packID, difficulty)
 	}
 
 	quests := make(map[string]QuestProgress, len(s.quests)+1)
@@ -408,7 +408,7 @@ func (s *Store) QuestsInPack(packID, difficulty int) []QuestProgress {
 func (s *Store) ActivePackID() int { return s.activePackID }
 func (s *Store) SetActivePackID(ctx command.Context, packID int) error {
 	if packID <= 0 {
-		return ErrInvalidQuest
+		return fmt.Errorf("%w: active pack %d", ErrInvalidQuest, packID)
 	}
 
 	old := s.activePackID

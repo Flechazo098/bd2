@@ -112,11 +112,11 @@ func (p *remoteProvider) check(ctx context.Context, scope, accountID, text strin
 		}{scope, accountID, text})
 	}
 	if err != nil {
-		return ErrUnavailable
+		return fmt.Errorf("%w: encode moderation request: %v", ErrUnavailable, err)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return ErrUnavailable
+		return fmt.Errorf("%w: build moderation request: %v", ErrUnavailable, err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
@@ -125,15 +125,15 @@ func (p *remoteProvider) check(ctx context.Context, scope, accountID, text strin
 	}
 	response, err := p.client.Do(request)
 	if err != nil {
-		return ErrUnavailable
+		return fmt.Errorf("%w: moderation request: %v", ErrUnavailable, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return ErrUnavailable
+		return fmt.Errorf("%w: moderation service answered HTTP %d", ErrUnavailable, response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil || len(data) > maxResponseBytes {
-		return ErrUnavailable
+		return fmt.Errorf("%w: moderation response of %d bytes: %v", ErrUnavailable, len(data), err)
 	}
 	if p.kind == "azure_content_safety" {
 		return azureResult(data, p.threshold)
@@ -142,15 +142,15 @@ func (p *remoteProvider) check(ctx context.Context, scope, accountID, text strin
 		Decision string `json:"decision"`
 	}
 	if !decodeResponse(data, &result, true) {
-		return ErrUnavailable
+		return fmt.Errorf("%w: moderation response is malformed", ErrUnavailable)
 	}
 	switch result.Decision {
 	case "allow":
 		return nil
 	case "reject":
-		return ErrRejected
+		return fmt.Errorf("%w: moderation service", ErrRejected)
 	default:
-		return ErrUnavailable
+		return fmt.Errorf("%w: moderation decision %q", ErrUnavailable, result.Decision)
 	}
 }
 

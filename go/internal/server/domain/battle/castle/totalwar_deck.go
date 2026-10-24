@@ -260,18 +260,18 @@ func totalWarSlots(raw []byte) ([]uint64, error) {
 		if f.Type == 0 {
 			v, k := binary.Uvarint(f.Value)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, v)
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		for p := f.Value; len(p) > 0; {
 			v, k := binary.Uvarint(p)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, v)
 			p = p[k:]

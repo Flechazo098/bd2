@@ -56,7 +56,7 @@ func loadSocialTables(root, version string, specs map[string][2]int) (map[string
 					for len(p) > 0 {
 						v, n := binary.Uvarint(p)
 						if n <= 0 {
-							return wire.ErrMalformed
+							return fmt.Errorf("%w: %s field %d packed varint is truncated", wire.ErrMalformed, name, f.Number)
 						}
 						r.Fields[f.Number] = append(r.Fields[f.Number], v)
 						p = p[n:]

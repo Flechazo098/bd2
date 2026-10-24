@@ -60,7 +60,7 @@ func Publish(tx PageStore, source string, event command.Event) error {
 	}
 	if found {
 		if !bytes.Equal(previous, digest[:]) {
-			return ErrConflict
+			return fmt.Errorf("%w: %s event %q from %s was published with a different body", ErrConflict, event.Topic, event.ID, source)
 		}
 		return nil
 	}
@@ -69,7 +69,7 @@ func Publish(tx PageStore, source string, event command.Event) error {
 		return err
 	}
 	if count >= MaxPending {
-		return ErrFull
+		return fmt.Errorf("%w: %d events are pending", ErrFull, count)
 	}
 	sequenceRaw, found, err := tx.LoadEntry(Domain, "sequence", "last")
 	if err != nil {
@@ -106,7 +106,7 @@ func validEnvelope(e Envelope) bool {
 func Validate(p Pending) (string, []byte, error) {
 	key, ok := pendingIdentity(p.Key)
 	if !ok || !validEnvelope(p.Envelope) || key != identity(p.Envelope.Source, p.Envelope.Event.Topic, p.Envelope.Event.ID) {
-		return "", nil, ErrConflict
+		return "", nil, fmt.Errorf("%w: pending event %q does not match its envelope", ErrConflict, p.Key)
 	}
 	raw, err := json.Marshal(p.Envelope)
 	if err != nil {
@@ -114,7 +114,7 @@ func Validate(p Pending) (string, []byte, error) {
 	}
 	digest := sha256.Sum256(raw)
 	if p.Digest != hex.EncodeToString(digest[:]) {
-		return "", nil, ErrConflict
+		return "", nil, fmt.Errorf("%w: pending event %q digest does not match its envelope", ErrConflict, p.Key)
 	}
 	return key, digest[:], nil
 }
@@ -149,7 +149,7 @@ func Acknowledge(tx stateio.AtomicEntryStore, key, digest string) error {
 		return err
 	}
 	if !found || !bytes.Equal(published, expected) {
-		return ErrConflict
+		return fmt.Errorf("%w: acknowledgement for %q does not match the published event (present=%t)", ErrConflict, key, found)
 	}
 	_, err = tx.DeleteEntry(Domain, pendingBucket, key)
 	return err

@@ -311,7 +311,7 @@ func (s *Service) ValidateAccess(token string) (string, error) {
 func (s *Service) AuthenticateLogin(request []byte) (string, error) {
 	token, found, err := wire.Bytes(request, 2)
 	if err != nil || !found {
-		return "", identity.ErrUnauthorized
+		return "", fmt.Errorf("%w: login request has no access token: %v", identity.ErrUnauthorized, err)
 	}
 	return s.identity.ValidateAccess(string(token))
 }

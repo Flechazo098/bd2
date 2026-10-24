@@ -198,7 +198,7 @@ func (r *Runtime) Submit(ctx context.Context, c Command) (*Future, error) {
 		return nil, err
 	}
 	if c.Identity.AccountID != r.accountID {
-		return nil, ErrWrongAccount
+		return nil, fmt.Errorf("%w: command for %s reached the runtime of %s", ErrWrongAccount, c.Identity.AccountID, r.accountID)
 	}
 	if c.Identity.SessionID == "" || c.Identity.RequestID == "" || (len(c.Requests) == 0) == (c.System == nil) {
 		return nil, errors.New("command requires session, request identity and requests")
@@ -213,14 +213,14 @@ func (r *Runtime) Submit(ctx context.Context, c Command) (*Future, error) {
 		return nil, err
 	}
 	if r.closing {
-		return nil, ErrClosed
+		return nil, fmt.Errorf("%w: player %s is closing", ErrClosed, r.accountID)
 	}
 	if c.ExpectedGeneration != 0 && c.ExpectedGeneration != r.generation.Load() {
-		return nil, ErrGenerationExpired
+		return nil, fmt.Errorf("%w: command expects generation %d, player %s is at %d", ErrGenerationExpired, c.ExpectedGeneration, r.accountID, r.generation.Load())
 	}
 	if previous, exists := r.receipts[c.Identity]; exists {
 		if previous.digest != c.Digest {
-			return nil, ErrIdentityConflict
+			return nil, fmt.Errorf("%w: request %q was replayed with a different body", ErrIdentityConflict, c.Identity.RequestID)
 		}
 		return previous.future, nil
 	}
@@ -228,7 +228,7 @@ func (r *Runtime) Submit(ctx context.Context, c Command) (*Future, error) {
 		return nil, errors.Join(ErrUnavailable, r.failed)
 	}
 	if r.pending >= r.limits.MaxCommands || size > r.limits.MaxBytes-r.bytes {
-		return nil, ErrMailboxFull
+		return nil, fmt.Errorf("%w: player %s has %d queued commands and %d bytes (limits %d and %d)", ErrMailboxFull, r.accountID, r.pending, r.bytes, r.limits.MaxCommands, r.limits.MaxBytes)
 	}
 	f := &Future{done: make(chan struct{})}
 	c.Cancellation = ctx
@@ -251,12 +251,12 @@ func (r *Runtime) Recover(ctx context.Context) error {
 	}
 	if r.closing {
 		r.mu.Unlock()
-		return ErrClosed
+		return fmt.Errorf("%w: player %s is closing", ErrClosed, r.accountID)
 	}
 	const recoveryBytes = 160
 	if r.pending >= r.limits.MaxCommands || recoveryBytes > r.limits.MaxBytes-r.bytes {
 		r.mu.Unlock()
-		return ErrMailboxFull
+		return fmt.Errorf("%w: player %s has no room for recovery (%d queued commands, %d bytes)", ErrMailboxFull, r.accountID, r.pending, r.bytes)
 	}
 	f := &Future{done: make(chan struct{})}
 	r.pending++
@@ -297,7 +297,7 @@ func (r *Runtime) run() {
 			failure := r.failed
 			r.mu.Unlock()
 			if w.generation != r.generation.Load() {
-				err = ErrGenerationExpired
+				err = fmt.Errorf("%w: command was accepted at generation %d, player %s is at %d", ErrGenerationExpired, w.generation, r.accountID, r.generation.Load())
 			} else if failure != nil {
 				err = errors.Join(ErrUnavailable, failure)
 			} else {
@@ -356,7 +356,7 @@ func (r *Runtime) run() {
 func (r *Runtime) recover(ctx context.Context) error {
 	recoverer, ok := r.executor.(Recoverer)
 	if !ok {
-		return ErrUnavailable
+		return fmt.Errorf("%w: player %s executor cannot recover", ErrUnavailable, r.accountID)
 	}
 	err := safeCall(func() error { return recoverer.Recover(ctx) })
 	r.mu.Lock()

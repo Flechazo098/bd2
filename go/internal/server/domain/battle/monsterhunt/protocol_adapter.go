@@ -401,7 +401,7 @@ func messages(b []byte, n int) ([][]byte, error) {
 	e := wire.Walk(b, func(f wire.Field) error {
 		if f.Number == n {
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			out = append(out, append([]byte(nil), f.Value...))
 		}
@@ -422,12 +422,12 @@ func packed(b []byte, n int) ([]uint64, error) {
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want packed varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		for p := f.Value; len(p) > 0; {
 			v, k := binary.Uvarint(p)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, v)
 			p = p[k:]

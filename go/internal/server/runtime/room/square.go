@@ -11,7 +11,7 @@ import (
 
 func (m *Manager) handleSquareChannel(ctx context.Context, c Connection, f Frame) ([]Delivery, error) {
 	if f.UDP || len(f.Payload) > 4096 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: square channel frame %d of %d bytes (udp=%t)", ErrUnauthorized, f.Type, len(f.Payload), f.UDP)
 	}
 	reply := func(body []byte, code int64) []Delivery {
 		return []Delivery{{c.ID, Frame{Type: f.Type + 1, Sequence: f.Sequence, OwnerIndex: c.Principal.OwnerIndex, Payload: message(m.config.Now(), code, body)}}}
@@ -38,7 +38,7 @@ func (m *Manager) handleSquareChannel(ctx context.Context, c Connection, f Frame
 		return nil, err
 	}
 	if number(profile.UserInfo, 1) != c.Principal.OwnerIndex || !profile.SquareUnlocked {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: square profile names owner %d for owner %d (unlocked=%t)", ErrUnauthorized, number(profile.UserInfo, 1), c.Principal.OwnerIndex, profile.SquareUnlocked)
 	}
 	m.squareJoinMu.Lock()
 	defer m.squareJoinMu.Unlock()
@@ -90,7 +90,7 @@ func (m *Manager) handleSquareChannel(ctx context.Context, c Connection, f Frame
 			if u == nil {
 				u = s.byOwner(c.Principal.OwnerIndex)
 				if u == nil || u.principal.AccountID != c.Principal.AccountID || u.principal.Generation > c.Principal.Generation {
-					return nil, nil, ErrUnauthorized
+					return nil, nil, fmt.Errorf("%w: owner %d square seat belongs to another or newer session", ErrUnauthorized, c.Principal.OwnerIndex)
 				}
 				return nil, s.leaveSquare(u), nil
 			}
@@ -108,7 +108,7 @@ func (m *Manager) handleSquareChannel(ctx context.Context, c Connection, f Frame
 		u := s.find(c.Principal)
 		if u == nil {
 			if s.byOwner(c.Principal.OwnerIndex) != nil {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: owner %d already holds a square seat from another session", ErrUnauthorized, c.Principal.OwnerIndex)
 			}
 			if len(s.members) >= s.selection.Capacity {
 				return nil, reply(nil, 11), nil
@@ -177,24 +177,24 @@ func (s *state) squareSnapshot(reconnect bool) []byte {
 
 func squareState(raw []byte, owner int64) ([]byte, error) {
 	if len(raw) == 0 || len(raw) > 4096 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: square state is %d bytes, want 1..4096", ErrUnauthorized, len(raw))
 	}
 	if err := wire.Walk(raw, func(wire.Field) error { return nil }); err != nil {
 		return nil, err
 	}
 	if id := number(raw, 1); id != 0 && id != owner {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: square state names owner %d, sender is %d", ErrUnauthorized, id, owner)
 	}
 	return integer(removeField(raw, 1), 1, owner), nil
 }
 
 func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]Delivery, error) {
 	if f.UDP || len(f.Payload) > 65536 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: square frame %d of %d bytes (udp=%t)", ErrUnauthorized, f.Type, len(f.Payload), f.UDP)
 	}
 	o := m.lookup(c.Principal, Square)
 	if o == nil {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: owner %d has no square room", ErrNotFound, c.Principal.OwnerIndex)
 	}
 	var profile Profile
 	if f.Type == 140 || f.Type == 147 || f.Type == 182 {
@@ -204,23 +204,23 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			return nil, err
 		}
 		if number(profile.UserInfo, 1) != c.Principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: square profile names owner %d, connection owner is %d", ErrUnauthorized, number(profile.UserInfo, 1), c.Principal.OwnerIndex)
 		}
 	}
 	_, deliveries, err := o.submit(ctx, int64(len(f.Payload)), func(s *state) (any, []Delivery, error) {
 		u := s.find(c.Principal)
 		if u == nil {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: owner %d is not in the square", ErrUnauthorized, c.Principal.OwnerIndex)
 		}
 		if f.Type == 23 || f.Type == 185 {
 			if f.Type == 23 && stringField(f.Payload, 2) != o.code || f.Type == 185 && stringField(f.Payload, 2) != u.guid {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame %d carries another room code or guid", ErrUnauthorized, f.Type)
 			}
 			if !u.disconnected.IsZero() && m.config.Now().Sub(u.disconnected) > s.reconnectWindow() {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: owner %d square reconnect window has passed", ErrNotReady, u.principal.OwnerIndex)
 			}
 			if f.Type == 185 && !u.ready {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: owner %d reconnects to the square before entering it", ErrNotReady, u.principal.OwnerIndex)
 			}
 			u.gameConnection = c.ID
 			u.disconnected = time.Time{}
@@ -231,11 +231,11 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			return nil, append(d, s.broadcast(128, blob(nil, 2, squareEnterUser(u)), false, u.principal.OwnerIndex)...), nil
 		}
 		if u.gameConnection != c.ID {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: square frame %d arrives on connection %q, the game connection is %q", ErrUnauthorized, f.Type, c.ID, u.gameConnection)
 		}
 		if f.Type == 126 {
 			if stringField(f.Payload, 2) != u.guid || stringField(f.Payload, 3) != o.code {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame 126 carries another guid or room code", ErrUnauthorized)
 			}
 			state, err := squareState(bytesField(f.Payload, 4), u.principal.OwnerIndex)
 			if err != nil {
@@ -250,12 +250,12 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			return nil, d, nil
 		}
 		if !u.ready {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: square frame %d before owner %d entered", ErrNotReady, f.Type, u.principal.OwnerIndex)
 		}
 		switch f.Type {
 		case 122, 175:
 			if stringField(f.Payload, 2) != u.guid {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame %d carries another guid", ErrUnauthorized, f.Type)
 			}
 			state, err := squareState(bytesField(f.Payload, 3), u.principal.OwnerIndex)
 			if err != nil {
@@ -272,12 +272,12 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			return nil, s.broadcast(typ, blob(nil, 2, state), false, u.principal.OwnerIndex), nil
 		case 129:
 			if stringField(f.Payload, 2) != u.guid {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame 129 carries another guid", ErrUnauthorized)
 			}
 			return nil, append([]Delivery{s.reply(c, f, 130, nil, 0)}, s.leaveSquare(u)...), nil
 		case 137:
 			if stringField(f.Payload, 2) != o.code {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame 137 carries another room code", ErrUnauthorized)
 			}
 			var body []byte
 			for _, member := range s.members {
@@ -294,7 +294,7 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			motion := bytesField(f.Payload, 2)
 			id := number(motion, 1)
 			if len(motion) > 256 || id < 0 || id != 0 && !slices.Contains(u.profile.AvatarMotions, uint64(id)) {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square motion %d (%d bytes) is not owned", ErrUnauthorized, id, len(motion))
 			}
 			if err := wire.Walk(motion, func(wire.Field) error { return nil }); err != nil {
 				return nil, nil, err
@@ -319,17 +319,17 @@ func (m *Manager) handleSquare(ctx context.Context, c Connection, f Frame) ([]De
 			return nil, d, nil
 		case 66, 68:
 			if stringField(f.Payload, 2) != u.guid {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame %d carries another guid", ErrUnauthorized, f.Type)
 			}
 			return nil, []Delivery{s.reply(c, f, f.Type+1, integer(nil, 2, number(f.Payload, 3)), 0)}, nil
 		case 70, 72:
 			if stringField(f.Payload, 2) != u.guid {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: square frame %d carries another guid", ErrUnauthorized, f.Type)
 			}
 			d, err := s.relay(c, f, u)
 			return nil, d, err
 		}
-		return nil, nil, ErrUnauthorized
+		return nil, nil, fmt.Errorf("%w: unknown square frame %d", ErrUnauthorized, f.Type)
 	})
 	return deliveries, err
 }

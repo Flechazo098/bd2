@@ -2,6 +2,7 @@ package social
 
 import (
 	"encoding/base64"
+	"fmt"
 
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/profile"
@@ -11,20 +12,20 @@ import (
 
 func SupporterSnapshot(member PublicMember, details profile.SupporterDetails, characterIndex, costumeIndex uint64, version string) (SupporterSlot, error) {
 	if member.AccountID == "" || member.OwnerIndex == 0 || version == "" || details.Character.InvenIndex != characterIndex {
-		return SupporterSlot{}, ErrInvalid
+		return SupporterSlot{}, fmt.Errorf("%w: supporter snapshot of %q (owner %d, version %q) names character %d, details hold %d", ErrInvalid, member.AccountID, member.OwnerIndex, version, characterIndex, details.Character.InvenIndex)
 	}
 	slot := SupporterSlot{AccountID: member.AccountID, OwnerIndex: member.OwnerIndex, Name: member.Name, CharacterIndex: characterIndex, CostumeIndex: costumeIndex, Version: version}
 	slot.CharacterID = details.Character.ID
 	for _, costume := range details.Costumes {
 		if costume.InvenIndex == costumeIndex {
 			if costume.UseChar != characterIndex {
-				return SupporterSlot{}, ErrIneligible
+				return SupporterSlot{}, fmt.Errorf("%w: costume %d is not for character %d", ErrIneligible, costumeIndex, characterIndex)
 			}
 			slot.CostumeID, slot.CostumeLevel, slot.CostumeDesignID = costume.ID, costume.Level, costume.DesignID
 		}
 	}
 	if slot.CostumeID == 0 {
-		return SupporterSlot{}, ErrIneligible
+		return SupporterSlot{}, fmt.Errorf("%w: costume %d is not owned", ErrIneligible, costumeIndex)
 	}
 	character := details.Character
 	character.UseCostume = costumeIndex

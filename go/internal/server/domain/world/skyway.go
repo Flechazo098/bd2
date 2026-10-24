@@ -186,7 +186,7 @@ func (s *Service) handleSkyWay(ctx command.Context, path string, request []byte)
 			raw, found, e := wire.Bytes(request, 3)
 			var position progress.Position
 			if e != nil || !found || json.Unmarshal(raw, &position) != nil || !s.skyway.design.SafeMaps[position.MapID] || !s.packUnlocked(ctx, pack) {
-				return 7, nil, true, ErrInvalidRequest
+				return 7, nil, true, fmt.Errorf("%w: SkyWay position in pack %d is not on a safe map (map %d, present=%t): %v", ErrInvalidRequest, pack, position.MapID, found, e)
 			}
 			if e = s.state.SaveUserPosition(ctx, request); e != nil {
 				return 7, nil, true, e
@@ -209,7 +209,7 @@ func (s *Service) handleSkyWay(ctx command.Context, path string, request []byte)
 	}
 	seq, present, err := wire.Varint(request, 1)
 	if err != nil || !present || seq == 0 || seq > math.MaxInt32 {
-		return code, nil, true, ErrInvalidRequest
+		return code, nil, true, fmt.Errorf("%w: %s sequence %d (present=%t): %v", ErrInvalidRequest, path, seq, present, err)
 	}
 	r := s.skyway
 	if path == "/SkyWayScheduleInfo" {
@@ -260,12 +260,12 @@ func (s *Service) handleSkyWay(ctx command.Context, path string, request []byte)
 		return code, out, true, nil
 	}
 	if ctx.SessionID == "" {
-		return code, nil, true, ErrInvalidRequest
+		return code, nil, true, fmt.Errorf("%w: SkyWay entry without a session", ErrInvalidRequest)
 	}
 	key := "enter:" + ctx.SessionID + ":" + strconv.FormatUint(seq, 10)
 	if prior, ok := v.Receipts[key]; ok {
 		if !bytes.Equal(prior.Request, request) {
-			return code, nil, true, ErrInvalidRequest
+			return code, nil, true, fmt.Errorf("%w: SkyWay entry %s was already settled with a different request", ErrInvalidRequest, key)
 		}
 		return code, prior.Response, true, nil
 	}
@@ -279,11 +279,11 @@ func (s *Service) handleSkyWay(ctx command.Context, path string, request []byte)
 	}
 	auto, _, err := wire.Varint(request, 5)
 	if err != nil || auto > 1 {
-		return code, nil, true, ErrInvalidRequest
+		return code, nil, true, fmt.Errorf("%w: SkyWay auto flag %d: %v", ErrInvalidRequest, auto, err)
 	}
 	stage, ok := r.design.Stage(group, id)
 	if !ok {
-		return code, nil, true, ErrInvalidRequest
+		return code, nil, true, fmt.Errorf("%w: SkyWay has no stage %d:%d", ErrInvalidRequest, group, id)
 	}
 	current, err := s.CurrentPackID(ctx)
 	if err != nil || current != pack || s.battleActive != nil && s.battleActive(ctx) {
@@ -367,7 +367,7 @@ func (s *Service) SkyWayBeginBattle(ctx command.Context, pack int, mode, monster
 func (s *Service) SkyWayCompleteBattle(ctx command.Context, pack int, mode, monster, deck uint64, instance, receipt string) ([]byte, []byte, [][]byte, error) {
 	r := s.skyway
 	if r == nil || receipt == "" {
-		return nil, nil, nil, ErrInvalidRequest
+		return nil, nil, nil, fmt.Errorf("%w: SkyWay battle completion without runtime or receipt (receipt %q)", ErrInvalidRequest, receipt)
 	}
 	v, err := r.load(ctx)
 	if err != nil {
@@ -377,7 +377,7 @@ func (s *Service) SkyWayCompleteBattle(ctx command.Context, pack int, mode, mons
 	key := "win:" + receipt
 	if old, ok := v.Receipts[key]; ok {
 		if !bytes.Equal(old.Request, []byte(fingerprint)) {
-			return nil, nil, nil, ErrInvalidRequest
+			return nil, nil, nil, fmt.Errorf("%w: SkyWay win %s was already settled with a different battle", ErrInvalidRequest, key)
 		}
 		return old.Response, old.Bonus, old.Monsters, nil
 	}
@@ -388,7 +388,7 @@ func (s *Service) SkyWayCompleteBattle(ctx command.Context, pack int, mode, mons
 	stage, _ := r.design.Stage(v.Run.Group, v.Run.ID)
 	cost := stage.BossAP
 	if monster == stage.Boss && v.Run.Generation == math.MaxUint64 {
-		return nil, nil, nil, ErrInvalidRequest
+		return nil, nil, nil, fmt.Errorf("%w: SkyWay boss %d run generation overflows", ErrInvalidRequest, monster)
 	}
 	for i, id := range stage.Monsters {
 		if id == monster {
@@ -476,7 +476,7 @@ func (s *Service) SkyWayDispatchEligibility(ctx command.Context, d *gamedata.Dis
 	}
 	stage, ok := s.skyway.design.Stage(d.TypeGroup, d.TypeID)
 	if !ok {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: SkyWay dispatch %d:%d names no stage", ErrInvalidRequest, d.TypeGroup, d.TypeID)
 	}
 	v, err := s.skyway.load(ctx)
 	if err != nil {
@@ -502,11 +502,11 @@ func (s *Service) skyWayMap(ctx command.Context, pack int) (int, bool, error) {
 
 func (s *Service) SkyWayDispatchCosts(ctx command.Context, d *gamedata.DispatchDesign, count uint64) ([]gamedata.Reward, error) {
 	if s.skyway == nil {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: SkyWay dispatch costs requested without the SkyWay runtime", ErrInvalidRequest)
 	}
 	stage, ok := s.skyway.design.Stage(d.TypeGroup, d.TypeID)
 	if !ok || count > math.MaxInt32/d.AP {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: SkyWay dispatch %d:%d names no stage or count %d times AP %d overflows", ErrInvalidRequest, d.TypeGroup, d.TypeID, count, d.AP)
 	}
 	return s.skyway.costs(ctx, stage, d.AP*count)
 }
@@ -520,7 +520,7 @@ func (s *Service) SkyWayBattleStarted(ctx command.Context, mode uint64, receipt 
 	}
 	r := s.skyway
 	if r == nil || receipt == "" {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: SkyWay dispatch settlement without runtime or receipt (receipt %q)", ErrInvalidRequest, receipt)
 	}
 	v, err := r.load(ctx)
 	if err != nil {
@@ -546,7 +546,7 @@ func (s *Service) SkyWayDispatchBonus(d *gamedata.DispatchDesign, rewards []game
 	out := append([]gamedata.BattleReward(nil), rewards...)
 	for i, r := range out {
 		if r.Count > math.MaxInt32/(100+rate) {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: SkyWay dispatch reward %d:%d count %d with bonus %d%% overflows", ErrInvalidRequest, r.Type, r.ID, r.Count, rate)
 		}
 		out[i].Count = r.Count * (100 + rate) / 100
 	}

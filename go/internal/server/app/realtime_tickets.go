@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -139,9 +140,11 @@ func (t *realtimeTickets) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (t *realtimeTickets) Consume(ctx context.Context, token, channel, instance string) (room.Principal, func(), error) {
-	denied := func() (room.Principal, func(), error) { return room.Principal{}, nil, room.ErrUnauthorized }
+	denied := func(format string, args ...any) (room.Principal, func(), error) {
+		return room.Principal{}, nil, fmt.Errorf("%w: realtime ticket "+format, append([]any{room.ErrUnauthorized}, args...)...)
+	}
 	if len(token) != 43 {
-		return denied()
+		return denied("is %d characters, want 43", len(token))
 	}
 	key := sha256.Sum256([]byte(token))
 	t.mu.Lock()
@@ -149,7 +152,7 @@ func (t *realtimeTickets) Consume(ctx context.Context, token, channel, instance 
 	delete(t.pending, key)
 	t.mu.Unlock()
 	if !found || !time.Now().Before(ticket.expires) || string(ticket.channel) != channel || ticket.instance != instance {
-		return denied()
+		return denied("for %s room %q is unknown, expired or for another room (known=%t)", channel, instance, found)
 	}
 	owner, release, err := t.players.Acquire(ctx, ticket.principal.AccountID)
 	if err != nil {
@@ -165,15 +168,15 @@ func (t *realtimeTickets) Consume(ctx context.Context, token, channel, instance 
 		}
 	}()
 	if owner.Generation() != ticket.principal.Generation || t.Validate(ctx, ticket.principal) != nil {
-		return denied()
+		return denied("of owner %d belongs to an older session", ticket.principal.OwnerIndex)
 	}
 	if ticket.channel != room.Matching {
 		view, err := t.rooms.View(ctx, ticket.principal, ticket.channel)
 		if err != nil || view.InstanceID != instance {
-			return denied()
+			return denied("of owner %d names room %q, which the owner is not in: %v", ticket.principal.OwnerIndex, instance, err)
 		}
 	} else if instance != t.bootID {
-		return denied()
+		return denied("names matching boot %q, server boot is %q", instance, t.bootID)
 	}
 	valid = true
 	return ticket.principal, release, nil

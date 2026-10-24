@@ -132,9 +132,12 @@ func LoadFieldResearch(root, version string, pack int) (FieldResearchDesign, err
 		if !ok {
 			return d, fmt.Errorf("gamedata: scene references missing research %d", id)
 		}
+		// Pack 3003's scene data also places research objects 2..6 on
+		// Map3003_015..019, which MapTable never lists, so no player reaches
+		// them; they must not stop the pack's other research from loading.
 		mapID, ok := maps[scene]
 		if !ok {
-			return d, fmt.Errorf("gamedata: research scene %s missing map", scene)
+			continue
 		}
 		o.Maps = append(o.Maps, mapID)
 		d.Objects[o.ID] = o

@@ -14,6 +14,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/dating"
 	"bd2server/internal/server/domain/life"
+	"bd2server/internal/server/domain/roster"
 	"bd2server/internal/server/domain/roster/deck"
 )
 
@@ -24,7 +25,7 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 			return fmt.Errorf("life: avatar service unavailable")
 		}
 		return p.avatarService.ValidateAppearance(ctx, raw)
-	}})
+	}, UnlimitedStacks: p.unlimitedStacks})
 	if err != nil {
 		return fmt.Errorf("open life: %w", err)
 	}
@@ -126,17 +127,27 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 	})
 	p.castleService.AttachTotalWarValidation(func(ctx command.Context, participants []castle.Participant) error {
 		for _, participant := range participants {
-			costume, owned := p.collection.CostumeByIndex(participant.CostumeIndex)
-			if !owned || costume.ID != participant.CostumeID {
-				return fmt.Errorf("castle: total war costume unavailable")
-			}
 			character, owned := p.worldService.CharacterService().Find(ctx, participant.CharacterIndex)
 			if !owned || character.ID != participant.CharacterID {
-				return fmt.Errorf("castle: total war character unavailable")
+				return fmt.Errorf("castle: character unavailable: character=%d character_index=%d", participant.CharacterID, participant.CharacterIndex)
 			}
-			definition, found := p.design.regularGacha.Character(costume.ID)
+			if participant.CostumeIndex == 0 && participant.CostumeID != 0 &&
+				participant.CostumeID == p.design.castle.Characters[participant.CharacterID].DefaultCostume {
+				continue
+			}
+			// Field battle costume changes do not update the equipped costume.
+			var costume roster.Costume
+			if participant.CostumeIndex == 0 {
+				costume, owned = p.collection.CostumeByID(participant.CostumeID)
+			} else {
+				costume, owned = p.collection.CostumeByIndex(participant.CostumeIndex)
+			}
+			if !owned || costume.ID != participant.CostumeID {
+				return fmt.Errorf("castle: costume unavailable: character=%d character_index=%d costume=%d costume_index=%d", participant.CharacterID, participant.CharacterIndex, participant.CostumeID, participant.CostumeIndex)
+			}
+			definition, found := p.design.rewardCostumes.Character(costume.ID)
 			if !found || definition.ID != character.ID && !slices.Contains(definition.GrowthCharacterIDs, character.ID) {
-				return fmt.Errorf("castle: costume belongs to a different character")
+				return fmt.Errorf("castle: costume belongs to a different character: character=%d character_index=%d costume=%d costume_index=%d", character.ID, character.InvenIndex, participant.CostumeID, participant.CostumeIndex)
 			}
 		}
 		return nil

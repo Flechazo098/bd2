@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"fmt"
 	"math"
 )
 
@@ -13,7 +14,7 @@ func addGameplayCount(tx Tx, owner uint64, borrow, claims uint64) error {
 		return err
 	}
 	if borrow > math.MaxInt64-count.BorrowCount || claims > math.MaxInt64-count.RentalClaims {
-		return ErrCapacity
+		return fmt.Errorf("%w: owner %d gameplay counts overflow", ErrCapacity, owner)
 	}
 	count.BorrowCount += borrow
 	count.RentalClaims += claims
@@ -32,7 +33,7 @@ func (f *Friends) GameplayCounts(ctx context.Context, account string, owner uint
 			return nil
 		}
 		if p.AccountID != account {
-			return ErrPermission
+			return fmt.Errorf("%w: owner %d is not account %q", ErrPermission, owner, account)
 		}
 		if _, err := load(tx, "friend.gameplay_counts", numberKey(owner), &count); err != nil {
 			return err

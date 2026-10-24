@@ -134,21 +134,21 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		s.transientCommand = true
 	}
 	if s.closed || c.Channel != s.selection.Kind {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: %s frame %d on a %s connection to a closed=%t room", ErrNotFound, s.selection.Kind, f.Type, c.Channel, s.closed)
 	}
 	u := s.find(c.Principal)
 	if u == nil {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: owner %d is not in the room", ErrUnauthorized, c.Principal.OwnerIndex)
 	}
 	if f.Type == 23 {
 		if f.UDP || stringField(f.Payload, 2) != s.owner.code || s.roomState < 1 || s.roomState > 2 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 23 from owner %d (udp=%t, code match=%t, room state %d)", ErrUnauthorized, u.principal.OwnerIndex, f.UDP, stringField(f.Payload, 2) == s.owner.code, s.roomState)
 		}
 		if u.clientState == 4 {
-			return nil, ErrNotReady
+			return nil, fmt.Errorf("%w: owner %d already left the room", ErrNotReady, u.principal.OwnerIndex)
 		}
 		if !u.disconnected.IsZero() && s.owner.manager.config.Now().Sub(u.disconnected) > s.reconnectWindow() {
-			return nil, ErrNotReady
+			return nil, fmt.Errorf("%w: owner %d reconnect window has passed", ErrNotReady, u.principal.OwnerIndex)
 		}
 		u.gameConnection = c.ID
 		u.disconnected = time.Time{}
@@ -159,7 +159,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 	}
 	if f.Type == 55 {
 		if !f.UDP || s.selection.Kind != Action || u.gameConnection != c.ID || stringField(f.Payload, 2) != s.owner.code {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 55 from owner %d needs the %s game connection over UDP", ErrUnauthorized, u.principal.OwnerIndex, s.selection.Kind)
 		}
 		b := text(nil, 2, s.owner.manager.config.AdvertisedHost)
 		b = text(b, 3, fmt.Sprint(s.owner.manager.config.UDPPort))
@@ -168,7 +168,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 	}
 	if f.Type == 195 || f.Type == 198 { // These notifications project a committed HTTP change.
 		if s.selection.Kind != Fishing || u.gameConnection != c.ID || f.UDP {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame %d from owner %d needs the fishing game connection over TCP", ErrUnauthorized, f.Type, u.principal.OwnerIndex)
 		}
 		if f.Type == 195 {
 			b := integer(nil, 2, u.principal.OwnerIndex)
@@ -181,11 +181,11 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 	}
 	if f.Type == 144 {
 		if s.selection.Kind != Fishing || f.UDP || u.gameConnection != c.ID || s.roomState != 2 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 144 from owner %d needs the fishing game connection in a running room (state %d)", ErrUnauthorized, u.principal.OwnerIndex, s.roomState)
 		}
 		info := bytesField(f.Payload, 2)
 		if len(info) > 256 || number(info, 1) <= 0 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: fishing motion from owner %d is %d bytes for id %d", ErrUnauthorized, u.principal.OwnerIndex, len(info), number(info, 1))
 		}
 		u.fishingMotion = append([]byte(nil), info...)
 		d := []Delivery{s.reply(c, f, 145, nil, 0)}
@@ -194,7 +194,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 	guid := stringField(f.Payload, 2)
 	if f.Type == 37 || f.Type == 109 || f.Type == 201 {
 		if f.UDP || guid != u.guid || u.clientState == 4 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: reconnect frame %d from owner %d (udp=%t, guid match=%t, client state %d)", ErrUnauthorized, f.Type, u.principal.OwnerIndex, f.UDP, guid == u.guid, u.clientState)
 		}
 		return s.reconnect(c, f, u)
 	}
@@ -202,12 +202,12 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return nil, err
 	}
 	if f.UDP && f.Type != 84 && f.Type != 68 && f.Type != 70 && f.Type != 72 && f.Type != 25 && f.Type != 34 && f.Type != 27 && f.Type != 30 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: frame %d cannot arrive over UDP", ErrUnauthorized, f.Type)
 	}
 	switch f.Type {
 	case 25, 34:
 		if !f.UDP || s.selection.Kind != Action {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame %d needs an action room over UDP, room is %s", ErrUnauthorized, f.Type, s.selection.Kind)
 		}
 		var b []byte
 		for _, member := range s.members {
@@ -220,7 +220,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return []Delivery{s.reply(c, f, f.Type+1, b, 0)}, nil
 	case 84:
 		if s.selection.Kind != Action || !f.UDP {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 84 needs an action room over UDP, room is %s", ErrUnauthorized, s.selection.Kind)
 		}
 		return []Delivery{s.reply(c, f, 85, nil, 0)}, nil
 	case 66, 68:
@@ -229,13 +229,13 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 	case 43:
 		v := number(f.Payload, 3)
 		if v < 0 || v > 2 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 43 value %d, want 0..2", ErrUnauthorized, v)
 		}
 		u.networkState = v
 		return []Delivery{s.reply(c, f, 44, integer(nil, 2, v), 0)}, nil
 	case 45:
 		if f.UDP || s.selection.Kind == Fishing || s.roomState != 1 && s.roomState != 2 {
-			return nil, ErrNotReady
+			return nil, fmt.Errorf("%w: frame 45 needs a waiting or running %s room over TCP (state %d)", ErrNotReady, s.selection.Kind, s.roomState)
 		}
 		if u.ready {
 			return []Delivery{s.reply(c, f, 46, integer(integer(nil, 2, u.principal.OwnerIndex), 3, u.clientState), 0)}, nil
@@ -248,7 +248,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return s.relay(c, f, u)
 	case 27, 30:
 		if s.selection.Kind != Action || !f.UDP {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame %d needs an action room over UDP, room is %s", ErrUnauthorized, f.Type, s.selection.Kind)
 		}
 		if f.Type == 27 {
 			f.Type = 70
@@ -266,7 +266,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return d, err
 	case 52, 114, 192:
 		if f.Type == 52 && s.selection.Kind != Defense || f.Type == 114 && s.selection.Kind != Action || f.Type == 192 && s.selection.Kind != Fishing {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame %d does not belong to a %s room", ErrUnauthorized, f.Type, s.selection.Kind)
 		}
 		u.clientState = 4
 		d := []Delivery{s.reply(c, f, f.Type+1, nil, 0)}
@@ -289,7 +289,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return d, nil
 	case 117:
 		if s.selection.Kind != Action {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 117 needs an action room, room is %s", ErrUnauthorized, s.selection.Kind)
 		}
 		u.paused = true
 		d := []Delivery{s.reply(c, f, 118, nil, 0)}
@@ -297,7 +297,7 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return append(d, s.chooseHost()...), nil
 	case 120:
 		if s.selection.Kind != Action || s.byOwner(number(f.Payload, 3)) == nil {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 120 names owner %d outside the %s room", ErrUnauthorized, number(f.Payload, 3), s.selection.Kind)
 		}
 		return []Delivery{s.reply(c, f, 121, nil, 0)}, nil
 	case 111:
@@ -306,14 +306,14 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return s.defenseState(c, f, u)
 	case 210:
 		if s.selection.Kind != Fishing || s.roomState != 2 {
-			return nil, ErrNotReady
+			return nil, fmt.Errorf("%w: frame 210 needs a running fishing room, room is %s in state %d", ErrNotReady, s.selection.Kind, s.roomState)
 		}
 		info := bytesField(f.Payload, 3)
 		if number(info, 1) != u.principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 210 names owner %d, sender is %d", ErrUnauthorized, number(info, 1), u.principal.OwnerIndex)
 		}
 		if nested := bytesField(info, 2); len(nested) > 0 && number(nested, 1) != u.principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 210 nested owner %d, sender is %d", ErrUnauthorized, number(nested, 1), u.principal.OwnerIndex)
 		}
 		u.fishingState = append([]byte(nil), info...)
 		if number(f.Payload, 4) == 0 {
@@ -322,14 +322,14 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		return s.broadcast(211, blob(nil, 2, info), false, u.principal.OwnerIndex), nil
 	case 212:
 		if s.selection.Kind != Fishing || stringField(f.Payload, 3) != s.owner.code || s.roomState < 1 || s.roomState > 2 {
-			return nil, ErrNotReady
+			return nil, fmt.Errorf("%w: frame 212 needs this fishing room's code while waiting or running, room is %s in state %d", ErrNotReady, s.selection.Kind, s.roomState)
 		}
 		info := bytesField(f.Payload, 4)
 		if id := number(info, 1); id != 0 && id != u.principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 212 names owner %d, sender is %d", ErrUnauthorized, id, u.principal.OwnerIndex)
 		}
 		if nested := bytesField(info, 2); len(nested) > 0 && number(nested, 1) != u.principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame 212 nested owner %d, sender is %d", ErrUnauthorized, number(nested, 1), u.principal.OwnerIndex)
 		}
 		info, _, _ = wire.ReplaceVarint(info, 1, uint64(u.principal.OwnerIndex))
 		u.fishingState = append([]byte(nil), info...)
@@ -353,18 +353,18 @@ func (s *state) handleGame(c Connection, f Frame) ([]Delivery, error) {
 		d := []Delivery{s.reply(c, f, 213, b, 0)}
 		return append(d, s.broadcast(214, blob(nil, 2, s.fishingUser(u)), false, u.principal.OwnerIndex)...), nil
 	}
-	return nil, ErrUnauthorized
+	return nil, fmt.Errorf("%w: unknown %s room frame %d", ErrUnauthorized, s.selection.Kind, f.Type)
 }
 
 func (s *state) reconnect(c Connection, f Frame, u *member) ([]Delivery, error) {
 	if f.Type == 37 && s.selection.Kind != Defense || f.Type == 109 && s.selection.Kind != Action || f.Type == 201 && s.selection.Kind != Fishing {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: reconnect frame %d does not belong to a %s room", ErrUnauthorized, f.Type, s.selection.Kind)
 	}
 	if !u.disconnected.IsZero() && s.owner.manager.config.Now().Sub(u.disconnected) > s.reconnectWindow() {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: owner %d reconnect window has passed", ErrNotReady, u.principal.OwnerIndex)
 	}
 	if s.roomState == 3 && s.owner.manager.config.PublishResult != nil && !s.resultPersisted {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: room result is not persisted yet", ErrNotReady)
 	}
 	u.gameConnection = c.ID
 	u.disconnected = time.Time{}
@@ -406,11 +406,11 @@ func (s *state) reconnect(c Connection, f Frame, u *member) ([]Delivery, error) 
 
 func (s *state) actionState(c Connection, f Frame, u *member) ([]Delivery, error) {
 	if s.selection.Kind != Action || s.roomState != 2 || !u.ready {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: action state from owner %d needs a running action room (room %s state %d, ready=%t)", ErrNotReady, u.principal.OwnerIndex, s.selection.Kind, s.roomState, u.ready)
 	}
 	ping := number(f.Payload, 3)
 	if ping < 0 || ping > 60000 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: action state ping %d, want 0..60000", ErrUnauthorized, ping)
 	}
 	u.ping = ping
 	u.paused = false
@@ -422,7 +422,7 @@ func (s *state) actionState(c Connection, f Frame, u *member) ([]Delivery, error
 		}
 		state := number(info, 3)
 		if state < 2 || state > 5 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: action client state %d, want 2..5", ErrUnauthorized, state)
 		}
 		if u.clientState == 4 || u.clientState == 5 {
 			continue
@@ -433,14 +433,14 @@ func (s *state) actionState(c Connection, f Frame, u *member) ([]Delivery, error
 		u.clientState = state
 		p := bytesField(v, 2)
 		if number(p, 3) != id {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: action snapshot names owner %d, state names %d", ErrUnauthorized, number(p, 3), id)
 		}
 		u.playerSnapshot = append([]byte(nil), p...)
 	}
 	monster := bytesField(f.Payload, 5)
 	if u.principal.OwnerIndex == s.host && len(monster) > 0 {
 		if number(monster, 3) != s.selection.MonsterID {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: action monster %d, room monster is %d", ErrUnauthorized, number(monster, 3), s.selection.MonsterID)
 		}
 		s.monsterSnapshot = append([]byte(nil), monster...)
 		if number(monster, 10) == 0 && u.acceptedRun {
@@ -471,17 +471,17 @@ func (s *state) actionState(c Connection, f Frame, u *member) ([]Delivery, error
 }
 func (s *state) defenseState(c Connection, f Frame, u *member) ([]Delivery, error) {
 	if s.selection.Kind != Defense || s.roomState != 2 || !u.ready {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: defense state from owner %d needs a running defense room (room %s state %d, ready=%t)", ErrNotReady, u.principal.OwnerIndex, s.selection.Kind, s.roomState, u.ready)
 	}
 	state, enemies, wave, kills, ping := number(f.Payload, 3), number(f.Payload, 4), number(f.Payload, 5), number(f.Payload, 6), number(f.Payload, 7)
 	if state < 2 || state > 5 || enemies < 0 || enemies > 100 || wave < u.wave || wave > s.selection.DefenseLastWave || kills < u.kills || kills > 100000000 || ping < 0 || ping > 60000 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: defense state %d enemies %d wave %d (from %d, last %d) kills %d (from %d) ping %d", ErrUnauthorized, state, enemies, wave, u.wave, s.selection.DefenseLastWave, kills, u.kills, ping)
 	}
 	if state == 5 && (wave != s.selection.DefenseLastWave || enemies != 0) {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: defense clear at wave %d with %d enemies, last wave is %d", ErrUnauthorized, wave, enemies, s.selection.DefenseLastWave)
 	}
 	if (state == 3 || state == 5) && !u.acceptedRun {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: defense state %d before owner %d accepted the run", ErrNotReady, state, u.principal.OwnerIndex)
 	}
 	if u.clientState == 3 || u.clientState == 4 || u.clientState == 5 {
 		return nil, nil
@@ -514,7 +514,7 @@ func (s *state) defenseState(c Connection, f Frame, u *member) ([]Delivery, erro
 
 func (s *state) relay(c Connection, f Frame, u *member) ([]Delivery, error) {
 	if s.roomState != 2 || !u.ready {
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: relay from owner %d needs a running room (state %d, ready=%t)", ErrNotReady, u.principal.OwnerIndex, s.roomState, u.ready)
 	}
 	field := 3
 	recipient := int64(0)
@@ -524,12 +524,12 @@ func (s *state) relay(c Connection, f Frame, u *member) ([]Delivery, error) {
 		recipient = number(f.Payload, 3)
 		typ = 73
 		if s.byOwner(recipient) == nil {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: relay to owner %d outside the room", ErrUnauthorized, recipient)
 		}
 	}
 	data := bytesField(f.Payload, field)
 	if len(data) < 4 || len(data) > 60000 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: relay payload is %d bytes, want 4..60000", ErrUnauthorized, len(data))
 	}
 	innerType := int64(binary.LittleEndian.Uint32(data))
 	payload := data[4:]
@@ -541,20 +541,20 @@ func (s *state) relay(c Connection, f Frame, u *member) ([]Delivery, error) {
 		switch innerType {
 		case 1011:
 			if number(payload, 3) != u.principal.OwnerIndex {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: relay %d names owner %d, sender is %d", ErrUnauthorized, innerType, number(payload, 3), u.principal.OwnerIndex)
 			}
 		case 1012:
 			if u.principal.OwnerIndex != s.host || number(payload, 3) != s.selection.MonsterID {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: relay 1012 from owner %d (host %d) names monster %d, room monster is %d", ErrUnauthorized, u.principal.OwnerIndex, s.host, number(payload, 3), s.selection.MonsterID)
 			}
 		default:
 			if innerType != 1007 && innerType != 1010 || number(payload, 1) != u.principal.OwnerIndex {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: action relay %d names owner %d, sender is %d", ErrUnauthorized, innerType, number(payload, 1), u.principal.OwnerIndex)
 			}
 		}
 		if innerType == 1011 || innerType == 1012 {
 			if number(payload, 1) < 0 || number(payload, 1) > 32 {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: relay %d index %d, want 0..32", ErrUnauthorized, innerType, number(payload, 1))
 			}
 			seq := number(payload, 2)
 			if seq > 0 {
@@ -567,29 +567,29 @@ func (s *state) relay(c Connection, f Frame, u *member) ([]Delivery, error) {
 		}
 	case Defense:
 		if innerType < 1002 || innerType > 1009 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: defense relay type %d, want 1002..1009", ErrUnauthorized, innerType)
 		}
 		if id := number(payload, 1); id != 0 && id != u.principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: defense relay %d names owner %d, sender is %d", ErrUnauthorized, innerType, id, u.principal.OwnerIndex)
 		}
 	case Fishing:
 		if innerType == 1013 {
 			if number(payload, 2) != u.principal.OwnerIndex {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: fishing relay 1013 names owner %d, sender is %d", ErrUnauthorized, number(payload, 2), u.principal.OwnerIndex)
 			}
 		} else if innerType >= 9002 && innerType <= 9004 {
 			if number(payload, 1) != u.principal.OwnerIndex || len(payload) > 2048 {
-				return nil, ErrUnauthorized
+				return nil, fmt.Errorf("%w: fishing relay %d names owner %d (sender %d) with %d bytes", ErrUnauthorized, innerType, number(payload, 1), u.principal.OwnerIndex, len(payload))
 			}
 		} else {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: fishing relay type %d", ErrUnauthorized, innerType)
 		}
 	case Square:
 		if innerType < 9002 || innerType > 9007 || number(payload, 1) != u.principal.OwnerIndex || len(payload) > 2048 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: square relay %d names owner %d (sender %d) with %d bytes", ErrUnauthorized, innerType, number(payload, 1), u.principal.OwnerIndex, len(payload))
 		}
 	default:
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: %s rooms do not relay", ErrUnauthorized, s.selection.Kind)
 	}
 	b := integer(nil, 2, u.principal.OwnerIndex)
 	b = blob(b, 3, data)

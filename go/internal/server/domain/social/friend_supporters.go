@@ -102,7 +102,7 @@ func (f *Friends) supporterDeck(tx Tx, p FriendProfile, borrower uint64, day str
 		if data := p.SupporterDetails[slot]; len(data) > 0 {
 			row, found, err := wire.Bytes(data, 1)
 			if err != nil || !found {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: supporter slot %d details lack a row (present=%t): %v", ErrInvalid, slot, found, err)
 			}
 			out = wire.AppendBytes(out, 9, row)
 		}
@@ -134,7 +134,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 	if path == "/SupporterStatus" {
 		limit, err := p.integer(2)
 		if err != nil || limit == 0 || limit > 256 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: SupporterStatus limit %d, want 1..256: %v", ErrInvalid, limit, err)
 		}
 		last, err := p.integer(3)
 		if err != nil {
@@ -268,11 +268,11 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 	}
 	lender, err := p.integer(2)
 	if err != nil || lender == 0 || lender == self.OwnerIndex {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: supporter lender %d for owner %d: %v", ErrInvalid, lender, self.OwnerIndex, err)
 	}
 	slot, err := p.integer(3)
 	if err != nil || slot > 1 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: supporter slot %d, want 0 or 1: %v", ErrInvalid, slot, err)
 	}
 	var other FriendProfile
 	found, err = load(tx, "friend.directory", numberKey(lender), &other)
@@ -288,7 +288,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 	}
 	bundle, found, err := wire.Bytes(row, 6)
 	if err != nil || !found {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: supporter row lacks its bundle (present=%t): %v", ErrInvalid, found, err)
 	}
 	char, err := base64.StdEncoding.DecodeString(string(bundle))
 	if err != nil {
@@ -324,7 +324,7 @@ func (f *Friends) supporter(tx Tx, self FriendProfile, path string, p packet, no
 		return nil, err
 	}
 	if id >= math.MaxInt64 {
-		return nil, ErrCapacity
+		return nil, fmt.Errorf("%w: supporter sequence %d is exhausted", ErrCapacity, id)
 	}
 	id++
 	if err := save(tx, "friend.supporter_sequence", "id", id); err != nil {

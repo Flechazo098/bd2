@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -12,7 +13,7 @@ type RaidHistory struct{ Day, Level, Score uint64 }
 
 func raidDay(s Season, day uint64) (string, error) {
 	if day == 0 || day > 366 {
-		return "", ErrInvalid
+		return "", fmt.Errorf("%w: raid day %d, want 1..366", ErrInvalid, day)
 	}
 	return time.UnixMilli(s.StartsMS).UTC().AddDate(0, 0, int(day)-1).Format("2006-01-02"), nil
 }

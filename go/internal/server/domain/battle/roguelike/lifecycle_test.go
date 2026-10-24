@@ -249,7 +249,7 @@ func TestRunReopenBattleSettlementAndFirstClearCannotPayTwice(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if v.Run != nil || v.MaxTry == 0 || v.MaxReward == 0 || economy.rewards == 0 {
+	if v.Run != nil || v.MaxTry == 0 || v.MaxReward == 0 || economy.rewards == 0 || !v.Seasons[period.Season].Cleared {
 		t.Fatal("full run did not unlock sweep and credit first-clear rewards")
 	}
 	paid := economy.rewards

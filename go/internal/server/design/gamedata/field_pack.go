@@ -15,7 +15,16 @@ type FieldPack struct {
 	HasOpenRule                     bool
 	MapIDs                          map[int]bool
 	IntroQuest                      *QuestDesign
+	// LifeQuests is a Life pack's quest chain: QuestTable rows of
+	// EQuestType.Life, ordered by their prior/next links.
+	LifeQuests []QuestDesign
 }
+
+// Define_PackType.PackLife and EQuestType.Life.
+const (
+	LifePackType  = 13
+	LifeQuestType = 4
+)
 
 func LoadFieldPacks(root, version string) (map[int]FieldPack, error) {
 	db, closeDB, err := openStatDatabase(root, version)
@@ -145,6 +154,11 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 			return nil, err
 		}
 		pack.IntroQuest = intro
+		if pack.Type == LifePackType {
+			if pack.LifeQuests, err = loadLifeQuests(db, id); err != nil {
+				return nil, err
+			}
+		}
 		result[id] = pack
 	}
 	return result, nil
@@ -177,4 +191,45 @@ func loadFieldIntroduction(db *sql.DB, packID int) (*QuestDesign, error) {
 		return &quest, nil
 	}
 	return nil, nil
+}
+
+// loadLifeQuests returns the single chain of Life quests, head first. The
+// client advances it with QuestUpdate and QuestClear like any active quest.
+func loadLifeQuests(db *sql.DB, packID int) ([]QuestDesign, error) {
+	var exists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", fmt.Sprintf("QuestTable%d", packID)).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	quests, err := loadQuestDesignDB(db, packID)
+	if err != nil {
+		return nil, err
+	}
+	head := 0
+	for id, quest := range quests {
+		if quest.Type != LifeQuestType {
+			return nil, fmt.Errorf("gamedata: life pack %d quest %d has type %d", packID, id, quest.Type)
+		}
+		if quest.PriorQuestID == 0 {
+			if head != 0 {
+				return nil, fmt.Errorf("gamedata: life pack %d has two quest chains", packID)
+			}
+			head = id
+		}
+	}
+	var chain []QuestDesign
+	for id, seen := head, map[int]bool{}; id != 0; id = quests[id].NextQuestID {
+		quest, found := quests[id]
+		if !found || seen[id] || (len(chain) > 0 && quest.PriorQuestID != chain[len(chain)-1].ID) {
+			return nil, fmt.Errorf("gamedata: life pack %d quest chain breaks at %d", packID, id)
+		}
+		seen[id] = true
+		chain = append(chain, quest)
+	}
+	if len(chain) != len(quests) {
+		return nil, fmt.Errorf("gamedata: life pack %d chain covers %d of %d quests", packID, len(chain), len(quests))
+	}
+	return chain, nil
 }

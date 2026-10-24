@@ -20,7 +20,7 @@ func nestedMessages(b []byte, number int) ([][]byte, error) {
 	e := wire.Walk(b, func(f wire.Field) error {
 		if f.Number == number {
 			if f.Type != 2 {
-				return ErrInvalidRequest
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", ErrInvalidRequest, number, f.Type)
 			}
 			out = append(out, append([]byte(nil), f.Value...))
 		}
@@ -32,7 +32,7 @@ func nestedMessages(b []byte, number int) ([][]byte, error) {
 func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	seq, present, e := wire.Varint(request, 1)
 	if e != nil || !present || seq == 0 || seq > 0x7fffffff || ctx.SessionID == "" {
-		return 275, nil, true, ErrInvalidRequest
+		return 275, nil, true, fmt.Errorf("%w: overwhelm sequence %d (present=%t, session %q): %v", ErrInvalidRequest, seq, present, ctx.SessionID, e)
 	}
 	pack, e := s.CurrentPackID(ctx)
 	if e != nil {
@@ -45,13 +45,13 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 	identity := fmt.Sprintf("overwhelm:%s:%d", ctx.SessionID, seq)
 	if prior, ok := v.Requests[identity]; ok {
 		if !bytes.Equal(prior.Request, request) {
-			return 275, nil, true, ErrInvalidRequest
+			return 275, nil, true, fmt.Errorf("%w: overwhelm %s was already settled with a different request", ErrInvalidRequest, identity)
 		}
 		return 275, prior.Response, true, nil
 	}
 	raw, e := nestedMessages(request, 2)
 	if e != nil || len(raw) == 0 || len(raw) > 4096 {
-		return 275, nil, true, ErrInvalidRequest
+		return 275, nil, true, fmt.Errorf("%w: overwhelm has %d monsters, want 1..4096: %v", ErrInvalidRequest, len(raw), e)
 	}
 	var targets []overwhelmedMonster
 	seen := map[uint64]bool{}
@@ -60,11 +60,11 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 		for f, dst := range map[int]*uint64{1: &m.Group, 2: &m.ID, 3: &m.Deck, 4: &m.Mode} {
 			*dst, _, e = wire.Varint(b, f)
 			if e != nil || *dst > 0x7fffffff {
-				return 275, nil, true, ErrInvalidRequest
+				return 275, nil, true, fmt.Errorf("%w: overwhelm monster field %d is %d: %v", ErrInvalidRequest, f, *dst, e)
 			}
 		}
 		if m.ID == 0 || seen[m.ID] {
-			return 275, nil, true, ErrInvalidRequest
+			return 275, nil, true, fmt.Errorf("%w: overwhelm monster id %d is zero or repeated", ErrInvalidRequest, m.ID)
 		}
 		seen[m.ID] = true
 		if m.Mode == 5 {
@@ -94,7 +94,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 			}
 			definition, found, e := s.findFieldMonster(pack, int(m.ID))
 			if e != nil || !found || (definition.UseBattleSkip != 1 && definition.Type != 3) {
-				return 275, nil, true, ErrInvalidRequest
+				return 275, nil, true, fmt.Errorf("%w: field monster %d in pack %d cannot be overwhelmed (found=%t, skip=%d, type=%d): %v", ErrInvalidRequest, m.ID, pack, found, definition.UseBattleSkip, definition.Type, e)
 			}
 			m.Definition = definition
 			if definition.Type == 2 || definition.Type == 4 {
@@ -117,7 +117,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 			}
 			if m.Mode == 2 {
 				if int(m.Group) != definition.GroupID || definition.GroupID == 0 || !s.monsterEligible(pack, definition) {
-					return 275, nil, true, ErrInvalidRequest
+					return 275, nil, true, fmt.Errorf("%w: overwhelm group %d does not match monster %d group %d or the monster is not eligible", ErrInvalidRequest, m.Group, m.ID, definition.GroupID)
 				}
 				state, e := s.monsterState(&v, pack, definition)
 				if e != nil {
@@ -129,7 +129,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 				m.Instance = fmt.Sprintf("fieldmonster:%s:%d", monsterKey(pack, definition.ID), state.Generation)
 			} else {
 				if m.Group != 0 {
-					return 275, nil, true, ErrInvalidRequest
+					return 275, nil, true, fmt.Errorf("%w: overwhelm mode %d of monster %d names group %d", ErrInvalidRequest, m.Mode, m.ID, m.Group)
 				}
 				m.Instance = fmt.Sprintf("questmonster:%d:%d:%d", pack, s.questDifficulty(pack), m.ID)
 			}
@@ -149,11 +149,11 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 		}
 		qp, _, e := wire.Varint(b, 2)
 		if e != nil || int(qp) != pack || quest == 0 || !s.canClear(ctx, pack, int(quest)) {
-			return 275, nil, true, ErrInvalidRequest
+			return 275, nil, true, fmt.Errorf("%w: overwhelm quest %d in pack %d (current pack %d) is not active: %v", ErrInvalidRequest, quest, qp, pack, e)
 		}
 		values, e := intsRequest(b, 3)
 		if e != nil || len(values) == 0 {
-			return 275, nil, true, ErrInvalidRequest
+			return 275, nil, true, fmt.Errorf("%w: overwhelm quest %d has no values: %v", ErrInvalidRequest, quest, e)
 		}
 		if e = s.validateOverwhelmQuest(ctx, pack, int(quest), values, targets); e != nil {
 			return 275, nil, true, e
@@ -161,7 +161,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 		req := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, seq), 2, quest), 3, qp)
 		for _, value := range values {
 			if value > 0x7fffffff {
-				return 275, nil, true, ErrInvalidRequest
+				return 275, nil, true, fmt.Errorf("%w: overwhelm quest %d value %d out of range", ErrInvalidRequest, quest, value)
 			}
 			req = wire.AppendVarint(req, 4, value)
 		}
@@ -203,7 +203,7 @@ func (s *Service) handleOverwhelm(ctx command.Context, request []byte) (int, []b
 				var e error
 				if len(m.Costs) > 0 {
 					if s.monsterRewards == nil || s.researchEconomy == nil {
-						return 275, nil, true, ErrInvalidRequest
+						return 275, nil, true, fmt.Errorf("%w: overwhelm monster %d has costs but no reward economy", ErrInvalidRequest, m.ID)
 					}
 					rs, x := s.monsterRewards(pack, m.Deck)
 					if x != nil {
@@ -317,7 +317,7 @@ func (s *Service) monsterRows(ctx command.Context, pack int, filter map[int]bool
 func (s *Service) handleMonsterInfo(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	seq, present, e := wire.Varint(request, 1)
 	if e != nil || !present || seq == 0 || seq > 0x7fffffff {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: monster info sequence %d (present=%t): %v", ErrInvalidRequest, seq, present, e)
 	}
 	groups, e := intsRequest(request, 2)
 	if e != nil {
@@ -326,13 +326,13 @@ func (s *Service) handleMonsterInfo(ctx command.Context, request []byte) (int, [
 	wanted := map[int]bool{}
 	for _, g := range groups {
 		if g == 0 || g > 0x7fffffff {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: monster info group %d out of range", ErrInvalidRequest, g)
 		}
 		wanted[int(g)] = true
 	}
 	pack, e := s.CurrentPackID(ctx)
 	if e != nil || !s.packUnlocked(ctx, pack) || s.monsterLoader == nil {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: monster info for pack %d is unavailable: %v", ErrInvalidRequest, pack, e)
 	}
 	if s.skyway != nil && pack == s.skyway.design.Pack {
 		v, err := s.skyway.load(ctx)
@@ -376,7 +376,7 @@ func (s *Service) CompleteFieldMonsterBattle(ctx command.Context, pack int, id u
 		return nil, e
 	}
 	if !found {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: pack %d has no field monster %d", ErrInvalidRequest, pack, id)
 	}
 	v, e := s.loadMonsterState(ctx)
 	if e != nil {
@@ -385,7 +385,7 @@ func (s *Service) CompleteFieldMonsterBattle(ctx command.Context, pack int, id u
 	key := monsterKey(pack, m.ID)
 	state, exists := v.Monsters[key]
 	if !exists {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: field monster %d in pack %d has no spawn state", ErrInvalidRequest, m.ID, pack)
 	}
 	if !v.Claims[instance] {
 		if instance != fmt.Sprintf("fieldmonster:%s:%d", key, state.Generation) {
@@ -409,11 +409,11 @@ func (s *Service) handleFieldMonsterRegen(ctx command.Context, request []byte) (
 	}
 	pack, e := s.CurrentPackID(ctx)
 	if e != nil || !s.packUnlocked(ctx, pack) {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: monster regen for pack %d is unavailable: %v", ErrInvalidRequest, pack, e)
 	}
 	m, found, e := s.findFieldMonster(pack, id)
 	if e != nil || !found {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: pack %d has no field monster %d: %v", ErrInvalidRequest, pack, id, e)
 	}
 	v, e := s.loadMonsterState(ctx)
 	if e != nil {
@@ -426,7 +426,7 @@ func (s *Service) handleFieldMonsterRegen(ctx command.Context, request []byte) (
 	}
 	if reply, ok := v.Requests[identity]; ok {
 		if !bytes.Equal(request, reply.Request) {
-			return 0, nil, true, ErrInvalidRequest
+			return 0, nil, true, fmt.Errorf("%w: monster regen %s was already settled with a different request", ErrInvalidRequest, identity)
 		}
 		return 139, reply.Response, true, nil
 	}
@@ -450,7 +450,7 @@ func (s *Service) handleFieldMonsterRegen(ctx command.Context, request []byte) (
 func fieldObjectInt(raw []byte, field int, required bool) (int, error) {
 	v, found, err := wire.Varint(raw, field)
 	if err != nil || required && (!found || v == 0) || v > uint64(^uint32(0)>>1) {
-		return 0, ErrInvalidRequest
+		return 0, fmt.Errorf("%w: field object field %d is %d (present=%t, required=%t): %v", ErrInvalidRequest, field, v, found, required, err)
 	}
 	return int(v), nil
 }
@@ -474,7 +474,7 @@ func (s *Service) handleFieldObjectRewardList(ctx command.Context, request []byt
 			return nil
 		}
 		if f.Type != 2 || len(selections) >= 100 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: field object selection has wire type %d or more than 100 entries", ErrInvalidRequest, f.Type)
 		}
 		group, e := fieldObjectInt(f.Value, 3, true)
 		if e != nil {
@@ -486,7 +486,7 @@ func (s *Service) handleFieldObjectRewardList(ctx command.Context, request []byt
 		}
 		obj, ok := design.Objects[id]
 		if !ok || obj.GroupID != group || obj.BuffID != 0 || obj.MonsterID != 0 || len(obj.Rewards) == 0 && obj.Type != 6 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: field object %d is not a claimable reward of group %d", ErrInvalidRequest, id, group)
 		}
 		if !seen[id] {
 			seen[id] = true
@@ -495,7 +495,7 @@ func (s *Service) handleFieldObjectRewardList(ctx command.Context, request []byt
 		return nil
 	})
 	if err != nil || len(selections) == 0 || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
-		return 260, nil, true, ErrInvalidRequest
+		return 260, nil, true, fmt.Errorf("%w: field object reward for pack %d has %d selections or the pack is not current: %v", ErrInvalidRequest, pack, len(selections), err)
 	}
 	var bundle []byte
 	for _, selection := range selections {
@@ -511,7 +511,7 @@ func (s *Service) handleFieldObjectRewardList(ctx command.Context, request []byt
 func (s *Service) handleFieldObjectPreview(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	pack, err := requestPack(request)
 	if err != nil || !s.packUnlocked(ctx, pack) {
-		return 144, nil, true, ErrInvalidRequest
+		return 144, nil, true, fmt.Errorf("%w: field object preview for pack %d is unavailable: %v", ErrInvalidRequest, pack, err)
 	}
 	ids, err := s.openedFieldObjects(ctx, pack)
 	if err != nil {
@@ -536,7 +536,7 @@ func (s *Service) handleFieldObjectPreview(ctx command.Context, request []byte) 
 func (s *Service) handleFieldObjectRespawn(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	pack, err := requestPack(request)
 	if err != nil || !s.packUnlocked(ctx, pack) {
-		return 30, nil, true, ErrInvalidRequest
+		return 30, nil, true, fmt.Errorf("%w: field object respawn for pack %d is unavailable: %v", ErrInvalidRequest, pack, err)
 	}
 	group, err := fieldObjectInt(request, 3, true)
 	if err != nil {
@@ -544,7 +544,7 @@ func (s *Service) handleFieldObjectRespawn(ctx command.Context, request []byte) 
 	}
 	kind, err := fieldObjectInt(request, 4, false)
 	if err != nil || kind != 0 && kind != 6 {
-		return 30, nil, true, ErrInvalidRequest
+		return 30, nil, true, fmt.Errorf("%w: field object respawn kind %d, want 0 or 6: %v", ErrInvalidRequest, kind, err)
 	}
 	design, err := s.fieldObjectDesign(ctx, pack)
 	if err != nil {
@@ -562,7 +562,7 @@ func (s *Service) handleFieldObjectRespawn(ctx command.Context, request []byte) 
 		}
 	}
 	if len(ids) == 0 {
-		return 30, nil, true, ErrInvalidRequest
+		return 30, nil, true, fmt.Errorf("%w: field object group %d in pack %d has no objects", ErrInvalidRequest, group, pack)
 	}
 	sort.Ints(ids)
 	var response []byte
@@ -593,7 +593,7 @@ func (s *Service) handleFieldObjectRespawn(ctx command.Context, request []byte) 
 			FieldObjectEventPeriod(int) (string, int64, error)
 		})
 		if !ok {
-			return 30, nil, true, ErrInvalidRequest
+			return 30, nil, true, fmt.Errorf("%w: field object group %d resets by event period but no event resolver is attached", ErrInvalidRequest, group)
 		}
 		_, end, err := resolver.FieldObjectEventPeriod(pack)
 		if err != nil {
@@ -612,7 +612,7 @@ func (s *Service) openFieldObjectResponse(ctx command.Context, pack, group, id i
 	}
 	obj, ok := design.Objects[id]
 	if !ok || obj.GroupID != group || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: field object %d is not in group %d or pack %d is not current", ErrInvalidRequest, id, group, pack)
 	}
 	period, err := s.fieldObjectPeriodFor(pack, obj)
 	if err != nil {
@@ -653,7 +653,7 @@ func (s *Service) openFieldObjectResponse(ctx command.Context, pack, group, id i
 				continue
 			}
 			if !s.monsterEligible(pack, monster) {
-				return nil, ErrInvalidRequest
+				return nil, fmt.Errorf("%w: field monster %d of object %d in pack %d is not eligible", ErrInvalidRequest, monster.ID, id, pack)
 			}
 			snapshot, e := s.loadMonsterState(ctx)
 			if e != nil {
@@ -777,7 +777,7 @@ func (s *Service) applyFieldObjectBuff(ctx command.Context, pack int, buff gamed
 // A persisted battle identity makes retries and reconnects safe.
 func (s *Service) ConsumeFieldBattleBuff(ctx command.Context, identity string) error {
 	if identity == "" {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: field battle buff consumed without a battle identity", ErrInvalidRequest)
 	}
 	rows, err := s.state.FieldBuffs(ctx)
 	if err != nil {
@@ -852,11 +852,11 @@ func (s *Service) handleFieldObjectReward(ctx command.Context, request []byte) (
 	}
 	group, _, err := wire.Varint(request, 3)
 	if err != nil || group == 0 || group > uint64(^uint32(0)>>1) {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: field object reward group %d: %v", ErrInvalidRequest, group, err)
 	}
 	id, _, err := wire.Varint(request, 4)
 	if err != nil || id == 0 || id > uint64(^uint32(0)>>1) {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: field object reward id %d: %v", ErrInvalidRequest, id, err)
 	}
 	response, err := s.openFieldObjectResponse(ctx, pack, int(group), int(id))
 	if err != nil {
@@ -1160,14 +1160,14 @@ func (s *Service) handleFieldMonsterEvent(ctx command.Context, path string, requ
 func (s *Service) handleFieldMonsterReward(request []byte) (int, []byte, bool, error) {
 	seq, present, e := wire.Varint(request, 1)
 	if e != nil || !present || seq == 0 {
-		return 84, nil, true, ErrInvalidRequest
+		return 84, nil, true, fmt.Errorf("%w: field monster reward sequence %d (present=%t): %v", ErrInvalidRequest, seq, present, e)
 	}
 	return 84, []byte{}, true, nil
 }
 
 func (s *Service) ApplyTalentMonsterSummon(ctx command.Context, identity string, c roster.Character, r gamedata.TalentUseRule, ids []uint64) ([]byte, error) {
 	if identity == "" || len(ids) == 0 || r.Class != 20 {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: talent monster summon %q has %d monsters and class %d", ErrInvalidRequest, identity, len(ids), r.Class)
 	}
 	pack, e := s.CurrentPackID(ctx)
 	if e != nil {
@@ -1181,12 +1181,12 @@ func (s *Service) ApplyTalentMonsterSummon(ctx command.Context, identity string,
 	var b []byte
 	for _, id := range ids {
 		if seen[id] {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: talent monster summon repeats monster %d", ErrInvalidRequest, id)
 		}
 		seen[id] = true
 		m, found, e := s.findFieldMonster(pack, int(id))
 		if e != nil || !found || m.Type != 2 || !s.monsterEligible(pack, m) {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: monster %d in pack %d is not a summonable talent monster (found=%t, type=%d): %v", ErrInvalidRequest, id, pack, found, m.Type, e)
 		}
 		if e = s.authorizeMonsterMap(ctx, pack, int(id)); e != nil {
 			return nil, e
@@ -1249,19 +1249,19 @@ func (s *Service) handleFieldObjectPosition(ctx command.Context, request []byte)
 	}
 	group, _, err := wire.Varint(request, 3)
 	if err != nil || group == 0 || group > 0x7fffffff {
-		return 95, nil, true, ErrInvalidRequest
+		return 95, nil, true, fmt.Errorf("%w: field action group %d: %v", ErrInvalidRequest, group, err)
 	}
 	id, _, err := wire.Varint(request, 4)
 	if err != nil || id == 0 || id > 0x7fffffff {
-		return 95, nil, true, ErrInvalidRequest
+		return 95, nil, true, fmt.Errorf("%w: field action id %d: %v", ErrInvalidRequest, id, err)
 	}
 	position, found, err := wire.Bytes(request, 5)
 	if err != nil || !found {
-		return 95, nil, true, ErrInvalidRequest
+		return 95, nil, true, fmt.Errorf("%w: field action has no position (present=%t): %v", ErrInvalidRequest, found, err)
 	}
 	mapID, _, err := wire.Varint(position, 1)
 	if err != nil || mapID == 0 || mapID > 0x7fffffff {
-		return 95, nil, true, ErrInvalidRequest
+		return 95, nil, true, fmt.Errorf("%w: field action map %d: %v", ErrInvalidRequest, mapID, err)
 	}
 	design, err := s.fieldObjectDesign(ctx, pack)
 	if err != nil {
@@ -1282,11 +1282,11 @@ func (s *Service) handleFieldObjectPosition(ctx command.Context, request []byte)
 	if err = wire.Walk(position, func(f wire.Field) error {
 		if f.Number >= 2 && f.Number <= 4 {
 			if f.Type != 5 {
-				return ErrInvalidRequest
+				return fmt.Errorf("%w: position coordinate %d has wire type %d", ErrInvalidRequest, f.Number, f.Type)
 			}
 			value := math.Float32frombits(binary.LittleEndian.Uint32(f.Value))
 			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-				return ErrInvalidRequest
+				return fmt.Errorf("%w: position coordinate %d is %v", ErrInvalidRequest, f.Number, value)
 			}
 		}
 		return nil

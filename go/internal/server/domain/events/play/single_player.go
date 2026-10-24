@@ -103,7 +103,7 @@ func (s *Service) singlePlayerGame(ctx command.Context, path string, req []byte,
 					return nil
 				}
 				if field.Type != 2 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, field.Number, field.Type)
 				}
 				id, count := num(field.Value, 1), num(field.Value, 2)
 				if count == 0 || count > num(row, 8) || count%2 != 0 || id/1000 == 12 || id/1000 == 10 || id == 0 || seen[id] {
@@ -297,7 +297,7 @@ func (s *Service) endSichuan(ctx command.Context, req []byte, a Run, st *snapsho
 				return nil
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			if n := num(f.Value, 1); n <= turn {
 				return fmt.Errorf("eventplay: Sichuan turn order invalid")
@@ -547,7 +547,7 @@ func (s *Service) endRhythm(ctx command.Context, req []byte, a Run, st *snapshot
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 		}
 		typ, count := num(f.Value, 1), num(f.Value, 2)
 		if typ < 1 || typ > 4 || counts[typ] != 0 {

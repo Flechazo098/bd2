@@ -152,7 +152,7 @@ func (s *LoginSeed) Write(path string) error {
 // user_key cannot accidentally be committed to a local seed.
 func (s *LoginSeed) Validate() error {
 	if s == nil || s.Version == "" || s.PacketCode <= 0 || len(s.UserInfo) == 0 {
-		return ErrInvalidSeed
+		return fmt.Errorf("%w: login seed lacks its version, packet code or user info", ErrInvalidSeed)
 	}
 	if _, found, err := wire.Bytes(s.UserInfo, 3); err != nil {
 		return fmt.Errorf("%w: malformed UserInfo: %v", ErrInvalidSeed, err)

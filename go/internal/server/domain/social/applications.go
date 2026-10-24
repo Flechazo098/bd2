@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 )
@@ -31,7 +32,7 @@ func clearApplications(tx Tx, account string) error {
 
 func (o *Owner) Applications(ctx context.Context, guild uint64, actor, after string, limit int) ([]Application, string, error) {
 	if limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: application page limit %d, want 1..256", ErrInvalid, limit)
 	}
 	var out []Application
 	var next string
@@ -42,7 +43,7 @@ func (o *Owner) Applications(ctx context.Context, guild uint64, actor, after str
 		}
 		member, ok := g.Members[actor]
 		if !ok || member.Role != Admin && member.Role != SubAdmin {
-			return ErrPermission
+			return fmt.Errorf("%w: %s is not an administrator of guild %d", ErrPermission, actor, guild)
 		}
 		rows, err := tx.Scan(applicationGuildBucket, numberKey(guild)+":", after, limit)
 		if err != nil {
@@ -63,7 +64,7 @@ func (o *Owner) Applications(ctx context.Context, guild uint64, actor, after str
 
 func (o *Owner) ApplicationsSent(ctx context.Context, account, after string, limit int) ([]Application, string, error) {
 	if account == "" || limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: sent applications for account %q with limit %d", ErrInvalid, account, limit)
 	}
 	var out []Application
 	var next string
@@ -91,7 +92,7 @@ func deletionKey(at int64, guild uint64) string { return fmt.Sprintf("%020d:%020
 
 func (o *Owner) DueDeletions(ctx context.Context, atMS int64, after string, limit int) ([]uint64, string, error) {
 	if atMS <= 0 || limit < 1 || limit > 256 {
-		return nil, "", ErrInvalid
+		return nil, "", fmt.Errorf("%w: due deletions at %d with limit %d", ErrInvalid, atMS, limit)
 	}
 	var ids []uint64
 	var next string
@@ -119,14 +120,14 @@ func (o *Owner) DueDeletions(ctx context.Context, atMS int64, after string, limi
 func (o *Owner) FinalizeDeletion(ctx context.Context, guild uint64, atMS int64) error {
 	return o.store.Update(ctx, func(tx Tx) error {
 		g, err := readGuild(tx, guild)
-		if err == ErrNotFound {
+		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		if g.DeleteAtMS == 0 || atMS < g.DeleteAtMS || len(g.Members) != 1 || len(g.Reserved) != 0 || g.PendingManagement != "" {
-			return ErrIneligible
+			return fmt.Errorf("%w: guild %d is not due for deletion at %d (delete at %d, %d members, %d reserved, pending %q)", ErrIneligible, guild, atMS, g.DeleteAtMS, len(g.Members), len(g.Reserved), g.PendingManagement)
 		}
 		for after := ""; ; {
 			rows, e := tx.Scan(seasonBucket, numberKey(guild)+":", after, 256)
@@ -139,7 +140,7 @@ func (o *Owner) FinalizeDeletion(ctx context.Context, guild uint64, atMS int64) 
 					return e
 				}
 				if season.Pending > 0 {
-					return ErrPending
+					return fmt.Errorf("%w: guild %d has %d pending season operations", ErrPending, guild, season.Pending)
 				}
 			}
 			if len(rows) < 256 {
@@ -153,13 +154,13 @@ func (o *Owner) FinalizeDeletion(ctx context.Context, guild uint64, atMS int64) 
 				return err
 			}
 			if a.PendingOperation != "" {
-				return ErrPending
+				return fmt.Errorf("%w: member %s of guild %d has pending operation %q", ErrPending, account, guild, a.PendingOperation)
 			}
 			if memberLocked(a, atMS) {
-				return ErrSeasonLocked
+				return fmt.Errorf("%w: member %s of guild %d", ErrSeasonLocked, account, guild)
 			}
 			if a.GuildID != guild || a.Epoch == math.MaxUint64 {
-				return ErrInvalid
+				return fmt.Errorf("%w: member %s belongs to guild %d (epoch %d), not %d", ErrInvalid, account, a.GuildID, a.Epoch, guild)
 			}
 			a.GuildID = 0
 			a.Epoch++

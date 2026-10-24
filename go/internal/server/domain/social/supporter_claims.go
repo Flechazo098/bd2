@@ -2,11 +2,12 @@ package social
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"fmt"
 )
 
 func (o *Owner) prepareSupporterClaim(tx Tx, op Operation, reservation *Reservation) error {
 	if op.Day == "" || len(op.UsageIDs) == 0 || uint64(len(op.UsageIDs)) > o.design.Supporters.DailyRewardClaims {
-		return ErrInvalid
+		return fmt.Errorf("%w: supporter claim on %q for %d usages", ErrInvalid, op.Day, len(op.UsageIDs))
 	}
 	var published FriendProfile
 	found, err := load(tx, "friend.directory", numberKey(op.Actor.OwnerIndex), &published)
@@ -14,7 +15,7 @@ func (o *Owner) prepareSupporterClaim(tx Tx, op Operation, reservation *Reservat
 		return err
 	}
 	if !found || published.AccountID != op.Actor.AccountID {
-		return ErrPermission
+		return fmt.Errorf("%w: supporter of %s is not published (present=%t)", ErrPermission, op.Actor.AccountID, found)
 	}
 	var claimed uint64
 	key := numberKey(op.Actor.OwnerIndex) + ":" + op.Day
@@ -22,12 +23,12 @@ func (o *Owner) prepareSupporterClaim(tx Tx, op Operation, reservation *Reservat
 		return err
 	}
 	if claimed+uint64(len(op.UsageIDs)) > o.design.Supporters.DailyRewardClaims {
-		return ErrCapacity
+		return fmt.Errorf("%w: %s claimed %d supporter rewards on %s and asks for %d more", ErrCapacity, op.Actor.AccountID, claimed, op.Day, len(op.UsageIDs))
 	}
 	seen := map[uint64]bool{}
 	for _, id := range op.UsageIDs {
 		if id == 0 || seen[id] {
-			return ErrInvalid
+			return fmt.Errorf("%w: supporter usage %d is zero or repeated", ErrInvalid, id)
 		}
 		seen[id] = true
 		key := supporterHistoryKey(op.Actor.OwnerIndex, id)
@@ -37,7 +38,7 @@ func (o *Owner) prepareSupporterClaim(tx Tx, op Operation, reservation *Reservat
 			return err
 		}
 		if !found || usage.Owner != op.Actor.OwnerIndex || usage.Received || !usage.RewardEligible {
-			return ErrIneligible
+			return fmt.Errorf("%w: supporter usage %d is missing, foreign, received or ineligible", ErrIneligible, id)
 		}
 		reservation.UsageIDs = append(reservation.UsageIDs, id)
 	}
@@ -55,7 +56,7 @@ func (o *Owner) confirmSupporterClaim(tx Tx, op Operation) error {
 			return err
 		}
 		if !found || usage.Received || !usage.RewardEligible {
-			return ErrConflict
+			return fmt.Errorf("%w: supporter usage %d is missing, received or ineligible", ErrConflict, id)
 		}
 		usage.Received = true
 		if err := save(tx, supporterHistoryBucket, key, usage); err != nil {

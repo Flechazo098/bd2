@@ -169,6 +169,24 @@ func TestSeasonRewardUnlocksAfterCalculationWithoutSeasonIDChange(t *testing.T) 
 	}
 	settled = true
 	s = open()
+	if info := rpc(t, s, ctx, "Info", req(30)); n(info, 21) != 0 {
+		t.Fatal("score without a completed run advertised season rewards")
+	}
+	assertRejected(t, s, ctx, "SeasonReward", req(31))
+	if economy.calls != 0 {
+		t.Fatal("failed or abandoned run qualified for season reward")
+	}
+	v, _, e = s.load(ctx)
+	if e != nil {
+		t.Fatal(e)
+	}
+	record := v.Seasons[period.Season]
+	record.Cleared = true
+	v.Seasons[period.Season] = record
+	if e = s.save(ctx, v); e != nil {
+		t.Fatal(e)
+	}
+	s = open()
 	if info := rpc(t, s, ctx, "Info", req(3)); n(info, 19) != period.Season || n(info, 21) != 1 {
 		t.Fatal("settled current season did not advertise its native reward request")
 	}

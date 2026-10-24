@@ -80,7 +80,7 @@ func (r *npcReputationRuntime) state(v npcReputationSnapshot, pack int, rule gam
 func (s *Service) reputationInfo(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	seq, found, err := wire.Varint(request, 1)
 	if err != nil || !found || seq == 0 || s.npcReputation == nil {
-		return 106, nil, true, ErrInvalidRequest
+		return 106, nil, true, fmt.Errorf("%w: ReputationInfo sequence %d (present=%t, reputation attached=%t): %v", ErrInvalidRequest, seq, found, s.npcReputation != nil, err)
 	}
 	v, err := s.npcReputation.snapshot(ctx)
 	if err != nil {
@@ -114,7 +114,7 @@ func (s *Service) reputationInfo(ctx command.Context, request []byte) (int, []by
 func (s *Service) NPCShopReputation(ctx command.Context, pack uint64) (uint64, uint64, error) {
 	current, err := s.CurrentPackID(ctx)
 	if err != nil || pack == 0 || !s.packUnlocked(ctx, int(pack)) || s.npcReputation == nil {
-		return 0, 0, ErrInvalidRequest
+		return 0, 0, fmt.Errorf("%w: NPC shop reputation for pack %d (current %d) is unavailable: %v", ErrInvalidRequest, pack, current, err)
 	}
 	d, err := s.npcReputation.load(int(pack))
 	if err != nil {
@@ -157,7 +157,7 @@ func (s *Service) InnContext(ctx command.Context, pack, npc uint64) (gamedata.In
 	var empty gamedata.InnRule
 	current, err := s.CurrentPackID(ctx)
 	if err != nil || s.npcReputation == nil || (pack != 0 && pack != uint64(current)) || !s.packUnlocked(ctx, current) {
-		return empty, 0, ErrInvalidRequest
+		return empty, 0, fmt.Errorf("%w: inn rule for pack %d (current %d) is unavailable: %v", ErrInvalidRequest, pack, current, err)
 	}
 	position, ok := s.state.Position()
 	if !ok || position.PackID != current {

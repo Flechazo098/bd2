@@ -81,7 +81,7 @@ func (p *playerInstance) prepareText(ctx context.Context, request player.Command
 				}
 			}
 			if !utf8.Valid(text) {
-				return nil, wire.ErrMalformed
+				return nil, fmt.Errorf("%w: text is not UTF-8", wire.ErrMalformed)
 			}
 			candidate := textCandidate{field.scope, string(text)}
 			if field.scope == "equipment_mark" {

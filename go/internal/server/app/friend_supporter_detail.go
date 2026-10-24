@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 
 	"bd2server/internal/server/domain/command"
@@ -27,7 +28,7 @@ func (h friendSupporterDetailHandler) Handle(ctx command.Context, path string, r
 			return nil
 		}
 		if f.Type != 0 || seen[f.Number] {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: SupporterDetail field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		fields[f.Number], _ = binary.Uvarint(f.Value)
 		seen[f.Number] = true
@@ -37,7 +38,7 @@ func (h friendSupporterDetailHandler) Handle(ctx command.Context, path string, r
 		return 434, nil, true, err
 	}
 	if fields[1] == 0 || fields[1] > math.MaxInt32 || fields[2] == 0 || fields[2] > math.MaxInt64 || fields[3] > 1 {
-		return 434, nil, true, wire.ErrMalformed
+		return 434, nil, true, fmt.Errorf("%w: SupporterDetail owner %d character %d slot %d", wire.ErrMalformed, fields[1], fields[2], fields[3])
 	}
 	owner, err := h.owner(ctx)
 	if err != nil {

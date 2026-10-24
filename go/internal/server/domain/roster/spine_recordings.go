@@ -50,14 +50,14 @@ type interactionRecording struct {
 
 func (s InteractionRecordService) authorize(ctx command.Context, group uint64) error {
 	if s.Design == nil || s.Authorize == nil || !s.Design.RecordGroups[group] {
-		return ErrRecordNotFound
+		return fmt.Errorf("%w: record group %d is not recordable", ErrRecordNotFound, group)
 	}
 	allowed, err := s.Authorize(ctx, group)
 	if err != nil {
 		return err
 	}
 	if !allowed {
-		return ErrRecordNotFound
+		return fmt.Errorf("%w: record group %d is not unlocked", ErrRecordNotFound, group)
 	}
 	return nil
 }
@@ -65,14 +65,14 @@ func (s InteractionRecordService) authorize(ctx command.Context, group uint64) e
 func (s InteractionRecordService) metadata(ctx command.Context, index uint64) (interactionRecording, error) {
 	var row interactionRecording
 	if s.Store == nil || ctx.State == nil || index == 0 || index > math.MaxInt32 {
-		return row, ErrRecordNotFound
+		return row, fmt.Errorf("%w: record index %d", ErrRecordNotFound, index)
 	}
 	raw, found, err := s.Store.LoadEntry(ctx.State, recordDomain, recordMetadataBucket, strconv.FormatUint(index, 10))
 	if err != nil {
 		return row, err
 	}
 	if !found {
-		return row, ErrRecordNotFound
+		return row, fmt.Errorf("%w: record %d", ErrRecordNotFound, index)
 	}
 	return decodeInteractionRecording(raw, index)
 }
@@ -100,7 +100,7 @@ func (s InteractionRecordService) LoadRecordData(ctx command.Context, index uint
 		return nil, err
 	}
 	if subtle.ConstantTimeCompare([]byte(row.Capability), []byte(capability)) != 1 {
-		return nil, ErrRecordNotFound
+		return nil, fmt.Errorf("%w: record %d capability does not match", ErrRecordNotFound, index)
 	}
 	if err = s.authorize(ctx, row.Group); err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (s InteractionRecordService) recordData(ctx command.Context, row interactio
 		return nil, err
 	}
 	if !found {
-		return nil, ErrRecordNotFound
+		return nil, fmt.Errorf("%w: record %d data", ErrRecordNotFound, row.Index)
 	}
 	digest := sha256.Sum256(raw)
 	if hex.EncodeToString(digest[:]) != row.Digest {
@@ -197,7 +197,7 @@ func (s InteractionRecordService) Handle(ctx command.Context, path string, reque
 	}
 	index, _, err := wire.Varint(request, 2)
 	if err != nil || index == 0 || index > math.MaxInt32 {
-		return fail(ErrRecordNotFound)
+		return fail(fmt.Errorf("%w: record index %d: %v", ErrRecordNotFound, index, err))
 	}
 	var row interactionRecording
 	var counter []byte

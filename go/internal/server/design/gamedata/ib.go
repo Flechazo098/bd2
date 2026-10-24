@@ -40,14 +40,14 @@ func ibNumbers(raw []byte, packed ...int) (map[int][]uint64, error) {
 		if f.Type == 0 {
 			v, n := binary.Uvarint(f.Value)
 			if n <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			out[f.Number] = append(out[f.Number], v)
 		} else if f.Type == 2 && slices.Contains(packed, f.Number) {
 			for data := f.Value; len(data) > 0; {
 				v, n := binary.Uvarint(data)
 				if n <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				out[f.Number] = append(out[f.Number], v)
 				data = data[n:]

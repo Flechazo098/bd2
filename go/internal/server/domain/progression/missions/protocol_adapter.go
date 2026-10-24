@@ -22,7 +22,7 @@ func (s *Service) userLevelReward(ctx command.Context, request []byte) ([]byte, 
 	}
 	ids, err := packed(request, 2)
 	if err != nil || len(ids) == 0 {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: user level reward request has no levels: %v", ErrInvalidRequest, err)
 	}
 	exp, err := s.achievementExperienceLocked()
 	if err != nil {
@@ -34,7 +34,7 @@ func (s *Service) userLevelReward(ctx command.Context, request []byte) ([]byte, 
 	var previous uint64
 	for _, id := range ids {
 		if id == 0 || id <= previous {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: user level reward %d is zero or out of order after %d", ErrInvalidRequest, id, previous)
 		}
 		previous = id
 		index := -1
@@ -45,7 +45,7 @@ func (s *Service) userLevelReward(ctx command.Context, request []byte) ([]byte, 
 			}
 		}
 		if index < 0 || id > level {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: user level reward %d is unknown or above level %d", ErrInvalidRequest, id, level)
 		}
 		if id <= s.levelReward {
 			continue
@@ -113,7 +113,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			}
 			if _, _, handled, err := s.eventHandler.Handle(ctx, path, event); err != nil || !handled {
 				if err == nil {
-					err = ErrInvalidRequest
+					err = fmt.Errorf("%w: %s event missions were not handled", ErrInvalidRequest, path)
 				}
 				return 119, nil, true, err
 			}
@@ -177,7 +177,7 @@ func splitMissionUpdates(request []byte) (regular, event []byte, err error) {
 			return nil
 		}
 		if f.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update has wire type %d, want a message", ErrInvalidRequest, f.Type)
 		}
 		uid, e := scalar(f.Value, 4)
 		if e != nil {
@@ -205,18 +205,18 @@ func (s *Service) validateRegularUpdates(request []byte) error {
 			return nil
 		}
 		if f.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update has wire type %d, want a message", ErrInvalidRequest, f.Type)
 		}
 		group, err := scalar(f.Value, 1)
 		if err != nil || group == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update group %d: %v", ErrInvalidRequest, group, err)
 		}
 		id, err := scalar(f.Value, 2)
 		if err != nil || id == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update id %d: %v", ErrInvalidRequest, id, err)
 		}
 		if _, err = scalar(f.Value, 3); err != nil {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update value: %v", ErrInvalidRequest, err)
 		}
 		matches := 0
 		for key := range s.design.Missions {
@@ -225,7 +225,7 @@ func (s *Service) validateRegularUpdates(request []byte) error {
 			}
 		}
 		if matches != 1 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission group %d id %d matches %d missions, want 1", ErrInvalidRequest, group, id, matches)
 		}
 		return nil
 	})
@@ -276,32 +276,32 @@ func (s *Service) update(ctx command.Context, request []byte) error {
 			return nil
 		}
 		if field.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update has wire type %d, want a message", ErrInvalidRequest, field.Type)
 		}
 		groupID, err := scalar(field.Value, 1)
 		if err != nil || groupID == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update group %d: %v", ErrInvalidRequest, groupID, err)
 		}
 		id, err := scalar(field.Value, 2)
 		if err != nil || id == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update id %d: %v", ErrInvalidRequest, id, err)
 		}
 		value, err := scalar(field.Value, 3)
 		if err != nil {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission update value: %v", ErrInvalidRequest, err)
 		}
 		var key gamedata.MissionKey
 		found := false
 		for candidate := range s.design.Missions {
 			if candidate.GroupID == groupID && candidate.ID == id && candidate.GroupType != 2 {
 				if found {
-					return ErrInvalidRequest
+					return fmt.Errorf("%w: mission group %d id %d matches more than one mission", ErrInvalidRequest, groupID, id)
 				}
 				key, found = candidate, true
 			}
 		}
 		if !found {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: mission group %d id %d is unknown", ErrInvalidRequest, groupID, id)
 		}
 		if err := s.setProgressLocked(ctx, key, value); err != nil {
 			return err
@@ -313,7 +313,7 @@ func (s *Service) update(ctx command.Context, request []byte) error {
 		return err
 	}
 	if updates == 0 {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: mission update carries no missions", ErrInvalidRequest)
 	}
 	return nil
 }
@@ -343,7 +343,7 @@ func (s *Service) clearMission(ctx command.Context, request []byte) ([]byte, err
 	}
 	eventID, err := scalar(request, 6)
 	if err != nil || groupType > 1 || eventID != 0 {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: MissionClear group type %d event %d: %v", ErrInvalidRequest, groupType, eventID, err)
 	}
 	var keys []gamedata.MissionKey
 	if all {
@@ -356,7 +356,7 @@ func (s *Service) clearMission(ctx command.Context, request []byte) ([]byte, err
 				known = known || key.GroupType == groupType && key.GroupID == groupID
 			}
 			if !known {
-				return nil, ErrInvalidRequest
+				return nil, fmt.Errorf("%w: MissionClear group type %d group %d is unknown", ErrInvalidRequest, groupType, groupID)
 			}
 		}
 		for _, key := range s.completedUnclaimedForType(groupType) {
@@ -370,7 +370,7 @@ func (s *Service) clearMission(ctx command.Context, request []byte) ([]byte, err
 		}
 		key := gamedata.MissionKey{GroupType: groupType, GroupID: groupID, ID: id}
 		if _, ok := s.design.Missions[key]; !ok || !s.missionActive(key) {
-			return nil, ErrInvalidRequest
+			return nil, fmt.Errorf("%w: mission %+v is unknown or inactive", ErrInvalidRequest, key)
 		}
 		if !contains(s.state.Claimed, "mission:"+missionName(key)) {
 			keys = []gamedata.MissionKey{key}
@@ -573,7 +573,7 @@ func rewardBundle(items []assets.Item) []byte {
 func requireSeq(b []byte) error {
 	seq, err := scalar(b, 1)
 	if err != nil || seq == 0 {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: request sequence %d: %v", ErrInvalidRequest, seq, err)
 	}
 	return nil
 }
@@ -581,7 +581,7 @@ func requireSeq(b []byte) error {
 func scalar(b []byte, number int) (uint64, error) {
 	value, found, err := wire.Varint(b, number)
 	if err != nil {
-		return 0, ErrInvalidRequest
+		return 0, fmt.Errorf("%w: field %d: %v", ErrInvalidRequest, number, err)
 	}
 	if !found {
 		return 0, nil
@@ -592,7 +592,7 @@ func scalar(b []byte, number int) (uint64, error) {
 func boolean(b []byte, number int) (bool, error) {
 	value, err := scalar(b, number)
 	if err != nil || value > 1 {
-		return false, ErrInvalidRequest
+		return false, fmt.Errorf("%w: field %d boolean %d: %v", ErrInvalidRequest, number, value, err)
 	}
 	return value == 1, nil
 }
@@ -604,15 +604,15 @@ func achievementClaims(b []byte) ([]achievementClaim, error) {
 			return nil
 		}
 		if field.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: achievement claim has wire type %d, want a message", ErrInvalidRequest, field.Type)
 		}
 		group, err := scalar(field.Value, 1)
 		if err != nil || group == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: achievement claim group %d: %v", ErrInvalidRequest, group, err)
 		}
 		ids, err := packed(field.Value, 2)
 		if err != nil || len(ids) == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: achievement claim group %d has no ids: %v", ErrInvalidRequest, group, err)
 		}
 		claims = append(claims, achievementClaim{group, ids})
 		return nil
@@ -632,12 +632,12 @@ func packed(b []byte, number int) ([]uint64, error) {
 			return nil
 		}
 		if field.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", ErrInvalidRequest, number, field.Type)
 		}
 		for remaining := field.Value; len(remaining) > 0; {
 			value, n := decode(remaining)
 			if n == 0 {
-				return ErrInvalidRequest
+				return fmt.Errorf("%w: field %d packed varint is truncated", ErrInvalidRequest, number)
 			}
 			values = append(values, value)
 			remaining = remaining[n:]

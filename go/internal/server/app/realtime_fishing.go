@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/fishing"
@@ -14,7 +15,7 @@ import (
 
 func (r *roomResults) FishingRooms(command.Context) ([]fishing.RoomInfo, error) {
 	if r.rooms == nil {
-		return nil, room.ErrClosed
+		return nil, fmt.Errorf("%w: realtime rooms are not running", room.ErrClosed)
 	}
 	views := r.rooms.FishingRooms()
 	result := make([]fishing.RoomInfo, 0, len(views))

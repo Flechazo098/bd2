@@ -10,7 +10,7 @@ import (
 
 func (s *Service) CompleteNPCReputation(ctx command.Context, identity string, pack int, group uint64) ([]byte, error) {
 	if s.npcReputation == nil || identity == "" || group == 0 || !s.packUnlocked(ctx, pack) {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: NPC reputation %q group %d in pack %d is unavailable", ErrInvalidRequest, identity, group, pack)
 	}
 	d, err := s.npcReputation.load(pack)
 	if err != nil {
@@ -86,7 +86,7 @@ func (s *Service) handleQuestUpdate(ctx command.Context, request []byte) (int, [
 	}
 	current, err := s.CurrentPackID(ctx)
 	if err != nil || current != pack || !s.canClear(ctx, pack, quest) {
-		return 0, nil, true, ErrInvalidRequest
+		return 0, nil, true, fmt.Errorf("%w: quest %d in pack %d is not active (current pack %d): %v", ErrInvalidRequest, quest, pack, current, err)
 	}
 	replay, replaying, err := s.state.QuestReplay(ctx, pack)
 	if err != nil {

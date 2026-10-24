@@ -43,7 +43,7 @@ func (f *Friends) PrepareRoomText(ctx context.Context, identity command.Identity
 	_, digest := requestIdentity(identity, path, seq, raw)
 	if found {
 		if prior.Digest != digest {
-			return ErrConflict
+			return fmt.Errorf("%w: %s sequence %d was replayed with a different body", ErrConflict, path, seq)
 		}
 		return nil
 	}
@@ -63,7 +63,7 @@ func (f *Friends) PrepareRoomText(ctx context.Context, identity command.Identity
 	default:
 		for _, row := range p[2] {
 			if row.Type != 2 {
-				return ErrInvalid
+				return fmt.Errorf("%w: %s room row has wire type %d, want a message", ErrInvalid, path, row.Type)
 			}
 			p, err := parsePacket(row.Value)
 			if err != nil {
@@ -105,19 +105,19 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 	if path == "/MyRoomShareOptionUpdate" {
 		scope, err := p.integer(2)
 		if err != nil || scope > 4 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room share scope %d, want 0..4: %v", ErrInvalid, scope, err)
 		}
 		state.Scope = scope
 		return nil
 	}
 	if path == "/MyRoomSave" {
 		if len(p[2]) == 0 || len(p[2]) > len(state.Rooms) {
-			return ErrInvalid
+			return fmt.Errorf("%w: room save carries %d rooms, %d owned", ErrInvalid, len(p[2]), len(state.Rooms))
 		}
 		seen := map[uint64]bool{}
 		for _, field := range p[2] {
 			if field.Type != 2 {
-				return ErrInvalid
+				return fmt.Errorf("%w: saved room has wire type %d, want a message", ErrInvalid, field.Type)
 			}
 			row, err := parsePacket(field.Value)
 			if err != nil {
@@ -125,7 +125,7 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 			}
 			id, err := row.integer(1)
 			if err != nil || id == 0 || seen[id] {
-				return ErrInvalid
+				return fmt.Errorf("%w: saved room id %d is zero or repeated: %v", ErrInvalid, id, err)
 			}
 			seen[id] = true
 			index := -1
@@ -136,20 +136,20 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 				}
 			}
 			if index < 0 {
-				return ErrPermission
+				return fmt.Errorf("%w: room %d is not owned", ErrPermission, id)
 			}
 			name, err := row.text(2)
 			if err != nil || !validRoomName(name) {
-				return ErrInvalid
+				return fmt.Errorf("%w: room name %q: %v", ErrInvalid, name, err)
 			}
 			hidden, err := row.integer(4)
 			if err != nil || hidden > 1 {
-				return ErrInvalid
+				return fmt.Errorf("%w: room hidden flag %d: %v", ErrInvalid, hidden, err)
 			}
 			room := personalRoom{ID: id, Name: name, Hidden: hidden == 1}
 			for _, position := range row[3] {
 				if position.Type != 2 {
-					return ErrInvalid
+					return fmt.Errorf("%w: room %d position has wire type %d, want a message", ErrInvalid, id, position.Type)
 				}
 				room.Positions = append(room.Positions, append([]byte(nil), position.Value...))
 			}
@@ -162,7 +162,7 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 	}
 	id, err := p.integer(2)
 	if err != nil || id == 0 {
-		return ErrInvalid
+		return fmt.Errorf("%w: %s room id %d: %v", ErrInvalid, path, id, err)
 	}
 	index := -1
 	for i, room := range state.Rooms {
@@ -172,24 +172,24 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 		}
 	}
 	if index < 0 {
-		return ErrPermission
+		return fmt.Errorf("%w: room %d is not owned", ErrPermission, id)
 	}
 	switch path {
 	case "/MyRoomNameChange":
 		name, err := p.text(3)
 		if err != nil || !validRoomName(name) {
-			return ErrInvalid
+			return fmt.Errorf("%w: room name %q: %v", ErrInvalid, name, err)
 		}
 		state.Rooms[index].Name = name
 	case "/MyRoomPrimaryChange":
 		if state.Rooms[index].Hidden {
-			return ErrIneligible
+			return fmt.Errorf("%w: hidden room %d cannot be primary", ErrIneligible, id)
 		}
 		state.Primary = id
 	case "/MyRoomMove":
 		target, err := p.integer(3)
 		if err != nil || target == 0 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room move target %d: %v", ErrInvalid, target, err)
 		}
 		other := -1
 		for i, v := range state.Rooms {
@@ -199,7 +199,7 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 			}
 		}
 		if other < 0 {
-			return ErrPermission
+			return fmt.Errorf("%w: room move target %d is not owned", ErrPermission, target)
 		}
 		state.Rooms[index], state.Rooms[other] = state.Rooms[other], state.Rooms[index]
 		state.Rooms[index].ID = id
@@ -211,7 +211,7 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 			return err
 		}
 	default:
-		return ErrInvalid
+		return fmt.Errorf("%w: unknown room edit %s", ErrInvalid, path)
 	}
 	return nil
 }
@@ -231,7 +231,7 @@ func validateRoomInventory(state personalRooms, self FriendProfile) error {
 			used[index]++
 			if typ == 1 {
 				if used[index] > 1 {
-					return ErrPermission
+					return fmt.Errorf("%w: room costume %d is placed %d times", ErrPermission, index, used[index])
 				}
 				continue
 			}
@@ -243,7 +243,7 @@ func validateRoomInventory(state personalRooms, self FriendProfile) error {
 				}
 			}
 			if used[index] > count {
-				return ErrPermission
+				return fmt.Errorf("%w: room item %d is placed %d times, %d owned", ErrPermission, index, used[index], count)
 			}
 		}
 	}
@@ -252,7 +252,7 @@ func validateRoomInventory(state personalRooms, self FriendProfile) error {
 
 func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limits gamedata.RoomLimits) error {
 	if len(room.Positions) > 256 {
-		return ErrCapacity
+		return fmt.Errorf("%w: room %d has %d placements, at most 256", ErrCapacity, room.ID, len(room.Positions))
 	}
 	var objects, carpets, characters uint64
 	used := map[string]uint64{}
@@ -263,25 +263,25 @@ func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limit
 		}
 		index, err := p.integer(1)
 		if err != nil || index == 0 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room placement inventory index %d: %v", ErrInvalid, index, err)
 		}
 		typ, err := p.integer(2)
 		if err != nil || typ > 2 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room placement type %d, want 0..2: %v", ErrInvalid, typ, err)
 		}
 		position, err := p.integer(3)
 		if err != nil || position > 3 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room placement location %d, want 0..3: %v", ErrInvalid, position, err)
 		}
 		for _, field := range []int{4, 5, 6, 7, 8} {
 			n, err := p.integer(field)
 			if err != nil || n > math.MaxInt32 {
-				return ErrInvalid
+				return fmt.Errorf("%w: room placement field %d value %d: %v", ErrInvalid, field, n, err)
 			}
 		}
 		wallHidden, err := p.integer(9)
 		if err != nil || wallHidden > 1 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room placement wall flag %d: %v", ErrInvalid, wallHidden, err)
 		}
 		key := fmt.Sprintf("%d:%d", typ, index)
 		used[key]++
@@ -294,7 +294,7 @@ func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limit
 				}
 			}
 			if !found || used[key] > 1 {
-				return ErrPermission
+				return fmt.Errorf("%w: room costume %d is missing or placed %d times", ErrPermission, index, used[key])
 			}
 			characters++
 			continue
@@ -308,7 +308,7 @@ func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limit
 			}
 		}
 		if id == 0 || used[key] > count {
-			return ErrPermission
+			return fmt.Errorf("%w: room item %d (type %d) is missing or placed %d times, %d owned", ErrPermission, index, typ, used[key], count)
 		}
 		if typ == 2 {
 			objects++
@@ -316,26 +316,26 @@ func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limit
 		}
 		item, found := f.rooms.Items[id]
 		if !found || item.ObjectType != 0 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room item %d is not a placeable object (known=%t)", ErrInvalid, id, found)
 		}
 		if item.Location == 0 && position != 1 || item.Location == 1 && position != 2 && position != 3 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room item %d at location %d cannot go to position %d", ErrInvalid, id, item.Location, position)
 		}
 		switch item.Kind {
 		case 0:
 			if used[key] > 2 {
-				return ErrInvalid
+				return fmt.Errorf("%w: room item %d is placed %d times", ErrInvalid, id, used[key])
 			}
 		case 1:
 			objects++
 		case 2:
 			carpets++
 		default:
-			return ErrInvalid
+			return fmt.Errorf("%w: room item %d has kind %d", ErrInvalid, id, item.Kind)
 		}
 	}
 	if objects > limits.Objects || carpets > limits.Carpets || characters > limits.Characters {
-		return ErrCapacity
+		return fmt.Errorf("%w: room %d holds %d objects, %d carpets and %d characters, limits %+v", ErrCapacity, room.ID, objects, carpets, characters, limits)
 	}
 	return nil
 }

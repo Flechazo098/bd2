@@ -48,7 +48,7 @@ func loadStoryCheckpoint(ctx command.Context) (*StoryCheckpoint, error) {
 		return nil, err
 	}
 	if checkpoint.ID == "" || checkpoint.PackID <= 0 || checkpoint.QuestID <= 0 {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: saved story checkpoint %q has pack %d quest %d", ErrInvalidRequest, checkpoint.ID, checkpoint.PackID, checkpoint.QuestID)
 	}
 	return &checkpoint, nil
 }
@@ -72,7 +72,7 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 		return reply, nil
 	case "complete":
 		if request.ID == "" {
-			return reply, ErrInvalidRequest
+			return reply, fmt.Errorf("%w: story checkpoint completion names no checkpoint", ErrInvalidRequest)
 		}
 		if pending == nil || pending.ID != request.ID {
 			return reply, nil
@@ -86,7 +86,7 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 		return StoryCheckpointReply{}, nil
 	case "begin":
 		if request.ID == "" || len(request.ID) > 128 {
-			return reply, ErrInvalidRequest
+			return reply, fmt.Errorf("%w: story checkpoint id %q is empty or longer than 128 bytes", ErrInvalidRequest, request.ID)
 		}
 		if _, completed, err := ctx.State.LoadEntry("world", "story_checkpoint_completed", request.ID); err != nil {
 			return reply, err
@@ -110,7 +110,7 @@ func (s *Service) StoryCheckpoint(ctx command.Context, request StoryCheckpointRe
 		}
 		return StoryCheckpointReply{Checkpoint: &request.StoryCheckpoint}, nil
 	default:
-		return reply, ErrInvalidRequest
+		return reply, fmt.Errorf("%w: unknown story checkpoint operation %q", ErrInvalidRequest, request.Operation)
 	}
 }
 
@@ -134,31 +134,31 @@ func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryC
 	}
 	quest, exists := pack.Quests[checkpoint.QuestID]
 	if !exists {
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: pack %d has no quest %d for checkpoint %q", ErrInvalidRequest, checkpoint.PackID, checkpoint.QuestID, checkpoint.ID)
 	}
 	cleared := s.state.QuestCleared(checkpoint.QuestID, checkpoint.PackID, checkpoint.Difficulty)
 	switch checkpoint.Phase {
 	case "accept":
 		if cleared || !s.canClear(ctx, checkpoint.PackID, checkpoint.QuestID) || checkpoint.Timeline == "" || checkpoint.Timeline != quest.AcceptCinemaName || checkpoint.ObjectID != 0 || checkpoint.SimpleTalkGroupID != 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: accept checkpoint %q for quest %d (cleared=%t, timeline %q, want %q, object %d, talk %d)", ErrInvalidRequest, checkpoint.ID, checkpoint.QuestID, cleared, checkpoint.Timeline, quest.AcceptCinemaName, checkpoint.ObjectID, checkpoint.SimpleTalkGroupID)
 		}
 	case "complete":
 		if !cleared || checkpoint.Timeline == "" || checkpoint.Timeline != quest.CompleteCinemaName || checkpoint.ObjectID != 0 || checkpoint.SimpleTalkGroupID != 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: complete checkpoint %q for quest %d (cleared=%t, timeline %q, want %q, object %d, talk %d)", ErrInvalidRequest, checkpoint.ID, checkpoint.QuestID, cleared, checkpoint.Timeline, quest.CompleteCinemaName, checkpoint.ObjectID, checkpoint.SimpleTalkGroupID)
 		}
 	case "interaction":
 		if cleared || !s.canClear(ctx, checkpoint.PackID, checkpoint.QuestID) || checkpoint.ObjectID <= 0 || s.presentationSource == nil {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: interaction checkpoint %q for quest %d (cleared=%t, object %d)", ErrInvalidRequest, checkpoint.ID, checkpoint.QuestID, cleared, checkpoint.ObjectID)
 		}
 		interaction, err := s.presentationSource.StoryInteraction(checkpoint.PackID, checkpoint.ObjectID)
 		if err != nil {
 			return err
 		}
 		if !slices.Contains(interaction.QuestIDs, uint64(checkpoint.QuestID)) || checkpoint.Timeline != interaction.Timeline || checkpoint.SimpleTalkGroupID != interaction.SimpleTalkGroupID || checkpoint.Timeline == "" && checkpoint.SimpleTalkGroupID == 0 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: interaction checkpoint %q object %d does not match quest %d (timeline %q, want %q, talk %d, want %d)", ErrInvalidRequest, checkpoint.ID, checkpoint.ObjectID, checkpoint.QuestID, checkpoint.Timeline, interaction.Timeline, checkpoint.SimpleTalkGroupID, interaction.SimpleTalkGroupID)
 		}
 	default:
-		return ErrInvalidRequest
+		return fmt.Errorf("%w: unknown story checkpoint phase %q", ErrInvalidRequest, checkpoint.Phase)
 	}
 	return nil
 }

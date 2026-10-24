@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -65,10 +66,10 @@ func standingRows(tx Tx, season, overkillMembers uint64) ([]GuildStanding, error
 				return nil, e
 			}
 			if !found {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: guild %d has no raid season %d", ErrInvalid, guild, season)
 			}
 			g, e := readGuild(tx, guild)
-			if e == ErrNotFound {
+			if errors.Is(e, ErrNotFound) {
 				g = s.GuildView
 				e = nil
 			}
@@ -86,7 +87,7 @@ func standingRows(tx Tx, season, overkillMembers uint64) ([]GuildStanding, error
 					break
 				}
 				if overkill > math.MaxUint64-m.Overkill {
-					return nil, ErrInvalid
+					return nil, fmt.Errorf("%w: raid overkill overflows", ErrInvalid)
 				}
 				overkill += m.Overkill
 			}
@@ -229,7 +230,7 @@ func (o *Owner) FinalizeSeason(ctx context.Context, season uint64, at int64) err
 				return e
 			}
 			if s.State != "frozen" {
-				return ErrPending
+				return fmt.Errorf("%w: guild %d raid season %d is %q, not frozen", ErrPending, row.Guild.ID, season, s.State)
 			}
 			if row.Score == 0 {
 				continue
@@ -276,7 +277,7 @@ func (o *Owner) FinalizeSeason(ctx context.Context, season uint64, at int64) err
 			for account, count := range donors {
 				rule := o.design.Raid
 				if rule.RentalSupportReward != 0 && count > (math.MaxUint64-rule.BasicSupportReward)/rule.RentalSupportReward {
-					return ErrInvalid
+					return fmt.Errorf("%w: supporter reward for %s with %d rentals overflows", ErrInvalid, account, count)
 				}
 				gold := rule.BasicSupportReward + count*rule.RentalSupportReward
 				if gold == 0 {

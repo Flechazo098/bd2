@@ -2,6 +2,7 @@ package app
 
 import (
 	"bd2server/internal/server/design/gamedata"
+	"bd2server/internal/server/domain/battle/castle"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/commerce"
 	"bd2server/internal/server/domain/events"
@@ -26,6 +27,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		}
 		p.monsterHuntService.AttachRanking(owner, p.shared.huntRanks)
 		p.castleService.AttachRanking(owner, p.shared.castleRanks)
+		p.castleService.AttachRankProfile(func(c command.Context) (castle.RankProfile, error) { return p.castleRankProfile(c, owner) })
 	}
 	if err := p.nickname(ctx); err != nil {
 		return err
@@ -68,7 +70,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 		p.avatarService,
 		friendSupporterDetailHandler{owner: p.ProfileOwner, load: func(ctx command.Context, target uint64) (map[uint64][]byte, error) {
 			if p.shared == nil || p.shared.friends == nil {
-				return nil, profile.ErrNotFound
+				return nil, fmt.Errorf("%w: friend directory is unavailable for owner %d", profile.ErrNotFound, target)
 			}
 			published, err := p.shared.friends.Profile(context.Background(), target)
 			return published.SupporterDetails, err
@@ -129,7 +131,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 	if p.pvpService != nil {
 		p.handlers = append([]session.Handler{p.pvpService}, p.handlers...)
 	}
-	p.observers = []session.ResponseObserver{p.achievementObserver, missionActionObserver{p}, p.eventTasksService, p.mailService}
+	p.observers = []session.ResponseObserver{&itemStackObserver{player: p}, p.achievementObserver, missionActionObserver{p}, p.eventTasksService, p.mailService}
 	if err := p.mailService.AttachStarterGifts(ctx, p.starterGifts); err != nil {
 		return fmt.Errorf("ensure account starter gifts: %w", err)
 	}

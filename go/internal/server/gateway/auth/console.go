@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -20,7 +21,7 @@ func (s *Service) Providers() []string { return s.config.Public().Providers }
 // BeginConsoleLogin starts the same device transaction the game client uses.
 func (s *Service) BeginConsoleLogin(provider, clientIP string) (ConsoleLogin, error) {
 	if !s.limits.allow("create:"+clientIP, s.identity.Now(), time.Minute, 10) {
-		return ConsoleLogin{}, ErrRateLimited
+		return ConsoleLogin{}, fmt.Errorf("%w: console sign-ins from %s exceed 10 per minute", ErrRateLimited, clientIP)
 	}
 	device, err := s.identity.CreateDevice(provider, clientIP)
 	if err != nil {
@@ -48,7 +49,7 @@ func (s *Service) FinishConsoleLogin(id, secret string) (accountID string, compl
 		}
 		return accountID, true, revokeErr
 	default:
-		return "", false, ErrLoginRejected
+		return "", false, fmt.Errorf("%w: device login status %q", ErrLoginRejected, result.Status)
 	}
 }
 

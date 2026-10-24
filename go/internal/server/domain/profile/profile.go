@@ -54,7 +54,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			return nil
 		}
 		if f.Type != 0 || seen[f.Number] {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		seen[f.Number] = true
 		v, _ := binary.Uvarint(f.Value)
@@ -75,14 +75,14 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		return s.handleSettings(ctx, path, request, seq)
 	}
 	if target == 0 || target > math.MaxInt64 {
-		return fail(ErrNotFound)
+		return fail(fmt.Errorf("%w: profile target owner %d", ErrNotFound, target))
 	}
 	p, err := s.source.PublicProfile(ctx, target)
 	if err != nil {
 		return fail(err)
 	}
 	if p.OwnerIndex != target || p.UserID == "" {
-		return fail(ErrNotFound)
+		return fail(fmt.Errorf("%w: profile of owner %d is owner %d with user %q", ErrNotFound, target, p.OwnerIndex, p.UserID))
 	}
 	for _, v := range []uint64{p.TitleID, p.PortraitCostumeID, p.PortraitDesignID, p.AchievementLevel, p.TotalBattlePower, p.MonsterHuntRank, p.LikeCount} {
 		if v > math.MaxInt32 {

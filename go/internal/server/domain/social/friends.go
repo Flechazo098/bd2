@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"time"
 )
@@ -57,7 +58,7 @@ func (f *Friends) AttachPresence(online func(string) bool) { f.online = online }
 
 func NewFriends(store Store, rules gamedata.FriendRules, supporters gamedata.SupporterRules, rooms *gamedata.RoomDesign, now func() time.Time) (*Friends, error) {
 	if store == nil || rules.Friends == 0 || rules.Sent == 0 || rules.Received == 0 || rules.Recommended == 0 || rules.ExpireDays == 0 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: friend rules %+v or store missing", ErrInvalid, rules)
 	}
 	if now == nil {
 		now = time.Now
@@ -67,7 +68,7 @@ func NewFriends(store Store, rules gamedata.FriendRules, supporters gamedata.Sup
 
 func (f *Friends) Publish(ctx context.Context, p FriendProfile) error {
 	if p.OwnerIndex == 0 || p.OwnerIndex > math.MaxInt64 || p.AccountID == "" || p.Snapshot.OwnerIndex != p.OwnerIndex || p.Version == 0 {
-		return ErrInvalid
+		return fmt.Errorf("%w: friend profile owner %d account %q snapshot owner %d version %d", ErrInvalid, p.OwnerIndex, p.AccountID, p.Snapshot.OwnerIndex, p.Version)
 	}
 	return f.store.Update(ctx, func(tx Tx) error {
 		var old FriendProfile
@@ -76,7 +77,7 @@ func (f *Friends) Publish(ctx context.Context, p FriendProfile) error {
 			return err
 		}
 		if found && old.AccountID != p.AccountID {
-			return ErrConflict
+			return fmt.Errorf("%w: owner %d belongs to account %q, not %q", ErrConflict, p.OwnerIndex, old.AccountID, p.AccountID)
 		}
 		if found && old.Version >= p.Version {
 			return nil
@@ -97,7 +98,7 @@ func (f *Friends) Profile(ctx context.Context, owner uint64) (FriendProfile, err
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: friend profile for owner %d", ErrNotFound, owner)
 		}
 		if _, err = load(tx, "friend.like_counts", numberKey(owner), &out.Snapshot.LikeCount); err != nil {
 			return err
@@ -135,7 +136,7 @@ func friendEdges(tx Tx, owner uint64, now int64, days uint64) ([]FriendRelation,
 				return nil, err
 			}
 			if !found {
-				return nil, ErrConflict
+				return nil, fmt.Errorf("%w: friend relation %q is indexed but missing", ErrConflict, row.Value)
 			}
 			if !rel.Accepted && now-rel.CreatedMS >= int64(days)*86400000 {
 				continue
@@ -226,7 +227,7 @@ func friendError(code, kind int, message string) error {
 func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner uint64, path string, raw []byte, contentType uint64) (int, []byte, error) {
 	code, known := friendCodes[path]
 	if !known {
-		return 0, nil, ErrInvalid
+		return 0, nil, fmt.Errorf("%w: unknown friend path %s", ErrInvalid, path)
 	}
 	p, err := parsePacket(raw)
 	if err != nil {
@@ -234,7 +235,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 	}
 	seq, err := p.integer(1)
 	if err != nil || seq == 0 || seq > math.MaxInt32 {
-		return code, nil, ErrInvalid
+		return code, nil, fmt.Errorf("%w: %s sequence %d: %v", ErrInvalid, path, seq, err)
 	}
 	var target uint64
 	if !roomOwns(path) {
@@ -244,7 +245,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 		}
 	}
 	if path == "/FriendInfoList" && target > 1 {
-		return code, nil, ErrInvalid
+		return code, nil, fmt.Errorf("%w: FriendInfoList type %d, want 0 or 1", ErrInvalid, target)
 	}
 	key, err := json.Marshal(identity)
 	if err != nil {
@@ -254,7 +255,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 	id := hex.EncodeToString(receiptKey[:])
 	_, digest := requestIdentity(identity, path, seq, raw)
 	if identity.AccountID == "" || identity.SessionID == "" || identity.RequestID == "" || owner == 0 {
-		return code, nil, ErrInvalid
+		return code, nil, fmt.Errorf("%w: %s identity %+v for owner %d is incomplete", ErrInvalid, path, identity, owner)
 	}
 	var response []byte
 	apply := func(tx Tx) error {
@@ -264,7 +265,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 			return err
 		}
 		if !found || self.AccountID != identity.AccountID {
-			return ErrPermission
+			return fmt.Errorf("%w: owner %d is not account %q (present=%t)", ErrPermission, owner, identity.AccountID, found)
 		}
 		if FriendMutates(path) {
 			var receipt friendReceipt
@@ -274,7 +275,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 			}
 			if found {
 				if receipt.Digest != digest {
-					return ErrConflict
+					return fmt.Errorf("%w: %s sequence %d was replayed with a different body", ErrConflict, path, seq)
 				}
 				response = receipt.Response
 				return nil
@@ -341,7 +342,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 					return err
 				}
 				if !found {
-					return ErrNotFound
+					return fmt.Errorf("%w: friend profile for owner %d", ErrNotFound, otherFriend(rel, owner))
 				}
 				row, err := f.friendWire(tx, profile, rel.CreatedMS)
 				if err != nil {
@@ -506,7 +507,7 @@ func (f *Friends) Execute(ctx context.Context, identity command.Identity, owner 
 				return friendError(code, 1, "Player is not a friend")
 			}
 		default:
-			return ErrInvalid
+			return fmt.Errorf("%w: unknown friend path %s", ErrInvalid, path)
 		}
 		return save(tx, "friend.receipts", id, friendReceipt{Digest: digest, Code: code, Response: response})
 	}

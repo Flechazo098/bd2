@@ -410,7 +410,7 @@ func (s *Service) handle(ctx command.Context, path string, b []byte, period Peri
 				return nil
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			if e := wire.Walk(f.Value, func(wire.Field) error { return nil }); e != nil {
 				return e

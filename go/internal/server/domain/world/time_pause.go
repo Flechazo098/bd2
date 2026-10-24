@@ -123,7 +123,7 @@ func (s *Service) handleTimePause(ctx command.Context, request []byte) (int, []b
 	var seen [2]bool
 	err := wire.Walk(request, func(field wire.Field) error {
 		if field.Number < 1 || field.Number > 2 || field.Type != 0 || seen[field.Number-1] {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: TimePause field %d wire type %d is unknown or repeated", ErrInvalidRequest, field.Number, field.Type)
 		}
 		seen[field.Number-1] = true
 		value, _ := binary.Uvarint(field.Value)
@@ -135,7 +135,7 @@ func (s *Service) handleTimePause(ctx command.Context, request []byte) (int, []b
 		return nil
 	})
 	if err != nil || seq == 0 || seq > math.MaxInt32 || action > 1 || ctx.SessionID == "" {
-		return 100, nil, true, ErrInvalidRequest
+		return 100, nil, true, fmt.Errorf("%w: TimePause sequence %d action %d session %q: %v", ErrInvalidRequest, seq, action, ctx.SessionID, err)
 	}
 	if s.monsterStore == nil {
 		return 100, nil, true, fmt.Errorf("world: field pause persistence unavailable")

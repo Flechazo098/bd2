@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"bd2server/internal/server/gateway/transport"
@@ -29,10 +30,10 @@ func (s *Server) Principal(ctx context.Context, cookie string) (Principal, error
 
 func (s *Server) ValidatePrincipal(ctx context.Context, p Principal) error {
 	if p.AccountID == "" || p.SessionID == "" || p.Generation == 0 {
-		return transport.ErrGameSessionExpired
+		return fmt.Errorf("%w: principal %q session %q generation %d is incomplete", transport.ErrGameSessionExpired, p.AccountID, p.SessionID, p.Generation)
 	}
 	if !s.containsPrincipal(p) {
-		return transport.ErrGameSessionExpired
+		return fmt.Errorf("%w: session %q of %s is not active", transport.ErrGameSessionExpired, p.SessionID, p.AccountID)
 	}
 	owner, release, err := s.router.Acquire(ctx, p.AccountID)
 	if err != nil {
@@ -43,7 +44,7 @@ func (s *Server) ValidatePrincipal(ctx context.Context, p Principal) error {
 	}
 	defer release()
 	if owner.Generation() != p.Generation || !s.containsPrincipal(p) {
-		return transport.ErrGameSessionExpired
+		return fmt.Errorf("%w: session %q of %s generation %d is no longer current (player is at %d)", transport.ErrGameSessionExpired, p.SessionID, p.AccountID, p.Generation, owner.Generation())
 	}
 	return nil
 }

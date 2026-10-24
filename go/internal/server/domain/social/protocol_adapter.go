@@ -87,7 +87,7 @@ type playerReceipt struct {
 
 func NewService(config ServiceConfig) (*Service, error) {
 	if config.Owner == nil || config.Profile == nil || config.Qualify == nil || config.CheckText == nil || config.Spend == nil || config.Grant == nil {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: guild service is missing a dependency", ErrInvalid)
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -98,7 +98,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 	seenSeasons := map[uint64]bool{}
 	for _, season := range config.RaidSeasons {
 		if season.ID == 0 || season.StartsMS <= 0 || season.EndsMS <= season.StartsMS || season.RulesVersion == "" || len(config.Owner.design.Raid.Bosses[season.BossGroupID]) == 0 || seenSeasons[season.ID] {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: raid season %+v is incomplete, duplicated or has no bosses", ErrInvalid, season)
 		}
 		seenSeasons[season.ID] = true
 	}
@@ -110,7 +110,7 @@ type packet map[int][]wire.Field
 func parsePacket(raw []byte) (packet, error) {
 	p := packet{}
 	if len(raw) > 1<<20 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: guild request is %d bytes", ErrInvalid, len(raw))
 	}
 	err := wire.Walk(raw, func(f wire.Field) error { p[f.Number] = append(p[f.Number], f); return nil })
 	return p, err
@@ -121,11 +121,11 @@ func (p packet) integer(field int) (uint64, error) {
 		return 0, nil
 	}
 	if len(v) != 1 || v[0].Type != 0 {
-		return 0, wire.ErrMalformed
+		return 0, fmt.Errorf("%w: field %d needs one varint, got %d values", wire.ErrMalformed, field, len(v))
 	}
 	n, k := binary.Uvarint(v[0].Value)
 	if k <= 0 || n > math.MaxInt64 {
-		return 0, wire.ErrMalformed
+		return 0, fmt.Errorf("%w: field %d varint is out of range", wire.ErrMalformed, field)
 	}
 	return n, nil
 }
@@ -135,7 +135,7 @@ func (p packet) text(field int) (string, error) {
 		return "", nil
 	}
 	if len(v) != 1 || v[0].Type != 2 || !utf8.Valid(v[0].Value) {
-		return "", wire.ErrMalformed
+		return "", fmt.Errorf("%w: field %d needs one UTF-8 string, got %d values", wire.ErrMalformed, field, len(v))
 	}
 	return string(v[0].Value), nil
 }
@@ -146,20 +146,20 @@ func (p packet) integers(field int) ([]uint64, error) {
 		case 0:
 			n, k := binary.Uvarint(f.Value)
 			if k <= 0 {
-				return nil, wire.ErrMalformed
+				return nil, fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, field)
 			}
 			out = append(out, n)
 		case 2:
 			for b := f.Value; len(b) > 0; {
 				n, k := binary.Uvarint(b)
 				if k <= 0 {
-					return nil, wire.ErrMalformed
+					return nil, fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, field)
 				}
 				out = append(out, n)
 				b = b[k:]
 			}
 		default:
-			return nil, wire.ErrMalformed
+			return nil, fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, field, f.Type)
 		}
 	}
 	return out, nil
@@ -187,7 +187,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		return nil, true, e
 	}
 	if identity.AccountID == "" || identity.SessionID == "" {
-		return nil, true, ErrInvalid
+		return nil, true, fmt.Errorf("%w: %s identity lacks account or session", ErrInvalid, path)
 	}
 	p, e := parsePacket(raw)
 	if e != nil {
@@ -195,7 +195,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 	}
 	seq, e := p.integer(1)
 	if e != nil || seq == 0 || seq > math.MaxInt32 {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: %s sequence %d: %v", ErrInvalid, path, seq, e))
 	}
 	id, digest := requestIdentity(identity, path, seq, raw)
 	plan := &Plan{ID: id, Identity: identity, Code: code, RequestDigest: digest}
@@ -210,7 +210,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		prior, e := s.config.Owner.Reservation(ctx, id)
 		if e == nil {
 			if prior.RequestDigest != digest || prior.ActorAccount != identity.AccountID || prior.Status == Cancelled {
-				return fail(ErrConflict)
+				return fail(fmt.Errorf("%w: %s sequence %d replays operation %q with a different request or after cancellation", ErrConflict, path, seq, id))
 			}
 			plan.Reservation = &prior
 			plan.Response, e = s.mutationResponse(ctx, path, prior, p)
@@ -231,7 +231,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		return fail(e)
 	}
 	if profile.AccountID != identity.AccountID || profile.OwnerIndex == 0 {
-		return fail(ErrPermission)
+		return fail(fmt.Errorf("%w: profile of owner %d is account %q, not %q", ErrPermission, profile.OwnerIndex, profile.AccountID, identity.AccountID))
 	}
 	a, e := s.config.Owner.Account(ctx, identity.AccountID)
 	if e != nil {
@@ -333,7 +333,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		op.Kind = map[string]Kind{"/GuildAccept": Accept, "/GuildJoinRefuse": Refuse, "/GuildMemberBan": Ban, "/GuildMemberRoleEdit": ChangeRole}[path]
 		target, e := p.integer(2)
 		if e != nil || target == 0 {
-			return fail(ErrInvalid)
+			return fail(fmt.Errorf("%w: %s target %d: %v", ErrInvalid, path, target, e))
 		}
 		if op.Kind == Accept || op.Kind == Refuse {
 			apps, _, e := s.config.Owner.Applications(ctx, g.ID, identity.AccountID, "", 256)
@@ -355,7 +355,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 			}
 		}
 		if op.TargetAccount == "" {
-			return fail(ErrNotFound)
+			return fail(fmt.Errorf("%w: %s target owner %d is not in guild %d", ErrNotFound, path, target, g.ID))
 		}
 		targetAccount, e := s.config.Owner.Account(ctx, op.TargetAccount)
 		if e != nil {
@@ -403,7 +403,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 		if path == "/GuildSupporterAdd" {
 			op.Kind = SupporterAdd
 			if s.config.Supporter == nil {
-				return fail(ErrIneligible)
+				return fail(fmt.Errorf("%w: guild supporters are not configured", ErrIneligible))
 			}
 			char, e := p.integer(3)
 			if e != nil {
@@ -419,7 +419,7 @@ func (s *Service) Prepare(ctx context.Context, identity command.Identity, path s
 			}
 			op.Supporter.Slot = slot
 			if op.Supporter.CharacterIndex != char || op.Supporter.CostumeIndex != costume {
-				return fail(ErrConflict)
+				return fail(fmt.Errorf("%w: supporter is character %d costume %d, request named %d and %d", ErrConflict, op.Supporter.CharacterIndex, op.Supporter.CostumeIndex, char, costume))
 			}
 		}
 	default:
@@ -447,7 +447,7 @@ func proofFor(r Reservation) CommitProof {
 }
 func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 	if plan == nil || ctx.Identity != plan.Identity {
-		return 0, nil, ErrPermission
+		return 0, nil, fmt.Errorf("%w: guild plan belongs to another identity", ErrPermission)
 	}
 	if plan.Reservation == nil {
 		if plan.local != nil {
@@ -458,7 +458,7 @@ func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 	}
 	r := *plan.Reservation
 	if ctx.State == nil {
-		return plan.Code, nil, ErrInvalid
+		return plan.Code, nil, fmt.Errorf("%w: guild operation %q has no state", ErrInvalid, r.ID)
 	}
 	if raw, found, e := ctx.State.LoadEntry("social", "receipts", r.ID); e != nil {
 		return plan.Code, nil, e
@@ -468,12 +468,12 @@ func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 			return plan.Code, nil, e
 		}
 		if receipt.RequestDigest != plan.RequestDigest || receipt.Proof != proofFor(r) {
-			return plan.Code, nil, ErrConflict
+			return plan.Code, nil, fmt.Errorf("%w: guild operation %q receipt does not match the plan", ErrConflict, r.ID)
 		}
 		return plan.Code, receipt.Response, nil
 	}
 	if r.Status == Confirmed {
-		return plan.Code, nil, ErrConflict
+		return plan.Code, nil, fmt.Errorf("%w: guild operation %q is already confirmed without a receipt", ErrConflict, r.ID)
 	}
 	if len(r.Charges) > 0 {
 		if e := s.config.Spend(ctx, r.ID, r.Charges); e != nil {
@@ -483,7 +483,7 @@ func (s *Service) Apply(ctx command.Context, plan *Plan) (int, []byte, error) {
 	if len(r.Grants) > 0 {
 		if r.Kind == RaidClaim || r.Kind == SupporterClaim {
 			if s.config.RewardBundle == nil {
-				return plan.Code, nil, ErrInvalid
+				return plan.Code, nil, fmt.Errorf("%w: guild operation %q needs a reward bundle builder", ErrInvalid, r.ID)
 			}
 			bundle, e := s.config.RewardBundle(ctx, r.ID, r.Grants)
 			if e != nil {
@@ -531,7 +531,7 @@ func decodeReceipt(raw []byte) (playerReceipt, error) {
 	var r playerReceipt
 	e := json.Unmarshal(raw, &r)
 	if e == nil && (r.Proof.OperationID == "" || r.Proof.ActorAccount == "" || r.Proof.Digest == "" || r.RequestDigest == "") {
-		e = ErrInvalid
+		e = fmt.Errorf("%w: guild receipt lacks its proof or digest", ErrInvalid)
 	}
 	return r, e
 }
@@ -563,7 +563,7 @@ func (s *Service) mutationResponse(ctx context.Context, path string, r Reservati
 		if r.Kind == Acknowledge {
 			return nil, nil
 		}
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: guild operation %v has no view", ErrInvalid, r.Kind)
 	}
 	g := *r.View
 	switch path {
@@ -594,7 +594,7 @@ func (s *Service) read(ctx context.Context, path string, p packet, a Account, g 
 	switch path {
 	case "/GuildNoticeInfo":
 		if g.ID == 0 {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: %s needs a guild", ErrIneligible, path)
 		}
 		return wire.AppendVarint(wire.AppendString(nil, 1, g.Notice), 2, uint64(g.NoticeUpdatedMS)), nil
 	case "/GuildInitInfo":
@@ -610,7 +610,7 @@ func (s *Service) read(ctx context.Context, path string, p packet, a Account, g 
 		return s.search(ctx, path, p, at)
 	case "/GuildSupporterInfoList", "/GuildSupporterInfo":
 		if g.ID == 0 {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: %s needs a guild", ErrIneligible, path)
 		}
 		target, slot := uint64(0), uint64(0)
 		var e error
@@ -650,7 +650,7 @@ func (s *Service) read(ctx context.Context, path string, p packet, a Account, g 
 			}
 		}
 		if target != 0 {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: guild %d has no supporter of owner %d", ErrNotFound, g.ID, target)
 		}
 		return out, nil
 	}
@@ -742,13 +742,13 @@ func (s *Service) search(ctx context.Context, path string, p packet, at int64) (
 		}
 		join, e = p.integer(4)
 		if e != nil || join > uint64(ClosedJoin) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: guild join type %d: %v", ErrInvalid, join, e)
 		}
 	} else if e != nil {
 		return nil, e
 	}
 	if max < min || max > s.config.Owner.design.Guild.MaxMembers {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: guild search member range %d..%d, guilds hold at most %d", ErrInvalid, min, max, s.config.Owner.design.Guild.MaxMembers)
 	}
 	var out []byte
 	count := 0

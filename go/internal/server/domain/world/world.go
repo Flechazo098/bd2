@@ -146,6 +146,7 @@ type Service struct {
 		EnsureForPack(ctx command.Context, _ int) ([]byte, error)
 	}
 	battleActive       func(command.Context) bool
+	activeBattlePack   func(command.Context) int
 	questDifficulties  map[int]map[int]bool
 	startingPackID     int
 	storyRoster        *gamedata.StoryCharacterCatalog
@@ -247,7 +248,7 @@ func (s *Service) questsFor(ctx command.Context, packID int) (map[int]gamedata.Q
 			return story.Quests, true
 		}
 	}
-	return nil, true
+	return s.lifeQuestDesigns(packID), true
 }
 
 // packUnlocked uses installed ContentOpen rules and real account tickets.
@@ -312,6 +313,9 @@ func (s *Service) grantQuestRewards(ctx command.Context, packID, quest int, desi
 				return nil, nil, fmt.Errorf("world: missing quest costume %d", reward.ID)
 			}
 		default:
+			if lifeReward(reward) {
+				continue // grantLifeQuestRewards
+			}
 			if reward.ID == 0 || reward.Count == 0 {
 				return nil, nil, fmt.Errorf("world: invalid item reward type=%d id=%d count=%d", reward.Type, reward.ID, reward.Count)
 			}

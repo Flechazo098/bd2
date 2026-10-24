@@ -58,7 +58,7 @@ func (s *Service) info(ctx command.Context, v *state, p Period) ([]byte, error) 
 	b = wire.AppendVarint(b, 19, v.Season)
 	b = wire.AppendVarint(b, 20, p.Regular)
 	for season, r := range v.Seasons {
-		if s.seasonSettled(season, v.Season) && r.Score > 0 && !r.Claimed {
+		if s.seasonSettled(season, v.Season) && r.Score > 0 && r.Cleared && !r.Claimed {
 			b = wire.AppendVarint(b, 21, 1)
 			break
 		}

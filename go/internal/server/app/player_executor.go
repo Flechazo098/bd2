@@ -24,7 +24,7 @@ type commandReceipt struct {
 
 func (p *playerInstance) Execute(ctx context.Context, request player.Command) (reply player.Reply, result error) {
 	if request.Identity.AccountID != p.accountID || p.assembly == nil {
-		return reply, player.Failure{Cause: player.ErrUnavailable, RecoveryRequired: true}
+		return reply, player.Failure{Cause: fmt.Errorf("%w: player %s cannot run commands for %s (assembled=%t)", player.ErrUnavailable, p.accountID, request.Identity.AccountID, p.assembly != nil), RecoveryRequired: true}
 	}
 	if request.System != nil && request.System.Kind == player.ReconcileSocial {
 		return p.reconcileSocial(ctx, request)
@@ -56,7 +56,7 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 		}
 		if found {
 			if receipt.Digest != hex.EncodeToString(request.Digest[:]) {
-				return reply, player.ErrIdentityConflict
+				return reply, fmt.Errorf("%w: request %q was replayed with a different body", player.ErrIdentityConflict, request.Identity.RequestID)
 			}
 			reply.Responses = receipt.Responses
 			return reply, nil
@@ -144,7 +144,7 @@ func (p *playerInstance) Execute(ctx context.Context, request player.Command) (r
 					p.assembly = nil
 					return reply, player.Failure{Cause: errors.Join(player.ErrIdentityConflict, err), RecoveryRequired: true}
 				}
-				return reply, player.ErrIdentityConflict
+				return reply, fmt.Errorf("%w: request %q was replayed with a different body", player.ErrIdentityConflict, request.Identity.RequestID)
 			}
 			reply.Responses = receipt.Responses
 			finished = true
@@ -331,6 +331,11 @@ func (p *playerAssembly) dispatch(ctx command.Context, path string, request []by
 
 func (p *playerAssembly) beginLogin(ctx command.Context) error {
 	if err := p.worldService.ResumeFieldTime(ctx); err != nil {
+		return err
+	}
+	// Item stacks follow the account's stack override: merged while it is on,
+	// split back to their limits (excess deleted) once it is off.
+	if _, err := p.normalizeItemStacks(ctx); err != nil {
 		return err
 	}
 	for _, observer := range p.observers {

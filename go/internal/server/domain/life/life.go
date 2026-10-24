@@ -26,6 +26,8 @@ type Options struct {
 	Now            func() time.Time
 	Sample         func(uint64) (uint64, error)
 	ValidateAvatar func(command.Context, []byte) error
+	// UnlimitedStacks reports the account's switch that lifts LifeItemTable stack limits.
+	UnlimitedStacks func(command.Context) (bool, error)
 }
 type Service struct {
 	design  *gamedata.LifeCatalog
@@ -36,8 +38,13 @@ type object struct {
 	X, Y                      int32
 	Rotate, Index, ID, Status uint64
 	Start, End                int64
-	Inner                     map[uint64]*object
-	Refund                    []gamedata.Reward
+	// StageStart is when the current growth stage began. The client reads
+	// LifeWorldObjectDBInfo.start_time that way: it adds the durations of the
+	// current and later stages to find when the object is ready. Start stays
+	// the time the growth (or regeneration) began.
+	StageStart int64 `json:",omitempty"`
+	Inner      map[uint64]*object
+	Refund     []gamedata.Reward
 }
 type citizen struct {
 	Index, Slot uint64
@@ -72,6 +79,8 @@ type snapshot struct {
 	Foods             map[uint64]int64
 	Collections       map[uint64]bool
 	ExpansionRefund   []gamedata.Reward
+	// UnlimitedStacks is read from the account's settings on every load.
+	UnlimitedStacks bool `json:"-"`
 }
 type receipt struct {
 	Request, Body []byte
@@ -94,7 +103,7 @@ func Open(ctx command.Context, design *gamedata.LifeCatalog, options Options) (*
 }
 func (s *Service) load(ctx command.Context) (*snapshot, error) {
 	if ctx.State == nil {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: life state requested without an account transaction", ErrInvalid)
 	}
 	raw, found, err := ctx.State.LoadEntry("missions", "life_state", "core")
 	if err != nil {
@@ -111,7 +120,8 @@ func (s *Service) load(ctx command.Context) (*snapshot, error) {
 		if v.World != 0 && s.design.Row("LifeWorldTable", v.World) == nil {
 			return nil, fmt.Errorf("life: saved world missing in design")
 		}
-		return &v, nil
+		v.UnlimitedStacks, err = s.unlimitedStacks(ctx)
+		return &v, err
 	}
 	v := &snapshot{Version: 1, Next: 1, Growth: [6]uint64{1, 0, 1, 0, 1, 0}, Chunks: map[uint64]bool{}, Objects: map[uint64]map[string]*object{}, Counts: map[uint64]uint64{}, ActiveCounts: map[uint64]uint64{}, Layers: map[uint64]uint64{}, Items: map[string]item{}, Tools: map[uint64]uint64{}, Citizens: map[uint64]citizen{}, Helpers: map[uint64]helper{}, Candidates: map[uint64][]helper{}, Purchases: map[string]purchase{}, Foods: map[uint64]int64{}, Collections: map[uint64]bool{}}
 	for group, ids := range s.design.ToolGroups {
@@ -119,7 +129,40 @@ func (s *Service) load(ctx command.Context) (*snapshot, error) {
 			v.Tools[group] = ids[0]
 		}
 	}
-	return v, nil
+	v.UnlimitedStacks, err = s.unlimitedStacks(ctx)
+	return v, err
+}
+
+func (s *Service) unlimitedStacks(ctx command.Context) (bool, error) {
+	if s.options.UnlimitedStacks == nil {
+		return false, nil
+	}
+	return s.options.UnlimitedStacks(ctx)
+}
+
+// TrimItemStacks cuts life items grown past their LifeItemTable limit while
+// the override was on back to that limit and reports whether it cut any. It
+// does nothing while the override is on.
+func (s *Service) TrimItemStacks(ctx command.Context) (bool, error) {
+	v, err := s.load(ctx)
+	if err != nil || v.UnlimitedStacks {
+		return false, err
+	}
+	trimmed := false
+	for key, it := range v.Items {
+		if it.Type != 66 {
+			continue
+		}
+		if limit := num(s.design.Row("LifeItemTable", it.ID), 8); limit > 0 && it.Count > limit {
+			it.Count = limit
+			v.Items[key] = it
+			trimmed = true
+		}
+	}
+	if !trimmed {
+		return false, nil
+	}
+	return true, save(ctx, v)
 }
 func save(ctx command.Context, v *snapshot, changes ...stateio.EntryMutation) error {
 	raw, err := json.Marshal(v)
@@ -183,7 +226,11 @@ func sorted[V any](m map[uint64]V) []uint64 {
 	return ids
 }
 func objectWire(o *object) []byte {
-	b := row(1, uint64(int64(o.X)), 2, uint64(int64(o.Y)), 3, o.Rotate, 4, o.Index, 6, o.ID, 7, o.Status, 8, uint64(o.Start*1000), 9, uint64(o.End*1000))
+	start := o.Start
+	if o.Status > 0 && o.StageStart > 0 {
+		start = o.StageStart
+	}
+	b := row(1, uint64(int64(o.X)), 2, uint64(int64(o.Y)), 3, o.Rotate, 4, o.Index, 6, o.ID, 7, o.Status, 8, uint64(start*1000), 9, uint64(o.End*1000))
 	for _, id := range sorted(o.Inner) {
 		b = wire.AppendBytes(b, 10, objectWire(o.Inner[id]))
 	}
@@ -295,7 +342,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 	}
 	seq := num(request, 1)
 	if seq == 0 || seq > math.MaxInt32 || ctx.SessionID == "" {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: %s request sequence %d (session %q)", ErrInvalid, path, seq, ctx.SessionID))
 	}
 	v, err := s.load(ctx)
 	if err != nil {
@@ -329,12 +376,12 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		}
 		if seq == r.Sequence {
 			if !bytes.Equal(r.Request, request) {
-				return fail(ErrInvalid)
+				return fail(fmt.Errorf("%w: %s sequence %d was already used by a different request", ErrInvalid, path, seq))
 			}
 			return code, r.Body, true, nil
 		}
 		if seq < r.Sequence {
-			return fail(ErrInvalid)
+			return fail(fmt.Errorf("%w: %s sequence %d is older than the settled sequence %d", ErrInvalid, path, seq, r.Sequence))
 		}
 	}
 	if err := s.refresh(v); err != nil {
@@ -356,7 +403,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 
 func (s *Service) Apply(ctx command.Context, key string, costs, gains []gamedata.Reward) ([]byte, error) {
 	if key == "" {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: life economy grant has no identity", ErrInvalid)
 	}
 	request, err := json.Marshal(struct{ Costs, Gains []gamedata.Reward }{costs, gains})
 	if err != nil {
@@ -372,7 +419,7 @@ func (s *Service) Apply(ctx command.Context, key string, costs, gains []gamedata
 			return nil, err
 		}
 		if !bytes.Equal(r.Request, request) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: life economy grant %q was already settled with different rewards", ErrInvalid, key)
 		}
 		return r.Body, nil
 	}
@@ -436,7 +483,7 @@ func (s *Service) Balance(ctx command.Context, typ, id uint64) (uint64, error) {
 func (s *Service) spend(v *snapshot, costs []gamedata.Reward) error {
 	for _, r := range costs {
 		if r.Count == 0 || r.Count > math.MaxInt32 {
-			return ErrInvalid
+			return fmt.Errorf("%w: cost %d:%d count %d, want 1..%d", ErrInvalid, r.Type, r.ID, r.Count, math.MaxInt32)
 		}
 		switch r.Type {
 		case 64:
@@ -453,7 +500,7 @@ func (s *Service) spend(v *snapshot, costs []gamedata.Reward) error {
 			it.Count -= r.Count
 			v.Items[key] = it
 		default:
-			return ErrInvalid
+			return fmt.Errorf("%w: cost type %d (id %d) is not a life currency or item", ErrInvalid, r.Type, r.ID)
 		}
 	}
 	return nil
@@ -462,19 +509,19 @@ func (s *Service) grant(v *snapshot, gains []gamedata.Reward) ([]byte, error) {
 	var b []byte
 	for _, r := range gains {
 		if r.Count == 0 || r.Count > math.MaxInt32 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: reward %d:%d count %d, want 1..%d", ErrInvalid, r.Type, r.ID, r.Count, math.MaxInt32)
 		}
 		it := item{Type: r.Type, ID: r.ID}
 		switch r.Type {
 		case 64:
 			if v.Coin > math.MaxInt32-r.Count {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: %d life coins plus %d overflows", ErrInvalid, v.Coin, r.Count)
 			}
 			v.Coin += r.Count
 			it.Count = v.Coin
 		case 65, 66:
 			if r.Type == 66 && s.design.Row("LifeItemTable", r.ID) == nil || r.Type == 65 && s.design.Row("LifeObjectGroupTable", r.ID) == nil {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: reward %d:%d has no design row", ErrInvalid, r.Type, r.ID)
 			}
 			key := itemKey(r.Type, r.ID)
 			it = v.Items[key]
@@ -483,18 +530,18 @@ func (s *Service) grant(v *snapshot, gains []gamedata.Reward) ([]byte, error) {
 				v.Next++
 			}
 			if it.Count > math.MaxInt32-r.Count {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: life item %d:%d count %d plus %d overflows", ErrInvalid, r.Type, r.ID, it.Count, r.Count)
 			}
 			it.Count += r.Count
 			if r.Type == 66 {
 				limit := num(s.design.Row("LifeItemTable", r.ID), 8)
-				if limit > 0 && it.Count > limit {
+				if limit > 0 && it.Count > limit && !v.UnlimitedStacks {
 					return nil, fmt.Errorf("life: item stack full")
 				}
 			}
 			v.Items[key] = it
 		default:
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: reward type %d (id %d) is not a life currency or item", ErrInvalid, r.Type, r.ID)
 		}
 		for _, id := range s.design.CollectionsByItem[[2]uint64{r.Type, r.ID}] {
 			v.Collections[id] = true

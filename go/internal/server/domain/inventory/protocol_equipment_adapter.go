@@ -685,7 +685,7 @@ func decodeRepeatedUint64(field wire.Field) ([]uint64, error) {
 	case 0:
 		value, count := binary.Uvarint(field.Value)
 		if count <= 0 {
-			return nil, wire.ErrMalformed
+			return nil, fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, field.Number)
 		}
 		return []uint64{value}, nil
 	case 2:
@@ -693,14 +693,14 @@ func decodeRepeatedUint64(field wire.Field) ([]uint64, error) {
 		for offset := 0; offset < len(field.Value); {
 			value, count := binary.Uvarint(field.Value[offset:])
 			if count <= 0 {
-				return nil, wire.ErrMalformed
+				return nil, fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, field.Number)
 			}
 			result = append(result, value)
 			offset += count
 		}
 		return result, nil
 	default:
-		return nil, wire.ErrMalformed
+		return nil, fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, field.Number, field.Type)
 	}
 }
 

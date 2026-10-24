@@ -328,12 +328,22 @@ func TestLifeWireTimersMatchNativeMilliseconds(t *testing.T) {
 	if got := scalar(t, building, 9); got != uint64(g.now.Add(5*time.Second).UnixMilli()) {
 		t.Fatalf("native construction deadline: got %d", got)
 	}
-	g.d.Tables["LifeItemTable"][[3]uint64{502}] = proto(5, 502, 1, 601, 8, 1000)
+	g.d.Tables["LifeItemTable"][[3]uint64{502}] = proto(5, 502, 1, 601, 8, 1000, 9, 3)
 	g.d.Tables["LifeBuffTable"][[3]uint64{601}] = proto(8, 601, 1, 60)
 	if _, err := g.s.Apply(g.ctx, "food", nil, []gamedata.Reward{{Type: 66, ID: 502, Count: 1}}); err != nil {
 		t.Fatal(err)
 	}
-	food := g.call("/LifeEatFood", child(nil, 2, proto(2, 502, 3, 66, 4, 1)))
+	items, err := g.s.Items(g.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foodIndex uint64
+	for _, it := range items {
+		if scalar(t, it, 2) == 502 {
+			foodIndex = scalar(t, it, 1)
+		}
+	}
+	food := g.call("/LifeEatFood", child(nil, 2, proto(1, foodIndex, 2, 502, 3, 66, 4, 1)))
 	if got := scalar(t, nested(t, food, 1), 2); got != uint64(g.now.Add(time.Minute).UnixMilli()) {
 		t.Fatalf("native food deadline: got %d", got)
 	}

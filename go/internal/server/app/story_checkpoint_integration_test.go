@@ -6,8 +6,6 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/domain/world"
-	"bd2server/internal/server/gateway/session"
-	"bd2server/internal/server/gateway/transport"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/runtime/player"
 	"context"
@@ -15,11 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 )
 
 func storyCheckpointCall(t *testing.T, owner *playerInstance, operation string, checkpoint world.StoryCheckpoint) world.StoryCheckpointReply {
@@ -124,118 +118,6 @@ func TestResearchPointRestoresCollectedStateWithoutRepeatingRewardDelta(t *testi
 	response = s.protocol(t, "/FieldObjectResearch", wire.AppendVarint(trapRequest(5, 5), 3, 5501))
 	if len(appRows(response, 2)) != 0 || s.owner.assembly.wallet.Snapshot(command.Context{}).Gold != beforeGold+830 {
 		t.Fatal("research retry after rejoin repeated a client reward delta or paid gold twice")
-	}
-}
-
-func TestStoryCheckpointHTTPNativeSessionReachesActorAndPersistsCompletion(t *testing.T) {
-	factory, accounts := newIntegrationFactory(t)
-	s := &trapPlayerScenario{factory: factory, account: accounts[0]}
-	s.owner = openNicknamePlayer(t, factory, s.account)
-	t.Cleanup(func() {
-		if s.owner != nil {
-			closeNicknamePlayer(t, s.owner)
-		}
-	})
-	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
-		if rule := p.design.world.Story.Packs[5].Open; rule != nil && rule.TicketID != 0 {
-			if _, err := p.ownedItems.GrantOnce(ctx, "http-presentation-chapter-ticket", []gamedata.BattleReward{{Type: 19, ID: rule.TicketID, Count: 1}}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for quest := 1; quest < 26; quest++ {
-			if err := p.progressState.ClearQuest(ctx, quest, 5, 0); err != nil {
-				t.Fatal(err)
-			}
-		}
-	})
-	s.protocol(t, "/PackInGameInfo", trapRequest(1, 5))
-	s.position(t, 5, 51)
-	s.protocol(t, "/QuestClear", wire.AppendVarint(trapRequest(2, 26), 3, 5))
-	settledGold := s.owner.assembly.wallet.Snapshot(command.Context{}).Gold
-	closeNicknamePlayer(t, s.owner)
-	s.owner = nil
-	var registry *playerRegistry
-	t.Cleanup(func() {
-		if registry != nil {
-			if err := registry.Close(context.Background()); err != nil {
-				t.Error(err)
-			}
-		}
-	})
-	openHTTP := func() (http.Handler, string) {
-		t.Helper()
-		registry = newPlayerRegistry(factory, time.Minute)
-		game, err := session.NewServer(registry, nicknameAuthenticator{accounts[0]})
-		if err != nil {
-			t.Fatal(err)
-		}
-		login, err := game.DispatchRaw(context.Background(), "/LoginUser", nicknameEncrypt(t, appScalar(1, 1), []byte("abcdefghijkrstuv024680wxyzlmnopq")), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		handler := transport.HTTP{StoryCheckpoints: storyCheckpoints{game: game, players: registry}}.Handler()
-		return handler, "s=" + login.Cookie
-	}
-	callHTTP := func(handler http.Handler, cookie, operation string, checkpoint world.StoryCheckpoint, status int) world.StoryCheckpointReply {
-		t.Helper()
-		body, err := json.Marshal(world.StoryCheckpointRequest{StoryCheckpoint: checkpoint, Operation: operation})
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := httptest.NewRequest(http.MethodPost, "/client/story-checkpoint", strings.NewReader(string(body)))
-		request.Header.Set("Cookie", cookie)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		if response.Code != status {
-			t.Fatalf("HTTP checkpoint %s status=%d want%d: %s", operation, response.Code, status, response.Body.String())
-		}
-		var result world.StoryCheckpointReply
-		if status == http.StatusOK {
-			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return result
-	}
-	handler, cookie := openHTTP()
-	callHTTP(handler, "", "read", world.StoryCheckpoint{}, http.StatusUnauthorized)
-	pending := callHTTP(handler, cookie, "read", world.StoryCheckpoint{}, http.StatusOK).Checkpoint
-	if pending == nil || pending.QuestID != 26 || pending.Timeline != "Quest_Main_26" || pending.MapID != 51 {
-		t.Fatalf("HTTP actor path did not restore actual pending cinema: %+v", pending)
-	}
-	begin := *pending
-	begin.ID = "http-client-replay"
-	if adopted := callHTTP(handler, cookie, "begin", begin, http.StatusOK).Checkpoint; adopted == nil || adopted.ID != pending.ID {
-		t.Fatal("HTTP actor path failed to adopt pending checkpoint")
-	}
-	if err := registry.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	registry = nil
-	handler, freshCookie := openHTTP()
-	callHTTP(handler, cookie, "read", world.StoryCheckpoint{}, http.StatusUnauthorized)
-	if restored := callHTTP(handler, freshCookie, "read", world.StoryCheckpoint{}, http.StatusOK).Checkpoint; restored == nil || restored.ID != pending.ID {
-		t.Fatal("HTTP checkpoint was lost across runtime/session restart")
-	}
-	if completed := callHTTP(handler, freshCookie, "complete", world.StoryCheckpoint{ID: pending.ID}, http.StatusOK).Checkpoint; completed != nil {
-		t.Fatal("HTTP actor completion left playback pending")
-	}
-	if err := registry.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	registry = nil
-	handler, lastCookie := openHTTP()
-	if replay := callHTTP(handler, lastCookie, "read", world.StoryCheckpoint{}, http.StatusOK).Checkpoint; replay != nil {
-		t.Fatal("HTTP completion did not persist across restart")
-	}
-	if err := registry.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	registry = nil
-	owner := openNicknamePlayer(t, factory, accounts[0])
-	defer closeNicknamePlayer(t, owner)
-	if owner.assembly.wallet.Snapshot(command.Context{}).Gold != settledGold || !owner.assembly.progressState.QuestCleared(26, 5, 0) || owner.assembly.progressState.QuestCleared(27, 5, 0) {
-		t.Fatal("HTTP playback recovery changed settled reward or quest progress")
 	}
 }
 

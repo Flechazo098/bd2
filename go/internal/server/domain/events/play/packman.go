@@ -56,7 +56,7 @@ func (s *Service) validatePackManRecord(a Run, progress []byte, stageClear bool)
 		switch f.Number {
 		case 7:
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			typ, x, y, t := num(f.Value, 1), num(f.Value, 2), num(f.Value, 3), num(f.Value, 4)
 			if typ < 1 || typ > 3 || t > elapsed*1000+1000 || t < lastCoinTime {
@@ -71,7 +71,7 @@ func (s *Service) validatePackManRecord(a Run, progress []byte, stageClear bool)
 			lastCoinTime = t
 		case 8:
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			row, e := s.design.Row("PackManItemTable", 4, num(f.Value, 2))
 			if e != nil {

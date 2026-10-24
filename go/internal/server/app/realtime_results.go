@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -115,7 +116,7 @@ func (r *roomResults) persist(ctx context.Context, final room.FinalResult) error
 				return err
 			}
 			if saved.ScoreMilliseconds != final.ScoreMilliseconds || saved.Clear != final.Clear || saved.View.Kind != final.View.Kind {
-				return outbox.ErrConflict
+				return fmt.Errorf("%w: room %q result was saved with different values", outbox.ErrConflict, final.View.InstanceID)
 			}
 			final = saved
 			return nil
@@ -144,25 +145,25 @@ func (r *roomResults) persist(ctx context.Context, final room.FinalResult) error
 
 func (r *roomResults) StartRun(ctx command.Context, family string) (eventplay.NativeRun, error) {
 	if r.rooms == nil {
-		return eventplay.NativeRun{}, eventplay.ErrNoRoom
+		return eventplay.NativeRun{}, fmt.Errorf("%w: realtime rooms are not running", eventplay.ErrNoRoom)
 	}
 	kind := room.Kind(strings.ToLower(family))
 	view, err := r.rooms.SnapshotForSession(ctx.AccountID, ctx.SessionID, kind)
 	if err != nil {
 		if errors.Is(err, room.ErrNotFound) {
-			return eventplay.NativeRun{}, eventplay.ErrNoRoom
+			return eventplay.NativeRun{}, fmt.Errorf("%w: %v", eventplay.ErrNoRoom, err)
 		}
 		return eventplay.NativeRun{}, err
 	}
 	if view.RoomState != 2 && (kind != room.Fishing || view.RoomState != 1) {
-		return eventplay.NativeRun{}, room.ErrNotReady
+		return eventplay.NativeRun{}, fmt.Errorf("%w: %s room %q is in state %d", room.ErrNotReady, kind, view.InstanceID, view.RoomState)
 	}
 	for _, member := range view.Members {
 		if member.Principal.AccountID != ctx.AccountID || member.Principal.SessionID != ctx.SessionID {
 			continue
 		}
 		if (!member.Ready && kind != room.Fishing) || member.NativeGUID == "" {
-			return eventplay.NativeRun{}, room.ErrNotReady
+			return eventplay.NativeRun{}, fmt.Errorf("%w: %s is not ready in %s room %q", room.ErrNotReady, ctx.AccountID, kind, view.InstanceID)
 		}
 		started := int64(0)
 		if !view.StartTime.IsZero() {
@@ -170,20 +171,20 @@ func (r *roomResults) StartRun(ctx command.Context, family string) (eventplay.Na
 		}
 		return eventplay.NativeRun{InstanceID: view.InstanceID, GUID: member.NativeGUID, Family: family, SessionID: ctx.SessionID, UID: uint64(view.Selection.EventScheduleID), Group: uint64(view.Selection.GroupID), Stage: uint64(view.Selection.StageID), Monster: uint64(view.Selection.MonsterID), Started: started, MapID: uint64(view.Selection.MapID), BoatLevel: uint64(view.Selection.BoatLevel), Host: member.Principal.OwnerIndex == view.HostOwnerIndex, Members: uint64(len(view.Members))}, nil
 	}
-	return eventplay.NativeRun{}, room.ErrUnauthorized
+	return eventplay.NativeRun{}, fmt.Errorf("%w: session %s of %s is not in %s room %q", room.ErrUnauthorized, ctx.SessionID, ctx.AccountID, kind, view.InstanceID)
 }
 
 func (r *roomResults) Result(ctx command.Context, run eventplay.NativeRun) (eventplay.NativeResult, error) {
 	if _, pending := r.pending.Load(run.InstanceID); pending {
-		return eventplay.NativeResult{}, eventplay.ErrRoomNotFinished
+		return eventplay.NativeResult{}, fmt.Errorf("%w: room %q result is pending", eventplay.ErrRoomNotFinished, run.InstanceID)
 	}
 	if r.rooms != nil {
 		view, err := r.rooms.SnapshotForSession(ctx.AccountID, run.SessionID, room.Kind(strings.ToLower(run.Family)))
 		if err == nil && view.InstanceID == run.InstanceID {
-			return eventplay.NativeResult{}, eventplay.ErrRoomNotFinished
+			return eventplay.NativeResult{}, fmt.Errorf("%w: room %q is still open", eventplay.ErrRoomNotFinished, run.InstanceID)
 		}
 	}
-	return eventplay.NativeResult{}, eventplay.ErrRoomAbandoned
+	return eventplay.NativeResult{}, fmt.Errorf("%w: room %q has no result", eventplay.ErrRoomAbandoned, run.InstanceID)
 }
 
 func (r *roomResults) Consume(ctx context.Context, event outbox.Pending) error {
@@ -237,7 +238,7 @@ func (r *roomResults) claim(ctx context.Context, event outbox.Pending, run event
 			}
 			var own eventplay.NativeRun
 			if !accepted || json.Unmarshal(saved, &own) != nil || own != run {
-				return room.ErrUnauthorized
+				return fmt.Errorf("%w: fishing room %q has no accepted run of %s matching the claim", room.ErrUnauthorized, run.InstanceID, envelope.Source)
 			}
 			key := run.InstanceID + ":" + roomMemberKey(envelope.Source)
 			if err := tx.Put("room.claims", key, []byte(run.GUID)); err != nil {
@@ -255,7 +256,7 @@ func (r *roomResults) claim(ctx context.Context, event outbox.Pending, run event
 			memberFound = memberFound || member.Principal.AccountID == envelope.Source && member.NativeGUID == run.GUID
 		}
 		if !memberFound {
-			return room.ErrUnauthorized
+			return fmt.Errorf("%w: room %q result has no member %s with guid %q", room.ErrUnauthorized, run.InstanceID, envelope.Source, run.GUID)
 		}
 		if err := tx.Put("room.claims", run.InstanceID+":"+roomMemberKey(envelope.Source), []byte(run.GUID)); err != nil {
 			return err

@@ -72,7 +72,7 @@ func canonicalChatUser(tx *shared.Tx, p room.Principal, language uint64) ([]byte
 		return nil, 0, err
 	}
 	if found && published.AccountID != p.AccountID {
-		return nil, 0, room.ErrUnauthorized
+		return nil, 0, fmt.Errorf("%w: owner %d belongs to %q, chat principal is %q", room.ErrUnauthorized, p.OwnerIndex, published.AccountID, p.AccountID)
 	}
 	var account social.Account
 	if _, err := chatJSON(tx, "social.accounts", p.AccountID, &account); err != nil {
@@ -87,7 +87,7 @@ func canonicalChatUser(tx *shared.Tx, p room.Principal, language uint64) ([]byte
 		}
 		member, ok := guild.Members[p.AccountID]
 		if !found || !ok || member.OwnerIndex != uint64(p.OwnerIndex) {
-			return nil, 0, room.ErrUnauthorized
+			return nil, 0, fmt.Errorf("%w: %s is not owner %d in guild %d (present=%t)", room.ErrUnauthorized, p.AccountID, p.OwnerIndex, guildID, found)
 		}
 		if published.AccountID == "" {
 			published.Snapshot.UserID = member.Name
@@ -123,14 +123,14 @@ func (r *realtimeChat) Handle(ctx context.Context, c room.Connection, f room.Fra
 		return r.rooms.Handle(ctx, c, f)
 	}
 	if f.UDP || f.OwnerIndex != 0 && f.OwnerIndex != c.Principal.OwnerIndex {
-		return nil, room.ErrUnauthorized
+		return nil, fmt.Errorf("%w: chat frame %d names owner %d over udp=%t, connection owner is %d", room.ErrUnauthorized, f.Type, f.OwnerIndex, f.UDP, c.Principal.OwnerIndex)
 	}
 	if err := wire.Walk(f.Payload, func(wire.Field) error { return nil }); err != nil {
 		return nil, err
 	}
 	clientUser := chatBytes(chatBytes(f.Payload, 1), 3)
 	if owner := chatScalar(clientUser, 1); owner != 0 && owner != uint64(c.Principal.OwnerIndex) {
-		return nil, room.ErrUnauthorized
+		return nil, fmt.Errorf("%w: chat user names owner %d, connection owner is %d", room.ErrUnauthorized, owner, c.Principal.OwnerIndex)
 	}
 	if f.Type == 10 || f.Type == 18 {
 		return nil, nil
@@ -288,20 +288,20 @@ func (r *realtimeChat) Handle(ctx context.Context, c room.Connection, f room.Fra
 }
 func (r *realtimeChat) validateGuildPayload(ctx context.Context, c room.Connection, raw []byte) error {
 	if len(raw) > 128000 || c.Principal.OwnerIndex <= 0 {
-		return room.ErrUnauthorized
+		return fmt.Errorf("%w: guild chat payload of %d bytes from owner %d", room.ErrUnauthorized, len(raw), c.Principal.OwnerIndex)
 	}
 	typ := chatScalar(raw, 2)
 	if typ > 2 {
-		return wire.ErrMalformed
+		return fmt.Errorf("%w: guild chat type %d, want 0..2", wire.ErrMalformed, typ)
 	}
 	for field := 3; field <= 6; field++ {
 		if field != 3+int(typ) && len(chatBytes(raw, field)) != 0 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: guild chat type %d carries field %d", wire.ErrMalformed, typ, field)
 		}
 	}
 	value := chatBytes(raw, 3+int(typ))
 	if len(value) == 0 {
-		return wire.ErrMalformed
+		return fmt.Errorf("%w: guild chat type %d has no value", wire.ErrMalformed, typ)
 	}
 	if err := wire.Walk(value, func(wire.Field) error { return nil }); err != nil {
 		return err
@@ -309,28 +309,28 @@ func (r *realtimeChat) validateGuildPayload(ctx context.Context, c room.Connecti
 	if typ == 0 {
 		text := string(chatBytes(value, 1))
 		if !utf8.ValidString(text) || strings.TrimSpace(text) == "" || utf8.RuneCountInString(text) > 100 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: guild chat text is empty, not UTF-8 or longer than 100 characters", wire.ErrMalformed)
 		}
 		return r.rules.CheckRoomText(ctx, c.Principal, text)
 	}
 	if typ == 1 && !r.emojis[chatScalar(value, 1)] {
-		return wire.ErrMalformed
+		return fmt.Errorf("%w: guild chat emoji %d is unknown", wire.ErrMalformed, chatScalar(value, 1))
 	}
 	if typ == 2 {
 		name := string(chatBytes(value, 2))
 		if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 100 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: guild chat name is not UTF-8 or longer than 100 characters", wire.ErrMalformed)
 		}
 		if err := wire.Walk(value, func(f wire.Field) error {
 			if f.Number == 1 {
 				_, characterPresent, characterErr := wire.Bytes(f.Value, 1)
 				if f.Type != 2 || !characterPresent || characterErr != nil {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: guild chat share lacks its character", wire.ErrMalformed)
 				}
 				return wire.Walk(f.Value, func(nested wire.Field) error {
 					if nested.Number >= 1 && nested.Number <= 4 {
 						if nested.Type != 2 {
-							return wire.ErrMalformed
+							return fmt.Errorf("%w: guild chat share field %d has wire type %d", wire.ErrMalformed, nested.Number, nested.Type)
 						}
 						return wire.Walk(nested.Value, func(wire.Field) error { return nil })
 					}
@@ -362,7 +362,7 @@ func (s *sharedRuntime) consumeChatPolicy(ctx context.Context, source string, ra
 		return err
 	}
 	if p.AccountID != source || p.OwnerIndex == 0 || p.Version == 0 {
-		return social.ErrPermission
+		return fmt.Errorf("%w: chat policy of %q (owner %d, version %d) arrived from %q", social.ErrPermission, p.AccountID, p.OwnerIndex, p.Version, source)
 	}
 	return s.store.Update(ctx, func(tx *shared.Tx) error {
 		old, err := chatPolicy(tx, source)

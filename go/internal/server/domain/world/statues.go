@@ -80,11 +80,11 @@ func (s *Service) handleStatueReward(ctx command.Context, req []byte) (int, []by
 	fail := func(err error) (int, []byte, bool, error) { return 202, nil, true, err }
 	seq, found, err := wire.Varint(req, 1)
 	if err != nil || !found || seq == 0 || seq > 0x7fffffff {
-		return fail(ErrInvalidRequest)
+		return fail(fmt.Errorf("%w: statue reward sequence %d (present=%t): %v", ErrInvalidRequest, seq, found, err))
 	}
 	id, found, err := wire.Varint(req, 2)
 	if err != nil || !found || id == 0 {
-		return fail(ErrInvalidRequest)
+		return fail(fmt.Errorf("%w: statue reward id %d (present=%t): %v", ErrInvalidRequest, id, found, err))
 	}
 	if s.statues == nil || s.researchEconomy == nil {
 		return fail(fmt.Errorf("world: statue runtime unavailable"))

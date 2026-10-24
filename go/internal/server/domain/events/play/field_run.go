@@ -229,7 +229,7 @@ func (s *Service) fieldRunGame(ctx command.Context, path string, req []byte, st 
 		err = wire.Walk(bundle, func(field wire.Field) error {
 			if field.Number == 1 {
 				if field.Type != 2 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, field.Number, field.Type)
 				}
 				out = wire.AppendBytes(out, 2, field.Value)
 			}

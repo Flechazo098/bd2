@@ -2,6 +2,7 @@ package social
 
 import (
 	"bytes"
+	"fmt"
 
 	"bd2server/internal/server/protocol/wire"
 )
@@ -67,7 +68,7 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 			kind = 2
 		}
 		if len(p[3]) != 1 || p[3][0].Type != 2 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: %s needs one preset message", ErrInvalid, path)
 		}
 		row, err := parsePacket(p[3][0].Value)
 		if err != nil {
@@ -80,7 +81,7 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 		preset.Slot = slot
 		preset.Name, err = row.text(2)
 		if err != nil || !validRoomName(preset.Name) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: room preset name %q: %v", ErrInvalid, preset.Name, err)
 		}
 		var source FriendProfile
 		found, err := load(tx, "friend.directory", numberKey(sourceOwner), &source)
@@ -88,7 +89,7 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 			return nil, err
 		}
 		if !found {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: friend profile for owner %d", ErrNotFound, sourceOwner)
 		}
 		var state personalRooms
 		found, err = load(tx, "friend.rooms", numberKey(sourceOwner), &state)
@@ -96,28 +97,28 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 			return nil, err
 		}
 		if !found {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: rooms of owner %d", ErrNotFound, sourceOwner)
 		}
 		visible, err := roomVisible(tx, self, source, state)
 		if err != nil {
 			return nil, err
 		}
 		if !visible {
-			return nil, ErrPermission
+			return nil, fmt.Errorf("%w: rooms of owner %d are not visible to owner %d", ErrPermission, sourceOwner, self.OwnerIndex)
 		}
 		if err := f.validateRoomPreset(source, self.OwnerIndex == sourceOwner, state, row, &preset); err != nil {
 			return nil, err
 		}
 	}
 	if err != nil || kind < 1 || kind > 2 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: room preset kind %d, want 1 or 2: %v", ErrInvalid, kind, err)
 	}
 	limit := f.rooms.MyPresets
 	if kind == 2 {
 		limit = f.rooms.UserPresets
 	}
 	if slot == 0 || slot > limit {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: room preset slot %d, want 1..%d", ErrInvalid, slot, limit)
 	}
 	key := roomPresetKey(self.OwnerIndex, kind, slot)
 	if path == "/MyRoomPresetDelete" {
@@ -129,11 +130,11 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 			return nil, err
 		}
 		if !found {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: room preset kind %d slot %d", ErrNotFound, kind, slot)
 		}
 		preset.Name, err = p.text(4)
 		if err != nil || !validRoomName(preset.Name) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: room preset name %q: %v", ErrInvalid, preset.Name, err)
 		}
 	}
 	return nil, save(tx, "friend.room_presets", key, preset)
@@ -141,13 +142,13 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 
 func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state personalRooms, row packet, result *roomPreset) error {
 	if len(row[4]) == 0 || len(row[4]) > len(f.rooms.Limits) || len(row[3]) > 256 {
-		return ErrInvalid
+		return fmt.Errorf("%w: room preset carries %d rooms and %d items", ErrInvalid, len(row[4]), len(row[3]))
 	}
 	items := map[uint64]uint64{}
 	seen := map[uint64]bool{}
 	for _, field := range row[3] {
 		if field.Type != 2 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset item has wire type %d, want a message", ErrInvalid, field.Type)
 		}
 		item, err := parsePacket(field.Value)
 		if err != nil {
@@ -163,7 +164,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 		}
 		count, err := item.integer(4)
 		if err != nil || count == 0 || seen[index] {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset item %d count %d is zero or repeated: %v", ErrInvalid, index, count, err)
 		}
 		seen[index] = true
 		owned := false
@@ -174,7 +175,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			}
 		}
 		if !owned {
-			return ErrPermission
+			return fmt.Errorf("%w: owner %d lacks %d of room item %d at index %d", ErrPermission, source.OwnerIndex, count, id, index)
 		}
 		items[index] = count
 		out := wire.AppendVarint(nil, 1, index)
@@ -186,7 +187,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 	used := map[uint64]uint64{}
 	for _, field := range row[4] {
 		if field.Type != 2 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset room has wire type %d, want a message", ErrInvalid, field.Type)
 		}
 		room, err := parsePacket(field.Value)
 		if err != nil {
@@ -194,20 +195,20 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 		}
 		id, err := room.integer(1)
 		if err != nil || roomIDs[id] {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset room %d is repeated: %v", ErrInvalid, id, err)
 		}
 		roomIDs[id] = true
 		limits, found := f.rooms.Limits[id]
 		if !found {
-			return ErrInvalid
+			return fmt.Errorf("%w: room %d has no limits", ErrInvalid, id)
 		}
 		hidden, err := room.integer(4)
 		if err != nil || hidden > 1 {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset hidden flag %d: %v", ErrInvalid, hidden, err)
 		}
 		name, err := room.text(2)
 		if err != nil || !validRoomName(name) {
-			return ErrInvalid
+			return fmt.Errorf("%w: room preset name %q: %v", ErrInvalid, name, err)
 		}
 		v := personalRoom{ID: id, Name: name, Hidden: hidden == 1}
 		var original *personalRoom
@@ -219,14 +220,14 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			}
 		}
 		if hidden == 0 && (original == nil || original.Hidden && !own) {
-			return ErrPermission
+			return fmt.Errorf("%w: room %d is not visible in the source rooms", ErrPermission, id)
 		}
 		if hidden == 1 && len(room[3]) > 0 {
-			return ErrInvalid
+			return fmt.Errorf("%w: hidden room %d carries %d placements", ErrInvalid, id, len(room[3]))
 		}
 		for _, position := range room[3] {
 			if position.Type != 2 {
-				return ErrInvalid
+				return fmt.Errorf("%w: room %d placement has wire type %d, want a message", ErrInvalid, id, position.Type)
 			}
 			p, err := parsePacket(position.Value)
 			if err != nil {
@@ -234,7 +235,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			}
 			typ, err := p.integer(2)
 			if err != nil || typ != 0 {
-				return ErrInvalid
+				return fmt.Errorf("%w: room preset placement type %d, want 0: %v", ErrInvalid, typ, err)
 			}
 			index, err := p.integer(1)
 			if err != nil {
@@ -242,7 +243,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			}
 			used[index]++
 			if used[index] > items[index] {
-				return ErrPermission
+				return fmt.Errorf("%w: room preset places item %d %d times, %d saved", ErrPermission, index, used[index], items[index])
 			}
 			if !own {
 				matched := false
@@ -253,7 +254,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 					}
 				}
 				if !matched {
-					return ErrPermission
+					return fmt.Errorf("%w: room %d placement is not in the source room", ErrPermission, id)
 				}
 			}
 			v.Positions = append(v.Positions, append([]byte(nil), position.Value...))
@@ -272,7 +273,7 @@ func (f *Friends) presetText(p packet, path string) ([]string, error) {
 		return []string{name}, err
 	}
 	if len(p[3]) != 1 || p[3][0].Type != 2 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: %s needs one preset message", ErrInvalid, path)
 	}
 	row, err := parsePacket(p[3][0].Value)
 	if err != nil {
@@ -285,7 +286,7 @@ func (f *Friends) presetText(p packet, path string) ([]string, error) {
 	texts := []string{name}
 	for _, room := range row[4] {
 		if room.Type != 2 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: room preset room has wire type %d, want a message", ErrInvalid, room.Type)
 		}
 		p, err := parsePacket(room.Value)
 		if err != nil {

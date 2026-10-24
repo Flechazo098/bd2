@@ -45,7 +45,7 @@ func roomCommerceLoad(ctx command.Context) (roomCommerceState, error) {
 		return s, err
 	}
 	if s.Bought == nil {
-		return s, ErrInvalid
+		return s, fmt.Errorf("%w: saved room purchases lack their counts", ErrInvalid)
 	}
 	return s, nil
 }
@@ -65,7 +65,7 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 		return code, nil, true, friendError(code, 9003, err.Error())
 	}
 	if s.Design == nil || s.Rooms == nil || s.Economy == nil {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: room commerce is not configured", ErrInvalid))
 	}
 	p, err := parsePacket(raw)
 	if err != nil {
@@ -73,7 +73,7 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 	}
 	seq, err := p.integer(1)
 	if err != nil || seq == 0 {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: %s sequence %d: %v", ErrInvalid, path, seq, err))
 	}
 	state, err := roomCommerceLoad(ctx)
 	if err != nil {
@@ -106,7 +106,7 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 			return code, nil, true, err
 		}
 		if r.Digest != hex.EncodeToString(digest[:]) {
-			return fail(ErrConflict)
+			return fail(fmt.Errorf("%w: %s sequence %d was replayed with a different body", ErrConflict, path, seq))
 		}
 		return code, r.Body, true, nil
 	}
@@ -121,7 +121,7 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 		owned := append(slices.Clone(s.Rooms.Defaults), state.Rooms...)
 		slices.Sort(owned)
 		if !known || slices.Contains(owned, room) || len(owned) == 0 || room != owned[len(owned)-1]+1 {
-			return fail(ErrIneligible)
+			return fail(fmt.Errorf("%w: room %d is not the next expansion after %v (priced=%t)", ErrIneligible, room, owned, known))
 		}
 		if err := roomPayment(p, 3, []gamedata.Reward{cost}, 1, &costs); err != nil {
 			return fail(err)
@@ -134,11 +134,11 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 			rows = nil
 			idField, countField, paymentField = 1, 2, 3
 			if len(p[2]) == 0 || len(p[2]) > 256 {
-				return fail(ErrInvalid)
+				return fail(fmt.Errorf("%w: room purchase carries %d products, want 1..256", ErrInvalid, len(p[2])))
 			}
 			for _, f := range p[2] {
 				if f.Type != 2 {
-					return fail(ErrInvalid)
+					return fail(fmt.Errorf("%w: room product has wire type %d, want a message", ErrInvalid, f.Type))
 				}
 				row, err := parsePacket(f.Value)
 				if err != nil {
@@ -159,14 +159,14 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 			}
 			product, known := s.Design.Products[id]
 			if !known || n == 0 || seen[id] || n > product.Limit || state.Bought[id] > product.Limit-n {
-				return fail(ErrCapacity)
+				return fail(fmt.Errorf("%w: room product %d count %d exceeds its limit (known=%t, repeated=%t, bought %d)", ErrCapacity, id, n, known, seen[id], state.Bought[id]))
 			}
 			seen[id] = true
 			if err := roomPayment(row, paymentField, product.Prices, n, &costs); err != nil {
 				return fail(err)
 			}
 			if product.Reward.Count > math.MaxInt32/n {
-				return fail(ErrCapacity)
+				return fail(fmt.Errorf("%w: room product %d reward count overflows at %d", ErrCapacity, id, n))
 			}
 			reward := product.Reward
 			reward.Count *= n
@@ -216,7 +216,7 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 
 func roomPayment(p packet, field int, prices []gamedata.Reward, count uint64, out *[]gamedata.Reward) error {
 	if len(p[field]) != 1 || p[field][0].Type != 2 {
-		return ErrInvalid
+		return fmt.Errorf("%w: room payment field %d needs one message", ErrInvalid, field)
 	}
 	item, err := parsePacket(p[field][0].Value)
 	if err != nil {
@@ -236,7 +236,7 @@ func roomPayment(p packet, field int, prices []gamedata.Reward, count uint64, ou
 	}
 	for _, price := range prices {
 		if price.Count > math.MaxInt32/count {
-			return ErrCapacity
+			return fmt.Errorf("%w: room price overflows at count %d", ErrCapacity, count)
 		}
 		if price.Type == typ && price.ID == id && price.Count*count == n {
 			price.Count = n
@@ -244,5 +244,5 @@ func roomPayment(p packet, field int, prices []gamedata.Reward, count uint64, ou
 			return nil
 		}
 	}
-	return ErrInvalid
+	return fmt.Errorf("%w: room payment type %d id %d count %d matches no price", ErrInvalid, typ, id, n)
 }

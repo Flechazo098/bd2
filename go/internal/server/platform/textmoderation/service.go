@@ -44,7 +44,7 @@ func (s *Service) Check(ctx context.Context, scope, accountID, text string) erro
 	}
 	key := matchingKey(text)
 	if s.matcher.matches(scope, key) {
-		return ErrRejected
+		return fmt.Errorf("%w: %s text matches a local block term", ErrRejected, scope)
 	}
 	if s.remote == nil || !s.remote.scopes[scope] {
 		return nil
@@ -61,7 +61,7 @@ func (s *Service) Check(ctx context.Context, scope, accountID, text string) erro
 	if s.remote.failurePolicy == "allow" {
 		return nil
 	}
-	return ErrUnavailable
+	return fmt.Errorf("%w: %s moderation failed: %v", ErrUnavailable, scope, err)
 }
 
 func (s *Service) Close() error {

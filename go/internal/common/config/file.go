@@ -165,10 +165,10 @@ func (f *File[T]) Update(expected Revision, change func(*T) error) (Snapshot[T],
 		return current, err
 	}
 	if expected != "" && current.Revision != expected {
-		return current, ErrConflict
+		return current, fmt.Errorf("%w: revision is %q, change expected %q", ErrConflict, current.Revision, expected)
 	}
 	if !current.Writable {
-		return current, ErrReadOnly
+		return current, fmt.Errorf("%w: configuration file is not writable", ErrReadOnly)
 	}
 	value := current.Value
 	if err := change(&value); err != nil {

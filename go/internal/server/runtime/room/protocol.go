@@ -179,20 +179,20 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 		return nil, err
 	}
 	if len(f.Payload) > 1280000 || f.Type < 1 || f.Type > 224 || f.OwnerIndex != 0 && f.OwnerIndex != c.Principal.OwnerIndex {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: frame %d of %d bytes names owner %d, connection owner is %d", ErrUnauthorized, f.Type, len(f.Payload), f.OwnerIndex, c.Principal.OwnerIndex)
 	}
 	if err := wire.Walk(f.Payload, func(wire.Field) error { return nil }); err != nil {
 		return nil, err
 	}
 	if h := bytesField(f.Payload, 1); h != nil {
 		if owner := number(bytesField(h, 3), 1); owner != 0 && owner != c.Principal.OwnerIndex {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: frame %d header names owner %d, connection owner is %d", ErrUnauthorized, f.Type, owner, c.Principal.OwnerIndex)
 		}
 	}
 	f.Payload = append([]byte(nil), f.Payload...)
 	if c.Channel == Matching && f.Type == 172 {
 		if len(f.Payload) > 4096 {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: matching message is %d bytes, at most 4096", ErrUnauthorized, len(f.Payload))
 		}
 		text := stringField(bytesField(f.Payload, 2), 4)
 		if text != "" && !m.allowRoomText(ctx, c.Principal, text) {
@@ -223,7 +223,7 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 	}
 	if c.Channel == Matching {
 		if f.UDP {
-			return nil, ErrUnauthorized
+			return nil, fmt.Errorf("%w: matching frame %d cannot arrive over UDP", ErrUnauthorized, f.Type)
 		}
 		if f.Type == 78 {
 			b := integer(nil, 1, int64(m.config.Region))
@@ -241,7 +241,7 @@ func (m *Manager) Handle(ctx context.Context, c Connection, f Frame) (deliveries
 	}
 	o := m.lookup(c.Principal, c.Channel)
 	if o == nil {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, c.Principal.OwnerIndex, c.Channel)
 	}
 	_, d, e := o.submit(ctx, int64(len(f.Payload)), func(s *state) (any, []Delivery, error) { d, e := s.handleGame(c, f); return nil, d, e })
 	return d, e
@@ -288,7 +288,7 @@ func matchKind(typ int32) Kind {
 func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]Delivery, error) {
 	k := matchKind(f.Type)
 	if k == "" {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: matching frame %d names no room kind", ErrUnauthorized, f.Type)
 	}
 	if f.Type == 76 || f.Type == 82 || f.Type == 149 || f.Type == 93 || f.Type == 153 || f.Type == 90 || f.Type == 155 {
 		return m.match(ctx, c, f, k)
@@ -300,11 +300,11 @@ func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]
 		m.mu.Unlock()
 	}
 	if o == nil {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, c.Principal.OwnerIndex, k)
 	}
 	_, d, e := o.submit(ctx, int64(len(f.Payload)), func(s *state) (any, []Delivery, error) {
 		if s.selection.Kind != k {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: matching frame %d is for a %s room, room is %s", ErrUnauthorized, f.Type, k, s.selection.Kind)
 		}
 		if f.Type == 215 || f.Type == 217 || f.Type == 219 {
 			var b []byte
@@ -323,25 +323,25 @@ func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]
 		}
 		u := s.find(c.Principal)
 		if u == nil {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: owner %d is not in the %s room", ErrUnauthorized, c.Principal.OwnerIndex, k)
 		}
 		u.matchingConnection = c.ID
 		switch f.Type {
 		case 80, 102, 169:
 			if s.roomState > 1 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: matching frame %d in room state %d", ErrNotReady, f.Type, s.roomState)
 			}
 			return nil, []Delivery{s.reply(c, f, f.Type+1, s.matchingResponse(f.Type), 0)}, nil
 		case 64, 87, 151:
 			if s.roomState != 0 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: matching frame %d in room state %d, want 0", ErrNotReady, f.Type, s.roomState)
 			}
 			d := []Delivery{s.reply(c, f, f.Type+1, nil, 0)}
 			d = append(d, s.leaveMatching(u)...)
 			return nil, d, nil
 		case 74, 104, 157:
 			if s.host != c.Principal.OwnerIndex || s.roomState != 0 {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: matching frame %d from owner %d needs the host %d in room state 0 (state %d)", ErrUnauthorized, f.Type, c.Principal.OwnerIndex, s.host, s.roomState)
 			}
 			d := []Delivery{s.reply(c, f, f.Type+1, nil, 0)}
 			if k == Action {
@@ -353,7 +353,7 @@ func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]
 			return nil, append(d, s.complete()...), nil
 		case 95:
 			if s.roomState != 0 || s.matchingType != 1 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: matching frame 95 needs an automatic room in state 0 (type %d, state %d)", ErrNotReady, s.matchingType, s.roomState)
 			}
 			s.matchingType = 2
 			m.mu.Lock()
@@ -366,7 +366,7 @@ func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]
 			return nil, []Delivery{s.reply(c, f, 96, nil, 0)}, nil
 		case 97:
 			if s.roomState != 0 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: matching frame 97 in room state %d, want 0", ErrNotReady, s.roomState)
 			}
 			selection := s.selection
 			selection.CharacterID = number(f.Payload, 2)
@@ -395,13 +395,13 @@ func (m *Manager) handleMatching(ctx context.Context, c Connection, f Frame) ([]
 		case 172:
 			// Matching messages contain the official enum/text payload, bounded here.
 			if len(f.Payload) > 4096 {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: matching message is %d bytes, at most 4096", ErrUnauthorized, len(f.Payload))
 			}
 			b := removeField(f.Payload, 1)
 			d := []Delivery{s.reply(c, f, 173, nil, 0)}
 			return nil, append(d, s.broadcast(174, b, true, u.principal.OwnerIndex)...), nil
 		}
-		return nil, nil, ErrUnauthorized
+		return nil, nil, fmt.Errorf("%w: unknown matching frame %d", ErrUnauthorized, f.Type)
 	})
 	return d, e
 }
@@ -412,7 +412,7 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 		return nil, err
 	}
 	if number(profile.UserInfo, 1) != c.Principal.OwnerIndex {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: room profile names owner %d, connection owner is %d", ErrUnauthorized, number(profile.UserInfo, 1), c.Principal.OwnerIndex)
 	}
 	selection := Selection{Kind: k, BoatLevel: profile.BoatLevel, BoatSkinID: profile.BoatSkinID}
 	mode := int64(2)
@@ -453,12 +453,12 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 	if f.Type == 93 {
 		o := m.lookup(c.Principal, k)
 		if o == nil {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, c.Principal.OwnerIndex, k)
 		}
 		v, d, e := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 			u := s.find(c.Principal)
 			if u == nil || s.roomState != 0 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: owner %d is not in a waiting %s room (state %d)", ErrNotReady, c.Principal.OwnerIndex, k, s.roomState)
 			}
 			s.matchingType = 1
 			u.matchingConnection = c.ID
@@ -498,7 +498,7 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 		return d, nil
 	}
 	if mode < 1 || mode > 4 {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: room join mode %d, want 1..4", ErrUnauthorized, mode)
 	}
 	selection.Solo = mode == 4
 	if previous := m.lookup(c.Principal, k); previous != nil {
@@ -520,10 +520,10 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 		_, d, e := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 			u := s.find(c.Principal)
 			if u == nil {
-				return nil, nil, ErrUnauthorized
+				return nil, nil, fmt.Errorf("%w: owner %d is not in the %s room", ErrUnauthorized, c.Principal.OwnerIndex, k)
 			}
 			if s.roomState != 0 {
-				return nil, nil, ErrNotReady
+				return nil, nil, fmt.Errorf("%w: room is in state %d, want 0", ErrNotReady, s.roomState)
 			}
 			u.matchingConnection = c.ID
 			return nil, []Delivery{s.reply(c, f, f.Type+1, s.matchingBody(), 0)}, nil
@@ -535,7 +535,7 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 		o := m.rooms[code]
 		m.mu.Unlock()
 		if o == nil {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: room code %q", ErrNotFound, code)
 		}
 		return m.join(ctx, o, c, f, profile, selection)
 	}
@@ -582,15 +582,15 @@ func (m *Manager) match(ctx context.Context, c Connection, f Frame, k Kind) ([]D
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil, ErrClosed
+		return nil, fmt.Errorf("%w: room manager is closed", ErrClosed)
 	}
 	if len(m.rooms) >= m.config.MaxRooms {
 		m.mu.Unlock()
-		return nil, ErrMailboxFull
+		return nil, fmt.Errorf("%w: %d rooms are open, at most %d", ErrMailboxFull, len(m.rooms), m.config.MaxRooms)
 	}
 	if m.memberships[memberKey(c.Principal, k)] != "" {
 		m.mu.Unlock()
-		return nil, ErrNotReady
+		return nil, fmt.Errorf("%w: owner %d is already in a %s room", ErrNotReady, c.Principal.OwnerIndex, k)
 	}
 	for m.rooms[o.code] != nil {
 		o.code = randomID()[:8]
@@ -617,14 +617,14 @@ func (m *Manager) join(ctx context.Context, o *owner, c Connection, f Frame, pro
 func (m *Manager) joinTransferred(ctx context.Context, o *owner, c Connection, f Frame, profile Profile, selection Selection, previousCode string) ([]Delivery, error) {
 	_, d, e := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		if s.selection.Kind != selection.Kind || s.roomState != 0 || len(s.members) >= s.selection.Capacity {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: %s room in state %d with %d of %d members cannot take owner %d", ErrNotReady, s.selection.Kind, s.roomState, len(s.members), s.selection.Capacity, c.Principal.OwnerIndex)
 		}
 		auto := f.Type == 76 && number(f.Payload, 3) == 1 || f.Type == 153
 		if auto && (s.matchingType != 1 || (selection.MapID != 0 && s.selection.MapID != selection.MapID) || s.selection.EventScheduleID != selection.EventScheduleID) {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: automatic join by owner %d does not match the room's map or event", ErrNotReady, c.Principal.OwnerIndex)
 		}
 		if s.byOwner(c.Principal.OwnerIndex) != nil {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: owner %d is already in the room", ErrUnauthorized, c.Principal.OwnerIndex)
 		}
 		candidate := s.selection
 		candidate.CharacterID = selection.CharacterID
@@ -646,7 +646,7 @@ func (m *Manager) joinTransferred(ctx context.Context, o *owner, c Connection, f
 		key := memberKey(c.Principal, s.selection.Kind)
 		if m.closed || m.memberships[key] != previousCode {
 			m.mu.Unlock()
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: owner %d membership moved from room %q (closed=%t)", ErrNotReady, c.Principal.OwnerIndex, previousCode, m.closed)
 		}
 		m.memberships[key] = o.code
 		m.mu.Unlock()

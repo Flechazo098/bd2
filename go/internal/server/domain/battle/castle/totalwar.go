@@ -183,17 +183,17 @@ func (s *Service) validateSavedTotalWarBattle(ctx command.Context, v *state, blu
 			if f.Type == 0 {
 				id, k := binary.Uvarint(f.Value)
 				if k <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				return consume(id)
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 			}
 			for p := f.Value; len(p) > 0; {
 				id, k := binary.Uvarint(p)
 				if k <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				if e := consume(id); e != nil {
 					return e

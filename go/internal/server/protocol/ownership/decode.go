@@ -29,7 +29,7 @@ func decodeFields(raw []byte, scalars map[int]*uint64, repeated map[int]*[]uint6
 			for rest := f.Value; len(rest) != 0; {
 				value, size := binary.Uvarint(rest)
 				if size <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: repeated field %d varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				*target = append(*target, value)
 				rest = rest[size:]
@@ -48,7 +48,7 @@ func decodePictorial(f wire.Field, number int, target *[]Pictorial) error {
 		return nil
 	}
 	if f.Type != 2 {
-		return wire.ErrMalformed
+		return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 	}
 	var value Pictorial
 	if err := decodeFields(f.Value, map[int]*uint64{1: &value.ID, 2: &value.GroupID}, nil, nil); err != nil {
@@ -76,7 +76,7 @@ func DecodeEquipment(raw []byte) (Equipment, error) {
 	err := decodeFields(raw, map[int]*uint64{1: &e.InvenIndex, 2: &e.UseChar, 3: &e.KeepFlag, 4: &e.LockFlag, 7: &e.SortID}, nil, func(f wire.Field) error {
 		if f.Number == 8 {
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			e.Mark = string(f.Value)
 			return nil
@@ -85,7 +85,7 @@ func DecodeEquipment(raw []byte) (Equipment, error) {
 			return nil
 		}
 		if f.Type != 2 || baseSeen {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: equipment base field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		baseSeen = true
 		return decodeFields(f.Value, map[int]*uint64{1: &e.ID, 2: &e.Level}, map[int]*[]uint64{6: &e.Rank}, func(option wire.Field) error {
@@ -93,7 +93,7 @@ func DecodeEquipment(raw []byte) (Equipment, error) {
 				return nil
 			}
 			if option.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: equipment option field %d has wire type %d, want a message", wire.ErrMalformed, option.Number, option.Type)
 			}
 			var value EquipmentOption
 			if err := decodeFields(option.Value, map[int]*uint64{1: &value.GroupID, 2: &value.ID}, nil, nil); err != nil {
@@ -106,7 +106,7 @@ func DecodeEquipment(raw []byte) (Equipment, error) {
 				e.SubOption = append(e.SubOption, value)
 			case 5:
 				if e.PrivateOption != nil {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: equipment has more than one private option", wire.ErrMalformed)
 				}
 				e.PrivateOption = &value
 			}

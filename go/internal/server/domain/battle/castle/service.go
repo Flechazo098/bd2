@@ -23,6 +23,7 @@ type Participant struct{ CharacterIndex, CostumeIndex, CharacterID, CostumeID ui
 type Service struct {
 	rankOwner          uint64
 	rankSource         RankSource
+	rankProfile        func(command.Context) (RankProfile, error)
 	settled            func(uint64) bool
 	design             *gamedata.CastleRewardDesign
 	now                func() time.Time
@@ -147,7 +148,7 @@ func msgs(raw []byte, num int) ([][]byte, error) {
 	e := wire.Walk(raw, func(f wire.Field) error {
 		if f.Number == num {
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			out = append(out, bytes.Clone(f.Value))
 		}
@@ -268,7 +269,9 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		}
 		slices.Sort(ids)
 		for _, id := range ids {
-			out = wire.AppendBytes(out, 1, floorWire(v.Floors[id]))
+			if v.Floors[id].Highest != 0 {
+				out = wire.AppendBytes(out, 1, floorWire(v.Floors[id]))
+			}
 		}
 		out = wire.AppendBytes(out, 2, totalWire(v))
 		out = wire.AppendVarint(out, 3, season)
@@ -308,7 +311,16 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 		}
 	case "/EvilCastleEnter":
 		if n(req, 2) != s.design.PackID {
-			return code, nil, true, fmt.Errorf("castle: castle season/pack unavailable")
+			return code, nil, true, fmt.Errorf("castle: EvilCastleEnter names pack %d, castle pack is %d", n(req, 2), s.design.PackID)
+		}
+		// Entering the castle pack batches EvilCastleEnter(stage 0) before
+		// PackInGameInfo, so clearing the run cannot wait for the pack entry.
+		id := n(req, 3)
+		if id == 0 {
+			if v.Encounter == nil {
+				v.Run = nil
+			}
+			break
 		}
 		if s.currentPack == nil {
 			return code, nil, true, fmt.Errorf("castle: current pack unavailable")
@@ -318,13 +330,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			return code, nil, true, e
 		}
 		if uint64(pack) != s.design.PackID {
-			return code, nil, true, fmt.Errorf("castle: not in castle pack")
-		}
-		id := n(req, 3)
-		if id == 0 {
-			v.Run = nil
-			v.Encounter = nil
-			break
+			return code, nil, true, fmt.Errorf("castle: floor %d needs the castle pack %d, player is in pack %d", id, s.design.PackID, pack)
 		}
 		if !active {
 			return code, nil, true, fmt.Errorf("castle: castle season unavailable")
@@ -340,15 +346,7 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			}
 			v.Run = &run{Floor: id, Retry: retry, Cleared: map[uint64]bool{}}
 		}
-		for monster, deck := range f.Monsters {
-			if v.Run.Cleared[monster] {
-				continue
-			}
-			item := wire.AppendVarint(nil, 1, monster)
-			item = wire.AppendVarint(item, 2, deck)
-			item = wire.AppendVarint(item, 6, 1)
-			out = wire.AppendBytes(out, 1, item)
-		}
+		out = s.remainingMonsters(v.Run, 1)
 	case "/EvilCastlePing":
 		if v.Run == nil || v.Run.Floor != n(req, 2) {
 			return code, nil, true, fmt.Errorf("castle: no active floor")
@@ -415,16 +413,16 @@ func (s *Service) floorRewards(ctx command.Context, v *state, id uint64) ([]byte
 		}
 		slices.Sort(ids)
 	}
-	for _, id := range ids {
-		f, ok := v.Floors[id]
-		d, defined := s.design.Floors[id]
+	for _, floorID := range ids {
+		f, ok := v.Floors[floorID]
+		d, defined := s.design.Floors[floorID]
 		if !ok || !defined || f.Highest == 0 || f.Rewarded {
-			if len(ids) == 1 {
-				return nil, fmt.Errorf("castle: floor reward unavailable")
+			if id != 0 {
+				return nil, fmt.Errorf("castle: floor reward unavailable: floor=%d exists=%t defined=%t cleared=%t rewarded=%t", floorID, ok, defined, f.Highest != 0, f.Rewarded)
 			}
 			continue
 		}
-		bundle, e := s.grant(ctx, fmt.Sprintf("castle:floor:%d:%d", v.Season, id), d.Rewards)
+		bundle, e := s.grant(ctx, fmt.Sprintf("castle:floor:%d:%d", v.Season, floorID), d.Rewards)
 		if e != nil {
 			return nil, e
 		}
@@ -439,7 +437,7 @@ func (s *Service) floorRewards(ctx command.Context, v *state, id uint64) ([]byte
 			return nil, e
 		}
 		f.Rewarded = true
-		v.Floors[id] = f
+		v.Floors[floorID] = f
 		granted = true
 	}
 	if !granted {

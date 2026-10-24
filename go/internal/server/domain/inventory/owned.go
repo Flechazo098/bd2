@@ -24,6 +24,7 @@ type Inventory struct {
 	randomBoxes           *gamedata.RandomBoxDesign
 	prestigeIllustrations map[uint64]uint64
 	itemStacks            *gamedata.ItemStackDesign
+	unlimitedStacks       func(command.Context) (bool, error)
 	owned                 ownedSnapshot
 	persisted             ownedSnapshot
 	capacity              *InventorySlots

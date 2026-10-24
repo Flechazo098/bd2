@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -60,7 +61,7 @@ func (s *Store) transact(ctx context.Context, writable bool, apply func(*Tx) err
 	case s.capacity <- struct{}{}:
 		defer func() { <-s.capacity }()
 	default:
-		return ErrBusy
+		return fmt.Errorf("%w: all %d shared store slots are in use", ErrBusy, cap(s.capacity))
 	}
 	tx, err := s.repository.BeginCommand(ctx)
 	if err != nil {
@@ -143,7 +144,7 @@ func (s *Store) Consume(ctx context.Context, event outbox.Pending, apply func(*T
 		}
 		if found {
 			if !bytes.Equal(prior, digest) {
-				return outbox.ErrConflict
+				return fmt.Errorf("%w: inbox event %q was delivered with a different body", outbox.ErrConflict, key)
 			}
 			return nil
 		}

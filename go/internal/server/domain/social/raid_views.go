@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 
@@ -150,7 +151,7 @@ func (s *Service) raidRead(ctx context.Context, path string, p packet, a Account
 			}
 		}
 		if account == "" {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: owner %d has no raid standing in season %d", ErrNotFound, targetOwner, targetSeason)
 		}
 		rows, e := s.config.Owner.MemberHistory(ctx, g.ID, targetSeason, account)
 		if e != nil {
@@ -162,7 +163,7 @@ func (s *Service) raidRead(ctx context.Context, path string, p packet, a Account
 		}
 		return out, nil
 	}
-	return nil, ErrInvalid
+	return nil, fmt.Errorf("%w: unknown raid view %s", ErrInvalid, path)
 }
 func memberRank(m MemberBest, rank uint64, g Guild) []byte {
 	out := wire.AppendVarint(nil, 1, rank)

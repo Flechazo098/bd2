@@ -2,6 +2,8 @@ package social
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"time"
@@ -15,7 +17,7 @@ func (f *Friends) searchRooms(tx Tx, self FriendProfile, path string, p packet, 
 		var err error
 		typ, err = p.integer(2)
 		if err != nil || typ > 1 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: room search type %d: %v", ErrInvalid, typ, err)
 		}
 	}
 	selfAccount, err := readAccount(tx, self.AccountID)
@@ -72,7 +74,7 @@ func (f *Friends) searchRooms(tx Tx, self FriendProfile, path string, p packet, 
 				continue
 			}
 			info, err := f.roomUser(tx, self, other, state, true)
-			if err == ErrPermission {
+			if errors.Is(err, ErrPermission) {
 				continue
 			}
 			if err != nil {

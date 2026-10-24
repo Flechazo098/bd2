@@ -18,11 +18,11 @@ func (s *Service) citizen(ctx command.Context, v *snapshot, path string, req []b
 		return nil, err
 	}
 	if o.Status != 1 || num(s.design.Row("LifeBuildingObjectTable", o.ID), 2) != 102 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: object %d is not a finished house (status %d, function %d)", ErrInvalid, o.ID, o.Status, num(s.design.Row("LifeBuildingObjectTable", o.ID), 2))
 	}
 	avatar := msg(msg(req, 3), 3)
 	if len(avatar) == 0 || num(avatar, 1) == 0 || s.options.ValidateAvatar == nil {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: citizen request has no avatar or no avatar validator", ErrInvalid)
 	}
 	if err := s.options.ValidateAvatar(ctx, avatar); err != nil {
 		return nil, err
@@ -30,12 +30,12 @@ func (s *Service) citizen(ctx command.Context, v *snapshot, path string, req []b
 	c, exists := v.Citizens[o.Index]
 	if path == "/LifeCitizenRecruit" {
 		if exists {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: house slot %d already has citizen %d", ErrInvalid, o.Index, c.Index)
 		}
 		c = citizen{Index: v.Next, Slot: o.Index}
 		v.Next++
 	} else if !exists {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: house slot %d has no citizen to edit", ErrInvalid, o.Index)
 	}
 	c.Avatar = append([]byte(nil), avatar...)
 	v.Citizens[o.Index] = c
@@ -47,7 +47,7 @@ func (s *Service) building(v *snapshot, raw []byte) (*object, error) {
 		return nil, err
 	}
 	if o.Status != 1 || num(s.design.Row("LifeBuildingObjectTable", o.ID), 2) != 101 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: object %d is not a finished worker house (status %d, function %d)", ErrInvalid, o.ID, o.Status, num(s.design.Row("LifeBuildingObjectTable", o.ID), 2))
 	}
 	return o, nil
 }
@@ -61,11 +61,11 @@ func (s *Service) chooseSpecies() (helper, error) {
 	}
 	slices.Sort(ids)
 	if total == 0 {
-		return helper{}, ErrInvalid
+		return helper{}, fmt.Errorf("%w: LifeHelperSpeciesTable has no weighted species", ErrInvalid)
 	}
 	pick, err := s.options.Sample(total)
 	if err != nil || pick >= total {
-		return helper{}, ErrInvalid
+		return helper{}, fmt.Errorf("%w: helper species sample %d of %d failed: %v", ErrInvalid, pick, total, err)
 	}
 	var d []byte
 	for _, id := range ids {
@@ -78,7 +78,7 @@ func (s *Service) chooseSpecies() (helper, error) {
 		pick -= w
 	}
 	if d == nil {
-		return helper{}, ErrInvalid
+		return helper{}, fmt.Errorf("%w: helper species sample %d of %d matched no species", ErrInvalid, pick, total)
 	}
 	avatar := row(1, num(d, 1), 3, num(d, 7), 6, num(d, 5))
 	for _, field := range []struct{ design, proto int }{{6, 2}, {8, 5}} {
@@ -88,7 +88,7 @@ func (s *Service) chooseSpecies() (helper, error) {
 		}
 		n, err := s.options.Sample(uint64(len(values)))
 		if err != nil || n >= uint64(len(values)) {
-			return helper{}, ErrInvalid
+			return helper{}, fmt.Errorf("%w: helper look sample %d of %d failed: %v", ErrInvalid, n, len(values), err)
 		}
 		avatar = wire.AppendVarint(avatar, field.proto, values[n])
 	}
@@ -111,7 +111,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 	}
 	if path == "/LifeHelperGachaDelete" {
 		if len(v.Candidates[o.Index]) == 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: worker house slot %d has no helper candidates to delete", ErrInvalid, o.Index)
 		}
 		delete(v.Candidates, o.Index)
 		return nil, nil
@@ -126,7 +126,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 		}
 		count := num(s.design.Row("LifeDefaultTable", 0), 18)
 		if count == 0 || count > 32 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: LifeDefaultTable helper candidate count is %d, want 1..32", ErrInvalid, count)
 		}
 		var b []byte
 		for range count {
@@ -156,7 +156,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 			}
 		}
 		if selected == nil {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: helper candidate %d is not offered at slot %d", ErrInvalid, id, o.Index)
 		}
 		occupied := uint64(0)
 		for index, h := range v.Helpers {
@@ -165,7 +165,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 			}
 		}
 		if (occupied != 0) != (num(req, 2) != 0) {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: slot %d occupied by helper %d but replacement flag is %d", ErrInvalid, o.Index, occupied, num(req, 2))
 		}
 		price := num(s.design.Row("LifeDefaultTable", 0), 19)
 		if price > 0 {
@@ -194,10 +194,10 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 	}
 	h, found := v.Helpers[id]
 	if !found {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: no helper %d", ErrInvalid, id)
 	}
 	if path != "/LifeHelperReconnect" && h.Slot != o.Index {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: helper %d is at slot %d, not %d", ErrInvalid, id, h.Slot, o.Index)
 	}
 	switch path {
 	case "/LifeHelperFire":
@@ -210,18 +210,18 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 	case "/LifeHelperReName":
 		name := string(msg(input, 4))
 		if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 24 || strings.TrimSpace(name) == "" {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: helper name %q is empty, invalid UTF-8 or over 24 characters", ErrInvalid, name)
 		}
 		h.Name = name
 		v.Helpers[id] = h
 		return nil, nil
 	case "/LifeHelperReconnect":
 		if h.Slot != 0 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: helper %d is still connected to slot %d", ErrInvalid, id, h.Slot)
 		}
 		for _, other := range v.Helpers {
 			if other.Slot == o.Index {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: slot %d already has helper %d", ErrInvalid, o.Index, other.Index)
 			}
 		}
 		h.Slot = o.Index
@@ -233,7 +233,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 	case "/LifeHelperAssign":
 		work, workID := num(input, 6), num(input, 7)
 		if work > 3 || work < 3 && workID != 0 || work == 3 && s.design.Row("LifeCropSeedTable", workID) == nil {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: helper work %d with target %d is not assignable", ErrInvalid, work, workID)
 		}
 		bundle, err := s.settle(v, false)
 		if err != nil {
@@ -249,7 +249,7 @@ func (s *Service) helpers(v *snapshot, path string, req []byte) ([]byte, error) 
 		v.Helpers[id] = h
 		return wire.AppendBytes(appendConnectedHelpers(nil, 1, v), 2, bundle), nil
 	}
-	return nil, ErrInvalid
+	return nil, fmt.Errorf("%w: unknown helper operation %s", ErrInvalid, path)
 }
 
 func appendConnectedHelpers(b []byte, field int, v *snapshot) []byte {
@@ -280,7 +280,7 @@ func (s *Service) helperRewards(v *snapshot) ([]gamedata.Reward, map[uint64]int6
 		period := int64(num(defaults, 20))
 		statField := map[uint64]int{1: 3, 2: 4, 3: 2}[h.Work]
 		if statField == 0 {
-			return nil, nil, 0, ErrInvalid
+			return nil, nil, 0, fmt.Errorf("%w: helper %d has work type %d", ErrInvalid, id, h.Work)
 		}
 		quantity := num(d, statField)
 		var unique []uint64
@@ -292,7 +292,7 @@ func (s *Service) helperRewards(v *snapshot) ([]gamedata.Reward, map[uint64]int6
 			unique = s.design.HelperUniques[h.Work]
 		}
 		if period <= 0 || maxTime <= 0 || quantity == 0 {
-			return nil, nil, 0, ErrInvalid
+			return nil, nil, 0, fmt.Errorf("%w: helper %d work %d has period %d, max time %d, quantity %d", ErrInvalid, id, h.Work, period, maxTime, quantity)
 		}
 		elapsed := min(max(now-h.Assigned, 0), maxTime)
 		cycles := uint64(elapsed / period)
@@ -300,7 +300,7 @@ func (s *Service) helperRewards(v *snapshot) ([]gamedata.Reward, map[uint64]int6
 			continue
 		}
 		if quantity > math.MaxInt32/cycles {
-			return nil, nil, 0, ErrInvalid
+			return nil, nil, 0, fmt.Errorf("%w: helper %d reward %d times %d cycles overflows", ErrInvalid, id, quantity, cycles)
 		}
 		quantity *= cycles
 		if len(unique) == 0 {
@@ -329,7 +329,7 @@ func (s *Service) helperRewards(v *snapshot) ([]gamedata.Reward, map[uint64]int6
 			} else {
 				rows := s.design.ItemsByUnique[u]
 				if len(rows) == 0 {
-					return nil, nil, 0, ErrInvalid
+					return nil, nil, 0, fmt.Errorf("%w: helper reward unique item %d has no LifeItemTable row", ErrInvalid, u)
 				}
 				itemID = num(rows[0], 5)
 			}

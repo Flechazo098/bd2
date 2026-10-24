@@ -27,7 +27,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		return addMessages(addMessages(addMessages(nil, 1, state.Deck), 2, state.SupporterDeck), 4, state.Settings), nil
 	case "/GuildRaidDeckSave":
 		if state.Active != nil {
-			return nil, ErrPending
+			return nil, fmt.Errorf("%w: a raid battle is in progress", ErrPending)
 		}
 		deck, e := p.messages(2)
 		if e != nil {
@@ -42,7 +42,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 			return nil, e
 		}
 		if len(deck)+len(supporters) > 7 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: raid deck has %d characters and %d supporters, at most 7 in total", ErrInvalid, len(deck), len(supporters))
 		}
 		if _, e = resolveSupporters(g, ctx.AccountID, supporters); e != nil {
 			return nil, e
@@ -57,14 +57,14 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		return nil, saveRaidState(ctx, state)
 	case "/GuildRaidBossQuickBattle":
 		if state.Active != nil || s.config.Now().UnixMilli() >= season.EndsMS {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: quick battle needs no active raid battle before season %d ends at %d", ErrIneligible, season.ID, season.EndsMS)
 		}
 		member := personal(state, season.ID)
 		if member.HighestLevel == 0 {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: quick battle needs a cleared raid level in season %d", ErrIneligible, season.ID)
 		}
 		if day := member.Days[s.config.Day(s.config.Now())]; day.Score >= member.Score && day.Level >= member.HighestLevel {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: today's raid record already matches score %d level %d", ErrIneligible, member.Score, member.HighestLevel)
 		}
 		var rewards []gamedata.Reward
 		for level, boss := range s.config.Owner.design.Raid.Bosses[season.BossGroupID] {
@@ -75,7 +75,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		var bundle []byte
 		if len(rewards) > 0 {
 			if s.config.RewardBundle == nil {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: raid rewards need a reward bundle builder", ErrInvalid)
 			}
 			bundle, e = s.config.RewardBundle(ctx, id, rewards)
 			if e != nil {
@@ -95,12 +95,12 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		return addMessages(nil, 1, sortedPresets(state.Presets)), nil
 	case "/GuildRaidPresetSlotAdd":
 		if s.config.Presets == nil {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: raid presets are not configured", ErrInvalid)
 		}
 		count, e := p.integer(2)
 		d := s.config.Presets
 		if e != nil || count == 0 || count > d.Maximum || state.PresetSlots > d.Maximum-count || d.Price != 0 && count > math.MaxUint64/d.Price {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: add %d raid preset slots to %d (max %d): %v", ErrInvalid, count, state.PresetSlots, d.Maximum, e)
 		}
 		if e = s.config.Spend(ctx, id, []gamedata.Reward{{Type: d.PriceType, ID: d.PriceID, Count: d.Price * count}}); e != nil {
 			return nil, e
@@ -110,7 +110,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 	case "/GuildRaidPresetSave":
 		rows, e := p.messages(2)
 		if e != nil || len(rows) != 1 {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: raid preset save carries %d presets, want 1: %v", ErrInvalid, len(rows), e)
 		}
 		slot, _, _, _, e := s.validateRaidPreset(ctx, rows[0], state.PresetSlots)
 		if e != nil {
@@ -125,7 +125,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		}
 		for _, slot := range slots {
 			if slot >= state.PresetSlots {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: raid preset slot %d, %d slots open", ErrInvalid, slot, state.PresetSlots)
 			}
 			delete(state.Presets, strconv.FormatUint(slot, 10))
 		}
@@ -133,7 +133,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 	case "/GuildRaidPresetInfoChange":
 		slot, e := p.integer(5)
 		if e != nil || slot >= state.PresetSlots {
-			return nil, ErrInvalid
+			return nil, fmt.Errorf("%w: raid preset slot %d, %d slots open: %v", ErrInvalid, slot, state.PresetSlots, e)
 		}
 		name, e := p.text(2)
 		if e != nil {
@@ -173,7 +173,7 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		return nil, saveRaidState(ctx, state)
 	case "/GuildRaidPresetUse":
 		if state.Active != nil {
-			return nil, ErrPending
+			return nil, fmt.Errorf("%w: a raid battle is in progress", ErrPending)
 		}
 		slot, e := p.integer(2)
 		if e != nil {
@@ -181,14 +181,14 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		}
 		raw, ok := state.Presets[strconv.FormatUint(slot, 10)]
 		if !ok {
-			return nil, ErrNotFound
+			return nil, fmt.Errorf("%w: raid preset slot %d is empty", ErrNotFound, slot)
 		}
 		_, deck, assignments, bindings, e := s.validateRaidPreset(ctx, raw, state.PresetSlots)
 		if e != nil {
 			return nil, e
 		}
 		if len(deck) == 0 || s.config.Equipment == nil {
-			return nil, ErrIneligible
+			return nil, fmt.Errorf("%w: raid preset slot %d has %d characters or equipment is not configured", ErrIneligible, slot, len(deck))
 		}
 		characters, e := s.config.Characters.ApplyPresetCostumes(ctx, assignments)
 		if e != nil {
@@ -239,11 +239,11 @@ func validateCombinedPositions(deck, supporters [][]byte) error {
 			}
 			pos, e := p.integer(part.position)
 			if e != nil || pos >= 18 {
-				return ErrInvalid
+				return fmt.Errorf("%w: raid deck position %d, want below 18: %v", ErrInvalid, pos, e)
 			}
 			seq, e := p.integer(part.sequence)
 			if e != nil || seq >= 7 || positions[pos] || sequences[seq] {
-				return ErrInvalid
+				return fmt.Errorf("%w: raid deck sequence %d at position %d is out of range or repeated: %v", ErrInvalid, seq, pos, e)
 			}
 			positions[pos], sequences[seq] = true, true
 		}
@@ -255,7 +255,7 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 		return 0, nil, nil, nil, e
 	}
 	if s.config.Presets == nil || s.config.Equipment == nil {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid presets or equipment are not configured", ErrInvalid))
 	}
 	p, e := parsePacket(raw)
 	if e != nil {
@@ -263,23 +263,23 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 	}
 	slot, e := p.integer(4)
 	if e != nil || slot >= slots {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid preset slot %d, %d slots open: %v", ErrInvalid, slot, slots, e))
 	}
 	name, e := p.text(1)
 	if e != nil || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 32 {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid preset name %q: %v", ErrInvalid, name, e))
 	}
 	icon, e := p.integer(2)
 	if e != nil || icon != 0 && !s.config.Presets.Icons[icon] {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid preset icon %d: %v", ErrInvalid, icon, e))
 	}
 	color, e := p.integer(3)
 	if e != nil || color > math.MaxInt32 {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid preset color %d: %v", ErrInvalid, color, e))
 	}
 	rows, e := p.messages(5)
 	if e != nil || len(rows) > 7 {
-		return fail(ErrInvalid)
+		return fail(fmt.Errorf("%w: raid preset has %d characters, at most 7: %v", ErrInvalid, len(rows), e))
 	}
 	var deck [][]byte
 	assignments := map[uint64]uint64{}
@@ -291,7 +291,7 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 		}
 		bases, e := r.messages(1)
 		if e != nil || len(bases) != 1 {
-			return fail(ErrInvalid)
+			return fail(fmt.Errorf("%w: raid preset character carries %d bases, want 1: %v", ErrInvalid, len(bases), e))
 		}
 		base, e := parsePacket(bases[0])
 		if e != nil {
@@ -308,7 +308,7 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 		if costume != 0 {
 			c, ok := s.config.Collection.CostumeByIndex(costume)
 			if !ok || c.UseChar != char {
-				return fail(ErrIneligible)
+				return fail(fmt.Errorf("%w: costume %d is not for character %d", ErrIneligible, costume, char))
 			}
 		}
 		assignments[char] = costume
@@ -326,7 +326,7 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 			}
 			typ, e := q.integer(1)
 			if e != nil || typ >= 5 || used[typ] {
-				return fail(ErrInvalid)
+				return fail(fmt.Errorf("%w: raid preset equipment type %d is out of range or repeated: %v", ErrInvalid, typ, e))
 			}
 			index, e := q.integer(2)
 			if e != nil {

@@ -441,6 +441,9 @@ func (e *Economy) consumeAndGrant(ctx command.Context, identity string, consumed
 		if err != nil {
 			return nil, err
 		}
+		if lifeBundle, err = ordinaryLifeBundle(lifeBundle); err != nil {
+			return nil, err
+		}
 		bundle = append(bundle, lifeBundle...)
 	}
 	items, err := e.items.GrantOnce(ctx, identity+":items", itemRewards)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -26,7 +27,7 @@ func (r roomRules) CheckRoomText(ctx context.Context, p room.Principal, text str
 	}
 	err := moderator.Check(ctx, "chat", p.AccountID, text)
 	if errors.Is(err, textmoderation.ErrRejected) {
-		return room.ErrTextRejected
+		return fmt.Errorf("%w: %v", room.ErrTextRejected, err)
 	}
 	return err
 }
@@ -51,7 +52,7 @@ func (r roomRules) Profile(ctx context.Context, principal room.Principal) (room.
 func (r roomRules) ValidateSelection(profile room.Profile, selection room.Selection) (room.Selection, error) {
 	if selection.Kind == room.Fishing {
 		if !slices.Contains(profile.FishingMaps, uint64(selection.MapID)) {
-			return selection, room.ErrUnauthorized
+			return selection, fmt.Errorf("%w: fishing map %d is not unlocked", room.ErrUnauthorized, selection.MapID)
 		}
 		rules, err := r.players.factory.design.eventPlay.NativeFishingRules(uint64(selection.MapID), uint64(profile.BoatLevel), uint64(profile.BoatSkinID))
 		if err != nil {
@@ -69,7 +70,7 @@ func (r roomRules) ValidateSelection(profile room.Profile, selection room.Select
 	if selection.Kind == room.Defense {
 		family = "Defense"
 	} else if selection.Kind != room.Action {
-		return selection, room.ErrUnauthorized
+		return selection, fmt.Errorf("%w: room kind %q has no event selection", room.ErrUnauthorized, selection.Kind)
 	}
 	for _, event := range r.players.factory.options.calendars.Events {
 		if int64(event.UID) != selection.EventScheduleID {
@@ -96,7 +97,7 @@ func (r roomRules) ValidateSelection(profile room.Profile, selection room.Select
 
 func (r roomRules) ValidateParticipant(profile room.Profile, selection room.Selection) error {
 	if selection.Kind != room.Fishing || profile.RodID <= 0 {
-		return room.ErrUnauthorized
+		return fmt.Errorf("%w: %s room participant needs a fishing rod (rod %d)", room.ErrUnauthorized, selection.Kind, profile.RodID)
 	}
 	_, err := r.players.factory.design.eventPlay.NativeFishingRules(uint64(selection.MapID), uint64(selection.BoatLevel), uint64(selection.BoatSkinID))
 	return err

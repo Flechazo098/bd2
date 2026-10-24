@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"bd2server/internal/server/domain/command"
@@ -29,7 +30,7 @@ type preparedRoomResults struct {
 // PrepareResults reads durable entitlements before the caller opens its player transaction.
 func (r *roomResults) PrepareResults(ctx context.Context, account string, runs []eventplay.NativeRun) (eventplay.RoomRuntime, error) {
 	if account == "" {
-		return nil, room.ErrUnauthorized
+		return nil, fmt.Errorf("%w: room results need an account", room.ErrUnauthorized)
 	}
 	prepared := &preparedRoomResults{roomResults: r, account: account, results: make(map[eventplay.NativeRun]preparedRoomResult, len(runs))}
 	err := r.store.View(ctx, func(tx *shared.Tx) error {
@@ -48,7 +49,7 @@ func (r *roomResults) PrepareResults(ctx context.Context, account string, runs [
 					return readyErr
 				}
 				if !ready {
-					prepared.results[run] = preparedRoomResult{err: eventplay.ErrRoomNotFinished}
+					prepared.results[run] = preparedRoomResult{err: fmt.Errorf("%w: room %q", eventplay.ErrRoomNotFinished, run.InstanceID)}
 					continue
 				}
 				var final room.FinalResult
@@ -71,12 +72,12 @@ func (r *roomResults) PrepareResults(ctx context.Context, account string, runs [
 
 func (r *preparedRoomResults) Result(ctx command.Context, run eventplay.NativeRun) (eventplay.NativeResult, error) {
 	if ctx.AccountID != r.account {
-		return eventplay.NativeResult{}, room.ErrUnauthorized
+		return eventplay.NativeResult{}, fmt.Errorf("%w: room results of %s read for %s", room.ErrUnauthorized, r.account, ctx.AccountID)
 	}
 	prepared, found := r.results[run]
 	if !found {
 		// A run created in this command is eligible for prefetch on the next command.
-		return eventplay.NativeResult{}, eventplay.ErrRoomNotFinished
+		return eventplay.NativeResult{}, fmt.Errorf("%w: room %q was not prefetched", eventplay.ErrRoomNotFinished, run.InstanceID)
 	}
 	result := prepared.result
 	result.Evidence = append([]byte(nil), result.Evidence...)
@@ -85,7 +86,7 @@ func (r *preparedRoomResults) Result(ctx command.Context, run eventplay.NativeRu
 
 func projectRoomResult(account string, run eventplay.NativeRun, final room.FinalResult) (eventplay.NativeResult, error) {
 	if string(final.View.Kind) != strings.ToLower(run.Family) {
-		return eventplay.NativeResult{}, room.ErrUnauthorized
+		return eventplay.NativeResult{}, fmt.Errorf("%w: %s room result for a %s run", room.ErrUnauthorized, final.View.Kind, run.Family)
 	}
 	for _, member := range final.View.Members {
 		if member.Principal.AccountID != account || member.NativeGUID != run.GUID {
@@ -100,7 +101,7 @@ func projectRoomResult(account string, run eventplay.NativeRun, final room.Final
 		}
 		return eventplay.NativeResult{Clear: final.Clear, Score: uint64(score), Evidence: append([]byte(nil), final.Evidence...)}, nil
 	}
-	return eventplay.NativeResult{}, room.ErrUnauthorized
+	return eventplay.NativeResult{}, fmt.Errorf("%w: room %q result has no member %s with guid %q", room.ErrUnauthorized, run.InstanceID, account, run.GUID)
 }
 
 func (r *roomResults) recoverResults(ctx context.Context) error {
@@ -154,7 +155,7 @@ func retiredRoomResult(tx *shared.Tx, final room.FinalResult) (bool, error) {
 		return false, err
 	}
 	if !bytes.Equal(prior, digest) {
-		return false, outbox.ErrConflict
+		return false, fmt.Errorf("%w: room result digest changed", outbox.ErrConflict)
 	}
 	return true, nil
 }

@@ -57,17 +57,6 @@ type Player struct {
 	Active    bool   `json:"active"`
 }
 
-type CapacityLimits struct {
-	Default uint64 `json:"default"`
-	Maximum uint64 `json:"maximum"`
-}
-
-// InventoryLimits are the backpack capacities an unlimited override switches between.
-type InventoryLimits struct {
-	Items     CapacityLimits `json:"items"`
-	Equipment CapacityLimits `json:"equipment"`
-}
-
 type Options struct {
 	Store    *Store
 	Identity Identity
@@ -75,8 +64,8 @@ type Options struct {
 	Players   func(context.Context) ([]Player, error)
 	Catalog   func() ([]gamedata.MailCatalogItem, error)
 	MailSpool string
-	Inventory *commonconfig.File[inventory.DevelopmentSettings]
-	Limits    InventoryLimits
+	// Settings holds each account's own item stack override.
+	Settings *commonconfig.File[inventory.DevelopmentSettings]
 	// Configuration is the owner's editable document registry.
 	Configuration *commonconfig.Registry
 	// Server describes the running process for the owner's overview.
@@ -102,7 +91,7 @@ type pendingLogin struct {
 }
 
 func New(options Options) (*Console, error) {
-	if options.Store == nil || options.Players == nil || options.Catalog == nil || options.MailSpool == "" || options.Inventory == nil || options.Configuration == nil {
+	if options.Store == nil || options.Players == nil || options.Catalog == nil || options.MailSpool == "" || options.Settings == nil || options.Configuration == nil {
 		return nil, errors.New("admin: incomplete console options")
 	}
 	if options.Now == nil {
@@ -160,8 +149,8 @@ func (c *Console) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, permissionCatalog(c.options.Configuration))
 	}))
 	mux.HandleFunc("PUT /admin/api/players/{account}/administrator", c.require(owner, c.setAdministrator))
-	mux.HandleFunc("GET /admin/api/players/{account}/inventory", c.require(can(PermissionPlayers), c.inventory))
-	mux.HandleFunc("PUT /admin/api/players/{account}/inventory", c.require(can(PermissionInventory), c.setInventory))
+	mux.HandleFunc("GET /admin/api/self/item-stacks", c.require(can(PermissionItemStacks), c.itemStacks))
+	mux.HandleFunc("PUT /admin/api/self/item-stacks", c.require(can(PermissionItemStacks), c.setItemStacks))
 	mux.HandleFunc("POST /admin/api/players/{account}/mail", c.require(can(PermissionMail), c.sendMail))
 	mux.HandleFunc("GET /admin/api/server", c.require(owner, func(w http.ResponseWriter, r *http.Request, _ session) {
 		writeJSON(w, http.StatusOK, c.options.Server())
@@ -282,7 +271,7 @@ func (c *Console) sessionInfo(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			permissions := current.Permissions
 			if current.Role == RoleOwner {
-				permissions = []string{PermissionPlayers, PermissionMail, PermissionInventory}
+				permissions = []string{PermissionPlayers, PermissionMail, PermissionItemStacks}
 			}
 			info["signed_in"], info["role"], info["csrf"], info["permissions"] = true, current.Role, current.CSRF, append([]string{}, permissions...)
 			info["configuration"] = current.canReadConfiguration(c.options.Configuration)
@@ -441,7 +430,6 @@ type playerView struct {
 	Owner         bool     `json:"owner"`
 	Administrator bool     `json:"administrator"`
 	Permissions   []string `json:"permissions,omitempty"`
-	Unlimited     bool     `json:"unlimited_inventory"`
 }
 
 func (c *Console) players(w http.ResponseWriter, r *http.Request, current session) {
@@ -462,16 +450,10 @@ func (c *Console) players(w http.ResponseWriter, r *http.Request, current sessio
 			return
 		}
 	}
-	settings, err := c.options.Inventory.Read()
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "unavailable", "development settings unavailable")
-		return
-	}
 	views := []playerView{}
 	for _, player := range players {
 		appointed, isAdministrator := administrators[player.AccountID]
-		view := playerView{Player: player, Owner: player.AccountID == administrator, Administrator: isAdministrator,
-			Unlimited: settings.Value.Accounts[player.AccountID].Inventory.Unlimited}
+		view := playerView{Player: player, Owner: player.AccountID == administrator, Administrator: isAdministrator}
 		if current.Role == RoleOwner {
 			view.Permissions = appointed.Permissions
 		}
@@ -557,22 +539,24 @@ func (c *Console) setAdministrator(w http.ResponseWriter, r *http.Request, curre
 	writeJSON(w, http.StatusOK, map[string]any{"administrator": true, "permissions": permissions})
 }
 
-func (c *Console) inventory(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r)
-	if !ok {
+// itemStacks reports the signed-in account's own stack override; nobody
+// changes another account's switch.
+func (c *Console) itemStacks(w http.ResponseWriter, r *http.Request, current session) {
+	if current.AccountID == "" {
+		fail(w, http.StatusBadRequest, "no_account", "this console session has no game account; sign in with your game account")
 		return
 	}
-	settings, err := c.options.Inventory.Read()
+	settings, err := c.options.Settings.Read()
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "unavailable", "development settings unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"unlimited": settings.Value.Accounts[player.AccountID].Inventory.Unlimited, "limits": c.options.Limits})
+	writeJSON(w, http.StatusOK, map[string]bool{"unlimited": settings.Value.Accounts[current.AccountID].Items.UnlimitedStacks})
 }
 
-func (c *Console) setInventory(w http.ResponseWriter, r *http.Request, current session) {
-	player, ok := c.target(w, r)
-	if !ok {
+func (c *Console) setItemStacks(w http.ResponseWriter, r *http.Request, current session) {
+	if current.AccountID == "" {
+		fail(w, http.StatusBadRequest, "no_account", "this console session has no game account; sign in with your game account")
 		return
 	}
 	var request struct {
@@ -585,14 +569,14 @@ func (c *Console) setInventory(w http.ResponseWriter, r *http.Request, current s
 		fail(w, http.StatusBadRequest, "invalid", "unlimited flag required")
 		return
 	}
-	_, err := c.options.Inventory.Update("", func(settings *inventory.DevelopmentSettings) error {
+	_, err := c.options.Settings.Update("", func(settings *inventory.DevelopmentSettings) error {
 		if settings.Accounts == nil {
 			settings.Accounts = map[string]inventory.DevelopmentAccount{}
 		}
 		if *request.Unlimited {
-			settings.Accounts[player.AccountID] = inventory.DevelopmentAccount{Inventory: inventory.DevelopmentInventory{Unlimited: true}}
+			settings.Accounts[current.AccountID] = inventory.DevelopmentAccount{Items: inventory.DevelopmentItems{UnlimitedStacks: true}}
 		} else {
-			delete(settings.Accounts, player.AccountID)
+			delete(settings.Accounts, current.AccountID)
 		}
 		return nil
 	})
@@ -601,12 +585,12 @@ func (c *Console) setInventory(w http.ResponseWriter, r *http.Request, current s
 		return
 	}
 	if err != nil {
-		slog.Error("console inventory override failed", "account", player.AccountID, "error", err)
+		slog.Error("console item stack override failed", "account", current.AccountID, "error", err)
 		fail(w, http.StatusInternalServerError, "unavailable", "development settings unavailable")
 		return
 	}
-	slog.Info("console inventory override changed", "account", player.AccountID, "uid", player.UID, "unlimited", *request.Unlimited)
-	writeJSON(w, http.StatusOK, map[string]any{"unlimited": *request.Unlimited, "limits": c.options.Limits})
+	slog.Info("console item stack override changed", "account", current.AccountID, "unlimited", *request.Unlimited)
+	writeJSON(w, http.StatusOK, map[string]bool{"unlimited": *request.Unlimited})
 }
 
 func (c *Console) sendMail(w http.ResponseWriter, r *http.Request, current session) {

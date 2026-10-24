@@ -53,11 +53,11 @@ func (s *Service) handlePackSummary(ctx command.Context, request []byte) (int, [
 func (s *Service) handlePackRewardCounts(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	seq, present, err := wire.Varint(request, 1)
 	if err != nil || !present || seq == 0 {
-		return 226, nil, true, ErrInvalidRequest
+		return 226, nil, true, fmt.Errorf("%w: PackRewardObjectCount sequence %d (present=%t): %v", ErrInvalidRequest, seq, present, err)
 	}
 	packs, err := intsRequest(request, 2)
 	if err != nil || len(packs) == 0 {
-		return 226, nil, true, ErrInvalidRequest
+		return 226, nil, true, fmt.Errorf("%w: PackRewardObjectCount names no packs: %v", ErrInvalidRequest, err)
 	}
 	types, err := intsRequest(request, 3)
 	if err != nil {
@@ -71,11 +71,11 @@ func (s *Service) handlePackRewardCounts(ctx command.Context, request []byte) (i
 	for _, p := range packs {
 		pack := int(p)
 		if pack <= 0 || !s.packUnlocked(ctx, pack) {
-			return 226, nil, true, ErrInvalidRequest
+			return 226, nil, true, fmt.Errorf("%w: pack %d is unavailable", ErrInvalidRequest, pack)
 		}
 		for _, t := range types {
 			if t < 1 || t > 4 {
-				return 226, nil, true, ErrInvalidRequest
+				return 226, nil, true, fmt.Errorf("%w: reward object type %d, want 1..4", ErrInvalidRequest, t)
 			}
 			key := [2]uint64{p, t}
 			if seen[key] {

@@ -49,14 +49,14 @@ func (s *Service) handleActiveMap(ctx command.Context, request []byte) (int, []b
 			return nil
 		}
 		if field.Type != 2 || len(rows) >= progress.MapExplorationRows || len(field.Value) > 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: map exploration row has wire type %d, %d bytes, %d rows already", ErrInvalidRequest, field.Type, len(field.Value), len(rows))
 		}
 		value := uint64(0)
 		if len(field.Value) != 0 {
 			var err error
 			value, err = strconv.ParseUint(string(field.Value), 16, 8)
 			if err != nil {
-				return ErrInvalidRequest
+				return fmt.Errorf("%w: map exploration value %q is not hex: %v", ErrInvalidRequest, field.Value, err)
 			}
 		}
 		rows = append(rows, byte(value))

@@ -368,7 +368,8 @@ func (s *Service) resume(ctx command.Context) (int, []byte, bool, error) {
 			}
 			out = append(out, extra...)
 		}
-		return 540, wire.AppendVarint(out, 22, 1), true, nil
+		out, err := s.resumeEvent(ctx, state, wire.AppendVarint(out, 22, 1))
+		return 540, out, true, err
 	}
 	out, _, err := wire.ReplaceVarint(state.Checkpoint, 27, boolNumber(len(state.previousSnapshot()) != 0))
 	if err != nil {
@@ -387,7 +388,19 @@ func (s *Service) resume(ctx command.Context) (int, []byte, bool, error) {
 		}
 	}
 	state.restoreCheckpointCursor(state.Checkpoint)
+	out, err = s.resumeEvent(ctx, state, out)
 	return 540, out, true, err
+}
+
+func (s *Service) resumeEvent(ctx command.Context, state *battleState, response []byte) ([]byte, error) {
+	if runtime := s.eventBattle(state.Mode); runtime != nil {
+		if restorer, ok := runtime.(interface {
+			ResumeBattle(command.Context, string, []byte) ([]byte, error)
+		}); ok {
+			return restorer.ResumeBattle(ctx, state.EnterReceipt, response)
+		}
+	}
+	return response, nil
 }
 
 func boolNumber(v bool) uint64 {

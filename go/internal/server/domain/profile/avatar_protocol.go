@@ -25,18 +25,18 @@ func avatarNumbers(data []byte, field int) ([]uint64, error) {
 			return nil
 		}
 		if f.Type != 0 && f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: avatar field %d has wire type %d", wire.ErrMalformed, f.Number, f.Type)
 		}
 		b := f.Value
 		for len(b) > 0 {
 			n, size := binary.Uvarint(b)
 			if size <= 0 || n > math.MaxInt32 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: avatar field %d value is truncated or above int32", wire.ErrMalformed, f.Number)
 			}
 			out = append(out, n)
 			b = b[size:]
 			if f.Type == 0 && len(b) > 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: avatar field %d varint has trailing bytes", wire.ErrMalformed, f.Number)
 			}
 		}
 		return nil
@@ -51,12 +51,12 @@ func avatarNumber(data []byte, field int) (uint64, error) {
 			return nil
 		}
 		if seen || f.Type != 0 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		seen = true
 		value, _ = binary.Uvarint(f.Value)
 		if value > math.MaxInt32 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: avatar field %d value %d is above int32", wire.ErrMalformed, f.Number, value)
 		}
 		return nil
 	})
@@ -70,7 +70,7 @@ func avatarMessage(data []byte, field int) ([]byte, error) {
 			return nil
 		}
 		if seen || f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		seen = true
 		out = slices.Clone(f.Value)
@@ -169,7 +169,7 @@ func (s *AvatarService) Handle(ctx command.Context, path string, request []byte)
 				return nil
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: avatar purchase has wire type %d, want a message", wire.ErrMalformed, f.Type)
 			}
 			id, err := avatarNumber(f.Value, 1)
 			if err != nil || id == 0 {

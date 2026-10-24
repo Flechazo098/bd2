@@ -172,13 +172,13 @@ func (s *Server) execute(ctx context.Context, c player.Command, expectedGenerati
 	defer release()
 	generation := owner.Generation()
 	if expectedGeneration != 0 && generation != expectedGeneration {
-		return player.Reply{}, 0, transport.ErrGameSessionExpired
+		return player.Reply{}, 0, fmt.Errorf("%w: request expects generation %d, player is at %d", transport.ErrGameSessionExpired, expectedGeneration, generation)
 	}
 	c.ExpectedGeneration = expectedGeneration
 	future, err := owner.Submit(ctx, c)
 	if err != nil {
 		if errors.Is(err, player.ErrGenerationExpired) {
-			return player.Reply{}, 0, transport.ErrGameSessionExpired
+			return player.Reply{}, 0, fmt.Errorf("%w: %v", transport.ErrGameSessionExpired, err)
 		}
 		return player.Reply{}, 0, err
 	}

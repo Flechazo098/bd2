@@ -3,6 +3,7 @@ package social
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 func projectGuild(tx Tx, g Guild, a Account, op Operation, r Reservation) (Guild, error) {
@@ -31,7 +32,7 @@ func projectGuild(tx Tx, g Guild, a Account, op Operation, r Reservation) (Guild
 					return Guild{}, e
 				}
 				if !found {
-					return Guild{}, ErrNotFound
+					return Guild{}, fmt.Errorf("%w: no application from %s to guild %d", ErrNotFound, r.SubjectAccount, g.ID)
 				}
 				profile = app.Applicant
 			}
@@ -64,7 +65,7 @@ func projectGuild(tx Tx, g Guild, a Account, op Operation, r Reservation) (Guild
 func (o *Owner) RecoverReservation(ctx context.Context, id string, proof *CommitProof) (Reservation, error) {
 	if proof != nil {
 		if proof.OperationID != id {
-			return Reservation{}, ErrConflict
+			return Reservation{}, fmt.Errorf("%w: proof names operation %q, not %q", ErrConflict, proof.OperationID, id)
 		}
 		return o.Confirm(ctx, *proof)
 	}

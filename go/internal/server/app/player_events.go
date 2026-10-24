@@ -132,6 +132,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 	p.battleService.AttachRewards(func(ctx command.Context, identity string, rewards []gamedata.Reward) ([]byte, error) {
 		return p.eventEconomy.Apply(ctx, identity, nil, rewards)
 	})
+	p.worldService.AttachActiveBattlePack(p.battleService.ActivePack)
 	if err := p.worldService.AttachBattleActive(p.battleService.Active); err != nil {
 		return fmt.Errorf("attach world battle guard: %w", err)
 	}

@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -46,7 +47,7 @@ func (f *Friends) like(tx Tx, owner, target uint64, path string, now int64) ([]b
 		return nil, err
 	}
 	if count >= math.MaxInt32 {
-		return nil, ErrCapacity
+		return nil, fmt.Errorf("%w: owner %d has %d likes", ErrCapacity, target, count)
 	}
 	if err := save(tx, "friend.like_counts", numberKey(target), count+1); err != nil {
 		return nil, err

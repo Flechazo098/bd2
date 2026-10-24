@@ -50,7 +50,7 @@ func (s *Service) TalentFieldContext(ctx command.Context) (int, uint64, bool, er
 // guessing a quest target map would authorize interactions in another scene.
 func (s *Service) currentFieldMap(ctx command.Context, pack int) (int, error) {
 	if !s.packUnlocked(ctx, pack) {
-		return 0, ErrInvalidRequest
+		return 0, fmt.Errorf("%w: pack %d is unavailable", ErrInvalidRequest, pack)
 	}
 	if mapID, found, err := s.skyWayMap(ctx, pack); found || err != nil {
 		return mapID, err

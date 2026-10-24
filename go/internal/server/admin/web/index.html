@@ -86,11 +86,17 @@
           <p id="status" class="status" aria-live="polite"></p>
         </form>
 
-        <section class="card panel">
-          <h3><label class="switch"><input id="unlimited-inventory" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span data-i18n="console.inventory.unlimited"></span></label></h3>
-          <div id="inventory-limits" class="limits"></div>
-          <p class="hint" data-i18n="console.mail.inventory.hint"></p>
-          <p id="inventory-status" class="status" aria-live="polite"></p>
+        <section class="card panel stacks" id="stacks" hidden>
+          <h3><label class="switch"><input id="unlimited-stacks" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span data-i18n="console.stacks.title"></span></label><span class="stacks-owner" id="stacks-owner"></span></h3>
+          <div class="stack-view" id="stack-view" aria-hidden="true">
+            <div class="stack-pile"><span class="cap"></span><i></i><i></i><i></i><i></i></div>
+            <div class="stack-values">
+              <span class="stack-value limited"><b data-i18n="console.stacks.limited"></b><small data-i18n="console.stacks.limited_detail"></small></span>
+              <span class="stack-value unlimited"><b>∞ <span data-i18n="console.stacks.unlimited"></span></b><small data-i18n="console.stacks.unlimited_detail"></small></span>
+            </div>
+          </div>
+          <p class="hint" id="stacks-hint"></p>
+          <p id="stacks-status" class="status" aria-live="polite"></p>
         </section>
 
         <section class="card panel">

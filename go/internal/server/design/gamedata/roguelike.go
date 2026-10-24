@@ -98,12 +98,12 @@ func LoadRogueLikeDesign(root, version string) (*RogueLikeDesign, error) {
 				case 0:
 					v, n := binary.Uvarint(f.Value)
 					if n <= 0 {
-						return wire.ErrMalformed
+						return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 					}
 					r.Values[f.Number] = append(r.Values[f.Number], v)
 				case 1:
 					if len(f.Value) != 8 {
-						return wire.ErrMalformed
+						return fmt.Errorf("%w: fixed64 field %d is %d bytes", wire.ErrMalformed, f.Number, len(f.Value))
 					}
 					v := math.Float64frombits(binary.LittleEndian.Uint64(f.Value))
 					if math.IsNaN(v) || math.IsInf(v, 0) {
@@ -115,7 +115,7 @@ func LoadRogueLikeDesign(root, version string) (*RogueLikeDesign, error) {
 						for b := f.Value; len(b) > 0; {
 							v, n := binary.Uvarint(b)
 							if n <= 0 {
-								return wire.ErrMalformed
+								return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 							}
 							r.Values[f.Number] = append(r.Values[f.Number], v)
 							b = b[n:]

@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	"bd2server/internal/server/protocol/wire"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"slices"
 )
@@ -273,20 +274,20 @@ func (s *Service) mix(v *state, b []byte) ([]byte, error) {
 		case 0:
 			x, k := binary.Uvarint(f.Value)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			indexes = append(indexes, x)
 		case 2:
 			for p := f.Value; len(p) > 0; {
 				x, k := binary.Uvarint(p)
 				if k <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, f.Number)
 				}
 				indexes = append(indexes, x)
 				p = p[k:]
 			}
 		default:
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		return nil
 	})

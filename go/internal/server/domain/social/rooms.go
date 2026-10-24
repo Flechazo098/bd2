@@ -2,6 +2,8 @@ package social
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -36,7 +38,7 @@ func (f *Friends) RoomProfile(ctx context.Context, viewer, target uint64) ([]byt
 		}
 		total = likes.Total
 		out, err = f.roomUser(tx, self, other, state, false)
-		if err == ErrPermission {
+		if errors.Is(err, ErrPermission) {
 			out = wire.AppendVarint(nil, 1, target)
 			out = wire.AppendString(out, 2, other.Snapshot.UserID)
 			out = wire.AppendVarint(out, 12, state.Scope)
@@ -80,7 +82,7 @@ func (f *Friends) ensureRooms(tx Tx, p FriendProfile) error {
 	ids := append(append([]uint64(nil), f.rooms.Defaults...), p.RoomIDs...)
 	for _, id := range ids {
 		if _, found := f.rooms.Limits[id]; !found {
-			return ErrInvalid
+			return fmt.Errorf("%w: room %d has no limits", ErrInvalid, id)
 		}
 		found := false
 		for _, room := range state.Rooms {
@@ -129,7 +131,7 @@ func roomVisible(tx Tx, viewer, owner FriendProfile, state personalRooms) (bool,
 	case 4:
 		return false, nil
 	}
-	return false, ErrInvalid
+	return false, fmt.Errorf("%w: room share scope %d", ErrInvalid, state.Scope)
 }
 
 func roomWire(v personalRoom) []byte {
@@ -150,7 +152,7 @@ func (f *Friends) roomUser(tx Tx, viewer, owner FriendProfile, state personalRoo
 		return nil, err
 	}
 	if !visible {
-		return nil, ErrPermission
+		return nil, fmt.Errorf("%w: rooms of owner %d are not visible to owner %d", ErrPermission, owner.OwnerIndex, viewer.OwnerIndex)
 	}
 	out := wire.AppendVarint(nil, 1, owner.OwnerIndex)
 	out = wire.AppendString(out, 2, owner.Snapshot.UserID)
@@ -182,7 +184,7 @@ func (f *Friends) roomUser(tx Tx, viewer, owner FriendProfile, state personalRoo
 		}
 	}
 	if !primaryVisible && viewer.OwnerIndex != owner.OwnerIndex {
-		return nil, ErrPermission
+		return nil, fmt.Errorf("%w: primary room of owner %d is hidden", ErrPermission, owner.OwnerIndex)
 	}
 	var likes roomLikes
 	if _, err := load(tx, "friend.room_like_counts", numberKey(owner.OwnerIndex), &likes); err != nil {
@@ -201,7 +203,7 @@ func friendKeyDirectional(a, b uint64) string { return numberKey(a) + ":" + numb
 
 func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int64) ([]byte, error) {
 	if f.rooms == nil {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: rooms are not configured", ErrInvalid)
 	}
 	var state personalRooms
 	found, err := load(tx, "friend.rooms", numberKey(self.OwnerIndex), &state)
@@ -209,7 +211,7 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 		return nil, err
 	}
 	if !found {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: rooms of owner %d", ErrNotFound, self.OwnerIndex)
 	}
 	fail := func(message string) ([]byte, error) { return nil, friendError(friendCodes[path], 9003, message) }
 	if strings.HasPrefix(path, "/MyRoomPreset") {
@@ -250,7 +252,7 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 		if path == "/MyRoomUserInfo" {
 			all, err := p.integer(3)
 			if err != nil || all > 1 {
-				return nil, ErrInvalid
+				return nil, fmt.Errorf("%w: MyRoomUserInfo all flag %d: %v", ErrInvalid, all, err)
 			}
 			out, err := f.roomUser(tx, self, other, rooms, true)
 			if err != nil {
@@ -278,7 +280,7 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 			return nil, err
 		}
 		if count.Total >= math.MaxInt32 {
-			return nil, ErrCapacity
+			return nil, fmt.Errorf("%w: owner %d has %d room likes", ErrCapacity, target, count.Total)
 		}
 		if count.Month != month {
 			count.Month = month

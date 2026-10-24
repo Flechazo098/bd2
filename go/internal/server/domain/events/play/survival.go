@@ -229,7 +229,7 @@ func (s *Service) survivalProgress(req []byte, a *Run) (uint64, uint64, error) {
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 		}
 		id, count := num(f.Value, 1), num(f.Value, 2)
 		if count == 0 {
@@ -321,7 +321,7 @@ func (s *Service) survivalProgress(req []byte, a *Run) (uint64, uint64, error) {
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 		}
 		id, count := num(f.Value, 1), num(f.Value, 2)
 		if count == 0 || count > math.MaxInt32 {

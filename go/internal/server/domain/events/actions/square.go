@@ -178,7 +178,7 @@ func (s *Service) square(ctx command.Context, path string, req []byte, identity 
 				return nil
 			}
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 			}
 			id, _, e := wire.Varint(f.Value, 1)
 			if e != nil {

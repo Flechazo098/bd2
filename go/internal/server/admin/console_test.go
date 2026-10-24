@@ -58,7 +58,7 @@ func newConsole(t *testing.T) (*Console, *fakeIdentity, string) {
 	identity := &fakeIdentity{}
 	spool := filepath.Join(root, "mail-grants-spool.json")
 	console, err := New(Options{
-		Store: store, Identity: identity, MailSpool: spool, Inventory: settings, Configuration: commonconfig.NewRegistry(game),
+		Store: store, Identity: identity, MailSpool: spool, Settings: settings, Configuration: commonconfig.NewRegistry(game),
 		Players: func(context.Context) ([]Player, error) {
 			return []Player{{AccountID: "owner", UID: "1", Active: true}, {AccountID: "friend", UID: "2", Active: true}, {AccountID: "other", UID: "3", Active: true}}, nil
 		},
@@ -181,7 +181,8 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 		{http.MethodGet, "/admin/api/config/"},
 		{http.MethodGet, "/admin/api/server"},
 		{http.MethodGet, "/admin/api/permissions"},
-		{http.MethodPut, "/admin/api/players/other/inventory"},
+		{http.MethodGet, "/admin/api/self/item-stacks"},
+		{http.MethodPut, "/admin/api/self/item-stacks"},
 		{http.MethodPut, "/admin/api/players/other/administrator"},
 	} {
 		if status, _ := friend.do(denied.method, denied.path, map[string]any{"unlimited": true, "administrator": true}, nil); status != http.StatusForbidden {
@@ -189,7 +190,7 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 		}
 	}
 
-	grant := map[string]any{"administrator": true, "permissions": []string{"config.game.purchases.write", PermissionInventory}}
+	grant := map[string]any{"administrator": true, "permissions": []string{"config.game.purchases.write"}}
 	if status, value := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", grant, nil); status != http.StatusOK ||
 		!strings.Contains(fmt.Sprint(value["permissions"]), "config.game.purchases.read") {
 		t.Fatalf("grant configuration section: %d %v", status, value)
@@ -199,9 +200,6 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 	}
 	if status, _ := owner.do(http.MethodPut, "/admin/api/players/owner/administrator", map[string]bool{"administrator": true}, nil); status != http.StatusBadRequest {
 		t.Fatalf("owner appointed as administrator: %d", status)
-	}
-	if status, _ := friend.do(http.MethodPut, "/admin/api/players/other/inventory", map[string]bool{"unlimited": true}, nil); status != http.StatusOK {
-		t.Fatalf("granted inventory permission: %d", status)
 	}
 	if status, _ := friend.do(http.MethodPost, "/admin/api/players/friend/mail", gift, nil); status != http.StatusForbidden {
 		t.Fatalf("replaced permissions kept mail: %d", status)
@@ -213,6 +211,24 @@ func TestConsoleTiersFollowOwnerAppointmentsAndPermissions(t *testing.T) {
 	sections := document["schema"].(map[string]any)["sections"].([]any)
 	if len(sections) != 1 || sections[0].(map[string]any)["id"] != "purchases" {
 		t.Fatalf("administrator saw ungranted sections: %v", sections)
+	}
+
+	stacker := map[string]any{"administrator": true, "permissions": []string{PermissionItemStacks}}
+	if status, value := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", stacker, nil); status != http.StatusOK ||
+		!strings.Contains(fmt.Sprint(value["permissions"]), PermissionMail) {
+		t.Fatalf("grant item stacks with its mail requirement: %d %v", status, value)
+	}
+	if status, value := friend.do(http.MethodPut, "/admin/api/self/item-stacks", map[string]bool{"unlimited": true}, nil); status != http.StatusOK || value["unlimited"] != true {
+		t.Fatalf("administrator switched own item stacks: %d %v", status, value)
+	}
+	if status, value := owner.do(http.MethodGet, "/admin/api/self/item-stacks", nil, nil); status != http.StatusOK || value["unlimited"] != false {
+		t.Fatalf("administrator's switch leaked to the owner: %d %v", status, value)
+	}
+	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(spool), "dev-tools.json")); err != nil || !strings.Contains(string(raw), `"friend"`) || strings.Contains(string(raw), `"other"`) || strings.Contains(string(raw), `"owner"`) {
+		t.Fatalf("item stack settings: %s, %v", raw, err)
+	}
+	if status, value := friend.do(http.MethodPut, "/admin/api/self/item-stacks", map[string]bool{"unlimited": false}, nil); status != http.StatusOK || value["unlimited"] != false {
+		t.Fatalf("administrator switched own item stacks off: %d %v", status, value)
 	}
 
 	if status, _ := owner.do(http.MethodPut, "/admin/api/players/friend/administrator", map[string]bool{"administrator": false}, nil); status != http.StatusOK {
@@ -230,14 +246,14 @@ func TestConsoleStateChangesRequireSessionCSRFAndSameOrigin(t *testing.T) {
 	owner := newBrowser(t, server)
 	owner.login(identity, "owner")
 	change := map[string]bool{"unlimited": true}
-	if status, _ := owner.do(http.MethodPut, "/admin/api/players/other/inventory", change, map[string]string{"X-CSRF-Token": ""}); status != http.StatusForbidden {
+	if status, _ := owner.do(http.MethodPut, "/admin/api/self/item-stacks", change, map[string]string{"X-CSRF-Token": ""}); status != http.StatusForbidden {
 		t.Fatalf("missing CSRF token accepted: %d", status)
 	}
-	if status, _ := owner.do(http.MethodPut, "/admin/api/players/other/inventory", change, map[string]string{"Sec-Fetch-Site": "cross-site"}); status != http.StatusForbidden {
+	if status, _ := owner.do(http.MethodPut, "/admin/api/self/item-stacks", change, map[string]string{"Sec-Fetch-Site": "cross-site"}); status != http.StatusForbidden {
 		t.Fatalf("cross-site request accepted: %d", status)
 	}
-	if status, value := owner.do(http.MethodPut, "/admin/api/players/other/inventory", change, nil); status != http.StatusOK || value["unlimited"] != true {
-		t.Fatalf("inventory override: %d %v", status, value)
+	if status, value := owner.do(http.MethodPut, "/admin/api/self/item-stacks", change, nil); status != http.StatusOK || value["unlimited"] != true {
+		t.Fatalf("item stack override: %d %v", status, value)
 	}
 }
 

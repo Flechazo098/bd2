@@ -20,7 +20,7 @@ func requestQuest(request []byte) (int, int, error) {
 	}
 	pack, found, err := wire.Varint(request, 3)
 	if err != nil || !found || pack == 0 || pack > uint64(^uint32(0)>>1) {
-		return 0, 0, ErrInvalidRequest
+		return 0, 0, fmt.Errorf("%w: quest request pack %d (present=%t): %v", ErrInvalidRequest, pack, found, err)
 	}
 	return quest, int(pack), nil
 }
@@ -128,7 +128,7 @@ func (s *Service) ApplyTalentFieldAbsorb(ctx command.Context, _ string, _ roster
 		return nil, err
 	}
 	if rule.Class != 4 || len(ids) == 0 {
-		return nil, ErrInvalidRequest
+		return nil, fmt.Errorf("%w: field absorb talent class %d with %d objects", ErrInvalidRequest, rule.Class, len(ids))
 	}
 	design, err := s.fieldObjectDesign(ctx, pack)
 	if err != nil {
@@ -208,18 +208,18 @@ func intsRequest(raw []byte, number int) ([]uint64, error) {
 		if f.Type == 0 {
 			v, n := binary.Uvarint(f.Value)
 			if n <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint", wire.ErrMalformed, number)
 			}
 			out = append(out, v)
 			return nil
 		}
 		if f.Type != 2 {
-			return ErrInvalidRequest
+			return fmt.Errorf("%w: field %d has wire type %d, want varint or packed", ErrInvalidRequest, number, f.Type)
 		}
 		for raw := f.Value; len(raw) > 0; {
 			v, n := binary.Uvarint(raw)
 			if n <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d packed varint", wire.ErrMalformed, number)
 			}
 			out = append(out, v)
 			raw = raw[n:]
@@ -232,7 +232,7 @@ func intsRequest(raw []byte, number int) ([]uint64, error) {
 func (s *Service) handleFieldResearch(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	seq, present, err := wire.Varint(request, 1)
 	if err != nil || !present || seq == 0 || seq > 0x7fffffff {
-		return 59, nil, true, ErrInvalidRequest
+		return 59, nil, true, fmt.Errorf("%w: field research sequence %d (present=%t): %v", ErrInvalidRequest, seq, present, err)
 	}
 	pack, err := requestPack(request)
 	if err != nil {
@@ -240,7 +240,7 @@ func (s *Service) handleFieldResearch(ctx command.Context, request []byte) (int,
 	}
 	id, _, err := wire.Varint(request, 3)
 	if err != nil || id == 0 || id > 0x7fffffff || !s.packUnlocked(ctx, pack) || !s.fieldObjectCurrentPack(pack) {
-		return 59, nil, true, ErrInvalidRequest
+		return 59, nil, true, fmt.Errorf("%w: field research object %d in pack %d is unavailable: %v", ErrInvalidRequest, id, pack, err)
 	}
 	design, err := s.researchDesign(pack)
 	if err != nil {
@@ -248,7 +248,7 @@ func (s *Service) handleFieldResearch(ctx command.Context, request []byte) (int,
 	}
 	obj, ok := design.Objects[int(id)]
 	if !ok || obj.CollectionID == 0 && obj.Reward.Type == 0 {
-		return 59, nil, true, ErrInvalidRequest
+		return 59, nil, true, fmt.Errorf("%w: field object %d in pack %d has no research reward", ErrInvalidRequest, id, pack)
 	}
 	position, saved := s.state.Position()
 	mapOK := false
@@ -353,7 +353,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		return s.reputationInfo(ctx, request)
 	case "/QuestImmortalReset":
 		if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
-			return 70, nil, true, ErrInvalidRequest
+			return 70, nil, true, fmt.Errorf("%w: QuestImmortalReset sequence %d (present=%t): %v", ErrInvalidRequest, seq, found, err)
 		}
 		return 70, nil, true, fmt.Errorf("world: immortal quest difficulty is unavailable in the current design")
 	case "/QuestMaxClearInfo":
@@ -536,6 +536,10 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err != nil {
 			return 0, nil, true, err
 		}
+		lifeRewards, err := s.grantLifeQuestRewards(ctx, pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)])
+		if err != nil {
+			return 0, nil, true, err
+		}
 		if err := s.state.ClearQuest(ctx, quest, pack, s.questDifficultyFor(pack, quest)); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
 		}
@@ -584,7 +588,8 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			"next_quest", s.nextQuestFor(ctx, pack, quest), "timeline", design.CompleteCinemaName,
 			"timeline_map", design.TimelineStartMapID, "position_found", positionFound,
 			"saved_position", saved.Position, "party_changes", len(nextChars), "items", len(items))
-		out, err := s.clearResponse(ctx, pack, quest, s.questClearRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment), nextItems, nextChars)
+		rewards := append(s.questClearRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment), lifeRewards...)
+		out, err := s.clearResponse(ctx, pack, quest, rewards, nextItems, nextChars)
 		if err != nil {
 			return 0, nil, true, err
 		}

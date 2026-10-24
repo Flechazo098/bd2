@@ -199,6 +199,14 @@ func (s *Service) AttachCommittedHealth(callback func(ctx command.Context, _ map
 	s.commitHealth = callback
 }
 
+func (s *Service) ActivePack(ctx command.Context) int {
+	state := s.stateLocked(ctx)
+	if !state.Entered {
+		return 0
+	}
+	return state.Pack
+}
+
 func (s *Service) Active(ctx command.Context) bool {
 
 	return s.stateLocked(ctx).Entered

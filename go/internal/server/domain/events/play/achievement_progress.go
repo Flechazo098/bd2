@@ -45,7 +45,7 @@ func (s *Service) readCompletedRhythmResults() []events.RhythmResult {
 		if err := wire.Walk(reply.Request, func(field wire.Field) error {
 			if field.Number == 3 {
 				if field.Type != 2 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, field.Number, field.Type)
 				}
 				result.Judgments[num(field.Value, 1)] = num(field.Value, 2)
 			}

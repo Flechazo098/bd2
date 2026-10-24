@@ -53,7 +53,7 @@ type Owner struct {
 
 func New(store Store, design *gamedata.GuildDesign) (*Owner, error) {
 	if store == nil || design == nil || design.Guild.MaxMembers == 0 || design.Guild.MaxMembers > 256 {
-		return nil, ErrInvalid
+		return nil, fmt.Errorf("%w: guild store or design missing, or max members outside 1..256", ErrInvalid)
 	}
 	return &Owner{store: store, design: design}, nil
 }
@@ -140,10 +140,10 @@ func readGuild(tx Tx, id uint64) (Guild, error) {
 		return g, err
 	}
 	if !found {
-		return g, ErrNotFound
+		return g, fmt.Errorf("%w: guild %d", ErrNotFound, id)
 	}
 	if g.ID != id || g.Members == nil || g.Reserved == nil {
-		return g, ErrInvalid
+		return g, fmt.Errorf("%w: saved guild %d is record %d with members=%t reserved=%t", ErrInvalid, id, g.ID, g.Members != nil, g.Reserved != nil)
 	}
 	if g.Supporters == nil {
 		g.Supporters = map[string]SupporterSlot{}
@@ -159,14 +159,14 @@ func readReservation(tx Tx, id string) (reservationRecord, bool, error) {
 			return r, false, e
 		}
 		if r.Operation.ID != id || r.Reservation.ID != id || r.Reservation.Digest != digest || r.Reservation.ActorAccount != r.Operation.Actor.AccountID || r.Reservation.Kind != r.Operation.Kind || r.Reservation.Status != Prepared && r.Reservation.Status != Confirmed && r.Reservation.Status != Cancelled {
-			return r, false, ErrInvalid
+			return r, false, fmt.Errorf("%w: saved reservation %q does not match its operation", ErrInvalid, id)
 		}
 	}
 	return r, ok, err
 }
 func hoursAfter(at int64, hours uint64) (int64, error) {
 	if hours > uint64(math.MaxInt64/(60*60*1000)) || at > math.MaxInt64-int64(hours)*60*60*1000 {
-		return 0, ErrInvalid
+		return 0, fmt.Errorf("%w: %d hours after %d overflows", ErrInvalid, hours, at)
 	}
 	return at + int64(hours)*60*60*1000, nil
 }
@@ -223,7 +223,7 @@ func (o *Owner) validDetails(d CreateDetails) bool {
 
 func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) {
 	if op.ID == "" || len(op.ID) > 256 || op.Actor.AccountID == "" || len(op.Actor.AccountID) > 256 || op.Actor.OwnerIndex == 0 || op.AtMS <= 0 {
-		return Reservation{}, ErrInvalid
+		return Reservation{}, fmt.Errorf("%w: operation %q by %q (owner %d) at %d is incomplete", ErrInvalid, op.ID, op.Actor.AccountID, op.Actor.OwnerIndex, op.AtMS)
 	}
 	digest, err := operationDigest(op)
 	if err != nil {
@@ -237,7 +237,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 		}
 		if found {
 			if prior.Reservation.Digest != digest {
-				return ErrConflict
+				return fmt.Errorf("%w: operation %q was replayed with a different body", ErrConflict, op.ID)
 			}
 			out = prior.Reservation
 			return nil
@@ -247,17 +247,17 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 			subject = op.TargetAccount
 		}
 		if subject == "" || len(subject) > 256 {
-			return ErrInvalid
+			return fmt.Errorf("%w: operation %q subject %q", ErrInvalid, op.ID, subject)
 		}
 		a, e := readAccount(tx, subject)
 		if e != nil {
 			return e
 		}
 		if a.PendingOperation != "" {
-			return ErrPending
+			return fmt.Errorf("%w: account %s has pending operation %q", ErrPending, subject, a.PendingOperation)
 		}
 		if a.Epoch != op.ExpectedMembershipEpoch {
-			return ErrConflict
+			return fmt.Errorf("%w: account %s membership epoch %d, operation expects %d", ErrConflict, subject, a.Epoch, op.ExpectedMembershipEpoch)
 		}
 		r := Reservation{ID: op.ID, Kind: op.Kind, ActorAccount: op.Actor.AccountID, SubjectAccount: subject, Digest: digest, RequestDigest: op.RequestDigest, Status: Prepared, GuildID: op.GuildID, MembershipEpoch: a.Epoch, PreparedMS: op.AtMS, Raid: op.Raid}
 		var g Guild
@@ -290,12 +290,12 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					after = rows[len(rows)-1].Key
 				}
 				if len(r.EntitlementIDs) == 0 {
-					return ErrIneligible
+					return fmt.Errorf("%w: account %s has no guild creation entitlement", ErrIneligible, subject)
 				}
 			}
 			for _, kind := range op.ActionTypes {
 				if kind < 1 || kind > 9 {
-					return ErrInvalid
+					return fmt.Errorf("%w: guild action type %d, want 1..9", ErrInvalid, kind)
 				}
 			}
 			if op.Kind == Acknowledge {
@@ -309,14 +309,14 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 			}
 		} else if op.Kind == Create {
 			if a.GuildID != 0 || op.AtMS < a.LeaveUntilMS || !validName(op.Create.Name) || !o.validDetails(op.Create) {
-				return ErrIneligible
+				return fmt.Errorf("%w: account %s cannot create guild %q (guild %d, leave until %d, at %d)", ErrIneligible, subject, op.Create.Name, a.GuildID, a.LeaveUntilMS, op.AtMS)
 			}
 			key := cases.Fold().String(norm.NFKC.String(op.Create.Name))
 			var reserved uint64
 			if found, e := load(tx, nameBucket, key, &reserved); e != nil {
 				return e
 			} else if found {
-				return ErrConflict
+				return fmt.Errorf("%w: guild name %q is taken", ErrConflict, op.Create.Name)
 			}
 			id, e := newGuildID()
 			if e != nil {
@@ -325,7 +325,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 			if _, found, e := tx.Get(guildBucket, numberKey(id)); e != nil {
 				return e
 			} else if found {
-				return ErrConflict
+				return fmt.Errorf("%w: guild %d already exists", ErrConflict, id)
 			}
 			g = Guild{ID: id, Name: op.Create.Name, NameKey: key, Message: op.Create.Message, IconColor: op.Create.IconColor, Icon: op.Create.Icon, JoinType: op.Create.JoinType, Revision: 1, CreatedMS: op.AtMS, UpdatedMS: op.AtMS, PendingOperation: op.ID, Members: map[string]Membership{}, Reserved: map[string]bool{op.ID: true}, Supporters: map[string]SupporterSlot{}}
 			r.GuildID = id
@@ -339,35 +339,35 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 				return e
 			}
 			if g.PendingOperation != "" || g.PendingManagement != "" || g.DeleteAtMS != 0 && op.Kind != CancelDelete {
-				return ErrIneligible
+				return fmt.Errorf("%w: guild %d is busy (operation %q, management %q, delete at %d)", ErrIneligible, g.ID, g.PendingOperation, g.PendingManagement, g.DeleteAtMS)
 			}
 			switch op.Kind {
 			case Attendance:
 				if a.GuildID != g.ID || g.Members[subject].Epoch != a.Epoch || a.AttendanceDay == op.Day {
-					return ErrIneligible
+					return fmt.Errorf("%w: account %s cannot attend guild %d on %s", ErrIneligible, subject, g.ID, op.Day)
 				}
 				if _, e := time.Parse("2006-01-02", op.Day); e != nil {
-					return ErrInvalid
+					return fmt.Errorf("%w: attendance day %q", ErrInvalid, op.Day)
 				}
 				r.Grants = []gamedata.Reward{o.design.Guild.Attendance}
 			case Edit, Rename, Notice:
 				actor, ok := g.Members[op.Actor.AccountID]
 				if !ok || actor.Role != Admin && actor.Role != SubAdmin {
-					return ErrPermission
+					return fmt.Errorf("%w: %s is not an administrator of guild %d", ErrPermission, op.Actor.AccountID, g.ID)
 				}
 				if op.Kind == Rename && actor.Role != Admin {
-					return ErrPermission
+					return fmt.Errorf("%w: only the guild master renames guild %d", ErrPermission, g.ID)
 				}
 				if op.Kind == Rename {
 					if !validName(op.Text) {
-						return ErrInvalid
+						return fmt.Errorf("%w: guild name %q", ErrInvalid, op.Text)
 					}
 					key := cases.Fold().String(norm.NFKC.String(op.Text))
 					var id uint64
 					if found, e := load(tx, nameBucket, key, &id); e != nil {
 						return e
 					} else if found && id != g.ID {
-						return ErrConflict
+						return fmt.Errorf("%w: guild name %q belongs to guild %d", ErrConflict, op.Text, id)
 					}
 					if e = save(tx, nameBucket, key, g.ID); e != nil {
 						return e
@@ -375,47 +375,47 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					r.Charges = []gamedata.Reward{o.design.Guild.RenameCost}
 				} else if op.Kind == Edit {
 					if !o.validDetails(op.Create) {
-						return ErrInvalid
+						return fmt.Errorf("%w: guild %d details %+v", ErrInvalid, g.ID, op.Create)
 					}
 				} else if !validText(op.Text, 500) {
-					return ErrInvalid
+					return fmt.Errorf("%w: guild notice is longer than 500 characters or invalid", ErrInvalid)
 				}
 				g.PendingManagement = op.ID
 			case SupporterAdd, SupporterRemove:
 				if a.GuildID != g.ID {
-					return ErrIneligible
+					return fmt.Errorf("%w: account %s is in guild %d, not %d", ErrIneligible, subject, a.GuildID, g.ID)
 				}
 				if op.Supporter.Slot > 1 || op.Supporter.AccountID != subject {
-					return ErrInvalid
+					return fmt.Errorf("%w: supporter slot %d for %q by %q", ErrInvalid, op.Supporter.Slot, op.Supporter.AccountID, subject)
 				}
 				if op.Kind == SupporterAdd && (op.Supporter.OwnerIndex != op.Actor.OwnerIndex || op.Supporter.Bundle == "" || op.Supporter.Version == "" || op.Supporter.CharacterIndex == 0 || op.Supporter.CostumeIndex == 0) {
-					return ErrInvalid
+					return fmt.Errorf("%w: supporter %+v is incomplete", ErrInvalid, op.Supporter)
 				}
 				if op.Kind == SupporterAdd {
 					for _, slot := range g.Supporters {
 						if slot.AccountID == subject && slot.Slot != op.Supporter.Slot && slot.CharacterIndex == op.Supporter.CharacterIndex {
-							return ErrConflict
+							return fmt.Errorf("%w: character %d already supports guild %d in slot %d", ErrConflict, slot.CharacterIndex, g.ID, slot.Slot)
 						}
 					}
 				}
 				if op.Kind == SupporterRemove {
 					if _, ok := g.Supporters[accountPrefix(subject)+numberKey(op.Supporter.Slot)]; !ok {
-						return ErrNotFound
+						return fmt.Errorf("%w: %s has no supporter in slot %d", ErrNotFound, subject, op.Supporter.Slot)
 					}
 				}
 			case CancelDelete:
 				member, ok := g.Members[op.Actor.AccountID]
 				if !ok || member.Role != Admin {
-					return ErrPermission
+					return fmt.Errorf("%w: only the guild master cancels the deletion of guild %d", ErrPermission, g.ID)
 				}
 				if g.DeleteAtMS == 0 || op.AtMS >= g.DeleteAtMS {
-					return ErrIneligible
+					return fmt.Errorf("%w: guild %d is not being deleted at %d (delete at %d)", ErrIneligible, g.ID, op.AtMS, g.DeleteAtMS)
 				}
 			case CancelJoin, Refuse:
 				if op.Kind == Refuse {
 					actor, ok := g.Members[op.Actor.AccountID]
 					if !ok || actor.Role != Admin && actor.Role != SubAdmin {
-						return ErrPermission
+						return fmt.Errorf("%w: %s is not an administrator of guild %d", ErrPermission, op.Actor.AccountID, g.ID)
 					}
 				}
 				var app Application
@@ -424,18 +424,18 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					return e
 				}
 				if !found {
-					return ErrNotFound
+					return fmt.Errorf("%w: no application from %s to guild %d", ErrNotFound, subject, g.ID)
 				}
 			case Join, Accept:
 				if a.GuildID != 0 || op.AtMS < a.LeaveUntilMS || op.AtMS < a.Bans[g.ID] {
-					return ErrIneligible
+					return fmt.Errorf("%w: account %s cannot join guild %d (guild %d, leave until %d, banned until %d, at %d)", ErrIneligible, subject, g.ID, a.GuildID, a.LeaveUntilMS, a.Bans[g.ID], op.AtMS)
 				}
 				if uint64(len(g.Members)+len(g.Reserved)) >= o.design.Guild.MaxMembers {
-					return ErrCapacity
+					return fmt.Errorf("%w: guild %d has %d members and %d reservations", ErrCapacity, g.ID, len(g.Members), len(g.Reserved))
 				}
 				if op.Kind == Join {
 					if g.JoinType != OpenJoin && g.JoinType != ApplicationJoin {
-						return ErrIneligible
+						return fmt.Errorf("%w: guild %d join type %v", ErrIneligible, g.ID, g.JoinType)
 					}
 					r.Application = g.JoinType == ApplicationJoin
 					if r.Application {
@@ -446,7 +446,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 				} else {
 					m, ok := g.Members[op.Actor.AccountID]
 					if !ok || m.Role != Admin && m.Role != SubAdmin {
-						return ErrPermission
+						return fmt.Errorf("%w: %s is not an administrator of guild %d", ErrPermission, op.Actor.AccountID, g.ID)
 					}
 					var app Application
 					found, e := load(tx, applicationBucket, applicationKey(g.ID, subject), &app)
@@ -454,7 +454,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 						return e
 					}
 					if !found || app.ExpiresMS <= op.AtMS {
-						return ErrIneligible
+						return fmt.Errorf("%w: application from %s to guild %d is missing or expired (present=%t, expires %d, at %d)", ErrIneligible, subject, g.ID, found, app.ExpiresMS, op.AtMS)
 					}
 				}
 				if !r.Application {
@@ -462,39 +462,39 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 				}
 			case Leave, Ban, ChangeRole:
 				if a.GuildID != g.ID {
-					return ErrIneligible
+					return fmt.Errorf("%w: account %s is in guild %d, not %d", ErrIneligible, subject, a.GuildID, g.ID)
 				}
 				m, ok := g.Members[subject]
 				if !ok {
-					return ErrIneligible
+					return fmt.Errorf("%w: %s is not a member of guild %d", ErrIneligible, subject, g.ID)
 				}
 				if op.Kind == Leave || op.Kind == Ban {
 					if memberLocked(a, op.AtMS) {
-						return ErrSeasonLocked
+						return fmt.Errorf("%w: %s is season locked at %d", ErrSeasonLocked, subject, op.AtMS)
 					}
 				}
 				if op.Kind == Leave && m.Role == Admin && (len(g.Members) != 1 || len(g.Reserved) != 0) {
-					return ErrIneligible
+					return fmt.Errorf("%w: the master of guild %d cannot leave while %d members and %d reservations remain", ErrIneligible, g.ID, len(g.Members), len(g.Reserved))
 				}
 				if op.Kind == Ban && !memberPermission(g, op.Actor.AccountID, subject) {
-					return ErrPermission
+					return fmt.Errorf("%w: %s cannot ban %s from guild %d", ErrPermission, op.Actor.AccountID, subject, g.ID)
 				}
 				if op.Kind == ChangeRole {
 					actor, ok := g.Members[op.Actor.AccountID]
 					if !ok || actor.Role != Admin || op.Role < Admin || op.Role > Member || op.Actor.AccountID == subject {
-						return ErrPermission
+						return fmt.Errorf("%w: %s cannot give %s role %v in guild %d", ErrPermission, op.Actor.AccountID, subject, op.Role, g.ID)
 					}
 					if m.Role == Admin {
-						return ErrPermission
+						return fmt.Errorf("%w: %s is the master of guild %d", ErrPermission, subject, g.ID)
 					}
 				}
 			case RaidEnter:
 				if a.GuildID != g.ID || op.Season == 0 || op.Day == "" || len(op.Day) > 32 {
-					return ErrIneligible
+					return fmt.Errorf("%w: %s cannot enter guild %d raid season %d on %q (guild %d)", ErrIneligible, subject, g.ID, op.Season, op.Day, a.GuildID)
 				}
 				member, ok := g.Members[subject]
 				if !ok || member.Epoch != a.Epoch {
-					return ErrIneligible
+					return fmt.Errorf("%w: %s membership in guild %d does not match epoch %d", ErrIneligible, subject, g.ID, a.Epoch)
 				}
 				var season Season
 				found, e := load(tx, seasonBucket, seasonKey(g.ID, op.Season), &season)
@@ -502,7 +502,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					return e
 				}
 				if !found || season.State != "active" || op.AtMS < season.StartsMS || op.AtMS >= season.EndsMS {
-					return ErrIneligible
+					return fmt.Errorf("%w: guild %d raid season %d is not open at %d (present=%t, state %q, %d..%d)", ErrIneligible, g.ID, op.Season, op.AtMS, found, season.State, season.StartsMS, season.EndsMS)
 				}
 				if op.UseSupporter {
 					if e = o.reserveSupporter(tx, op, g.ID, 1); e != nil {
@@ -510,7 +510,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					}
 				}
 				if season.Pending == math.MaxUint64 {
-					return ErrInvalid
+					return fmt.Errorf("%w: guild %d raid season %d pending count overflows", ErrInvalid, g.ID, op.Season)
 				}
 				season.Pending++
 				if e = save(tx, seasonBucket, seasonKey(g.ID, op.Season), season); e != nil {
@@ -524,7 +524,7 @@ func (o *Owner) Prepare(ctx context.Context, op Operation) (Reservation, error) 
 					return e
 				}
 			default:
-				return ErrInvalid
+				return fmt.Errorf("%w: unknown guild operation kind %v", ErrInvalid, op.Kind)
 			}
 			g.PendingManagement = op.ID
 		}
@@ -575,7 +575,7 @@ func (o *Owner) checkApplications(tx Tx, account string, guild uint64, at int64)
 		after = rows[len(rows)-1].Key
 	}
 	if count >= o.design.Guild.ApplicationLimit {
-		return ErrCapacity
+		return fmt.Errorf("%w: %s has %d open guild applications", ErrCapacity, account, count)
 	}
 	return nil
 }
@@ -588,16 +588,16 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild operation %q", ErrNotFound, proof.OperationID)
 		}
 		r, op := record.Reservation, record.Operation
 		if r.ActorAccount != proof.ActorAccount || r.Digest != proof.Digest {
-			return ErrConflict
+			return fmt.Errorf("%w: guild operation %q proof does not match its reservation", ErrConflict, proof.OperationID)
 		}
 		if r.Status != Prepared {
 			out = r
 			if r.Status == Cancelled {
-				return ErrConflict
+				return fmt.Errorf("%w: guild operation %q was cancelled", ErrConflict, r.ID)
 			}
 			return nil
 		}
@@ -606,7 +606,7 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 			return err
 		}
 		if a.PendingOperation != r.ID || a.Epoch != r.MembershipEpoch {
-			return ErrConflict
+			return fmt.Errorf("%w: account %s pending %q epoch %d, reservation %q epoch %d", ErrConflict, r.SubjectAccount, a.PendingOperation, a.Epoch, r.ID, r.MembershipEpoch)
 		}
 		var g Guild
 		if r.GuildID != 0 {
@@ -628,7 +628,7 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 					return e
 				}
 				if !found || ent.AccountID != r.SubjectAccount || ent.Claimed {
-					return ErrConflict
+					return fmt.Errorf("%w: entitlement %q of %s is missing, foreign or claimed", ErrConflict, key, r.SubjectAccount)
 				}
 				ent.Claimed = true
 				if e = save(tx, entitlementBucket, key, ent); e != nil {
@@ -685,7 +685,7 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 				}
 			} else {
 				if !g.Reserved[r.ID] || a.GuildID != 0 || a.Epoch == math.MaxUint64 {
-					return ErrConflict
+					return fmt.Errorf("%w: guild %d join %q no longer applies to %s (guild %d)", ErrConflict, g.ID, r.ID, r.SubjectAccount, a.GuildID)
 				}
 				profile := op.Actor
 				if r.Kind == Accept {
@@ -718,7 +718,7 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 				}
 			} else {
 				if a.Epoch == math.MaxUint64 {
-					return ErrInvalid
+					return fmt.Errorf("%w: account %s membership epoch overflows", ErrInvalid, r.SubjectAccount)
 				}
 				delete(g.Members, r.SubjectAccount)
 				for key, slot := range g.Supporters {
@@ -765,7 +765,7 @@ func (o *Owner) Confirm(ctx context.Context, proof CommitProof) (Reservation, er
 				return err
 			}
 		default:
-			return ErrInvalid
+			return fmt.Errorf("%w: unknown guild operation kind %v", ErrInvalid, r.Kind)
 		}
 		a.PendingOperation = ""
 		if g.PendingManagement == r.ID {
@@ -808,11 +808,11 @@ func (o *Owner) Cancel(ctx context.Context, proof CommitProof) (Reservation, err
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild operation %q", ErrNotFound, proof.OperationID)
 		}
 		r, op := record.Reservation, record.Operation
 		if r.ActorAccount != proof.ActorAccount || r.Digest != proof.Digest {
-			return ErrConflict
+			return fmt.Errorf("%w: guild operation %q proof does not match its reservation", ErrConflict, proof.OperationID)
 		}
 		if r.Status != Prepared {
 			out = r
@@ -823,7 +823,7 @@ func (o *Owner) Cancel(ctx context.Context, proof CommitProof) (Reservation, err
 			return err
 		}
 		if a.PendingOperation != r.ID {
-			return ErrConflict
+			return fmt.Errorf("%w: account %s pending %q, reservation %q", ErrConflict, r.SubjectAccount, a.PendingOperation, r.ID)
 		}
 		var g Guild
 		if r.GuildID != 0 {
@@ -863,7 +863,7 @@ func (o *Owner) Cancel(ctx context.Context, proof CommitProof) (Reservation, err
 				return err
 			}
 			if season.Pending == 0 {
-				return ErrInvalid
+				return fmt.Errorf("%w: guild %d raid season %d has no pending entries", ErrInvalid, g.ID, op.Season)
 			}
 			season.Pending--
 			if err = save(tx, seasonBucket, seasonKey(g.ID, op.Season), season); err != nil {
@@ -925,12 +925,12 @@ func (o *Owner) reserveSupporter(tx Tx, op Operation, guild uint64, change int) 
 	}
 	if change > 0 {
 		if count >= o.design.Raid.DailySupporterUses {
-			return ErrCapacity
+			return fmt.Errorf("%w: %s used %d guild supporters on %s", ErrCapacity, op.Actor.AccountID, count, op.Day)
 		}
 		count++
 	} else {
 		if count == 0 {
-			return ErrInvalid
+			return fmt.Errorf("%w: %s has no guild supporter use to return on %s", ErrInvalid, op.Actor.AccountID, op.Day)
 		}
 		count--
 	}

@@ -115,7 +115,7 @@ func (s *Seed) Write(path string) error {
 
 func (s *Seed) Validate() error {
 	if s == nil || s.Version != StateVersion() || len(s.Responses) == 0 {
-		return ErrInvalidSeed
+		return fmt.Errorf("%w: static data seed version or responses do not match state version %q", ErrInvalidSeed, StateVersion())
 	}
 	for path, r := range s.Responses {
 		if len(path) < 2 || path[0] != '/' || r.PacketCode < 0 {

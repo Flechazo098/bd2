@@ -111,7 +111,7 @@ func (s *Service) Handle(ctx command.Context, path string, raw []byte) (int, []b
 	values := map[int]wire.Field{}
 	if err := wire.Walk(raw, func(f wire.Field) error {
 		if _, exists := values[f.Number]; exists {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: chat field %d repeats", wire.ErrMalformed, f.Number)
 		}
 		values[f.Number] = f
 		return nil
@@ -124,11 +124,11 @@ func (s *Service) Handle(ctx command.Context, path string, raw []byte) (int, []b
 			return 0, nil
 		}
 		if v.Type != 0 {
-			return 0, wire.ErrMalformed
+			return 0, fmt.Errorf("%w: chat field %d has wire type %d, want varint", wire.ErrMalformed, field, v.Type)
 		}
 		n, size := binary.Uvarint(v.Value)
 		if size <= 0 {
-			return 0, wire.ErrMalformed
+			return 0, fmt.Errorf("%w: chat field %d varint is truncated", wire.ErrMalformed, field)
 		}
 		return n, nil
 	}

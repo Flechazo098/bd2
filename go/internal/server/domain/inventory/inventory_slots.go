@@ -25,34 +25,36 @@ type inventorySlotSnapshot struct {
 	InventorySlotCounts
 }
 
-// DevelopmentSettings is the operator's per-account development overrides
-// file. It is read at each login, so edits apply on the next login.
+// DevelopmentSettings is the per-account development overrides file. Each
+// account switches its own entry from the console; grants read it as they happen.
 type DevelopmentSettings struct {
 	Version  int                           `json:"version"`
 	Accounts map[string]DevelopmentAccount `json:"accounts"`
 }
 
 type DevelopmentAccount struct {
-	Inventory DevelopmentInventory `json:"inventory"`
+	Items DevelopmentItems `json:"items"`
 }
 
-type DevelopmentInventory struct {
-	Unlimited bool `json:"unlimited"`
+type DevelopmentItems struct {
+	// UnlimitedStacks lifts every item stack limit. When it is switched off,
+	// stacks above their limit are cut back to it at the next login.
+	UnlimitedStacks bool `json:"unlimited_stacks"`
 }
 
 var DevelopmentSettingsDocument = commonconfig.Document[DevelopmentSettings]{
 	Name:     "dev-tools",
 	FileName: "dev-tools.json",
 	Defaults: func() DevelopmentSettings {
-		return DevelopmentSettings{Version: 2, Accounts: map[string]DevelopmentAccount{}}
+		return DevelopmentSettings{Version: 3, Accounts: map[string]DevelopmentAccount{}}
 	},
 	Base:   func() DevelopmentSettings { return DevelopmentSettings{} },
 	Decode: commonconfig.DecodeOptions{DisallowUnknownFields: true, RejectTrailing: true, RejectNull: true},
 	Schema: commonconfig.Schema{Title: "开发覆盖", Sections: []commonconfig.Section{{ID: "format", Title: "格式", Fields: []commonconfig.Field{
-		{Path: "version", Kind: commonconfig.KindInteger, Label: "格式版本", Required: true, Options: []commonconfig.Option{{Value: 2, Label: "2"}}},
+		{Path: "version", Kind: commonconfig.KindInteger, Label: "格式版本", Required: true, Options: []commonconfig.Option{{Value: 3, Label: "3"}}},
 		{Path: "accounts", Kind: commonconfig.KindMap, Label: "账号", Required: true},
-		{Path: "accounts.*.inventory", Kind: commonconfig.KindMap, Label: "背包", Required: true},
-		{Path: "accounts.*.inventory.unlimited", Kind: commonconfig.KindBool, Label: "无限背包容量", Required: true},
+		{Path: "accounts.*.items", Kind: commonconfig.KindMap, Label: "物品", Required: true},
+		{Path: "accounts.*.items.unlimited_stacks", Kind: commonconfig.KindBool, Label: "不限物品堆叠", Required: true},
 	}}}},
 	Rules: func(settings DevelopmentSettings) commonconfig.Problems {
 		var problems commonconfig.Problems
@@ -72,15 +74,12 @@ type inventorySlotReply struct {
 }
 
 // InventorySlots owns the four ordinary UserDBInfo capacity fields and the
-// four matching expansion endpoints. The optional development settings file
-// changes only the two backpack values advertised at login; purchased values
-// remain durable and become visible again when the switch is disabled.
+// four matching expansion endpoints.
 type InventorySlots struct {
-	store        stateio.ScopedEntryStore
-	design       *gamedata.InventorySlotDesign
-	wallet       *Wallet
-	state        inventorySlotSnapshot
-	settingsPath string
+	store  stateio.ScopedEntryStore
+	design *gamedata.InventorySlotDesign
+	wallet *Wallet
+	state  inventorySlotSnapshot
 
 	replies map[string]inventorySlotReply
 }
@@ -122,11 +121,6 @@ func (s *InventorySlots) validateCounts(counts InventorySlotCounts) error {
 	return nil
 }
 
-func (s *InventorySlots) AttachDevelopmentSettings(path string) {
-
-	s.settingsPath = path
-}
-
 func (s *InventorySlots) BeginLogin(ctx command.Context) {
 	id := ctx.SessionID
 
@@ -145,18 +139,8 @@ func (s *InventorySlots) EnsurePersisted(ctx command.Context) error {
 	return s.persistLocked(ctx, s.state)
 }
 
-func (s *InventorySlots) InventorySlotCounts(ctx command.Context) (InventorySlotCounts, error) {
-
-	counts := s.state.InventorySlotCounts
-	unlimited, err := loadUnlimitedInventory(s.settingsPath, ctx.AccountID)
-	if err != nil {
-		return InventorySlotCounts{}, err
-	}
-	if unlimited {
-		counts.Items = s.design.Items.Maximum
-		counts.Equipment = s.design.Equipment.Maximum
-	}
-	return counts, nil
+func (s *InventorySlots) InventorySlotCounts(command.Context) (InventorySlotCounts, error) {
+	return s.state.InventorySlotCounts, nil
 }
 
 func (s *InventorySlots) UserInventorySlots(ctx command.Context) (items, storage, equipment, equipmentStorage uint64, err error) {
@@ -167,7 +151,9 @@ func (s *InventorySlots) UserInventorySlots(ctx command.Context) (items, storage
 	return counts.Items, counts.Storage, counts.Equipment, counts.EquipmentStorage, nil
 }
 
-func loadUnlimitedInventory(path, accountID string) (bool, error) {
+// UnlimitedItemStacks reports the account's switch in the development
+// settings file at path; a missing path or file means ordinary limits.
+func UnlimitedItemStacks(path, accountID string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
@@ -182,7 +168,7 @@ func loadUnlimitedInventory(path, accountID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("player: malformed development settings: %w", err)
 	}
-	return settings.Accounts[accountID].Inventory.Unlimited, nil
+	return settings.Accounts[accountID].Items.UnlimitedStacks, nil
 }
 
 func inventorySlotPrice(rule gamedata.InventorySlotRule, current, count uint64) (uint64, error) {

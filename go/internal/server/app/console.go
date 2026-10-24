@@ -55,14 +55,9 @@ func openConsole(c *configuration, design *designCatalog, seeds *seedCatalog, au
 		}
 		return items, err
 	})
-	slots := design.slotDesign
 	started := time.Now().UTC()
 	options := admin.Options{
-		Store: store, Players: players, Catalog: catalog, MailSpool: c.mailGrantSpool, Inventory: developmentSettings,
-		Limits: admin.InventoryLimits{
-			Items:     admin.CapacityLimits{Default: slots.Items.Default, Maximum: slots.Items.Maximum},
-			Equipment: admin.CapacityLimits{Default: slots.Equipment.Default, Maximum: slots.Equipment.Maximum},
-		},
+		Store: store, Players: players, Catalog: catalog, MailSpool: c.mailGrantSpool, Settings: developmentSettings,
 		Configuration: commonconfig.NewRegistry(c.gameFile, c.authFile, c.resourceFile, c.updateFile),
 		Secure:        c.authentication.Mode == "oauth" && c.authRuntime.PublicURLParsed != nil && c.authRuntime.PublicURLParsed.Scheme == "https",
 		Server: func() any {

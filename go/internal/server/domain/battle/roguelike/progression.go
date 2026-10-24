@@ -133,6 +133,9 @@ func (s *Service) finish(ctx command.Context, v *state, win, penalty bool, key s
 	score, obs := s.score(v, penalty)
 	var bundle []byte
 	if win {
+		record := v.Seasons[v.Season]
+		record.Cleared = true
+		v.Seasons[v.Season] = record
 		v.MaxTry = max(v.MaxTry, r.Level)
 		if r.Level > v.MaxReward {
 			var grant []gamedata.Reward
@@ -237,7 +240,7 @@ func (s *Service) rank(ctx command.Context, v *state, season uint64) ([]byte, er
 func (s *Service) seasonReward(ctx command.Context, v *state, key string) ([]byte, error) {
 	var season uint64
 	for id, r := range v.Seasons {
-		if s.seasonSettled(id, v.Season) && !r.Claimed && r.Score > 0 && (season == 0 || id < season) {
+		if s.seasonSettled(id, v.Season) && !r.Claimed && r.Cleared && r.Score > 0 && (season == 0 || id < season) {
 			season = id
 		}
 	}

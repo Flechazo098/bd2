@@ -195,14 +195,14 @@ func (s *Service) multiBuy(ctx command.Context, request []byte, seq uint64) (int
 		case 0:
 			id, n := binary.Uvarint(field.Value)
 			if n <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, field.Number)
 			}
 			return appendID(id)
 		case 2:
 			for packed := field.Value; len(packed) != 0; {
 				id, n := binary.Uvarint(packed)
 				if n <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, field.Number)
 				}
 				if err := appendID(id); err != nil {
 					return err
@@ -279,7 +279,7 @@ func (s *Service) multiBuy(ctx command.Context, request []byte, seq uint64) (int
 			case 0:
 				value, n := binary.Uvarint(field.Value)
 				if n <= 0 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, field.Number)
 				}
 				result = wire.AppendVarint(result, field.Number+1, value)
 			case 2:

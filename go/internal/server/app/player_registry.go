@@ -82,7 +82,7 @@ func (r *playerRegistry) Acquire(ctx context.Context, accountID string) (*player
 		r.mu.Lock()
 		if r.closing {
 			r.mu.Unlock()
-			return nil, nil, player.ErrClosed
+			return nil, nil, fmt.Errorf("%w: player registry is closing, cannot load %s", player.ErrClosed, accountID)
 		}
 		slot := r.players[accountID]
 		if slot != nil && slot.retiring {
@@ -144,7 +144,7 @@ func (r *playerRegistry) Acquire(ctx context.Context, accountID string) (*player
 func (r *playerRegistry) load(accountID string, slot *playerSlot) {
 	r.mu.Lock()
 	if r.closing {
-		slot.err = player.ErrClosed
+		slot.err = fmt.Errorf("%w: player registry closed before %s loaded", player.ErrClosed, accountID)
 		close(slot.ready)
 		delete(r.players, accountID)
 		r.mu.Unlock()

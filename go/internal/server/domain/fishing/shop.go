@@ -170,7 +170,7 @@ func (s *Service) shop(ctx command.Context, path string, req []byte, n *snapshot
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want a message", wire.ErrMalformed, f.Number, f.Type)
 		}
 		index, group, id, count := num(f.Value, 1), num(f.Value, 2), num(f.Value, 3), num(f.Value, 4)
 		if seen[index] || count != 1 {
@@ -260,7 +260,7 @@ func (s *Service) fishPrice(fish Item, base uint64) (uint64, error) {
 		switch f.Type {
 		case 2:
 			if len(f.Value)%4 != 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: packed float field %d is %d bytes", wire.ErrMalformed, f.Number, len(f.Value))
 			}
 			for i := 0; i < len(f.Value); i += 4 {
 				premiums = append(premiums, float64(math.Float32frombits(binary.LittleEndian.Uint32(f.Value[i:]))))
@@ -268,7 +268,7 @@ func (s *Service) fishPrice(fish Item, base uint64) (uint64, error) {
 		case 5:
 			premiums = append(premiums, float64(math.Float32frombits(binary.LittleEndian.Uint32(f.Value))))
 		default:
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: float field %d has wire type %d", wire.ErrMalformed, f.Number, f.Type)
 		}
 		return nil
 	})

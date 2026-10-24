@@ -154,11 +154,11 @@ func (m *Manager) lookup(p Principal, k Kind) *owner {
 
 func (o *owner) submit(ctx context.Context, size int64, call func(*state) (any, []Delivery, error)) (any, []Delivery, error) {
 	if size > o.manager.config.QueueBytes {
-		return nil, nil, ErrMailboxFull
+		return nil, nil, fmt.Errorf("%w: %d byte command exceeds the %d byte queue", ErrMailboxFull, size, o.manager.config.QueueBytes)
 	}
 	if o.bytes.Add(size) > o.manager.config.QueueBytes {
 		o.bytes.Add(-size)
-		return nil, nil, ErrMailboxFull
+		return nil, nil, fmt.Errorf("%w: %d byte command does not fit the %d byte queue", ErrMailboxFull, size, o.manager.config.QueueBytes)
 	}
 	op := operation{size: size, call: call, done: make(chan outcome, 1)}
 	select {
@@ -167,14 +167,14 @@ func (o *owner) submit(ctx context.Context, size int64, call func(*state) (any, 
 		return nil, nil, ctx.Err()
 	case <-o.done:
 		o.bytes.Add(-size)
-		return nil, nil, ErrClosed
+		return nil, nil, fmt.Errorf("%w: room stopped before the command was queued", ErrClosed)
 	default:
 	}
 	select {
 	case o.queue <- op:
 	default:
 		o.bytes.Add(-size)
-		return nil, nil, ErrMailboxFull
+		return nil, nil, fmt.Errorf("%w: room queue is full", ErrMailboxFull)
 	}
 	// Accepted commands finish even if the connection disappears.
 	select {
@@ -185,7 +185,7 @@ func (o *owner) submit(ctx context.Context, size int64, call func(*state) (any, 
 		case r := <-op.done:
 			return r.value, r.deliveries, r.err
 		default:
-			return nil, nil, ErrClosed
+			return nil, nil, fmt.Errorf("%w: room stopped before the command ran", ErrClosed)
 		}
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
@@ -201,7 +201,7 @@ func (o *owner) run() {
 		case op := <-o.queue:
 			o.bytes.Add(-op.size)
 			if o.state.closed {
-				op.done <- outcome{err: ErrClosed}
+				op.done <- outcome{err: fmt.Errorf("%w: room closed before the command ran", ErrClosed)}
 				continue
 			}
 			o.state.transientCommand = false
@@ -231,7 +231,7 @@ func (o *owner) run() {
 				select {
 				case op := <-o.queue:
 					o.bytes.Add(-op.size)
-					op.done <- outcome{err: ErrClosed}
+					op.done <- outcome{err: fmt.Errorf("%w: room stopped before the command ran", ErrClosed)}
 				default:
 					return
 				}
@@ -249,35 +249,35 @@ func (o *owner) publishView() {
 func (m *Manager) Snapshot(p Principal, k Kind) (View, error) {
 	o := m.lookup(p, k)
 	if o == nil {
-		return View{}, ErrNotFound
+		return View{}, fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, p.OwnerIndex, k)
 	}
 	v := o.projection.Load()
 	if v == nil {
-		return View{}, ErrNotReady
+		return View{}, fmt.Errorf("%w: owner %d %s room has no view yet", ErrNotReady, p.OwnerIndex, k)
 	}
 	for _, member := range v.Members {
 		if samePrincipal(member.Principal, p) {
 			return cloneView(*v), nil
 		}
 	}
-	return View{}, ErrUnauthorized
+	return View{}, fmt.Errorf("%w: owner %d is not a member of the %s room", ErrUnauthorized, p.OwnerIndex, k)
 }
 
 func (m *Manager) SnapshotForSession(account, session string, k Kind) (View, error) {
 	o := m.lookup(Principal{AccountID: account}, k)
 	if o == nil {
-		return View{}, ErrNotFound
+		return View{}, fmt.Errorf("%w: account %s has no %s room", ErrNotFound, account, k)
 	}
 	v := o.projection.Load()
 	if v == nil {
-		return View{}, ErrNotReady
+		return View{}, fmt.Errorf("%w: account %s %s room has no view yet", ErrNotReady, account, k)
 	}
 	for _, member := range v.Members {
 		if member.Principal.AccountID == account && member.Principal.SessionID == session {
 			return cloneView(*v), nil
 		}
 	}
-	return View{}, ErrUnauthorized
+	return View{}, fmt.Errorf("%w: session %s of account %s is not in the %s room", ErrUnauthorized, session, account, k)
 }
 
 func (m *Manager) FishingRooms() []View {
@@ -346,11 +346,11 @@ func (m *Manager) Close(ctx context.Context) error {
 func (m *Manager) View(ctx context.Context, p Principal, k Kind) (View, error) {
 	o := m.lookup(p, k)
 	if o == nil {
-		return View{}, ErrNotFound
+		return View{}, fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, p.OwnerIndex, k)
 	}
 	v, _, err := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		if s.find(p) == nil {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: owner %d is not a member of the %s room", ErrUnauthorized, p.OwnerIndex, k)
 		}
 		return s.view(), nil, nil
 	})
@@ -362,15 +362,15 @@ func (m *Manager) View(ctx context.Context, p Principal, k Kind) (View, error) {
 func (m *Manager) AcceptRun(ctx context.Context, p Principal, k Kind, instanceID, runGUID string) error {
 	o := m.lookup(p, k)
 	if o == nil {
-		return ErrNotFound
+		return fmt.Errorf("%w: owner %d has no %s room", ErrNotFound, p.OwnerIndex, k)
 	}
 	_, _, err := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		u := s.find(p)
 		if u == nil || s.instance != instanceID || (!u.ready && k != Fishing) || s.roomState < 1 || s.roomState > 3 || (s.roomState == 1 && k != Fishing) || runGUID == "" || runGUID != u.guid {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: owner %d cannot accept run %q of %s room %q (room %q state %d)", ErrNotReady, p.OwnerIndex, runGUID, k, instanceID, s.instance, s.roomState)
 		}
 		if u.acceptedRun && u.runGUID != runGUID {
-			return nil, nil, ErrUnauthorized
+			return nil, nil, fmt.Errorf("%w: owner %d already accepted run %q, not %q", ErrUnauthorized, p.OwnerIndex, u.runGUID, runGUID)
 		}
 		u.runGUID = runGUID
 		u.acceptedRun = true
@@ -383,12 +383,12 @@ func (m *Manager) Result(ctx context.Context, p Principal, k Kind, instanceID st
 	o := m.instances[instanceID]
 	m.mu.Unlock()
 	if o == nil {
-		return FinalResult{}, ErrNotFound
+		return FinalResult{}, fmt.Errorf("%w: room instance %q", ErrNotFound, instanceID)
 	}
 	v, _, err := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		u := s.find(p)
 		if u == nil || s.selection.Kind != k || s.instance != instanceID || !u.ready || !u.acceptedRun || s.roomState != 3 {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: owner %d has no finished accepted %s run in room %q (room %s state %d)", ErrNotReady, p.OwnerIndex, k, instanceID, s.selection.Kind, s.roomState)
 		}
 		return FinalResult{View: s.view(), Clear: s.clear, ScoreMilliseconds: s.end.Sub(s.start).Milliseconds(), Evidence: append([]byte(nil), s.evidence...)}, nil, nil
 	})
@@ -403,11 +403,11 @@ func (m *Manager) AcknowledgeResult(ctx context.Context, instanceID string) erro
 	o := m.instances[instanceID]
 	m.mu.Unlock()
 	if o == nil {
-		return ErrNotFound
+		return fmt.Errorf("%w: room instance %q", ErrNotFound, instanceID)
 	}
 	_, deliveries, err := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		if s.roomState != 3 {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: room %q is in state %d, not finished", ErrNotReady, instanceID, s.roomState)
 		}
 		if s.resultPersisted {
 			return nil, nil, nil
@@ -431,16 +431,16 @@ func (m *Manager) AcknowledgeResult(ctx context.Context, instanceID string) erro
 // UpdateFishingProjection is called only after the player's HTTP transaction commits.
 func (m *Manager) UpdateFishingProjection(ctx context.Context, p Principal, profile Profile, buffs [][]byte, itemID int64, eventID string) ([]Delivery, error) {
 	if number(profile.UserInfo, 1) != p.OwnerIndex || eventID == "" {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: fishing projection for owner %d names owner %d with event %q", ErrUnauthorized, p.OwnerIndex, number(profile.UserInfo, 1), eventID)
 	}
 	o := m.lookup(p, Fishing)
 	if o == nil {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("%w: owner %d has no fishing room", ErrNotFound, p.OwnerIndex)
 	}
 	_, d, e := o.submit(ctx, 0, func(s *state) (any, []Delivery, error) {
 		u := s.find(p)
 		if u == nil || s.roomState != 2 {
-			return nil, nil, ErrNotReady
+			return nil, nil, fmt.Errorf("%w: owner %d is not in a running fishing room (state %d)", ErrNotReady, p.OwnerIndex, s.roomState)
 		}
 		if slices.Contains(u.projectionEvents, eventID) {
 			return nil, nil, nil
@@ -621,16 +621,16 @@ func (s *state) reconnectWindow() time.Duration {
 }
 func (m *Manager) checkConnection(c Connection) error {
 	if !validPrincipal(c.Principal) || c.ID == "" {
-		return ErrUnauthorized
+		return fmt.Errorf("%w: connection %q has an invalid principal", ErrUnauthorized, c.ID)
 	}
 	if c.Channel != Matching && c.Channel != Action && c.Channel != Defense && c.Channel != Fishing && c.Channel != Square {
-		return ErrUnauthorized
+		return fmt.Errorf("%w: connection %q channel %q", ErrUnauthorized, c.ID, c.Channel)
 	}
 	m.mu.Lock()
 	closed := m.closed
 	m.mu.Unlock()
 	if closed {
-		return ErrClosed
+		return fmt.Errorf("%w: room manager is closed", ErrClosed)
 	}
 	return nil
 }
@@ -646,7 +646,7 @@ func (s *state) endpoint(b []byte, hostField, tcpField, udpField int) []byte {
 func (s *state) require(c Connection, guid string) (*member, error) {
 	u := s.find(c.Principal)
 	if u == nil || u.gameConnection != c.ID || guid != u.guid {
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: owner %d connection %q does not hold the room's game connection or guid", ErrUnauthorized, c.Principal.OwnerIndex, c.ID)
 	}
 	return u, nil
 }

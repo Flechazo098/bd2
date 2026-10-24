@@ -21,14 +21,14 @@ func parseCard(raw []byte) (Card, error) {
 		}
 		if f.Number == 6 {
 			if f.Type != 0 || seen[6] {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 			}
 			seen[6] = true
 			card.Rotate, _ = binary.Uvarint(f.Value)
 			return nil
 		}
 		if f.Type != 2 || f.Number != 4 && seen[f.Number] {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d or repeats", wire.ErrMalformed, f.Number, f.Type)
 		}
 		seen[f.Number] = true
 		item, err := parseCardItem(f.Value)
@@ -60,13 +60,13 @@ func parseCardItem(raw []byte) (CardItem, error) {
 			return nil
 		}
 		if seen[f.Number] {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: card item field %d repeats", wire.ErrMalformed, f.Number)
 		}
 		seen[f.Number] = true
 		switch f.Number {
 		case 5, 6:
 			if f.Type != 5 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: card item field %d has wire type %d, want fixed32", wire.ErrMalformed, f.Number, f.Type)
 			}
 			n := math.Float32frombits(binary.LittleEndian.Uint32(f.Value))
 			if f.Number == 5 {
@@ -76,38 +76,38 @@ func parseCardItem(raw []byte) (CardItem, error) {
 			}
 		case 8:
 			if f.Type != 2 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: card item color has wire type %d", wire.ErrMalformed, f.Type)
 			}
 			item.Color = string(f.Value)
 		default:
 			if f.Type != 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: card item field %d has wire type %d, want varint", wire.ErrMalformed, f.Number, f.Type)
 			}
 			n, _ := binary.Uvarint(f.Value)
 			switch f.Number {
 			case 1:
 				if n > math.MaxInt64 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: card item inventory index %d", wire.ErrMalformed, n)
 				}
 				item.InvenIndex = n
 			case 2:
 				if n > math.MaxInt32 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: card item id %d", wire.ErrMalformed, n)
 				}
 				item.ID = n
 			case 3:
 				if n != uint64(int64(int32(n))) {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: card item x %d", wire.ErrMalformed, n)
 				}
 				item.X = int32(n)
 			case 4:
 				if n != uint64(int64(int32(n))) {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: card item y %d", wire.ErrMalformed, n)
 				}
 				item.Y = int32(n)
 			case 7:
 				if n > math.MaxInt32 {
-					return wire.ErrMalformed
+					return fmt.Errorf("%w: card item field 7 value %d", wire.ErrMalformed, n)
 				}
 				item.Layer = n
 			}
@@ -226,7 +226,7 @@ func (s *Service) buyCardItems(ctx command.Context, identity string, request []b
 			return nil
 		}
 		if f.Type != 2 {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: card item purchase has wire type %d, want a message", wire.ErrMalformed, f.Type)
 		}
 		id, e := profileScalar(f.Value, 1, math.MaxInt32)
 		if e != nil {

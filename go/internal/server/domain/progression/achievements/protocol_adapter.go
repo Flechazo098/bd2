@@ -21,7 +21,7 @@ func (s *AchievementService) Handle(ctx command.Context, path string, request []
 	fail := func(err error) (int, []byte, bool, error) { return 0, nil, true, err }
 	seq, found, err := wire.Varint(request, 1)
 	if err != nil || !found || seq == 0 || seq > math.MaxInt32 {
-		return fail(ErrInvalidRequest)
+		return fail(fmt.Errorf("%w: achievement request sequence %d (present=%t): %v", ErrInvalidRequest, seq, found, err))
 	}
 	state, err := s.load(ctx)
 	if err != nil {
@@ -74,11 +74,11 @@ func (s *AchievementService) Handle(ctx command.Context, path string, request []
 	}
 	group, found, err := wire.Varint(request, 2)
 	if err != nil || !found || group == 0 || group > math.MaxInt32 || len(s.design.Groups[int(group)]) == 0 {
-		return fail(ErrInvalidRequest)
+		return fail(fmt.Errorf("%w: achievement group %d is missing or unknown: %v", ErrInvalidRequest, group, err))
 	}
 	add, found, err := wire.Varint(request, 3)
 	if err != nil || !found || add == 0 || add > math.MaxInt32 || ctx.SessionID == "" {
-		return fail(ErrInvalidRequest)
+		return fail(fmt.Errorf("%w: achievement progress %d for session %q: %v", ErrInvalidRequest, add, ctx.SessionID, err))
 	}
 	receipt := achievementReceipt{Sequence: seq, Group: int(group), Add: int(add)}
 	replayKey := ctx.SessionID + "/" + strconv.FormatUint(seq, 10)

@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/protocol/wire"
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 func (o *Owner) LoginInfo(ctx context.Context, account string) (member, base []byte, err error) {
@@ -24,7 +25,7 @@ func (o *Owner) LoginInfo(ctx context.Context, account string) (member, base []b
 		}
 		m, found := g.Members[account]
 		if !found {
-			return ErrInvalid
+			return fmt.Errorf("%w: %s is not a member of guild %d", ErrInvalid, account, g.ID)
 		}
 		member = MemberInfo(g, m)
 		base = wire.AppendVarint(nil, 1, g.ID)
@@ -85,7 +86,7 @@ func projectMemberProfiles(tx Tx, g *Guild) error {
 			return err
 		}
 		if profile.AccountID != account {
-			return ErrInvalid
+			return fmt.Errorf("%w: friend profile belongs to %q, not %q", ErrInvalid, profile.AccountID, account)
 		}
 		member.Name = profile.Snapshot.UserID
 		member.TitleID = profile.Snapshot.TitleID

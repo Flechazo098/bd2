@@ -42,6 +42,7 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err := p.ownedItems.AttachItemStacks(p.design.itemStacks); err != nil {
 		return err
 	}
+	p.ownedItems.AttachStackOverride(p.unlimitedStacks)
 	if p.initializeAccount {
 		if err := p.ownedItems.InitializeItems(ctx, p.starter.OwnedItems); err != nil {
 			return fmt.Errorf("initialize owned item seed: %w", err)
@@ -93,7 +94,6 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load inventory slot state: %w", err)
 	}
-	p.inventorySlots.AttachDevelopmentSettings(p.options.devToolsConfig)
 	p.ownedItems.AttachCapacity(p.inventorySlots)
 	if err := p.login.AttachInventorySlots(p.inventorySlots); err != nil {
 		return fmt.Errorf("attach inventory slots to login: %w", err)
@@ -151,4 +151,9 @@ func (p *playerAssembly) assets(ctx command.Context) error {
 		return fmt.Errorf("attach equipment option reroll GameData: %w", err)
 	}
 	return nil
+}
+
+// unlimitedStacks reads the account's own console switch for item stack limits.
+func (p *playerAssembly) unlimitedStacks(ctx command.Context) (bool, error) {
+	return assets.UnlimitedItemStacks(p.options.devToolsConfig, ctx.AccountID)
 }

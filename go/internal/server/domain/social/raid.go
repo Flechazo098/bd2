@@ -2,6 +2,7 @@ package social
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -9,7 +10,7 @@ import (
 
 func (o *Owner) OpenSeason(ctx context.Context, season Season) error {
 	if season.GuildID == 0 || season.ID == 0 || season.StartsMS <= 0 || season.EndsMS <= season.StartsMS || season.RulesVersion == "" || len(o.design.Raid.Bosses[season.BossGroupID]) == 0 {
-		return ErrInvalid
+		return fmt.Errorf("%w: raid season %+v is incomplete or has no bosses", ErrInvalid, season)
 	}
 	return o.store.Update(ctx, func(tx Tx) error {
 		g, err := readGuild(tx, season.GuildID)
@@ -19,7 +20,7 @@ func (o *Owner) OpenSeason(ctx context.Context, season Season) error {
 		if _, found, err := tx.Get(boardBucket, numberKey(season.ID)); err != nil {
 			return err
 		} else if found {
-			return ErrSeasonLocked
+			return fmt.Errorf("%w: raid season %d already has a board", ErrSeasonLocked, season.ID)
 		}
 		var old Season
 		found, err := load(tx, seasonBucket, seasonKey(season.GuildID, season.ID), &old)
@@ -28,7 +29,7 @@ func (o *Owner) OpenSeason(ctx context.Context, season Season) error {
 		}
 		if found {
 			if old.StartsMS != season.StartsMS || old.EndsMS != season.EndsMS || old.BossGroupID != season.BossGroupID || old.RulesVersion != season.RulesVersion {
-				return ErrConflict
+				return fmt.Errorf("%w: guild %d raid season %d reopened with different rules", ErrConflict, season.GuildID, season.ID)
 			}
 			return nil
 		}
@@ -49,7 +50,7 @@ func (o *Owner) OpenSeason(ctx context.Context, season Season) error {
 // The entry fixes the guild and epoch; current membership cannot redirect it.
 func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, error) {
 	if result.ResultID == "" || len(result.ResultID) > 256 || result.EntryID == "" || result.AccountID == "" {
-		return MemberBest{}, ErrInvalid
+		return MemberBest{}, fmt.Errorf("%w: raid result %q for entry %q by %q is incomplete", ErrInvalid, result.ResultID, result.EntryID, result.AccountID)
 	}
 	var out MemberBest
 	err := o.store.Update(ctx, func(tx Tx) error {
@@ -57,7 +58,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 		if found, err := load(tx, resultIdentityBucket, result.ResultID, &seenEntry); err != nil {
 			return err
 		} else if found && seenEntry != result.EntryID {
-			return ErrConflict
+			return fmt.Errorf("%w: raid result %q belongs to entry %q, not %q", ErrConflict, result.ResultID, seenEntry, result.EntryID)
 		}
 		var previous RaidResult
 		found, err := load(tx, resultBucket, result.EntryID, &previous)
@@ -66,7 +67,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 		}
 		if found {
 			if previous != result {
-				return ErrConflict
+				return fmt.Errorf("%w: raid result %q was replayed with different values", ErrConflict, result.ResultID)
 			}
 			_, err = load(tx, bestBucket, memberBestKey(result.GuildID, result.Season, result.AccountID), &out)
 			return err
@@ -77,10 +78,10 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: raid entry %q", ErrNotFound, result.EntryID)
 		}
 		if entry.Status != "confirmed" || entry.AccountID != result.AccountID || entry.GuildID != result.GuildID || entry.Season != result.Season || entry.MembershipEpoch != result.MembershipEpoch || entry.Digest != result.Digest {
-			return ErrConflict
+			return fmt.Errorf("%w: raid result %q does not match entry %q (status %q)", ErrConflict, result.ResultID, result.EntryID, entry.Status)
 		}
 		var season Season
 		found, err = load(tx, seasonBucket, seasonKey(result.GuildID, result.Season), &season)
@@ -88,14 +89,14 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 			return err
 		}
 		if !found || season.State != "active" && season.State != "freezing" || season.Pending == 0 || season.RulesVersion != result.RulesVersion {
-			return ErrIneligible
+			return fmt.Errorf("%w: guild %d raid season %d cannot settle (present=%t, state %q, pending %d, rules %q vs %q)", ErrIneligible, result.GuildID, result.Season, found, season.State, season.Pending, season.RulesVersion, result.RulesVersion)
 		}
 		if result.Level == 0 {
 			if result.Score != 0 || result.Overkill != 0 {
-				return ErrInvalid
+				return fmt.Errorf("%w: a level 0 raid result scored %d with overkill %d", ErrInvalid, result.Score, result.Overkill)
 			}
 		} else if _, ok := o.design.Raid.Bosses[season.BossGroupID][result.Level]; !ok {
-			return ErrInvalid
+			return fmt.Errorf("%w: raid level %d is not in boss group %d", ErrInvalid, result.Level, season.BossGroupID)
 		}
 		key := memberBestKey(result.GuildID, result.Season, result.AccountID)
 		_, err = load(tx, bestBucket, key, &out)
@@ -104,7 +105,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 		}
 		if out.AccountID == "" {
 			if entry.Participant.AccountID != result.AccountID || entry.Participant.OwnerIndex == 0 {
-				return ErrIneligible
+				return fmt.Errorf("%w: raid entry %q participant %q (owner %d) is not %q", ErrIneligible, result.EntryID, entry.Participant.AccountID, entry.Participant.OwnerIndex, result.AccountID)
 			}
 			out = MemberBest{GuildID: result.GuildID, Season: season.ID, AccountID: result.AccountID, OwnerIndex: entry.Participant.OwnerIndex, Name: entry.Participant.Name, TitleID: entry.Participant.TitleID, PortraitID: entry.Participant.PortraitID, PortraitDesignID: entry.Participant.PortraitDesignID}
 		}
@@ -117,7 +118,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 		if result.Score > out.Score {
 			delta := result.Score - out.Score
 			if season.TotalScore > math.MaxUint64-delta {
-				return ErrInvalid
+				return fmt.Errorf("%w: guild %d raid season %d total score overflows", ErrInvalid, result.GuildID, result.Season)
 			}
 			season.TotalScore += delta
 			out.Score = result.Score
@@ -159,7 +160,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 					return e
 				}
 				if count == math.MaxUint64 {
-					return ErrInvalid
+					return fmt.Errorf("%w: supporter %s rental count overflows", ErrInvalid, supporter.AccountID)
 				}
 				if e := save(tx, rentalBucket, key, count+1); e != nil {
 					return e
@@ -219,7 +220,7 @@ func (o *Owner) SettleRaid(ctx context.Context, result RaidResult) (MemberBest, 
 			if e = save(tx, seasonBucket, seasonKey(result.GuildID, result.Season), season); e != nil {
 				return e
 			}
-		} else if e != ErrNotFound {
+		} else if !errors.Is(e, ErrNotFound) {
 			return e
 		}
 		if err = save(tx, raidEntryBucket, result.EntryID, entry); err != nil {
@@ -245,16 +246,16 @@ func (o *Owner) BeginFreeze(ctx context.Context, guild, season uint64, atMS int6
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild %d raid season %d", ErrNotFound, guild, season)
 		}
 		if atMS < s.EndsMS {
-			return ErrIneligible
+			return fmt.Errorf("%w: guild %d raid season %d ends at %d, now %d", ErrIneligible, guild, season, s.EndsMS, atMS)
 		}
 		if s.State == "frozen" || s.State == "freezing" {
 			return nil
 		}
 		if s.State != "active" {
-			return ErrInvalid
+			return fmt.Errorf("%w: guild %d raid season %d is %q, not active", ErrInvalid, guild, season, s.State)
 		}
 		s.State = "freezing"
 		return save(tx, seasonBucket, seasonKey(guild, season), s)
@@ -269,16 +270,16 @@ func (o *Owner) FinishFreeze(ctx context.Context, guild, season uint64, atMS int
 			return err
 		}
 		if !found {
-			return ErrNotFound
+			return fmt.Errorf("%w: guild %d raid season %d", ErrNotFound, guild, season)
 		}
 		if out.State == "frozen" {
 			return nil
 		}
 		if out.State != "freezing" || atMS < out.EndsMS {
-			return ErrIneligible
+			return fmt.Errorf("%w: guild %d raid season %d is %q and ends at %d, now %d", ErrIneligible, guild, season, out.State, out.EndsMS, atMS)
 		}
 		if out.Pending != 0 {
-			return ErrPending
+			return fmt.Errorf("%w: guild %d raid season %d has %d pending entries", ErrPending, guild, season, out.Pending)
 		}
 		members, err := memberBests(tx, guild, season)
 		if err != nil {
@@ -287,13 +288,13 @@ func (o *Owner) FinishFreeze(ctx context.Context, guild, season uint64, atMS int
 		var total uint64
 		for _, best := range members {
 			if best.GuildID != guild || best.Season != season || total > math.MaxUint64-best.Score {
-				return ErrInvalid
+				return fmt.Errorf("%w: best record of %s (guild %d season %d) does not belong to guild %d season %d or overflows", ErrInvalid, best.AccountID, best.GuildID, best.Season, guild, season)
 			}
 			total += best.Score
 			out.FrozenMembers = append(out.FrozenMembers, best)
 		}
 		if total != out.TotalScore {
-			return ErrInvalid
+			return fmt.Errorf("%w: guild %d raid season %d member scores sum to %d, season total is %d", ErrInvalid, guild, season, total, out.TotalScore)
 		}
 		slices.SortFunc(out.FrozenMembers, func(a, b MemberBest) int {
 			if a.Score > b.Score {

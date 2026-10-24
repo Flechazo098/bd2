@@ -270,7 +270,7 @@ async function loadPlayers() {
 /* ---------- Mail ---------- */
 const categoryName = category => tr('console.mail.category.' + category, category);
 const mailTool = (() => {
-  let all = [], cats = [], category = '', view = [], cursor = -1, chosen = null, byKey = new Map(), target = null, loaded = false, submitting = false, inventory = null, waitingCatalog = false;
+  let all = [], cats = [], category = '', view = [], cursor = -1, chosen = null, byKey = new Map(), target = null, loaded = false, submitting = false, stacks = null, waitingCatalog = false;
   const log = [];
   const keyOf = x => x.element_type + ':' + x.id;
   const catName = x => categoryName(x.category);
@@ -426,29 +426,40 @@ const mailTool = (() => {
     $('recipient-note').textContent = player ? (player.name || '') : t('console.mail.recipient.none');
   }
   $('uid-display').onclick = async () => { if (target && target.uid) await copy(target.uid, 'UID'); };
-  function showInventory(value) {
-    inventory = value;
-    const on = value.unlimited, l = value.limits;
-    $('unlimited-inventory').checked = on;
-    $('unlimited-inventory').disabled = !can('players.inventory');
-    $('unlimited-inventory').closest('label').title = can('players.inventory') ? '' : t('console.mail.inventory.no_permission');
-    $('inventory-limits').replaceChildren(el('span'), el('span', {class: 'h'}, t('console.mail.inventory.items')), el('span', {class: 'h'}, t('console.mail.inventory.equipment')),
-      el('span', {class: 'lab' + (on ? '' : ' on')}, t('console.mail.inventory.normal')), el('b', {}, fmt(l.items.default)), el('b', {}, fmt(l.equipment.default)),
-      el('span', {class: 'lab' + (on ? ' on' : '')}, t('console.mail.inventory.unlimited')), el('b', {}, fmt(l.items.maximum)), el('b', {}, fmt(l.equipment.maximum)));
+  // The stack switch always belongs to the signed-in account, whoever the mail is for.
+  function paintStacks() {
+    const panel = $('stacks'), self = state.session.player;
+    panel.hidden = !can('players.item_stacks');
+    if (panel.hidden) return;
+    const on = !!(stacks && stacks.unlimited);
+    panel.classList.toggle('on', on);
+    $('stacks-owner').textContent = self && self.uid ? 'UID ' + self.uid : '';
+    $('unlimited-stacks').checked = on;
+    $('unlimited-stacks').disabled = !self || stacks === null;
+    $('stacks-hint').textContent = t(!self ? 'console.stacks.no_account' : on ? 'console.stacks.hint_on' : 'console.stacks.hint');
   }
+  async function loadStacks() {
+    stacks = null; paintStacks();
+    if (!can('players.item_stacks') || !state.session.player) return;
+    try { stacks = (await api('self/item-stacks')).value; } catch (error) { await say($('stacks-status'), error, 'err'); }
+    paintStacks();
+  }
+  $('unlimited-stacks').onchange = async event => {
+    const box = event.target, want = box.checked;
+    if (!want && !await ask({title: t('console.stacks.off.title'), body: t('console.stacks.off.body'), ok: t('console.stacks.off.ok'), danger: true})) { box.checked = true; return; }
+    box.disabled = true; await say($('stacks-status'), '');
+    try {
+      stacks = (await api('self/item-stacks', {method: 'PUT', body: {unlimited: want}})).value;
+      await say($('stacks-status'), Component.translatable(want ? 'console.stacks.saved_on' : 'console.stacks.saved_off'), 'ok');
+    } catch (error) { await say($('stacks-status'), error, 'err'); }
+    finally { paintStacks(); }
+  };
   async function select(accountID) {
     target = state.players.find(p => p.account_id === accountID) || null;
-    showRecipient(target); $('tools').disabled = true; await say($('status'), ''); await say($('inventory-status'), ''); waitingCatalog = false;
-    await note($('lock-note'), Component.translatable(target ? 'console.mail.lock.loading_player' : 'console.mail.lock.no_player'));
-    if (!target) return;
-    try {
-      const requested = target.account_id;
-      const {value} = await api('players/' + encodeURIComponent(requested) + '/inventory');
-      if (target && target.account_id === requested) {
-        showInventory(value); $('tools').disabled = !loaded; waitingCatalog = !loaded;
-        await note($('lock-note'), loaded ? '' : Component.translatable('console.mail.catalog_loading'));
-      }
-    } catch (error) { await note($('lock-note'), error); }
+    showRecipient(target); $('tools').disabled = true; await say($('status'), ''); waitingCatalog = false;
+    if (!target) { await note($('lock-note'), Component.translatable('console.mail.lock.no_player')); return; }
+    $('tools').disabled = !loaded; waitingCatalog = !loaded;
+    await note($('lock-note'), loaded ? '' : Component.translatable('console.mail.catalog_loading'));
   }
   $('player').onchange = async () => await select($('player').value);
   $('form').onsubmit = async event => {
@@ -466,15 +477,6 @@ const mailTool = (() => {
       setTimeout(() => { send.classList.remove('done'); label.textContent = t('console.mail.send'); }, 1400);
     } catch (error) { await say($('status'), error, 'err'); }
     finally { submitting = false; send.disabled = false; $('player').disabled = false; }
-  };
-  $('unlimited-inventory').onchange = async event => {
-    const box = event.target, old = !box.checked; box.disabled = true; $('player').disabled = true;
-    try {
-      const {value} = await api('players/' + encodeURIComponent(target.account_id) + '/inventory', {method: 'PUT', body: {unlimited: box.checked}});
-      showInventory(value); target.unlimited_inventory = value.unlimited;
-      await say($('inventory-status'), Component.translatable('console.mail.inventory.saved', String(target.uid)), 'ok');
-    } catch (error) { box.checked = old; await say($('inventory-status'), error, 'err'); }
-    finally { box.disabled = !can('players.inventory'); $('player').disabled = false; }
   };
   async function loadCatalog() {
     try {
@@ -509,11 +511,11 @@ const mailTool = (() => {
       const initial = (usable.some(p => p.account_id === accountID) ? accountID : null) || (target && usable.some(p => p.account_id === target.account_id) ? target.account_id : null) || (usable.some(p => p.account_id === self) ? self : usable[0] && usable[0].account_id);
       if (initial) $('player').value = initial;
       if (loaded) await relabelCatalog(); else if (!all.length) await loadCatalog();
-      await checkQuantity(); await select(initial || '');
+      await checkQuantity(); await select(initial || ''); await loadStacks();
     },
     async relabel() {
       await playerOptions(); showRecipient(target); await paintParcel(); paintPeek(); await paintLog(); await checkQuantity();
-      if (inventory) showInventory(inventory);
+      paintStacks();
       if (loaded) await relabelCatalog();
     },
   };
@@ -537,7 +539,7 @@ const roster = (() => {
     const renderPass = beginRender('players');
     try {
       const owner = isOwner();
-      $('roster-head-row').replaceChildren(...['console.roster.col.uid', 'console.roster.col.name', 'console.roster.col.role', owner ? 'console.roster.col.admin' : null, 'console.roster.col.unlimited', '']
+      $('roster-head-row').replaceChildren(...['console.roster.col.uid', 'console.roster.col.name', 'console.roster.col.role', owner ? 'console.roster.col.admin' : null, '']
         .filter(h => h !== null).map((h, i) => el('th', {class: i >= 3 && h ? 'c' : ''}, h ? t(h) : '')));
       const q = $('player-q').value.trim().toLowerCase();
       const rows = state.players.filter(p => !q || (p.uid + ' ' + p.name).toLowerCase().includes(q));
@@ -551,12 +553,11 @@ const roster = (() => {
             p.active ? null : el('span', {class: 'pill'}, t('console.roster.inactive')),
             owner && p.administrator ? el('small', {class: 'perm-summary'}, await summary(p)) : null),
           adminCell,
-          el('td', {class: 'c'}, toggle(p.unlimited_inventory, !p.active || !can('players.inventory'), async event => await setInventory(p, event.target), t('console.inventory.unlimited'))),
           el('td', {class: 'act'},
             owner && p.administrator ? el('button', {type: 'button', class: 'linkish', onclick: async () => await editPermissions(p)}, t('console.roster.permissions')) : null,
             can('mail.send') && mailable(p) ? el('button', {type: 'button', class: 'linkish', onclick: () => { location.hash = '#mail'; setTimeout(async () => await mailTool.open(p.account_id)); }}, t('console.roster.mail')) : null));
       })), renderPass));
-      if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 6, class: 'muted'}, t(state.players.length ? 'console.roster.no_match' : 'console.roster.empty'))));
+      if (!rows.length) $('roster').replaceChildren(el('tr', {}, el('td', {colspan: 5, class: 'muted'}, t(state.players.length ? 'console.roster.no_match' : 'console.roster.empty'))));
 
     } catch (error) { if (error !== staleRender) throw error; }
   }
@@ -612,14 +613,6 @@ const roster = (() => {
       const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/administrator', {method: 'PUT', body: {administrator: true, permissions: [...granted]}});
       player.permissions = value.permissions; await render(); await toast(Component.translatable('console.roster.permissions_updated', String(player.uid)));
     } catch (error) { await say($('roster-status'), error, 'err'); }
-  }
-  async function setInventory(player, box) {
-    box.disabled = true;
-    try {
-      const {value} = await api('players/' + encodeURIComponent(player.account_id) + '/inventory', {method: 'PUT', body: {unlimited: box.checked}});
-      player.unlimited_inventory = value.unlimited; await toast(Component.translatable(value.unlimited ? 'console.roster.unlimited_on' : 'console.roster.unlimited_off', String(player.uid)));
-    } catch (error) { box.checked = !box.checked; await say($('roster-status'), error, 'err'); }
-    finally { box.disabled = false; }
   }
   $('player-q').oninput = render;
   return {async open() { await say($('roster-status'), ''); await loadPlayers(); await render(); }, relabel: render};

@@ -23,20 +23,20 @@ func QuestValues(request []byte) ([]int, error) {
 		case 0:
 			value, count := binary.Uvarint(field.Value)
 			if count <= 0 || value > uint64(^uint32(0)>>1) {
-				return ErrInvalidQuest
+				return fmt.Errorf("%w: quest value %d is out of range", ErrInvalidQuest, value)
 			}
 			values = append(values, int(value))
 		case 2:
 			for remaining := field.Value; len(remaining) > 0; {
 				value, count := binary.Uvarint(remaining)
 				if count <= 0 || value > uint64(^uint32(0)>>1) {
-					return ErrInvalidQuest
+					return fmt.Errorf("%w: packed quest value %d is out of range", ErrInvalidQuest, value)
 				}
 				values = append(values, int(value))
 				remaining = remaining[count:]
 			}
 		default:
-			return ErrInvalidQuest
+			return fmt.Errorf("%w: quest value has wire type %d", ErrInvalidQuest, field.Type)
 		}
 		return nil
 	}); err != nil {
@@ -102,7 +102,7 @@ func (s *Store) SaveUserPosition(ctx command.Context, request []byte) error {
 func (s *Store) ClearTutorial(ctx command.Context, request []byte) error {
 	id, found, err := wire.Varint(request, 2)
 	if err != nil || !found || id == 0 || id > uint64(^uint32(0)>>1) {
-		return ErrInvalidTutorial
+		return fmt.Errorf("%w: TutorialClear id %d (present=%t): %v", ErrInvalidTutorial, id, found, err)
 	}
 
 	tutorials := make(map[int]struct{}, len(s.tutorials)+1)
@@ -131,7 +131,7 @@ func (s *Store) Handle(ctx command.Context, path string, request []byte) (int, [
 		return 102, nil, true, nil
 	case "/TutorialInfo":
 		if seq, found, err := wire.Varint(request, 1); err != nil || !found || seq == 0 {
-			return 0, nil, true, ErrInvalidTutorial
+			return 0, nil, true, fmt.Errorf("%w: TutorialInfo sequence %d (present=%t): %v", ErrInvalidTutorial, seq, found, err)
 		}
 		var packed []byte
 		for _, id := range s.Tutorials() {

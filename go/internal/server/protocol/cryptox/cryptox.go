@@ -48,7 +48,7 @@ func SessionKey(userKey string) ([]byte, error) {
 // Encrypt applies PKCS#7 and AES-256-CBC using the all-zero protocol IV.
 func Encrypt(plain, key []byte) ([]byte, error) {
 	if len(key) != AESKeySize {
-		return nil, ErrInvalidKey
+		return nil, fmt.Errorf("%w: key is %d bytes, want %d", ErrInvalidKey, len(key), AESKeySize)
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -63,10 +63,10 @@ func Encrypt(plain, key []byte) ([]byte, error) {
 // Decrypt removes AES-256-CBC and requires valid PKCS#7 padding.
 func Decrypt(ciphertext, key []byte) ([]byte, error) {
 	if len(key) != AESKeySize {
-		return nil, ErrInvalidKey
+		return nil, fmt.Errorf("%w: key is %d bytes, want %d", ErrInvalidKey, len(key), AESKeySize)
 	}
 	if len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
-		return nil, ErrInvalidCiphertext
+		return nil, fmt.Errorf("%w: ciphertext is %d bytes", ErrInvalidCiphertext, len(ciphertext))
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -126,11 +126,11 @@ func pad(src []byte, blockSize int) []byte {
 
 func unpad(src []byte, blockSize int) ([]byte, error) {
 	if len(src) == 0 || len(src)%blockSize != 0 {
-		return nil, ErrInvalidPadding
+		return nil, fmt.Errorf("%w: %d bytes is not whole blocks of %d", ErrInvalidPadding, len(src), blockSize)
 	}
 	n := int(src[len(src)-1])
 	if n == 0 || n > blockSize || n > len(src) || !bytes.Equal(src[len(src)-n:], bytes.Repeat([]byte{byte(n)}, n)) {
-		return nil, ErrInvalidPadding
+		return nil, fmt.Errorf("%w: padding byte %d", ErrInvalidPadding, n)
 	}
 	return src[:len(src)-n], nil
 }

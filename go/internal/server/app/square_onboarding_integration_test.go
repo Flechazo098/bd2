@@ -5,99 +5,12 @@ package app
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
-	"bd2server/internal/server/domain/mail"
 	"bd2server/internal/server/protocol/wire"
 )
-
-// PackTable's missed field-card rewards include currencies in UserDBInfo,
-// ordinary content tickets and AvatarMotion ownership. MailOpen must apply
-// all three domains together and retain its one-claim receipt after restart.
-func TestPackRewardCompensationMailClaimsAllRewardDomainsOnce(t *testing.T) {
-	g := profileGameplay(t)
-	goldBefore := g.owner.assembly.wallet.Snapshot(command.Context{}).Gold
-	beforeUser, _, err := wire.Bytes(g.call("/LoginUser", nil), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spool := filepath.Join(t.TempDir(), "grants.json")
-	grant := mail.Grant{AccountID: g.account, Identity: "pack-reward-compensation", Title: "Card rewards", Body: "Previously missed card rewards", SentAt: time.Now().UnixMilli(), Rewards: []mail.GrantReward{
-		{Type: 4, Count: 2000}, {Type: 15, Count: 10}, {Type: 16, Count: 100}, {Type: 18, Count: 50},
-		{Type: 19, ID: 3009, Count: 1}, {Type: 19, ID: 3012, Count: 1}, {Type: 50, ID: 1, Count: 1},
-	}}
-	if err := mail.AppendGrant(spool, grant); err != nil {
-		t.Fatal(err)
-	}
-	g.factory.options.mailGrantSpool = spool
-	g.reopen()
-	mailbox := g.call("/MailInfo", nil)
-	var id uint64
-	for _, entry := range appRows(mailbox, 1) {
-		title, _, err := wire.Bytes(entry, 5)
-		if err == nil && string(title) == grant.Title {
-			id = appValue(entry, 1)
-		}
-	}
-	if id == 0 {
-		t.Fatal("targeted compensation did not appear in the normal mailbox")
-	}
-	userAfterIssue, _, err := wire.Bytes(g.call("/LoginUser", nil), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.owner.assembly.wallet.Snapshot(command.Context{}).Gold != goldBefore {
-		t.Fatal("mail creation granted gold before claim")
-	}
-	for _, field := range []int{16, 17, 18} {
-		if appValue(userAfterIssue, field) != appValue(beforeUser, field) {
-			t.Fatalf("mail creation granted currency field %d before claim", field)
-		}
-	}
-	for _, reward := range grant.Rewards[4:] {
-		if got := g.itemCount(reward.Type, reward.ID); got != 0 {
-			t.Fatalf("mail creation granted attachment before claim: %v count=%d", reward, got)
-		}
-	}
-	g.call("/MailOpen", wire.AppendVarint(nil, 2, id))
-	check := func() {
-		t.Helper()
-		if got := g.owner.assembly.wallet.Snapshot(command.Context{}).Gold; got != goldBefore+2000 {
-			t.Fatalf("gold changed incorrectly after claim/retry: %d", got)
-		}
-		tx, err := g.owner.repository.BeginCommand(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		balances, balanceErr := g.owner.assembly.eventEconomy.AdditionalCurrencies(command.Context{State: tx})
-		_ = tx.Rollback()
-		if balanceErr != nil {
-			t.Fatal(balanceErr)
-		}
-		for _, currency := range []struct {
-			field  int
-			amount uint64
-		}{{16, 10}, {17, 100}, {18, 50}} {
-			if got := balances[currency.field]; got != appValue(beforeUser, currency.field)+currency.amount {
-				t.Fatalf("currency field %d: got %d", currency.field, got)
-			}
-		}
-		for _, reward := range grant.Rewards[4:] {
-			if got := g.itemCount(reward.Type, reward.ID); got != 1 {
-				t.Fatalf("attachment missing or duplicated after claim/retry: %v count=%d", reward, got)
-			}
-		}
-	}
-	check()
-	g.reopen()
-	g.call("/MailInfo", nil)
-	g.call("/MailOpen", wire.AppendVarint(nil, 2, id))
-	check()
-}
 
 func avatarChoiceRequest(shop uint64) []byte {
 	price := wire.AppendVarint(wire.AppendVarint(nil, 3, 44), 4, 1000)

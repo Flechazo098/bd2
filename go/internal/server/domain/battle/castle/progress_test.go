@@ -89,12 +89,23 @@ func TestBattleProgressReopenAccountsAndDailySeasonIsolation(t *testing.T) {
 	blue = wire.AppendVarint(blue, 3, 71)
 	blue = wire.AppendVarint(blue, 6, 82)
 	blue = wire.AppendVarint(blue, 7, 91)
-	proof = battle.SettlementEvidence{Receipt: "tower", Mode: 16, Deck: 61, Round: 1, InitialBlue: [][]byte{blue}}
+	// A borrowed supporter (supporter_owner_index 38) carries the lender's
+	// inventory indexes, which the borrower does not own.
+	supporter := wire.AppendVarint(nil, 2, 501)
+	supporter = wire.AppendVarint(supporter, 3, 72)
+	supporter = wire.AppendVarint(supporter, 6, 502)
+	supporter = wire.AppendVarint(supporter, 7, 92)
+	supporter = wire.AppendVarint(supporter, 38, 7001)
+	proof = battle.SettlementEvidence{Receipt: "tower", Mode: 16, Deck: 61, Round: 1, InitialBlue: [][]byte{blue, supporter}}
 	end := wire.AppendVarint(request(4, 1), 5, 0)
 	char := wire.AppendVarint(nil, 1, 81)
 	char = wire.AppendVarint(char, 2, 71)
 	char = wire.AppendVarint(char, 3, 1)
 	end = wire.AppendBytes(end, 3, char)
+	borrowed := wire.AppendVarint(nil, 1, 501)
+	borrowed = wire.AppendVarint(borrowed, 2, 72)
+	borrowed = wire.AppendVarint(borrowed, 3, 1)
+	end = wire.AppendBytes(end, 3, borrowed)
 	if _, e := s.CompleteBattle(a, end, "tower"); e != nil {
 		t.Fatal(e)
 	}
@@ -248,5 +259,77 @@ func TestTotalWarRejectsUnstartedAndUnregisteredDamage(t *testing.T) {
 	stored, e := msgs(execute(t, s, ctx, "/TotalWarInfo", request(5)), 1)
 	if e != nil || len(stored) != 1 || n(stored[0], 1) != 91 || n(stored[0], 2) != 100 {
 		t.Fatal("rejected damage consumed the active battle or changed its legitimate saved damage")
+	}
+}
+
+// The native reward UI treats every EvilCastleInfo row as a cleared floor.
+// Partial floor scores must remain available to the run but not to that list.
+func TestFloorRewardsExcludeUnfinishedRunsAndPersistClaims(t *testing.T) {
+	d := testDesign()
+	f := d.Floors[1]
+	f.Rewards = []gamedata.Reward{{Type: 4, Count: 7}}
+	d.Floors[1] = f
+	s := NewService(d)
+	s.AttachClock(func() time.Time { return time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC) })
+	s.AttachPeriod(func(command.Context) (uint64, bool, error) { return 1, true, nil })
+	ctx := command.Context{Identity: command.Identity{AccountID: "reward-owner", SessionID: "reward-session"}, State: stateio.NewMemory()}
+	grants := uint64(0)
+	s.AttachRewards(func(_ command.Context, _ string, rewards []gamedata.Reward) ([]byte, error) {
+		for _, r := range rewards {
+			grants += r.Count
+		}
+		return wire.AppendBytes(nil, 1, request(1, 7)), nil
+	})
+	v := &state{Season: 1, Towers: map[string]tower{}, Floors: map[uint64]floor{1: {ID: 1, Point: 44000}}, Run: &run{Floor: 1, Point: 44000, Cleared: map[uint64]bool{51: true}}}
+	if err := save(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := msgs(execute(t, s, ctx, "/EvilCastleInfo", request(1)), 1); err != nil || len(rows) != 0 {
+		t.Fatal("unfinished floor exposed a claimable record")
+	}
+	if n(execute(t, s, ctx, "/EvilCastlePing", request(2, 1)), 1) != 44000 {
+		t.Fatal("hiding reward row lost the run score")
+	}
+	for i, id := range []uint64{1, 0} {
+		if _, _, _, err := s.Handle(ctx, "/EvilCastleStageClearReward", request(uint64(3+i), d.PackID, id)); err == nil {
+			t.Fatal("unfinished floor rewarded")
+		}
+	}
+	if grants != 0 {
+		t.Fatal("failed reward request granted assets")
+	}
+	v, _, _, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Floors[1] = floor{ID: 1, Point: 45000, Highest: 45000}
+	v.Floors[2] = floor{ID: 2, Point: 1000} // Another unfinished record must be skipped.
+	v.Run = nil
+	if err := save(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := msgs(execute(t, s, ctx, "/EvilCastleInfo", request(5)), 1)
+	if err != nil || len(rows) != 1 || n(rows[0], 2) != 1 || n(rows[0], 6) != 0 {
+		t.Fatal("completed floor not exposed as unclaimed")
+	}
+	claim := request(6, d.PackID, 0)
+	execute(t, s, ctx, "/EvilCastleStageClearReward", claim)
+	execute(t, s, ctx, "/EvilCastleStageClearReward", claim)
+	if grants != 7 {
+		t.Fatalf("bulk claim/retry granted %d, want 7", grants)
+	}
+	reloaded, _, _, err := s.load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Floors[1].Rewarded || reloaded.Floors[2].Rewarded {
+		t.Fatal("claim state lost or unfinished record rewarded")
+	}
+	if _, _, _, err := s.Handle(ctx, "/EvilCastleStageClearReward", request(7, d.PackID, 1)); err == nil || grants != 7 {
+		t.Fatal("fresh sequence duplicated claimed reward")
+	}
+	rows, err = msgs(execute(t, s, ctx, "/EvilCastleInfo", request(8)), 1)
+	if err != nil || len(rows) != 1 || n(rows[0], 6) != 1 {
+		t.Fatal("rewarded state not restored to client list")
 	}
 }

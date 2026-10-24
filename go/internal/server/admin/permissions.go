@@ -11,9 +11,9 @@ import (
 // Permissions an owner may grant to an administrator. Managing administrators
 // and the server overview are never grantable: they belong to the owner.
 const (
-	PermissionMail      = "mail.send"
-	PermissionPlayers   = "players.view"
-	PermissionInventory = "players.inventory"
+	PermissionMail       = "mail.send"
+	PermissionPlayers    = "players.view"
+	PermissionItemStacks = "players.item_stacks"
 )
 
 // Configuration permissions are "config.<document>.<section>.read|write".
@@ -36,7 +36,7 @@ type Ability struct {
 var abilities = []Ability{
 	{Key: PermissionPlayers, Label: "查看玩家", Help: "查看玩家列表、UID 与背包设置。", Default: true},
 	{Key: PermissionMail, Label: "邮件发放", Help: "给自己的账号寄送物品和货币；只有服主能给其他玩家寄送。", Requires: []string{PermissionPlayers}},
-	{Key: PermissionInventory, Label: "调整背包容量", Help: "开关任意玩家的无限背包容量。", Requires: []string{PermissionPlayers}},
+	{Key: PermissionItemStacks, Label: "不限物品堆叠", Help: "开关自己账号的物品堆叠上限，只能修改自己的账号。", Requires: []string{PermissionMail}},
 }
 
 type ConfigurationGrant struct {

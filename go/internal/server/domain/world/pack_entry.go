@@ -9,6 +9,10 @@ import (
 	"slices"
 )
 
+func (s *Service) AttachActiveBattlePack(pack func(command.Context) int) {
+	s.activeBattlePack = pack
+}
+
 func (s *Service) handlePackEntry(ctx command.Context, request []byte) (int, []byte, bool, error) {
 	id, err := requestPack(request)
 	if err != nil {
@@ -27,8 +31,16 @@ func (s *Service) handlePackEntry(ctx command.Context, request []byte) (int, []b
 		if err != nil {
 			return 5, nil, true, err
 		}
-		if id != current {
-			return 5, nil, true, fmt.Errorf("%w: cannot change pack during active battle", ErrInvalidRequest)
+		encounterPack := 0
+		if s.activeBattlePack != nil {
+			encounterPack = s.activeBattlePack(ctx)
+		}
+		allowedPack := current
+		if encounterPack > 0 {
+			allowedPack = encounterPack
+		}
+		if id != allowedPack {
+			return 5, nil, true, fmt.Errorf("%w: cannot change pack during active battle: requested=%d current=%d battle_pack=%d", ErrInvalidRequest, id, current, encounterPack)
 		}
 	}
 	if err := s.ResumeFieldTime(ctx); err != nil {
@@ -91,6 +103,9 @@ func (s *Service) enterPersistentPack(ctx command.Context, pack packDefinition, 
 		if _, err := s.ensureQuestItems(ctx, pack.id, active); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.ensureLifeQuest(ctx, pack.id); err != nil {
+		return nil, err
 	}
 	return s.packInfoFor(ctx, pack.id)
 }

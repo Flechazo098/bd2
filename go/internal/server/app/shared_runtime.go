@@ -127,7 +127,7 @@ func (s *sharedRuntime) Consume(ctx context.Context, event outbox.Pending) error
 			return err
 		}
 		if profile.AccountID != event.Envelope.Source {
-			return social.ErrPermission
+			return fmt.Errorf("%w: friend profile of %q arrived from %q", social.ErrPermission, profile.AccountID, event.Envelope.Source)
 		}
 		return s.friends.Publish(ctx, profile)
 	}

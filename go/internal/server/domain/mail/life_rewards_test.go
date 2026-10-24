@@ -142,17 +142,23 @@ func TestOperatorLifeRewardsClaimIntoLifeInventoryExactlyOnce(t *testing.T) {
 		}
 	}
 	check()
-	gotDeltas := map[uint64]uint64{}
+	// The client files every item_info entry under the ordinary inventory, so
+	// only life coins (a currency there) go to item_info; every reward is shown
+	// through view_item_info with the granted amount, not the balance.
+	saved, shown := map[uint64]uint64{}, map[uint64]uint64{}
 	if err := wire.Walk(message(first, 1), func(f wire.Field) error {
-		if f.Number == 1 && f.Type == 2 {
-			gotDeltas[value(f.Value, 3)] += value(f.Value, 4)
+		if f.Type == 2 && (f.Number == 1 || f.Number == 6) {
+			map[int]map[uint64]uint64{1: saved, 6: shown}[f.Number][value(f.Value, 3)] += value(f.Value, 4)
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(gotDeltas) != 3 || gotDeltas[64] != 7 || gotDeltas[65] != 2 || gotDeltas[66] != 3 {
-		t.Fatalf("claim must report granted amounts, not existing balances: %v", gotDeltas)
+	if len(saved) != 1 || saved[64] != 7 {
+		t.Fatalf("item_info must carry only the life coin delta: %v", saved)
+	}
+	if len(shown) != 3 || shown[64] != 7 || shown[65] != 2 || shown[66] != 3 {
+		t.Fatalf("view_item_info must show the granted amounts: %v", shown)
 	}
 	if again := call("/MailOpen", claim); !bytes.Equal(first, again) {
 		t.Fatal("claim retry changed its reward bundle")

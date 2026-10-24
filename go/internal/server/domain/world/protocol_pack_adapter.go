@@ -46,11 +46,11 @@ func (s *Service) handlePacks(ctx command.Context, path string, request []byte) 
 func requestPack(request []byte) (int, error) {
 	seq, found, err := wire.Varint(request, 1)
 	if err != nil || !found || seq == 0 {
-		return 0, ErrInvalidRequest
+		return 0, fmt.Errorf("%w: pack request sequence %d (present=%t): %v", ErrInvalidRequest, seq, found, err)
 	}
 	pack, found, err := wire.Varint(request, 2)
 	if err != nil || !found || pack == 0 || pack > uint64(^uint32(0)>>1) {
-		return 0, ErrInvalidRequest
+		return 0, fmt.Errorf("%w: pack request pack %d (present=%t): %v", ErrInvalidRequest, pack, found, err)
 	}
 	return int(pack), nil
 }

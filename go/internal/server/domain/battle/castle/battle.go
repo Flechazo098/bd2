@@ -112,7 +112,12 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, identity strin
 				return nil, fmt.Errorf("castle: invalid initial party")
 			}
 			participants[index] = id
-			party = append(party, Participant{index, n(raw, 6), id, n(raw, 7)})
+			// BattleCharDBInfo.supporter_owner_index marks a borrowed
+			// supporter: its inventory indexes are the lender's, so only the
+			// player's own characters are checked for ownership.
+			if n(raw, 38) == 0 {
+				party = append(party, Participant{index, n(raw, 6), id, n(raw, 7)})
+			}
 		}
 		if len(participants) == 0 || len(participants) > 5 {
 			return nil, fmt.Errorf("castle: invalid castle party size")
@@ -263,4 +268,59 @@ func (s *Service) CompleteBattle(ctx command.Context, req []byte, identity strin
 		return nil, e
 	}
 	return out, nil
+}
+
+func (s *Service) remainingMonsters(r *run, field int) []byte {
+	var out []byte
+	f := s.design.Floors[r.Floor]
+	ids := make([]uint64, 0, len(f.Monsters))
+	for id := range f.Monsters {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		if r.Cleared[id] {
+			continue
+		}
+		item := wire.AppendVarint(nil, 1, id)
+		item = wire.AppendVarint(item, 2, f.Monsters[id])
+		item = wire.AppendVarint(item, 6, 1)
+		out = wire.AppendBytes(out, field, item)
+	}
+	return out
+}
+
+func (s *Service) ResumeBattle(ctx command.Context, identity string, response []byte) ([]byte, error) {
+	v, _, active, err := s.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a := v.Encounter
+	if a == nil || a.Receipt != identity {
+		return nil, fmt.Errorf("castle: resume encounter unavailable")
+	}
+	if a.Mode != 7 {
+		return response, nil
+	}
+	if !active || v.Run == nil || v.Run.Floor != a.ID || v.Run.Cleared[a.Monster] {
+		return nil, fmt.Errorf("castle: resume floor unavailable: floor=%d monster=%d", a.ID, a.Monster)
+	}
+	var out []byte
+	if err = wire.Walk(response, func(f wire.Field) error {
+		if f.Number != 6 {
+			out = append(out, response[f.Start:f.End]...)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	out, _, err = wire.ReplaceVarint(out, 7, v.Run.Point)
+	if err != nil {
+		return nil, err
+	}
+	out, _, err = wire.ReplaceVarint(out, 19, v.Run.Floor)
+	if err != nil {
+		return nil, err
+	}
+	return append(out, s.remainingMonsters(v.Run, 6)...), nil
 }

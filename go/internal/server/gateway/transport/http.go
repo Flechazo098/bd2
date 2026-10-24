@@ -118,7 +118,7 @@ func (b Bootstrap) Dispatch(path string, request []byte) (Reply, error) {
 		data, err := b.Notices.NoticeInfo(request, i18n.Fallback)
 		return Reply{Data: data}, err
 	default:
-		return Reply{}, ErrNotImplemented
+		return Reply{}, fmt.Errorf("%w: bootstrap path %s", ErrNotImplemented, path)
 	}
 }
 

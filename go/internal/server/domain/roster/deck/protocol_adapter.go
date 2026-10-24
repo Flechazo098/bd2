@@ -353,18 +353,18 @@ func repeatedUint64(field wire.Field) ([]uint64, error) {
 	if field.Type == 0 {
 		value, count := binary.Uvarint(field.Value)
 		if count <= 0 {
-			return nil, wire.ErrMalformed
+			return nil, fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, field.Number)
 		}
 		return []uint64{value}, nil
 	}
 	if field.Type != 2 {
-		return nil, wire.ErrMalformed
+		return nil, fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, field.Number, field.Type)
 	}
 	var out []uint64
 	for offset := 0; offset < len(field.Value); {
 		value, count := binary.Uvarint(field.Value[offset:])
 		if count <= 0 {
-			return nil, wire.ErrMalformed
+			return nil, fmt.Errorf("%w: field %d packed varint is truncated", wire.ErrMalformed, field.Number)
 		}
 		out = append(out, value)
 		offset += count

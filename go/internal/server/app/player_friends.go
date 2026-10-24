@@ -131,7 +131,7 @@ func (p *playerInstance) prepareFriends(ctx context.Context, request player.Comm
 				}
 				typ, found := p.assembly.design.recovery.Types[pack]
 				if !found {
-					return social.ErrInvalid
+					return fmt.Errorf("%w: pack %d has no friend recovery type", social.ErrInvalid, pack)
 				}
 				contentType = typ
 				return nil
@@ -141,7 +141,7 @@ func (p *playerInstance) prepareFriends(ctx context.Context, request player.Comm
 		}
 		code, body, err := p.factory.shared.friends.Execute(ctx, request.Identity, own.OwnerIndex, item.Path, item.Body, contentType)
 		if errors.Is(err, social.ErrConflict) {
-			return nil, player.ErrIdentityConflict
+			return nil, fmt.Errorf("%w: %s: %v", player.ErrIdentityConflict, item.Path, err)
 		}
 		if err != nil {
 			return nil, err

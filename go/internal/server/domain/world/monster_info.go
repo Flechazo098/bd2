@@ -200,7 +200,7 @@ func (s *Service) BeginFieldMonsterBattle(ctx command.Context, pack int, id, dec
 		return "", found, e
 	}
 	if !s.packUnlocked(ctx, pack) || !s.monsterEligible(pack, m) {
-		return "", true, ErrInvalidRequest
+		return "", true, fmt.Errorf("%w: field monster %d in pack %d is unavailable or not eligible", ErrInvalidRequest, m.ID, pack)
 	}
 	deckOK := deck == m.BattleDeck
 	for _, allowed := range m.BattleDecks {

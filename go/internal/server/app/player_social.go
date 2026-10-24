@@ -65,7 +65,7 @@ func (p *playerInstance) reconcileSocial(ctx context.Context, request player.Com
 		return player.Reply{}, err
 	}
 	if p.factory.shared == nil || reservation.ActorAccount != p.accountID || reservation.ID == "" {
-		return player.Reply{}, social.ErrPermission
+		return player.Reply{}, fmt.Errorf("%w: guild reservation %q belongs to %q, player is %q", social.ErrPermission, reservation.ID, reservation.ActorAccount, p.accountID)
 	}
 	var proof *social.CommitProof
 	err := p.readLocal(ctx, request.Identity, func(c command.Context) error {
@@ -118,7 +118,7 @@ func (p *playerInstance) guildQualification(ctx context.Context, identity comman
 			return err
 		}
 		if p.factory.design.levelDesign.Level(exp) < rule.SquadLevel {
-			return social.ErrIneligible
+			return fmt.Errorf("%w: guilds need squad level %d", social.ErrIneligible, rule.SquadLevel)
 		}
 		if rule.TicketID == 0 {
 			return nil
@@ -128,7 +128,7 @@ func (p *playerInstance) guildQualification(ctx context.Context, identity comman
 				return nil
 			}
 		}
-		return social.ErrIneligible
+		return fmt.Errorf("%w: guilds need ticket item %d", social.ErrIneligible, rule.TicketID)
 	})
 }
 

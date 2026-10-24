@@ -49,7 +49,7 @@ type CastleRewardDesign struct {
 	Reset                  FieldResetSchedule
 	Characters             map[uint64]CastleCharacter
 }
-type CastleCharacter struct{ Unique, Element uint64 }
+type CastleCharacter struct{ Unique, Element, DefaultCostume uint64 }
 
 func LoadCastleRewardDesign(root, version string) (*CastleRewardDesign, error) {
 	db, done, err := openStatDatabase(root, version)
@@ -68,7 +68,11 @@ func LoadCastleRewardDesign(root, version string) (*CastleRewardDesign, error) {
 		if e != nil {
 			return e
 		}
-		d.Characters[id] = CastleCharacter{u, element}
+		defaultCostume, e := optionalScalar(raw, 5)
+		if e != nil {
+			return e
+		}
+		d.Characters[id] = CastleCharacter{u, element, defaultCostume}
 		return nil
 	})
 	if err != nil {

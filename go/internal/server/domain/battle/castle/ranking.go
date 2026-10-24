@@ -36,7 +36,11 @@ type RankSource interface {
 func (s *Service) AttachRanking(owner uint64, source RankSource) {
 	s.rankOwner, s.rankSource = owner, source
 }
-func (s *Service) AttachSeasonSettlement(f func(uint64) bool) { s.settled = f }
+
+// AttachRankProfile supplies the player's current public profile for their
+// own ranking row when they have no published score.
+func (s *Service) AttachRankProfile(f func(command.Context) (RankProfile, error)) { s.rankProfile = f }
+func (s *Service) AttachSeasonSettlement(f func(uint64) bool)                     { s.settled = f }
 func RankWire(entry RankEntry) []byte {
 	p := entry.Profile
 	out := wire.AppendVarint(nil, 1, p.Owner)
@@ -170,10 +174,20 @@ func (s *Service) rankInfo(ctx command.Context, v *state, path string, req []byt
 	for _, entry := range s.rankSource.Top(season, stage, 100) {
 		out = wire.AppendBytes(out, 1, RankWire(entry))
 	}
-	if own.Point != 0 {
-		out = wire.AppendBytes(out, 2, RankWire(own))
+	// EvilCastleRankUI.UpdateRanking reads my_ranking_info unconditionally,
+	// so a player without a score still gets their own row: unranked, no
+	// points.
+	if own.Point == 0 {
+		own = RankEntry{RankRecord: RankRecord{Season: season, Stage: stage}, Profile: RankProfile{Owner: s.rankOwner}}
+		if s.rankProfile != nil {
+			profile, e := s.rankProfile(ctx)
+			if e != nil {
+				return nil, e
+			}
+			own.Profile = profile
+		}
 	}
-	return out, nil
+	return wire.AppendBytes(out, 2, RankWire(own)), nil
 }
 func castleRankRewards(rows []gamedata.CastleRankReward, rank uint64) []gamedata.Reward {
 	var out []gamedata.Reward

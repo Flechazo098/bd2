@@ -72,13 +72,13 @@ func VerifySubmittedChallenges(req []byte, definitions []EventBattleChallenge) (
 		if f.Type == 0 { //nolint:staticcheck // QF1003
 			n, k := binary.Uvarint(f.Value)
 			if k <= 0 {
-				return wire.ErrMalformed
+				return fmt.Errorf("%w: field %d varint is truncated", wire.ErrMalformed, f.Number)
 			}
 			v = []uint64{n}
 		} else if f.Type == 2 {
 			v, e = packedInts(wire.AppendBytes(nil, 5, f.Value), 5)
 		} else {
-			return wire.ErrMalformed
+			return fmt.Errorf("%w: field %d has wire type %d, want varints", wire.ErrMalformed, f.Number, f.Type)
 		}
 		if e != nil {
 			return e
