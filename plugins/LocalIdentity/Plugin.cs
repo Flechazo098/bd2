@@ -78,6 +78,7 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("event hub presentation", () => EventHubPresentation.Install(harmony, Logger));
             TryInstall("notice presentation", () => NoticePresentation.Install(harmony));
             TryInstall("event request diagnostics", () => EventRequestDiagnostics.Install(harmony, Logger));
+            TryInstall("item stack refresh", () => ItemStackRefresh.Install(harmony, this, Logger));
             Logger.LogInfo("Local identity active: AppManager.IsPlatformLogin => false");
         }
         catch (Exception ex)
