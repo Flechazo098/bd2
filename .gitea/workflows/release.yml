@@ -1,0 +1,31 @@
+name: release notes
+
+on:
+  push:
+    branches: [main]
+    paths: [CHANGELOG.md, .gitea/workflows/release.yml, .gitea/scripts/release.py]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  releases:
+    runs-on: bd2-host
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        env:
+          TOKEN: ${{ gitea.token }}
+        run: |
+          git init -q .
+          git -c http.extraHeader="Authorization: token $TOKEN" fetch -q --no-tags "$GITEA_URL/${{ gitea.repository }}.git" "${{ gitea.sha }}"
+          git checkout -q --detach FETCH_HEAD
+      - name: Create missing releases
+        env:
+          GITEA_TOKEN: ${{ gitea.token }}
+        run: python3 -I .gitea/scripts/release.py
+
+env:
+  GITEA_URL: http://gitea:3000
+  GITEA_API: http://gitea:3000/api/v1
