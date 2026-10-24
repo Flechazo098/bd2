@@ -1,5 +1,74 @@
 # 更新日志
 
+## server 2.37.13+server.0.2.1 · 2026-10-24
+
+> type: update
+> migration: none
+
+### en_us: Unlimited item stacks, farm quests and Evil Castle battle fixes
+
+- The admin console's unlimited item stacks switch takes effect right away: matching items merge into one stack, and switching it off splits them back to the game's limits.
+- The farm serves its quest chain, so the farm tutorial can finish and life quests pay their rewards.
+- Farm food can be bought, cooked and eaten in bulk, objects can be moved across farm areas, and crops show the right growth stage.
+- Evil Castle battles with a borrowed supporter or no costume settle correctly, and floor rewards only count finished runs and new victories.
+- Field research that failed to load in some areas loads again.
+
+### zh_cn: 不限物品堆叠、农场任务与恶魔城战斗修复
+
+- 管理台的不限物品堆叠开关即时生效：同一物品合并为一堆，关闭后按游戏上限重新拆分。
+- 农场提供任务链，农场教程可以完成，生活任务会发放奖励。
+- 农场食物可以批量购买、烹饪和食用，物件可以跨区域移动，作物显示正确的生长阶段。
+- 带借用支援角色或未装备服装的恶魔城战斗可以正常结算，楼层奖励只计算已完成的挑战和新的胜利。
+- 部分区域无法载入的野外调查恢复正常。
+
+### zh_tw: 不限物品堆疊、農場任務與惡魔城戰鬥修正
+
+- 管理台的不限物品堆疊開關即時生效：同一物品合併為一堆，關閉後依遊戲上限重新拆分。
+- 農場提供任務鏈，農場教學可以完成，生活任務會發放獎勵。
+- 農場食物可以批次購買、烹飪與食用，物件可以跨區域移動，作物顯示正確的生長階段。
+- 帶借用支援角色或未裝備服裝的惡魔城戰鬥可以正常結算，樓層獎勵只計算已完成的挑戰與新的勝利。
+- 部分區域無法載入的野外調查恢復正常。
+
+### ja_jp: スタック無制限、農場クエストと悪魔城バトルの修正
+
+- 管理コンソールのスタック無制限スイッチがすぐに反映され、同じアイテムが一つにまとまり、オフにするとゲームの上限で分け直されます。
+- 農場がクエストチェーンを提供し、農場チュートリアルを完了でき、ライフクエストの報酬を受け取れます。
+- 農場の料理をまとめて購入・調理・食事でき、オブジェクトをエリアをまたいで移動でき、作物が正しい成長段階を表示します。
+- 借りたサポーターや衣装なしの悪魔城バトルが正しく精算され、フロア報酬は完了した挑戦と新しい勝利のみを数えます。
+- 一部のエリアで読み込めなかったフィールド調査が正常に戻りました。
+
+### ko_kr: 아이템 스택 무제한, 농장 퀘스트 및 악마성 전투 수정
+
+- 관리 콘솔의 아이템 스택 무제한 스위치가 바로 적용되어 같은 아이템이 하나로 합쳐지고, 끄면 게임 상한에 맞게 다시 나뉩니다.
+- 농장이 퀘스트 체인을 제공하여 농장 튜토리얼을 완료할 수 있고 라이프 퀘스트 보상을 받을 수 있습니다.
+- 농장 음식을 한꺼번에 구매, 요리, 섭취할 수 있고, 오브젝트를 구역을 넘어 이동할 수 있으며, 작물이 올바른 성장 단계를 표시합니다.
+- 빌린 서포터나 코스튬 없이 진행한 악마성 전투가 올바르게 정산되고, 층 보상은 완료한 도전과 새로운 승리만 계산합니다.
+- 일부 지역에서 불러오지 못하던 필드 조사가 정상으로 돌아왔습니다.
+
+## client 2.37.13+client.0.2.11 · 2026-10-24
+
+> type: update
+
+### en_us: Item stacks update in game right away
+
+- After the admin console switches unlimited item stacks on or off, merged or split stacks show up in the bag, storage and life items without logging in again.
+
+### zh_cn: 物品堆叠即时刷新
+
+- 在管理台开启或关闭不限物品堆叠后，背包、仓库和生活物品会立即显示合并或拆分后的结果，不用重新登录。
+
+### zh_tw: 物品堆疊即時刷新
+
+- 在管理台開啟或關閉不限物品堆疊後，背包、倉庫與生活物品會立即顯示合併或拆分後的結果，不用重新登入。
+
+### ja_jp: アイテムスタックの即時反映
+
+- 管理コンソールでスタック無制限をオン・オフすると、ログインし直さなくてもバッグ、倉庫、ライフアイテムにまとめた結果や分け直した結果がすぐに表示されます。
+
+### ko_kr: 아이템 스택 즉시 반영
+
+- 관리 콘솔에서 아이템 스택 무제한을 켜거나 끄면 다시 로그인하지 않아도 가방, 창고, 라이프 아이템에 합치거나 나눈 결과가 바로 표시됩니다.
+
 ## client 2.37.13+client.0.2.10 · 2026-10-24
 
 > type: update
