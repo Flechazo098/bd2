@@ -62,6 +62,7 @@ func (p *playerAssembly) optionalGameplay(ctx command.Context) error {
 	p.worldService.AttachFieldPackEconomy(p.eventEconomy)
 	p.datingService.AttachFirstMeeting(p.cafeteriaService.CanMeet)
 	p.castleService = castle.NewService(p.design.castle)
+	p.clearPackages.AttachProgress(p.worldService.CashPackagePackCleared, p.castleService.CashPackageTowerCleared)
 	p.castleService.AttachTotalWarTextCheck(p.checkProfileText)
 	if err := p.castleService.AttachTotalWarRuntime(p.worldService.CharacterService(), p.collection, p.ownedEquipment, p.wallet); err != nil {
 		return err

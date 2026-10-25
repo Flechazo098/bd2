@@ -1127,12 +1127,19 @@ func (s *ClearPackages) Handle(ctx command.Context, path string, request []byte)
 	if d.Type == 1 && !s.entitled(ctx, d.TicketID) {
 		return 286, nil, true, fmt.Errorf("commerce: clear reward premium ticket required")
 	}
-	proof := s.packCleared
+	cleared := false
 	if claim.Kind == 1 {
-		proof = s.towerCleared
+		if s.towerCleared != nil {
+			cleared, err = s.towerCleared(ctx, d.TargetID, d.Level)
+		}
+	} else if s.packCleared != nil {
+		cleared = s.packCleared(d.TargetID, d.Level)
 	}
-	if proof == nil || !proof(d.TargetID, d.Level) {
-		return 286, nil, true, fmt.Errorf("commerce: clear reward progression incomplete")
+	if err != nil {
+		return 286, nil, true, fmt.Errorf("commerce: verify clear reward progression: %w", err)
+	}
+	if !cleared {
+		return 286, nil, true, fmt.Errorf("commerce: clear reward progression incomplete: kind=%d group=%d ticket=%d target=%d level=%d", claim.Kind, claim.GroupID, claim.TicketID, claim.TargetID, claim.Level)
 	}
 	rewards := []gamedata.Reward{{Type: 9, ID: d.RandomBoxID, Count: 1}}
 	var bundle []byte

@@ -25,7 +25,7 @@ type ClearPackages struct {
 	items        ClearPackageInventory
 	design       map[clearClaim]gamedata.ClearPackageRewardDesign
 	packCleared  func(uint64, uint64) bool
-	towerCleared func(uint64, uint64) bool
+	towerCleared func(command.Context, uint64, uint64) (bool, error)
 	now          func() time.Time
 }
 
@@ -44,7 +44,7 @@ func NewClearPackages(ctx command.Context, store stateio.Store, design *gamedata
 	_, err := s.load(ctx)
 	return s, err
 }
-func (s *ClearPackages) AttachProgress(pack, tower func(uint64, uint64) bool) {
+func (s *ClearPackages) AttachProgress(pack func(uint64, uint64) bool, tower func(command.Context, uint64, uint64) (bool, error)) {
 	s.packCleared = pack
 	s.towerCleared = tower
 }

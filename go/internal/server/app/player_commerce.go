@@ -32,7 +32,6 @@ func (p *playerAssembly) commerce(ctx command.Context) error {
 	if err != nil {
 		return fmt.Errorf("load clear-package claims: %w", err)
 	}
-	p.clearPackages.AttachProgress(p.worldService.CashPackagePackCleared, nil)
 	p.cashService.SetClock(time.Now, p.design.eventAPReset.ResetSeconds-9*3600)
 	if err := p.cashService.AttachPackageRules(p.design.cashDesign.Packages); err != nil {
 		return fmt.Errorf("attach cash package progression: %w", err)
