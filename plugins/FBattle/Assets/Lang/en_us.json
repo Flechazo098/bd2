@@ -1,0 +1,23 @@
+{
+  "fbattle.entry": "Actions",
+  "fbattle.title": "Preset Actions",
+  "fbattle.info": "Choose each character's first-turn action; on a selected skill, the arrows set its burst. Burst 0 still casts the skill, and later turns follow the game. Drag sideways for more actions.",
+  "fbattle.action.default": "Follow game",
+  "fbattle.action.attack": "Normal attack",
+  "fbattle.action.knockback": "Knockback",
+  "fbattle.sp_total": "First-turn skills: {0} / {1} SP",
+  "fbattle.sp_partial": "Chosen actions: {0} / {1} SP (excludes characters following the game)",
+  "fbattle.unsaved": "Unsaved changes",
+  "fbattle.saved": "Saved",
+  "fbattle.saving": "Saving preset and actions…",
+  "fbattle.save_failed": "Save failed. Your changes remain open; please try again.",
+  "fbattle.open_failed": "Unable to open the action editor. Please check the plugin log.",
+  "fbattle.empty": "Add characters to the preset first.",
+  "fbattle.save": "Save",
+  "fbattle.cancel": "Cancel",
+  "fbattle.discard": "Discard changes",
+  "fbattle.confirm.title": "Save preset actions?",
+  "fbattle.confirm.message": "Your action changes have not been saved. Save also saves this preset's characters, positions and equipment. Discard leaves the actions unchanged. Cancel returns to editing.",
+  "fbattle.server_required": "This server does not support preset actions. Please update the server.",
+  "fbattle.request_failed": "Unable to load or save preset actions. Please try again later."
+}

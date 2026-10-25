@@ -1,0 +1,23 @@
+{
+  "fbattle.entry": "行動設定",
+  "fbattle.title": "プリセットの行動設定",
+  "fbattle.info": "各キャラクターの初回行動を選びます。選択中のスキルは左右の矢印でバーストを調整できます。バースト 0 でもスキルを使用し、以降のターンはゲームに従います。横にドラッグすると他の行動を表示します。",
+  "fbattle.action.default": "ゲームに従う",
+  "fbattle.action.attack": "通常攻撃",
+  "fbattle.action.knockback": "ノックバック",
+  "fbattle.sp_total": "初回スキル合計：{0} / {1} SP",
+  "fbattle.sp_partial": "指定済みの行動：{0} / {1} SP（ゲームに従うキャラを除く）",
+  "fbattle.unsaved": "未保存の変更あり",
+  "fbattle.saved": "保存済み",
+  "fbattle.saving": "プリセットと行動を保存中…",
+  "fbattle.save_failed": "保存に失敗しました。変更内容は保持されています。再度お試しください。",
+  "fbattle.open_failed": "行動設定を開けません。プラグインログを確認してください。",
+  "fbattle.empty": "先にプリセットにキャラクターを追加してください。",
+  "fbattle.save": "保存",
+  "fbattle.cancel": "キャンセル",
+  "fbattle.discard": "変更を破棄",
+  "fbattle.confirm.title": "行動設定を保存しますか？",
+  "fbattle.confirm.message": "行動設定に未保存の変更があります。保存すると現在のキャラ・配置・装備も保存します。破棄すると行動設定を変更せずに閉じます。キャンセルで編集を続けます。",
+  "fbattle.server_required": "このサーバーはプリセットの行動設定に対応していません。サーバーを更新してください。",
+  "fbattle.request_failed": "プリセットの行動設定を読み込み、または保存できません。後でもう一度お試しください。"
+}

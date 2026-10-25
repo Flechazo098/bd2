@@ -15,12 +15,13 @@ import (
 )
 
 type Preset struct {
-	Name          string        `json:"name"`
-	ResourceID    uint64        `json:"resource_id"`
-	ResourceColor uint64        `json:"resource_color"`
-	Slot          uint64        `json:"slot"`
-	Decks         []PresetDeck  `json:"decks"`
-	Blesses       []PresetBless `json:"blesses"`
+	Name          string         `json:"name"`
+	ResourceID    uint64         `json:"resource_id"`
+	ResourceColor uint64         `json:"resource_color"`
+	Slot          uint64         `json:"slot"`
+	Decks         []PresetDeck   `json:"decks"`
+	Blesses       []PresetBless  `json:"blesses"`
+	BattlePlan    []BattleAction `json:"-"`
 }
 
 type PresetDeck struct {
@@ -58,6 +59,13 @@ func (s *Store) AttachPresetRuntime(ctx command.Context, wallet *assets.Wallet, 
 	}
 
 	s.wallet, s.characters, s.equipment, s.collection = wallet, characters, equipment, collection
+	for _, preset := range s.presets {
+		if preset.BattlePlan != nil {
+			if err := s.validateBattlePlan(preset, preset.BattlePlan); err != nil {
+				return fmt.Errorf("deck: saved battle plan %d: %w", preset.Slot, err)
+			}
+		}
+	}
 	return s.validatePresetOwnershipLocked(ctx)
 }
 
@@ -236,7 +244,15 @@ func (s *Store) persistPresetLocked(ctx command.Context, p Preset) error {
 	if err != nil {
 		return err
 	}
-	return s.storage.SaveWithEntries(ctx.State, "deck", core, []stateio.EntryMutation{{Bucket: "presets", Key: strconv.FormatUint(p.Slot, 10), Payload: payload}})
+	changes := []stateio.EntryMutation{{Bucket: "presets", Key: strconv.FormatUint(p.Slot, 10), Payload: payload}}
+	if p.BattlePlan != nil {
+		plan, err := battlePlanMutation(p)
+		if err != nil {
+			return err
+		}
+		changes = append(changes, plan)
+	}
+	return s.storage.SaveWithEntries(ctx.State, "deck", core, changes)
 }
 
 func (s *Store) corePayloadLocked() ([]byte, error) {

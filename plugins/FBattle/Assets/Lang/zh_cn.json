@@ -1,0 +1,23 @@
+{
+  "fbattle.entry": "出手方式",
+  "fbattle.title": "编辑出手方式",
+  "fbattle.info": "选择每位角色首轮的招式；选中技能后可用左右箭头调整爆发。爆发 0 仍会施放技能，后续回合交给游戏。横向拖动查看更多招式。",
+  "fbattle.action.default": "跟随游戏",
+  "fbattle.action.attack": "普通攻击",
+  "fbattle.action.knockback": "击退",
+  "fbattle.sp_total": "首轮技能合计：{0} / {1} SP",
+  "fbattle.sp_partial": "已指定招式：{0} / {1} SP（不含跟随游戏的角色）",
+  "fbattle.unsaved": "尚未保存",
+  "fbattle.saved": "已保存",
+  "fbattle.saving": "正在保存预设和出手方式…",
+  "fbattle.save_failed": "保存失败，修改仍保留在此界面，请重试。",
+  "fbattle.open_failed": "无法打开出手方式编辑器，请检查插件日志。",
+  "fbattle.empty": "请先在预设中添加角色。",
+  "fbattle.save": "保存",
+  "fbattle.cancel": "取消",
+  "fbattle.discard": "丢弃修改",
+  "fbattle.confirm.title": "保存出手方式？",
+  "fbattle.confirm.message": "出手方式有未保存的修改。保存将同时保存当前预设的角色、站位和装备；丢弃则不保存出手方式。取消可继续编辑。",
+  "fbattle.server_required": "当前服务器不支持预设出手方式，请更新服务端。",
+  "fbattle.request_failed": "无法读取或保存预设出手方式，请稍后重试。"
+}

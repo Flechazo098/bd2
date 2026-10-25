@@ -1,0 +1,23 @@
+{
+  "fbattle.entry": "出手方式",
+  "fbattle.title": "編輯出手方式",
+  "fbattle.info": "選擇每位角色首輪的招式；選中技能後可用左右箭頭調整爆發。爆發 0 仍會施放技能，後續回合交給遊戲。橫向拖曳查看更多招式。",
+  "fbattle.action.default": "跟隨遊戲",
+  "fbattle.action.attack": "普通攻擊",
+  "fbattle.action.knockback": "擊退",
+  "fbattle.sp_total": "首輪技能合計：{0} / {1} SP",
+  "fbattle.sp_partial": "已指定招式：{0} / {1} SP（不含跟隨遊戲的角色）",
+  "fbattle.unsaved": "尚未儲存",
+  "fbattle.saved": "已儲存",
+  "fbattle.saving": "正在儲存預設與出手方式…",
+  "fbattle.save_failed": "儲存失敗，修改仍保留於此畫面，請重試。",
+  "fbattle.open_failed": "無法開啟出手方式編輯器，請檢查外掛日誌。",
+  "fbattle.empty": "請先在預設中加入角色。",
+  "fbattle.save": "儲存",
+  "fbattle.cancel": "取消",
+  "fbattle.discard": "捨棄修改",
+  "fbattle.confirm.title": "儲存出手方式？",
+  "fbattle.confirm.message": "出手方式有尚未儲存的修改。儲存會同時儲存目前預設的角色、站位與裝備；捨棄則不儲存出手方式。取消可繼續編輯。",
+  "fbattle.server_required": "目前伺服器不支援預設出手方式，請更新伺服器。",
+  "fbattle.request_failed": "無法讀取或儲存預設出手方式，請稍後重試。"
+}

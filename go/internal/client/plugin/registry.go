@@ -25,6 +25,7 @@ var definitions = []Definition{
 	{ID: "login_ui", ProjectPath: "LoginUI/LoginUI.csproj", Framework: "netstandard2.1", FileName: "BD2LoginUI.dll", VersionKey: "login_ui", UsesGameSdk: true, Dependencies: []string{"game_names"}},
 	{ID: "cash_shop", ProjectPath: "CashShop/CashShop.csproj", Framework: "netstandard2.1", FileName: "BD2CashShop.dll", VersionKey: "cash_shop", UsesGameSdk: true, Dependencies: []string{"game_names"}},
 	{ID: "fchat", ProjectPath: "FChat/FChat.csproj", Framework: "netstandard2.1", FileName: "BD2FChat.dll", VersionKey: "fchat", UsesGameSdk: true, Dependencies: []string{"game_names", "login_ui"}},
+	{ID: "fbattle", ProjectPath: "FBattle/FBattle.csproj", Framework: "netstandard2.1", FileName: "BD2FBattle.dll", VersionKey: "fbattle", UsesGameSdk: true, Dependencies: []string{"game_names", "local_identity"}},
 	{ID: "brown_dust_x_accel", ProjectPath: "BrownDustXAccel/BrownDustXAccel.csproj", Framework: "netstandard2.1", FileName: "BD2BrownDustXAccel.dll"},
 }
 

@@ -46,6 +46,7 @@ type PluginVersions struct {
 	LoginUI            string `json:"login_ui"`
 	CashShop           string `json:"cash_shop"`
 	FChat              string `json:"fchat"`
+	FBattle            string `json:"fbattle,omitempty"`
 }
 
 // Load reads one explicit version file. Unknown fields and trailing JSON are
@@ -89,6 +90,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("minimum_plugins.%s must be a numeric three-part version no newer than plugins.%s", id, id)
 		}
 	}
+	if c.Plugins.FBattle != "" && !semanticVersion.MatchString(c.Plugins.FBattle) {
+		return errors.New("plugins.fbattle must be a numeric three-part version")
+	}
 	if err := validateReleaseVersion("client_version", c.ClientVersion, c.GameVersion, "client"); err != nil {
 		return err
 	}
@@ -114,7 +118,11 @@ func (c Config) Validate() error {
 
 // ByID lists the plugin versions under their versions.json keys.
 func (p PluginVersions) ByID() map[string]string {
-	return map[string]string{"local_identity": p.LocalIdentity, "capture_environment": p.CaptureEnvironment, "login_ui": p.LoginUI, "cash_shop": p.CashShop, "fchat": p.FChat}
+	versions := map[string]string{"local_identity": p.LocalIdentity, "capture_environment": p.CaptureEnvironment, "login_ui": p.LoginUI, "cash_shop": p.CashShop, "fchat": p.FChat}
+	if p.FBattle != "" {
+		versions["fbattle"] = p.FBattle
+	}
+	return versions
 }
 
 func (p PluginVersions) pairs(minimum PluginVersions) map[string][2]string {

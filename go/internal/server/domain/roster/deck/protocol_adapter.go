@@ -277,6 +277,12 @@ func decodePreset(data []byte) (Preset, error) {
 				return err
 			}
 			p.Blesses = append(p.Blesses, bless)
+		case 100:
+			plan, err := decodeBattlePlan(field.Value)
+			if err != nil {
+				return err
+			}
+			p.BattlePlan = plan
 		}
 		return nil
 	})
@@ -399,6 +405,10 @@ func presetWire(p Preset) []byte {
 		}
 		out = wire.AppendBytes(out, 6, b)
 	}
+	// Every preset advertises the extension. An empty plan means the player has
+	// explicitly cleared it (or has never configured it), while a missing field
+	// is reserved for old servers and is never emitted by this implementation.
+	out = wire.AppendBytes(out, 100, battlePlanWire(p.BattlePlan))
 	return out
 }
 
@@ -452,6 +462,13 @@ func (s *Store) handlePresetInfo(request []byte) (int, []byte, bool, error) {
 	for _, slot := range slots {
 		response = wire.AppendBytes(response, 1, presetWire(s.presets[slot]))
 	}
+	// Field 100 is the FBattle capability marker. It is deliberately present
+	// even for a new account with no ordinary presets, allowing the plugin to
+	// open the editor and save its first plan without guessing server support.
+	response = wire.AppendBytes(response, 100, battlePlanWire(nil))
+	if s.activePreset != nil {
+		response = wire.AppendVarint(response, 101, *s.activePreset)
+	}
 	return 178, response, true, nil
 }
 
@@ -475,6 +492,16 @@ func (s *Store) handlePresetSave(ctx command.Context, request []byte) (int, []by
 	if s.characters == nil || s.collection == nil || s.equipment == nil {
 		return 0, nil, true, errors.New("deck: preset runtime unavailable")
 	}
+	if p, exists := s.presets[preset.Slot]; exists && preset.BattlePlan == nil {
+		// Old clients omit the extension. Preserve their saved actions, pruning
+		// only characters removed from this newly submitted preset.
+		preset.BattlePlan = clipBattlePlan(preset, p.BattlePlan)
+	}
+	if preset.BattlePlan != nil {
+		if err := s.validateBattlePlan(preset, preset.BattlePlan); err != nil {
+			return 0, nil, true, fmt.Errorf("deck: invalid battle plan: %w", err)
+		}
+	}
 	if err := s.validatePresetOwnedLocked(ctx, preset); err != nil {
 		return 0, nil, true, fmt.Errorf("deck: invalid preset: %w", err)
 	}
@@ -482,8 +509,9 @@ func (s *Store) handlePresetSave(ctx command.Context, request []byte) (int, []by
 		return 0, nil, true, fmt.Errorf("deck: persist preset: %w", err)
 	}
 	s.presets[preset.Slot] = preset
-	s.rememberReplyLocked(ctx, "save", seq, 179, nil)
-	return 179, nil, true, nil
+	body := wire.AppendBytes(nil, 100, battlePlanWire(preset.BattlePlan))
+	s.rememberReplyLocked(ctx, "save", seq, 179, body)
+	return 179, body, true, nil
 }
 
 func (s *Store) handlePresetAddSlot(ctx command.Context, request []byte) (int, []byte, bool, error) {
@@ -614,6 +642,10 @@ func (s *Store) handlePresetDelete(ctx command.Context, request []byte) (int, []
 		}
 		seen[slot] = true
 		changes = append(changes, stateio.EntryMutation{Bucket: "presets", Key: strconv.FormatUint(slot, 10), Delete: true})
+		changes = append(changes, stateio.EntryMutation{Bucket: "battle_plans", Key: strconv.FormatUint(slot, 10), Delete: true})
+		if s.activePreset != nil && *s.activePreset == slot {
+			changes = append(changes, stateio.EntryMutation{Bucket: "active_preset", Key: "slot", Delete: true})
+		}
 	}
 	core, err := s.corePayloadLocked()
 	if err != nil {
@@ -624,6 +656,9 @@ func (s *Store) handlePresetDelete(ctx command.Context, request []byte) (int, []
 	}
 	for slot := range seen {
 		delete(s.presets, slot)
+		if s.activePreset != nil && *s.activePreset == slot {
+			s.activePreset = nil
+		}
 	}
 	// 2.36.7 contains the request/response classes but no PacketCode enum
 	// member. Code zero is the same compatibility fallback used for other
@@ -678,7 +713,7 @@ func (s *Store) handlePresetUse(ctx command.Context, request []byte) (int, []byt
 	next := clone(s.state)
 	next.Deck = append([]DeckEntry(nil), deckEntries...)
 	maps.Copy(next.Costumes, assignments)
-	if err := s.commit(ctx, next); err != nil {
+	if err := s.persistActivePreset(ctx, next, slot); err != nil {
 		return 0, nil, true, fmt.Errorf("deck: persist applied preset: %w", err)
 	}
 	var response []byte
@@ -714,8 +749,29 @@ func (s *Store) handlePresetUse(ctx command.Context, request []byte) (int, []byt
 		}
 		response = wire.AppendBytes(response, 3, info)
 	}
+	response = wire.AppendBytes(response, 100, battlePlanWire(preset.BattlePlan))
+	response = wire.AppendVarint(response, 101, slot)
 	s.rememberReplyLocked(ctx, "use", seq, 409, response)
 	return 409, response, true, nil
+}
+
+func (s *Store) persistActivePreset(ctx command.Context, next state, slot uint64) error {
+	activePayload, err := json.Marshal(slot)
+	if err != nil {
+		return err
+	}
+	if s.storage != nil {
+		core, err := json.MarshalIndent(next, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := s.storage.SaveWithEntries(ctx.State, "deck", append(core, '\n'), []stateio.EntryMutation{{Bucket: "active_preset", Key: "slot", Payload: activePayload}}); err != nil {
+			return err
+		}
+	}
+	s.state = next
+	s.activePreset = &slot
+	return nil
 }
 
 func costumeSettingWire(setting CostumeSetting) []byte {

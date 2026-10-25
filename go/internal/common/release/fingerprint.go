@@ -184,7 +184,7 @@ func (f Fingerprint) Validate() error {
 
 func knownPlayerPlugin(id string) bool {
 	switch id {
-	case "local_identity", "login_ui", "cash_shop", "fchat":
+	case "local_identity", "login_ui", "cash_shop", "fchat", "fbattle":
 		return true
 	default:
 		return false

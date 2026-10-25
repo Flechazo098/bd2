@@ -1,0 +1,23 @@
+{
+  "fbattle.entry": "행동 설정",
+  "fbattle.title": "프리셋 행동 설정",
+  "fbattle.info": "캐릭터별 첫 턴 행동을 선택합니다. 선택한 스킬은 좌우 화살표로 버스트를 조절합니다. 버스트 0도 스킬을 사용하며 이후 턴은 게임을 따릅니다. 가로로 드래그하면 다른 행동을 볼 수 있습니다.",
+  "fbattle.action.default": "게임 설정 따르기",
+  "fbattle.action.attack": "일반 공격",
+  "fbattle.action.knockback": "넉백",
+  "fbattle.sp_total": "첫 턴 스킬 합계: {0} / {1} SP",
+  "fbattle.sp_partial": "지정한 행동: {0} / {1} SP (게임 설정을 따르는 캐릭터 제외)",
+  "fbattle.unsaved": "저장하지 않은 변경 사항",
+  "fbattle.saved": "저장됨",
+  "fbattle.saving": "프리셋과 행동을 저장하는 중…",
+  "fbattle.save_failed": "저장하지 못했습니다. 변경 사항은 유지됩니다. 다시 시도해 주세요.",
+  "fbattle.open_failed": "행동 편집기를 열 수 없습니다. 플러그인 로그를 확인해 주세요.",
+  "fbattle.empty": "먼저 프리셋에 캐릭터를 추가해 주세요.",
+  "fbattle.save": "저장",
+  "fbattle.cancel": "취소",
+  "fbattle.discard": "변경 버리기",
+  "fbattle.confirm.title": "행동 설정을 저장할까요?",
+  "fbattle.confirm.message": "저장하지 않은 행동 변경 사항이 있습니다. 저장하면 현재 캐릭터, 위치, 장비도 함께 저장합니다. 버리면 행동 설정을 변경하지 않고 닫습니다. 취소하면 편집을 계속합니다.",
+  "fbattle.server_required": "현재 서버는 프리셋 행동 설정을 지원하지 않습니다. 서버를 업데이트해 주세요.",
+  "fbattle.request_failed": "프리셋 행동 설정을 불러오거나 저장할 수 없습니다. 나중에 다시 시도해 주세요."
+}

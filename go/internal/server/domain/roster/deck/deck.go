@@ -72,6 +72,7 @@ type Store struct {
 	presetSlots     uint64
 	presetDesign    gamedata.PresetDesign
 	costumeSettings map[uint64]CostumeSetting
+	activePreset    *uint64
 	wallet          *assets.Wallet
 	characters      *roster.CharacterStore
 	equipment       *assets.EquipmentInventory
@@ -193,7 +194,7 @@ func OpenStore(ctx command.Context, storage stateio.Store, seed Seed, designs ..
 		return nil, fmt.Errorf("deck: load state: %w", e)
 	}
 	if b == nil {
-		if e = stateio.RequireNoEntries(entries, ctx.State, "deck", "presets", "preset_config", "costume_settings", "field_settings"); e != nil {
+		if e = stateio.RequireNoEntries(entries, ctx.State, "deck", "presets", "preset_config", "battle_plans", "active_preset", "costume_settings", "field_settings"); e != nil {
 			return nil, fmt.Errorf("deck: invalid entry storage: %w", e)
 		}
 		return s, nil
@@ -214,6 +215,18 @@ func OpenStore(ctx command.Context, storage stateio.Store, seed Seed, designs ..
 	s.state = loaded
 	if e = s.loadPresetEntries(ctx); e != nil {
 		return nil, e
+	}
+	if e = s.loadBattlePlans(ctx); e != nil {
+		return nil, e
+	}
+	if raw, found, e := entries.LoadEntry(ctx.State, "deck", "active_preset", "slot"); e != nil {
+		return nil, e
+	} else if found {
+		var slot uint64
+		if e = json.Unmarshal(raw, &slot); e != nil || slot >= s.presetSlots {
+			return nil, errors.New("deck: invalid active preset")
+		}
+		s.activePreset = &slot
 	}
 	return s, nil
 }
