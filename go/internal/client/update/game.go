@@ -122,8 +122,20 @@ func (m *Manager) prepareDevelopmentGame(game string) error {
 	m.mu.Lock()
 	server := m.fingerprint
 	m.mu.Unlock()
-	if server != nil && (m.project == nil || server.ID != m.project.ID) {
-		return fmt.Errorf("server requires update %s for game %s; update the project's %s before launching", server.ID, gameVersion(server), release.FingerprintFileName)
+	if server != nil {
+		runtime := m.developmentRuntime()
+		identity := release.ClientIdentity{
+			Version:             runtime.ClientVersion,
+			Plugins:             v.Plugins.ByID(),
+			GameVersion:         runtime.GameVersion,
+			BundleVersion:       runtime.BundleVersion,
+			GameDataVersion:     runtime.GameDataVersion,
+			Fingerprint:         runtime.UpdateFingerprint,
+			ResourceFingerprint: runtime.ResourceFingerprint,
+		}
+		if !server.Accepts(identity) {
+			return fmt.Errorf("server requires update %s for game %s; update the project's %s before launching", server.ID, gameVersion(server), release.FingerprintFileName)
+		}
 	}
 	if _, err := setup.Inspect(game, v); err != nil {
 		return fmt.Errorf("development game does not match versions.json: %w", err)
