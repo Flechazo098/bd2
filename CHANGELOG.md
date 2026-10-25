@@ -1,5 +1,44 @@
 # 更新日志
 
+## client 2.37.13+client.0.2.16 · 2026-10-25
+
+> type: update
+
+### en_us: Preset first-turn actions and client update fixes
+
+- Configure each character's first-turn normal attack, knock-back or costume skill and burst level in the team preset's action editor. Choices are saved with the preset and restored after reconnecting; later turns follow the game's normal behavior.
+- Fix a crash when placing the first wallpaper on an empty wall in My Room.
+- Fix incorrect client-update prompts caused by missing plugin version reports. Report actual loaded managed plugins while keeping third-party plugins separate, and allow future plugin additions without blocking launcher updates.
+- Fix development launches being rejected when release identifiers differ despite compatible versions and identical game resources.
+
+### zh_cn: 预设首轮出手与客户端更新修复
+
+- 在配队预设的“出手方式”中，为每名角色选择首轮普攻、击退或服装技能及爆发等级。配置随预设保存，重连后恢复，后续回合交给游戏处理。
+- 修复小屋空墙面首次放置墙纸时崩溃的问题。
+- 修复漏报插件版本导致的“需要更新客户端”误提示，按实际加载结果识别受管理插件，不混入第三方插件；后续新增插件也不会阻断启动器更新。
+- 修复开发模式下版本和游戏资源均兼容，却因发布标识不同而无法启动的问题。
+
+### zh_tw: 預設首輪行動與用戶端更新修正
+
+- 在配隊預設的「出手方式」中，為每名角色選擇首輪普攻、擊退或服裝技能與爆發等級。設定隨預設儲存，重新連線後恢復，後續回合交給遊戲處理。
+- 修正小屋空牆面首次放置壁紙時崩潰的問題。
+- 修正漏報插件版本導致的「需要更新用戶端」誤提示，依實際載入結果識別受管理插件，不混入第三方插件；後續新增插件也不會阻擋啟動器更新。
+- 修正開發模式下版本與遊戲資源均相容，卻因發布識別碼不同而無法啟動的問題。
+
+### ja_jp: プリセットの初回行動とクライアント更新の修正
+
+- 編成プリセットの行動エディターで、各キャラクターの初回の通常攻撃、ノックバック、コスチュームスキルとバーストレベルを選べます。設定はプリセットとともに保存され、再接続後も復元されます。以降のターンは通常のゲーム動作に従います。
+- マイルームの空の壁に初めて壁紙を配置するとクラッシュする問題を修正しました。
+- プラグインのバージョン報告漏れによる誤った更新要求を修正しました。管理対象のプラグインは実際の読み込み状態から判定し、第三者製プラグインは含めません。今後のプラグイン追加でもランチャーの更新を妨げません。
+- 開発モードで、バージョンとゲームリソースが互換でもリリース識別子の違いにより起動できない問題を修正しました。
+
+### ko_kr: 프리셋 첫 턴 행동 및 클라이언트 업데이트 수정
+
+- 편성 프리셋의 행동 편집기에서 캐릭터별 첫 턴의 일반 공격, 넉백 또는 코스튬 스킬과 버스트 단계를 선택할 수 있습니다. 설정은 프리셋과 함께 저장되고 재접속 후 복원되며, 이후 턴은 게임의 기본 동작을 따릅니다.
+- 마이룸의 빈 벽에 처음 벽지를 배치할 때 발생하는 충돌을 수정했습니다.
+- 플러그인 버전 보고 누락으로 잘못 표시되던 업데이트 요구를 수정했습니다. 관리 대상 플러그인은 실제 로드 상태로 확인하고 타사 플러그인은 포함하지 않습니다. 이후 새 플러그인이 추가되어도 런처 업데이트를 차단하지 않습니다.
+- 개발 모드에서 버전과 게임 리소스가 호환되어도 릴리스 식별자가 다르면 실행할 수 없던 문제를 수정했습니다.
+
 ## server 2.37.13+server.0.2.3 · 2026-10-25
 
 > type: update
