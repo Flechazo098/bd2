@@ -778,3 +778,59 @@ func TestNativePVPGameplayUsesOwnedSnapshotsAndTickets(t *testing.T) {
 		}
 	}
 }
+
+// Both native matching callbacks handle errorType 2 as "Unable to find battle
+// opponent" (LocalText108902), then close matching without removing a ticket.
+func TestColosseumNoOpponentReturnsNativeErrorWithoutSpendingTicket(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	state, err := openSharedRuntime(context.Background(), factory.options, factory.design)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := state.store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	factory.shared, factory.pvpSource = state, state.pvp
+	decks := make([][]byte, 2)
+	for i, account := range accounts[:2] {
+		actor := &guildGameplay{t: t, factory: factory, account: account}
+		actor.open()
+		decks[i], _ = actor.ownedPVPDeck()
+		actor.close()
+	}
+	registry := newPlayerRegistry(factory, time.Minute)
+	t.Cleanup(func() {
+		if err := registry.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	attacker := friendHTTPLogin(t, registry, accounts[0])
+	ticketBefore := appValue(appRows(attacker.loginBody, 1)[0], 58)
+	if ticketBefore == 0 {
+		t.Fatal("test account has no arena ticket")
+	}
+	attacker.send("/ColosseumDeckSave", appMessage(2, decks[0]), 476, 0)
+	drainFriendPublications(t, registry, state, accounts[0])
+	for range 2 {
+		attacker.send("/ColosseumBattleMatching", nil, 483, 2)
+	}
+	attacker.send("/ColosseumDeckInfo", nil, 475, 0)
+	attacker = friendHTTPLogin(t, registry, accounts[0])
+	if tickets := appValue(appRows(attacker.loginBody, 1)[0], 58); tickets != ticketBefore {
+		t.Fatalf("empty matching spent tickets: before=%d after=%d", ticketBefore, tickets)
+	}
+	defender := friendHTTPLogin(t, registry, accounts[1])
+	defender.send("/ColosseumDeckSave", appMessage(2, decks[1]), 476, 0)
+	drainFriendPublications(t, registry, state, accounts[1])
+	matched := attacker.send("/ColosseumBattleMatching", nil, 483, 0)
+	enemies := appRows(matched, 3)
+	if len(enemies) != 1 || appValue(enemies[0], 1) != defender.owner {
+		t.Fatal("matching did not recover when a real opponent published a team")
+	}
+	attacker = friendHTTPLogin(t, registry, accounts[0])
+	if tickets := appValue(appRows(attacker.loginBody, 1)[0], 58); tickets != ticketBefore-1 {
+		t.Fatalf("valid matching ticket debit=%d want %d", tickets, ticketBefore-1)
+	}
+}

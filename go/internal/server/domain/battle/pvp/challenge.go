@@ -84,7 +84,11 @@ func (s *Service) matching(ctx command.Context, mode Mode, request []byte) ([]by
 		}
 	}
 	if len(accepted) == 0 {
-		return nil, fmt.Errorf("pvp: no eligible published opponent")
+		code := codes["/PvpBattleMatching"]
+		if mode == Colosseum {
+			code = codes["/ColosseumBattleMatching"]
+		}
+		return nil, &command.GameError{PacketCode: code, ErrorType: 2, Message: "pvp: no eligible published opponent"}
 	}
 	index, e := randomID()
 	if e != nil {
