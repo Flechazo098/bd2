@@ -45,8 +45,9 @@ internal static class UpdateCompatibility
                 string expected = Path.GetFullPath(Path.Combine(BepInEx.Paths.PluginPath, entry.Value));
                 foreach (BepInEx.PluginInfo info in Chainloader.PluginInfos.Values)
                 {
-                    if (info.Instance == null || !string.Equals(info.Instance.GetType().Assembly.Location, expected,
-                        Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) continue;
+                    if (info.Instance is null || string.IsNullOrEmpty(info.Location) ||
+                        !string.Equals(Path.GetFullPath(info.Location), expected,
+                            Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) continue;
                     if (plugins.ContainsKey(entry.Key))
                         throw new InvalidDataException("Multiple loaded plugins use the managed DLL " + entry.Value);
                     plugins.Add(entry.Key, info.Metadata.Version.ToString());
@@ -54,10 +55,12 @@ internal static class UpdateCompatibility
             }
             using var stream = new MemoryStream();
             Serializer(typeof(Dictionary<string, string>)).WriteObject(stream, plugins);
+            string reportedPlugins = Encoding.UTF8.GetString(stream.ToArray());
+            Log?.LogInfo("Client plugin versions reported: " + reportedPlugins);
             headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["X-BD2-Client-Version"] = ClientVersion,
-                ["X-BD2-Plugins"] = Encoding.UTF8.GetString(stream.ToArray()),
+                ["X-BD2-Plugins"] = reportedPlugins,
                 ["X-BD2-Game-Version"] = Application.version,
                 ["X-BD2-Bundle-Version"] = BundleVersion,
                 ["X-BD2-Game-Data-Version"] = GameDataVersion,
