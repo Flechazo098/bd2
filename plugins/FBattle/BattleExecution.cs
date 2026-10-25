@@ -59,10 +59,10 @@ internal static class BattleExecution
         team = null;
         choices = null;
         if (battle == null || battle.BattleProcessor == null || battle.GetBattleTurn() > 1 || battle.IsRetryCharActionSetting ||
-            battle.IsPVPMode() || battle.IsTotalWar() || battle.IsRoguelike || battle.IsMonsterHunt || battle.IsGuildRaidBoss() ||
+            battle.IsBasePvpMode() || battle.IsTotalWar() || battle.IsRoguelike || battle.IsMonsterHunt || battle.IsGuildRaidBoss() ||
             BattleRecordManager.IsReadyBattleRecord || !battle.IsBlueTurn()) return false;
         team = battle.GetTeamBattleCharSequenceList(ETeamType.TT_BLUE);
-        return team != null && PresetPlans.TryActive(team.Select(character => character.CharInvenIndex), out choices);
+        return team != null && PresetPlans.TryActive(team.Where(character => !character.IsBorrowedSupporter).Select(character => character.CharInvenIndex), out choices);
     }
 
     private static PlanScope CreateScope(ETeamType teamType, bool burst)
