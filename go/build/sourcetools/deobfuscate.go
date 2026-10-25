@@ -92,8 +92,11 @@ func readableIdentifier(meaning string) string {
 			b.WriteByte('_')
 		}
 	}
-	name := strings.Trim(b.String(), "_")
-	if name == "" {
+	// Leading and trailing underscores are part of the name: the game SDK and
+	// BD2.GameNames resolve members by the mapped name, so CommonPacket's
+	// _itemKeepInfoDic must read as _itemKeepInfoDic here too.
+	name := b.String()
+	if strings.Trim(name, "_") == "" {
 		name = "unnamed"
 	}
 	if name[0] >= '0' && name[0] <= '9' || keywords[name] {

@@ -21,7 +21,7 @@ internal static class ItemStackRefresh
     private const int NotifyField = 1000;
     private const int RefreshItems = 1 << 0;
     private const int RefreshLife = 1 << 1;
-    private static readonly FieldInfo KeepItems = typeof(CommonPacket).GetGameField("itemKeepInfoDic", BindingFlags.Static | BindingFlags.NonPublic);
+    private static readonly FieldInfo KeepItems = typeof(CommonPacket).GetGameField("_itemKeepInfoDic", BindingFlags.Static | BindingFlags.NonPublic);
     private static ManualLogSource Log;
     private static int pending;
     private static bool reloadingStorage;
@@ -31,7 +31,7 @@ internal static class ItemStackRefresh
         Log = logger;
         if (KeepItems == null)
         {
-            throw new MissingFieldException(nameof(CommonPacket), "itemKeepInfoDic");
+            throw new MissingFieldException(nameof(CommonPacket), "_itemKeepInfoDic");
         }
         harmony.Patch(typeof(NetworkManager).GetGameMethod("OnAfterResponse", BindingFlags.Instance | BindingFlags.NonPublic,
                 null, [typeof(PacketData), typeof(ResponseData)], null),
@@ -92,7 +92,7 @@ internal static class ItemStackRefresh
 
     private static IEnumerator Reload()
     {
-        for (;;)
+        while (true)
         {
             yield return null;
             if (Volatile.Read(ref pending) == 0 || SG.Net == null ||

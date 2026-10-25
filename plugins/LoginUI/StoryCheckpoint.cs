@@ -350,7 +350,7 @@ internal static class StoryCheckpoint
     {
         foreach (Type nested in typeof(GameFieldManager).GetNestedTypes(BindingFlags.NonPublic))
         {
-            MethodInfo end = nested.GetGameMethod("StartFirstQuestCinema_g__EndCinema_2", InstanceFlags);
+            MethodInfo end = nested.GetGameMethod("<StartFirstQuestCinema>g__EndCinema|2", InstanceFlags);
             if (end == null) continue;
             object continuation = Activator.CreateInstance(nested, true);
             nested.GetGameField("<>4__this", InstanceFlags).SetValue(continuation, field);
