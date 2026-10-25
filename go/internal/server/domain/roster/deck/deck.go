@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -142,26 +143,17 @@ func validField(entries []FieldEntry) error {
 }
 
 func validDeck(entries []DeckEntry) error {
-	if len(entries) == 0 || len(entries) > 5 {
-		return errors.New("deck: invalid battle deck size")
+	if len(entries) == 0 {
+		return errors.New("deck: empty battle deck")
 	}
-	characters := map[uint64]bool{}
-	positions := map[uint64]bool{}
-	sequences := map[uint64]bool{}
+	members := make([]formation.Member, 0, len(entries))
 	for _, entry := range entries {
-		position := entry.CostumeInvenIndex
-		unassigned := position == ^uint64(0) // int32 -1 sign-extends in protobuf varints.
-		if entry.CharacterInvenIndex == 0 || (!unassigned && position > 11) || entry.Slot == 0 || entry.Slot > 5 ||
-			characters[entry.CharacterInvenIndex] || (!unassigned && positions[position]) || sequences[entry.Slot] {
-			return errors.New("deck: invalid battle deck")
+		if entry.CharacterInvenIndex == 0 {
+			return errors.New("deck: missing battle character")
 		}
-		characters[entry.CharacterInvenIndex] = true
-		if !unassigned {
-			positions[position] = true
-		}
-		sequences[entry.Slot] = true
+		members = append(members, formation.Member{Character: entry.CharacterInvenIndex, Position: entry.CostumeInvenIndex, Sequence: entry.Slot})
 	}
-	return nil
+	return (formation.Rules{Capacity: formation.StandardCapacity, Cells: formation.StandardCells, AllowUnassigned: true}).Validate(members)
 }
 func NewStore(seed Seed, designs ...gamedata.PresetDesign) (*Store, error) {
 	if e := seed.validate(); e != nil {

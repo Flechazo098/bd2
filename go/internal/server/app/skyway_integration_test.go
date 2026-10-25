@@ -366,3 +366,69 @@ func TestSkyWayCrystalDispatchUsesTorchesAndSurvivesRetryAndReopen(t *testing.T)
 		t.Fatal("reopened cancellation refunded torches twice")
 	}
 }
+
+// SkyWayEnter selects a dungeon map without SaveUserPosition; PackInGameInfo
+// resets that run when returning to the ship's sole safe map (MapTable 30021).
+func TestSkyWayTalentsResolveShipAndRunWithoutSavedPosition(t *testing.T) {
+	s := newSkyWayPlayerScenario(t)
+	var caster, group uint64
+	tx, err := s.owner.repository.BeginCommand(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx, InstanceIDs: s.factory.instanceIDs()}
+	p := s.owner.assembly
+	// CharTable80 has default costume801 and talent205 (FastDash); its only
+	// banned pack in the current TalentTable is3010, so SkyWay permits it.
+	if _, err := p.collection.GrantCostumes(ctx, "skyway-dash-caster", []uint64{801}, p.design.rewardCostumes); err != nil {
+		t.Fatal(err)
+	}
+	for _, owned := range p.collection.Characters() {
+		if owned.ID != 80 {
+			continue
+		}
+		owned.TalentLevel = 1
+		if err := p.collection.UpdateCharacter(ctx, owned.ID, owned); err != nil {
+			t.Fatal(err)
+		}
+		caster, group = owned.InvenIndex, 205
+	}
+	if caster == 0 {
+		t.Fatal("current GameData has no available dash caster for SkyWay")
+	}
+	if err := p.wallet.ExchangeOnce(ctx, "skyway-talent-catalyst", nil, []gamedata.Reward{{Type: 12, Count: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	checkMap := func(want uint64) {
+		t.Helper()
+		tx, err := s.owner.repository.BeginCommand(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		ctx := command.Context{Identity: command.Identity{AccountID: s.account, SessionID: "skyway-client"}, State: tx}
+		pack, current, battle, err := s.owner.assembly.worldService.TalentFieldContext(ctx)
+		if err != nil || pack != 3004 || current != want || battle {
+			t.Fatalf("talent scene: pack=%d map=%d battle=%t err=%v, want map=%d", pack, current, battle, err, want)
+		}
+	}
+	checkMap(30021)
+	cast := s.request(caster)
+	reply := s.call(t, "/TalentSkillUse", cast)
+	if rows := appRows(reply, 1); len(rows) != 1 || appValue(rows[0], 1) != group {
+		t.Fatal("ship cast did not return the caster's talent state")
+	}
+	s.reopen(t)
+	checkMap(30021)
+	if replay := s.call(t, "/TalentSkillUse", cast); !bytes.Equal(reply, replay) {
+		t.Fatal("ship talent retry after reopen changed its acknowledged response")
+	}
+	s.call(t, "/SkyWayEnter", s.request(3004, 1, 10, 0))
+	checkMap(30027)
+	s.call(t, "/PackInGameInfo", s.request(3004))
+	checkMap(30021)
+}

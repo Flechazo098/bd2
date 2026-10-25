@@ -12,6 +12,7 @@ import (
 
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
 )
@@ -266,7 +267,7 @@ func (s *Service) prepareRaid(ctx context.Context, plan *Plan, path string, p pa
 				return nil, e
 			}
 		}
-		if len(deck)+len(supporterDeck) == 0 || len(deck)+len(supporterDeck) > 7 {
+		if len(deck)+len(supporterDeck) == 0 || len(deck)+len(supporterDeck) > formation.GuildCapacity {
 			return nil, fmt.Errorf("%w: raid deck has %d characters and %d supporters, want 1..7 in total", ErrInvalid, len(deck), len(supporterDeck))
 		}
 		if e = validateCombinedPositions(deck, supporterDeck); e != nil {
@@ -414,33 +415,17 @@ func (s *Service) validateRaidFormation(ctx command.Context, deck, settings [][]
 	if s.config.Characters == nil || s.config.Collection == nil {
 		return fmt.Errorf("%w: raid formation checks are not configured", ErrInvalid)
 	}
-	characters := map[uint64]bool{}
-	positions := map[uint64]bool{}
-	sequences := map[uint64]bool{}
+	if err := validateCombinedPositions(deck, nil); err != nil {
+		return err
+	}
 	for _, raw := range deck {
-		p, e := parsePacket(raw)
-		if e != nil {
-			return e
+		member, err := formation.DecodeDeck(raw)
+		if err != nil {
+			return fmt.Errorf("%w: raid %w", ErrInvalid, err)
 		}
-		index, e := p.integer(1)
-		if e != nil || index == 0 {
-			return fmt.Errorf("%w: raid formation character %d: %v", ErrInvalid, index, e)
+		if _, found := s.config.Characters.Find(ctx, member.Character); !found {
+			return fmt.Errorf("%w: character %d is not owned", ErrNotFound, member.Character)
 		}
-		pos, e := p.integer(2)
-		if e != nil || pos >= 18 {
-			return fmt.Errorf("%w: raid formation position %d, want below 18: %v", ErrInvalid, pos, e)
-		}
-		seq, e := p.integer(3)
-		if e != nil || seq >= 7 {
-			return fmt.Errorf("%w: raid formation sequence %d, want below 7: %v", ErrInvalid, seq, e)
-		}
-		if characters[index] || positions[pos] || sequences[seq] {
-			return fmt.Errorf("%w: raid formation repeats character %d, position %d or sequence %d", ErrInvalid, index, pos, seq)
-		}
-		if _, found := s.config.Characters.Find(ctx, index); !found {
-			return fmt.Errorf("%w: character %d is not owned", ErrNotFound, index)
-		}
-		characters[index], positions[pos], sequences[seq] = true, true, true
 	}
 	for _, raw := range settings {
 		p, e := parsePacket(raw)
@@ -448,8 +433,12 @@ func (s *Service) validateRaidFormation(ctx command.Context, deck, settings [][]
 			return e
 		}
 		index, e := p.integer(1)
-		if e != nil || !characters[index] {
-			return fmt.Errorf("%w: raid setting names character %d which is not in the deck: %v", ErrInvalid, index, e)
+		if _, found := s.config.Characters.Find(ctx, index); e != nil || !found {
+			return fmt.Errorf("%w: raid setting character %d is not owned: %v", ErrInvalid, index, e)
+		}
+		mode, e := p.integer(3)
+		if e != nil || mode != RaidBattleMode && mode != RaidPracticeMode {
+			return fmt.Errorf("%w: invalid raid setting mode %d", ErrInvalid, mode)
 		}
 		refs, e := p.messages(2)
 		if e != nil {
@@ -460,12 +449,22 @@ func (s *Service) validateRaidFormation(ctx command.Context, deck, settings [][]
 			if e != nil {
 				return e
 			}
-			costume, e := q.integer(1)
+			costume, _, e := wire.Varint(ref, 1)
 			if e != nil {
 				return e
 			}
+			burst, e := q.integer(2)
+			if e != nil {
+				return e
+			}
+			if costume == 0 || costume == math.MaxUint64 {
+				if burst != 0 {
+					return fmt.Errorf("%w: raid normal action has burst level %d", ErrInvalid, burst)
+				}
+				continue
+			}
 			c, found := s.config.Collection.CostumeByIndex(costume)
-			if !found || c.UseChar != index {
+			if !found || c.UseChar != index || burst > c.BurstLevel {
 				return fmt.Errorf("%w: costume %d is not for character %d", ErrIneligible, costume, index)
 			}
 		}

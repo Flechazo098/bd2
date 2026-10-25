@@ -497,7 +497,20 @@ func (s *Service) skyWayMap(ctx command.Context, pack int) (int, bool, error) {
 		return 0, true, err
 	}
 	stage, ok := s.skyway.design.Stage(v.Run.Group, v.Run.ID)
-	return int(stage.Map), ok, nil
+	if ok {
+		return int(stage.Map), true, nil
+	}
+	if saved, found := s.state.Position(); found && saved.PackID == pack && s.skyway.design.SafeMaps[saved.Position.MapID] {
+		return saved.Position.MapID, true, nil
+	}
+	// An empty run is the ship lobby. Its sole authored safe map is known
+	// before the first SaveUserPosition, unlike an ordinary pack's gate assets.
+	if len(s.skyway.design.SafeMaps) == 1 {
+		for mapID := range s.skyway.design.SafeMaps {
+			return mapID, true, nil
+		}
+	}
+	return 0, true, fmt.Errorf("world: SkyWay lobby map is unavailable: pack=%d safe_maps=%d", pack, len(s.skyway.design.SafeMaps))
 }
 
 func (s *Service) SkyWayDispatchCosts(ctx command.Context, d *gamedata.DispatchDesign, count uint64) ([]gamedata.Reward, error) {

@@ -3,6 +3,7 @@ package pvp
 import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
+	party "bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/protocol/wire"
 	"crypto/rand"
 	"crypto/sha256"
@@ -385,7 +386,7 @@ func (s *Service) saveFormation(ctx command.Context, mode Mode, side uint64, dec
 	return s.save(ctx)
 }
 func (s *Service) validateDeck(mode Mode, season uint64, deck [][]byte) error {
-	maximum, grids := uint64(5), uint64(12)
+	maximum, grids := uint64(party.StandardCapacity), uint64(party.StandardCells)
 	if mode == Colosseum {
 		size, e := s.rules.Design.ColosseumRule(season, 1)
 		if e != nil || len(size) != 2 || size[0] == 0 || size[1] == 0 || size[0] > 32 || size[1] > 32 {
@@ -397,21 +398,16 @@ func (s *Service) validateDeck(mode Mode, season uint64, deck [][]byte) error {
 		}
 		maximum, grids = count[0], size[0]*size[1]
 	}
-	if uint64(len(deck)) > maximum {
-		return fmt.Errorf("pvp: formation exceeds mode limit")
-	}
-	chars, positions, sequences := map[uint64]bool{}, map[uint64]bool{}, map[uint64]bool{}
+	members := make([]party.Member, 0, len(deck))
 	for _, entry := range deck {
-		index, e := scalar(entry, 1)
-		position, pErr := scalar(entry, 2)
-		sequence, sErr := scalar(entry, 3)
-		costume, cErr := scalar(entry, 4)
-		if e != nil || pErr != nil || sErr != nil || cErr != nil || index == 0 || index > math.MaxInt64 || costume == 0 || costume > math.MaxInt64 || position >= grids || sequence == 0 || sequence > maximum || chars[index] || positions[position] || sequences[sequence] {
+		member, err := party.DecodeDeck(entry)
+		costume, costumeErr := scalar(entry, 4)
+		if err != nil || costumeErr != nil || costume == 0 || costume > math.MaxInt64 {
 			return fmt.Errorf("pvp: invalid formation entry")
 		}
-		chars[index], positions[position], sequences[sequence] = true, true, true
+		members = append(members, member)
 	}
-	return nil
+	return (party.Rules{Capacity: maximum, Cells: grids}).Validate(members)
 }
 func validateFullDeck(deck [][]byte, raw []byte) error {
 	resolved, e := messages(raw, 1)

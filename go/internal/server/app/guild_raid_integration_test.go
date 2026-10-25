@@ -275,7 +275,7 @@ func TestNativeGuildRaidSettlesBothMembersAndClaimsOnce(t *testing.T) {
 	scores := map[string]uint64{}
 	for i, g := range []*guildGameplay{a, b} {
 		_, character := g.ownedPVPDeck()
-		deck := appScalar(1, character)
+		deck := append(appScalar(1, character), appScalar(3, 1)...)
 		g.pvpCall("/GuildRaidDeckSave", appMessage(2, deck))
 		entered := g.pvpCall("/GuildRaidBossBattleEnter", appScalar(2, level))
 		if appValue(entered, 4) != 1 {

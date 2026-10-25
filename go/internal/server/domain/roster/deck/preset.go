@@ -4,6 +4,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/storage/stateio"
 	"encoding/json"
 	"errors"
@@ -154,18 +155,15 @@ func (s *Store) validatePresetOwnershipLocked(ctx command.Context) error {
 }
 
 func (s *Store) validatePresetShape(p Preset, slotCount uint64) error {
-	if p.Slot >= slotCount || (p.ResourceID != 0 && !s.presetDesign.Icons[p.ResourceID]) || p.ResourceColor > 5 || !validPresetName(p.Name) || len(p.Decks) > 5 {
+	if p.Slot >= slotCount || (p.ResourceID != 0 && !s.presetDesign.Icons[p.ResourceID]) || p.ResourceColor > 5 || !validPresetName(p.Name) {
 		return errors.New("invalid metadata or deck count")
 	}
-	characters, positions, sequences := map[uint64]bool{}, map[uint64]bool{}, map[uint64]bool{}
+	members := make([]formation.Member, 0, len(p.Decks))
 	for _, deck := range p.Decks {
-		if deck.Deck.CharacterInvenIndex == 0 || deck.Deck.CostumeInvenIndex > 11 || deck.Deck.Slot == 0 || deck.Deck.Slot > 5 || deck.Team != 0 ||
-			characters[deck.Deck.CharacterInvenIndex] || positions[deck.Deck.CostumeInvenIndex] || sequences[deck.Deck.Slot] {
+		if deck.Deck.CharacterInvenIndex == 0 || deck.Team != 0 {
 			return errors.New("invalid deck entry")
 		}
-		characters[deck.Deck.CharacterInvenIndex] = true
-		positions[deck.Deck.CostumeInvenIndex] = true
-		sequences[deck.Deck.Slot] = true
+		members = append(members, formation.Member{Character: deck.Deck.CharacterInvenIndex, Position: deck.Deck.CostumeInvenIndex, Sequence: deck.Deck.Slot})
 		if len(deck.Equipment) != 5 {
 			return errors.New("preset deck requires five equipment slots")
 		}
@@ -177,7 +175,7 @@ func (s *Store) validatePresetShape(p Preset, slotCount uint64) error {
 			seen[item.Type] = true
 		}
 	}
-	return nil
+	return (formation.Rules{Capacity: formation.StandardCapacity, Cells: formation.StandardCells}).Validate(members)
 }
 
 func validPresetName(value string) bool {

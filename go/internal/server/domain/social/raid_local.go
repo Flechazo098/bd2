@@ -11,6 +11,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/protocol/wire"
 )
 
@@ -41,19 +42,22 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 		if e != nil {
 			return nil, e
 		}
-		if len(deck)+len(supporters) > 7 {
-			return nil, fmt.Errorf("%w: raid deck has %d characters and %d supporters, at most 7 in total", ErrInvalid, len(deck), len(supporters))
+		if len(deck)+len(supporters) > 0 {
+			if _, e = resolveSupporters(g, ctx.AccountID, supporters); e != nil {
+				return nil, e
+			}
+			state.Deck, state.SupporterDeck = deck, supporters
 		}
-		if _, e = resolveSupporters(g, ctx.AccountID, supporters); e != nil {
+		state.Settings, e = formation.MergeCostumeSettings(state.Settings, settings)
+		if e != nil {
 			return nil, e
 		}
-		if e = s.validateRaidFormation(ctx, deck, settings); e != nil {
+		if e = s.validateRaidFormation(ctx, state.Deck, state.Settings); e != nil {
 			return nil, e
 		}
-		if e = validateCombinedPositions(deck, supporters); e != nil {
+		if e = validateCombinedPositions(state.Deck, state.SupporterDeck); e != nil {
 			return nil, e
 		}
-		state.Deck, state.SupporterDeck, state.Settings = deck, supporters, settings
 		return nil, saveRaidState(ctx, state)
 	case "/GuildRaidBossQuickBattle":
 		if state.Active != nil || s.config.Now().UnixMilli() >= season.EndsMS {
@@ -227,26 +231,31 @@ func (s *Service) raidLocal(ctx command.Context, path string, p packet, id strin
 	return nil, fmt.Errorf("social: unknown raid operation %s", path)
 }
 func validateCombinedPositions(deck, supporters [][]byte) error {
-	positions, sequences := map[uint64]bool{}, map[uint64]bool{}
-	for _, part := range []struct {
-		rows               [][]byte
-		position, sequence int
-	}{{deck, 2, 3}, {supporters, 3, 4}} {
-		for _, raw := range part.rows {
-			p, e := parsePacket(raw)
-			if e != nil {
-				return e
-			}
-			pos, e := p.integer(part.position)
-			if e != nil || pos >= 18 {
-				return fmt.Errorf("%w: raid deck position %d, want below 18: %v", ErrInvalid, pos, e)
-			}
-			seq, e := p.integer(part.sequence)
-			if e != nil || seq >= 7 || positions[pos] || sequences[seq] {
-				return fmt.Errorf("%w: raid deck sequence %d at position %d is out of range or repeated: %v", ErrInvalid, seq, pos, e)
-			}
-			positions[pos], sequences[seq] = true, true
+	members := make([]formation.Member, 0, len(deck)+len(supporters))
+	for _, raw := range deck {
+		member, err := formation.DecodeDeck(raw)
+		if err != nil {
+			return fmt.Errorf("%w: raid %w", ErrInvalid, err)
 		}
+		members = append(members, member)
+	}
+	for _, raw := range supporters {
+		p, err := parsePacket(raw)
+		if err != nil {
+			return err
+		}
+		position, err := p.integer(3)
+		if err != nil {
+			return err
+		}
+		sequence, err := p.integer(4)
+		if err != nil {
+			return err
+		}
+		members = append(members, formation.Member{Position: position, Sequence: sequence})
+	}
+	if err := (formation.Rules{Capacity: formation.GuildCapacity, Cells: formation.GuildCells}).Validate(members); err != nil {
+		return fmt.Errorf("%w: raid %w", ErrInvalid, err)
 	}
 	return nil
 }
@@ -278,7 +287,7 @@ func (s *Service) validateRaidPreset(ctx command.Context, raw []byte, slots uint
 		return fail(fmt.Errorf("%w: raid preset color %d: %v", ErrInvalid, color, e))
 	}
 	rows, e := p.messages(5)
-	if e != nil || len(rows) > 7 {
+	if e != nil || len(rows) > formation.GuildCapacity {
 		return fail(fmt.Errorf("%w: raid preset has %d characters, at most 7: %v", ErrInvalid, len(rows), e))
 	}
 	var deck [][]byte

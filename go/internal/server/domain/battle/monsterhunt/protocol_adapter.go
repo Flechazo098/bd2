@@ -6,6 +6,7 @@ import (
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/roster"
+	"bd2server/internal/server/domain/roster/formation"
 	"bd2server/internal/server/protocol/staticdata"
 	"bd2server/internal/server/protocol/wire"
 	"bd2server/internal/server/storage/stateio"
@@ -495,12 +496,19 @@ func (s *Service) Handle(ctx command.Context, path string, req []byte) (int, []b
 			out = wire.AppendBytes(out, 2, v)
 		}
 	case "/MonsterHuntDeckSave":
-		next.Decks, e = messages(req, 2)
+		var decks, settings [][]byte
+		decks, e = messages(req, 2)
+		if e == nil && len(decks) > 0 {
+			next.Decks = decks
+		}
 		if e == nil {
 			e = s.validateDecks(ctx, next.Decks)
 		}
 		if e == nil {
-			next.Settings, e = messages(req, 3)
+			settings, e = messages(req, 3)
+		}
+		if e == nil {
+			next.Settings, e = formation.MergeCostumeSettings(next.Settings, settings)
 		}
 		if e == nil {
 			e = s.validateSettings(ctx, next.Settings)
@@ -767,30 +775,29 @@ func (s *Service) validateDecks(ctx command.Context, ds [][]byte) error {
 	seen := map[uint64]bool{}
 	for _, d := range ds {
 		t, e := scalar(d, 1)
-		if e != nil || t == 0 || t > 3 || seen[t] {
+		if e != nil || t == 0 || t > formation.HuntTeams || seen[t] {
 			return fmt.Errorf("monsterhunt: invalid or duplicate team")
 		}
 		seen[t] = true
 		chars, e := messages(d, 2)
-		if e != nil || len(chars) > 5 {
-			return fmt.Errorf("monsterhunt: invalid team size")
+		if e != nil {
+			return e
 		}
-		positions := map[uint64]bool{}
-		indices := map[uint64]bool{}
-		for _, b := range chars {
-			i, e := scalar(b, 1)
-			p, _ := scalar(b, 2)
-			seq, _ := scalar(b, 3)
-			if e != nil || i == 0 || p > 11 || seq == 0 || seq > 5 || positions[p] || indices[i] {
-				return fmt.Errorf("monsterhunt: invalid deck character")
+		members := make([]formation.Member, 0, len(chars))
+		for _, raw := range chars {
+			member, err := formation.DecodeDeck(raw)
+			if err != nil {
+				return err
 			}
 			if s.characters != nil {
-				if _, found := s.characters.Find(ctx, i); !found {
+				if _, found := s.characters.Find(ctx, member.Character); !found {
 					return fmt.Errorf("monsterhunt: character not owned")
 				}
 			}
-			positions[p] = true
-			indices[i] = true
+			members = append(members, member)
+		}
+		if err := (formation.Rules{Capacity: formation.StandardCapacity, Cells: formation.StandardCells}).Validate(members); err != nil {
+			return fmt.Errorf("monsterhunt: team %d: %w", t, err)
 		}
 	}
 	return nil
@@ -832,13 +839,13 @@ func (s *Service) presetDecks(p []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("monsterhunt: missing preset deck")
 		}
 		t, e := scalar(entry, 4)
-		if e != nil || t == 0 || t > 3 {
+		if e != nil || t == 0 || t > formation.HuntTeams {
 			return nil, fmt.Errorf("monsterhunt: invalid preset team")
 		}
 		teams[t] = wire.AppendBytes(teams[t], 2, base)
 	}
 	var out [][]byte
-	for t := uint64(1); t <= 3; t++ {
+	for t := uint64(1); t <= formation.HuntTeams; t++ {
 		if b, ok := teams[t]; ok {
 			out = append(out, append(wire.AppendVarint(nil, 1, t), b...))
 		}
