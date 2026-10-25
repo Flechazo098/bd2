@@ -341,7 +341,11 @@ func (s *Studio) Launch(input Request) (Response, error) {
 		launch := func() (Response, error) {
 			configured := input.settings()
 			if s.updates != nil {
-				configured.Runtime = s.updates.Runtime(input.GameDirectory)
+				runtime, err := s.updates.Runtime(input.GameDirectory)
+				if err != nil {
+					return Response{}, err
+				}
+				configured.Runtime = runtime
 			}
 			settings, err := clientsetup.SaveSettings(input.GameDirectory, configured)
 			if err != nil {

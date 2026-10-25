@@ -20,11 +20,6 @@ namespace Bd2LoginUI;
 
 internal static class UpdateCompatibility
 {
-    private static readonly KeyValuePair<string, string>[] PluginIds =
-    [
-        new("local_identity", "bd2.localidentity"), new("login_ui", Plugin.PluginId),
-        new("cash_shop", "bd2.cashshop"), new("fchat", "bd2.fchat")
-    ];
     private static readonly string Fingerprint = ClientSettings.Current.runtime.update_fingerprint;
     private static readonly string ResourceFingerprint = ClientSettings.Current.runtime.resource_fingerprint;
     private static readonly string ClientVersion = ClientSettings.Current.ClientVersion;
@@ -45,9 +40,18 @@ internal static class UpdateCompatibility
         {
             if (headers != null) return headers;
             plugins = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (KeyValuePair<string, string> id in PluginIds)
-                if (Chainloader.PluginInfos.TryGetValue(id.Value, out BepInEx.PluginInfo info))
-                    plugins.Add(id.Key, info.Metadata.Version.ToString());
+            foreach (KeyValuePair<string, string> entry in ClientSettings.Current.runtime.plugin_files)
+            {
+                string expected = Path.GetFullPath(Path.Combine(BepInEx.Paths.PluginPath, entry.Value));
+                foreach (BepInEx.PluginInfo info in Chainloader.PluginInfos.Values)
+                {
+                    if (info.Instance == null || !string.Equals(info.Instance.GetType().Assembly.Location, expected,
+                        Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) continue;
+                    if (plugins.ContainsKey(entry.Key))
+                        throw new InvalidDataException("Multiple loaded plugins use the managed DLL " + entry.Value);
+                    plugins.Add(entry.Key, info.Metadata.Version.ToString());
+                }
+            }
             using var stream = new MemoryStream();
             Serializer(typeof(Dictionary<string, string>)).WriteObject(stream, plugins);
             headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

@@ -14,6 +14,7 @@ import (
 
 	clientconfig "bd2server/internal/client/config"
 	"bd2server/internal/client/download"
+	"bd2server/internal/client/plugin"
 	"bd2server/internal/client/setup"
 	commonconfig "bd2server/internal/common/config"
 	"bd2server/internal/common/release"
@@ -68,12 +69,34 @@ func (m *Manager) Versions(game string) versionconfig.Config {
 	return v
 }
 
-func (m *Manager) Runtime(game string) *clientconfig.Runtime {
+func (m *Manager) Runtime(game string) (*clientconfig.Runtime, error) {
+	var runtime *clientconfig.Runtime
 	if m.options.Development {
-		return m.developmentRuntime()
+		runtime = m.developmentRuntime()
+		for _, artifact := range m.options.DevelopmentPlugins {
+			if artifact.ID != "" {
+				if runtime.PluginFiles == nil {
+					runtime.PluginFiles = map[string]string{}
+				}
+				runtime.PluginFiles[artifact.ID] = artifact.Name
+			}
+		}
+		return runtime, nil
 	}
 	v := m.Versions(game)
-	runtime := &clientconfig.Runtime{ClientVersion: v.ClientVersion, GameVersion: v.GameVersion, BundleVersion: v.BundleVersion, GameDataVersion: v.GameDataVersion}
+	runtime = &clientconfig.Runtime{ClientVersion: v.ClientVersion, GameVersion: v.GameVersion, BundleVersion: v.BundleVersion, GameDataVersion: v.GameDataVersion}
+	store, err := plugin.ReadStore(m.options.Directory)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime plugin identities: %w", err)
+	}
+	for _, file := range store.Files {
+		if file.ID != "" {
+			if runtime.PluginFiles == nil {
+				runtime.PluginFiles = map[string]string{}
+			}
+			runtime.PluginFiles[file.ID] = file.Name
+		}
+	}
 	m.mu.Lock()
 	fp := m.fingerprint
 	m.mu.Unlock()
@@ -83,7 +106,7 @@ func (m *Manager) Runtime(game string) *clientconfig.Runtime {
 			runtime.ResourceFingerprint = receipt.ResourceFingerprint
 		}
 	}
-	return runtime
+	return runtime, nil
 }
 
 func (m *Manager) configureGame(game string) error {
@@ -91,7 +114,10 @@ func (m *Manager) configureGame(game string) error {
 	if err != nil {
 		return err
 	}
-	settings.Runtime = m.Runtime(game)
+	settings.Runtime, err = m.Runtime(game)
+	if err != nil {
+		return err
+	}
 	_, err = clientconfig.Save(game, settings)
 	return err
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using BepInEx;
@@ -28,7 +29,7 @@ internal sealed class ClientSettings
     {
         if (token == null || token.Type == JTokenType.Null) return new ClientRuntime();
         if (token is not JObject value) throw new InvalidDataException("runtime must be an object");
-        RequireOnly(value, "client_version", "update_fingerprint", "resource_fingerprint", "game_version", "bundle_version", "game_data_version");
+        RequireOnly(value, "client_version", "update_fingerprint", "resource_fingerprint", "game_version", "bundle_version", "game_data_version", "plugin_files");
         var runtime = new ClientRuntime
         {
             client_version = OptionalString(value, "client_version"),
@@ -38,6 +39,18 @@ internal sealed class ClientSettings
             bundle_version = OptionalString(value, "bundle_version"),
             game_data_version = OptionalString(value, "game_data_version")
         };
+        if (value["plugin_files"] is JToken files && files.Type != JTokenType.Null)
+        {
+            if (files is not JObject entries) throw new InvalidDataException("runtime.plugin_files must be an object");
+            foreach (JProperty entry in entries.Properties())
+            {
+                string file = RequiredString(entries, entry.Name);
+                if (string.IsNullOrWhiteSpace(entry.Name) || Path.GetFileName(file) != file ||
+                    file.IndexOfAny(['/', '\\', ':']) >= 0 || !file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("runtime.plugin_files must map plugin IDs to DLL file names");
+                runtime.plugin_files.Add(entry.Name, file);
+            }
+        }
         ValidateFingerprint(runtime.update_fingerprint, "update_fingerprint");
         ValidateFingerprint(runtime.resource_fingerprint, "resource_fingerprint");
         ValidateResourceVersion(runtime.bundle_version, "bundle_version");
@@ -232,6 +245,7 @@ internal sealed class ClientSettings
 
 internal sealed class ClientRuntime
 {
+    internal Dictionary<string, string> plugin_files = new(StringComparer.Ordinal);
     internal string client_version = string.Empty;
     internal string update_fingerprint = string.Empty;
     internal string resource_fingerprint = string.Empty;

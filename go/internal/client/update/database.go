@@ -15,8 +15,12 @@ func (m *Manager) PrepareLocalDatabase(ctx context.Context, client *http.Client,
 	if client == nil {
 		client = m.options.Client
 	}
-	_, err := dbpatch.Run(ctx, dbpatch.Options{
-		GameDirectory: game, Origin: origin, GameVersion: m.Runtime(game).GameVersion,
+	runtime, err := m.Runtime(game)
+	if err != nil {
+		return err
+	}
+	_, err = dbpatch.Run(ctx, dbpatch.Options{
+		GameDirectory: game, Origin: origin, GameVersion: runtime.GameVersion,
 		Client: client, Logger: m.options.Logger, Running: func() (bool, error) { return m.localDatabaseRunning(game) },
 	})
 	return err

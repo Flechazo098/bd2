@@ -37,12 +37,13 @@ type Settings struct {
 }
 
 type Runtime struct {
-	ClientVersion       string `json:"client_version"`
-	UpdateFingerprint   string `json:"update_fingerprint"`
-	ResourceFingerprint string `json:"resource_fingerprint"`
-	GameVersion         string `json:"game_version"`
-	BundleVersion       string `json:"bundle_version"`
-	GameDataVersion     string `json:"game_data_version"`
+	PluginFiles         map[string]string `json:"plugin_files,omitempty"`
+	ClientVersion       string            `json:"client_version"`
+	UpdateFingerprint   string            `json:"update_fingerprint"`
+	ResourceFingerprint string            `json:"resource_fingerprint"`
+	GameVersion         string            `json:"game_version"`
+	BundleVersion       string            `json:"bundle_version"`
+	GameDataVersion     string            `json:"game_data_version"`
 }
 
 func Path(gameDir string) string {
