@@ -1,5 +1,69 @@
 # 更新日志
 
+## client 2.37.13+client.0.2.18 · 2026-10-26
+
+> type: update
+
+### en_us: Preset battle actions with supporters and arena teams
+
+- Keep ordinary preset first-turn actions working when the party includes a borrowed supporter; supporters continue using their own actions and are excluded from preset member matching.
+- Exclude Golden Colosseum battles from ordinary preset action overrides, keeping each mode’s own team and action settings separate.
+
+### zh_cn: 助战与竞技场预设动作修复
+
+- 普通队伍带借用助战时仍可正确匹配预设并应用首轮动作；助战独立行动，不参与普通预设成员匹配。
+- 黄金竞技场不再误用普通预设的首轮动作，保留各玩法自己的配队和行动设置。
+
+### zh_tw: 助戰與競技場預設動作修正
+
+- 普通隊伍包含借用助戰時，仍能正確比對預設並套用首輪動作；助戰獨立行動，不參與普通預設成員比對。
+- 黃金競技場不再誤用普通預設的首輪動作，保留各玩法自己的配隊及行動設定。
+
+### ja_jp: 助っ人と闘技場のプリセット動作修正
+
+- 通常編成に借用した助っ人がいてもプリセットを正しく照合し、初手の行動を適用します。助っ人は照合対象から除外し、独自の行動を維持します。
+- 黄金の闘技場では通常プリセットの初手設定を適用せず、各モードの編成と行動設定を維持します。
+
+### ko_kr: 지원 캐릭터 및 투기장 프리셋 행동 수정
+
+- 일반 편성에 빌린 지원 캐릭터가 있어도 프리셋을 올바르게 확인하고 첫 턴 행동을 적용합니다. 지원 캐릭터는 프리셋 구성원 비교에서 제외하고 자체 행동을 유지합니다.
+- 황금 투기장에 일반 프리셋의 첫 턴 설정이 잘못 적용되지 않도록 하여 각 모드의 편성 및 행동 설정을 유지합니다.
+
+## server 2.37.13+server.0.2.5 · 2026-10-26
+
+> type: update
+> migration: none
+
+### en_us: Party presets and airship talents
+
+- Share formation validation across ordinary parties, PvP, guild raids and Fiend Hunts while retaining each mode’s capacity and grid rules. Fix guild raid saves rejecting the seventh action slot and the last cells of the 5×5 grid, and reject duplicate action orders in Fiend Hunt teams.
+- Preserve parties when saving only action settings in guild raids and Fiend Hunts. Merge settings by character, battle mode and monster so changes do not erase other saved actions.
+- Resolve the airship lobby before its first position save, keeping dungeon and lobby maps correct when entering stages, returning or reconnecting. Fix valid talent requests being rejected because the current map was unknown.
+
+### zh_cn: 配队预设与飞船天赋修复
+
+- 普通配队、PvP、公会联合战和魔兽追踪共用编队校验，各玩法保留独立的人数与棋盘规则；修复公会第七行动位、5×5 棋盘后部位置无法保存的问题，并补上魔兽同队行动序号去重。
+- 修复公会与魔兽仅保存技能设置时清空配队的问题；技能设置按角色、战斗模式和怪物分别合并，保留其他已保存设置。
+- 补齐首次保存位置前的飞船大厅地图识别，进入关卡、返回大厅和重连时保持正确场景，修复合法天赋请求因地图未知而被拒绝的问题。
+
+### zh_tw: 配隊預設與飛船天賦修正
+
+- 普通配隊、PvP、公會聯合戰與魔獸追蹤共用編隊驗證，各玩法保留獨立的人數及棋盤規則；修正公會第七行動位、5×5 棋盤後段位置無法儲存的問題，並補上魔獸同隊行動順序去重。
+- 修正公會與魔獸僅儲存技能設定時清空配隊的問題；技能設定依角色、戰鬥模式及怪物合併，保留其他已儲存設定。
+- 補齊首次儲存位置前的飛船大廳地圖識別，進入關卡、返回大廳及重新連線時維持正確場景，修正合法天賦請求因地圖未知而遭拒絕的問題。
+
+### ja_jp: 編成プリセットと飛行船の才能スキル修正
+
+- 通常編成、PvP、ギルドレイド、魔獣追跡の編成検証を共通化し、各モードの人数と盤面ルールを維持しました。ギルドの7番目の行動順と5×5盤面の後方マスを保存できない問題を修正し、魔獣の同一チーム内の行動順重複を検出します。
+- ギルドと魔獣でスキル設定だけを保存すると編成が消える問題を修正しました。設定はキャラクター、戦闘モード、モンスターごとに更新し、他の設定を保持します。
+- 最初の位置保存前でも飛行船ロビーを識別し、ステージ進入、ロビーへの帰還、再接続時のマップを正しく扱います。現在地不明で有効な才能スキルが拒否される問題を修正しました。
+
+### ko_kr: 편성 프리셋 및 비행선 재능 수정
+
+- 일반 편성, PvP, 길드 레이드와 마수 추적의 편성 검증을 공통화하고 각 모드의 인원 및 전장 규칙을 유지했습니다. 길드의 일곱 번째 행동 순서와 5×5 전장 뒤쪽 칸을 저장하지 못하는 문제를 수정하고 마수 팀 내 행동 순서 중복을 검사합니다.
+- 길드와 마수에서 스킬 설정만 저장할 때 편성이 지워지던 문제를 수정했습니다. 캐릭터, 전투 모드와 몬스터별로 설정을 병합하여 다른 설정을 보존합니다.
+- 첫 위치 저장 전에도 비행선 로비를 식별하고 스테이지 진입, 로비 복귀 및 재접속 시 올바른 맵을 유지합니다. 현재 맵을 알 수 없어 유효한 재능 요청이 거부되던 문제를 수정했습니다.
+
 ## client 2.37.13+client.0.2.17 · 2026-10-25
 
 > type: update
