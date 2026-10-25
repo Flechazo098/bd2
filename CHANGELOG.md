@@ -1,5 +1,79 @@
 # 更新日志
 
+## server 2.37.13+server.0.2.2 · 2026-10-25
+
+> type: update
+> migration: none
+
+### en_us: Game card quests and ID card fixes
+
+- Restore the introductory quests for Mirror War, Last Night and Evil Castle, and the quest chains in character and older event packs.
+- Restore character-pack side quest previews and completion counts, and preserve quest progress and cutscene checkpoints after reconnecting.
+- Award arena quest currencies correctly and prevent repeated quest completion from paying rewards twice.
+- Fix saving a portrait ID card from the personal profile.
+
+### zh_cn: 游戏卡任务与 ID 卡修复
+
+- 补齐镜中之战、末日之书和恶魔城的入门任务，以及角色卡、旧活动卡的任务链。
+- 恢复角色卡支线预览和通关计数，重连后保留任务进度与剧情检查点。
+- 修复竞技玩法任务货币奖励发放，重复完成不会重复领奖。
+- 修复在个人资料中保存竖屏 ID 卡失败的问题。
+
+### zh_tw: 遊戲卡任務與 ID 卡修正
+
+- 補齊鏡中之戰、末日之書與惡魔城的入門任務，以及角色卡、舊活動卡的任務鏈。
+- 恢復角色卡支線預覽與通關計數，重新連線後保留任務進度及劇情檢查點。
+- 修正競技玩法任務貨幣獎勵發放，重複完成不會重複領獎。
+- 修正在個人資料中儲存直式 ID 卡失敗的問題。
+
+### ja_jp: ゲームカセットのクエストとIDカードの修正
+
+- 鏡戦争、ラストナイト、悪魔城の導入クエストと、キャラクター・過去イベントのカセットのクエストチェーンを復元しました。
+- キャラクターカセットのサブクエスト表示とクリア数を修正し、再接続後もクエスト進行とシナリオのチェックポイントを保持します。
+- 競技コンテンツのクエスト通貨報酬を正しく配布し、同じクエストの再精算で報酬が重複しないようにしました。
+- プロフィールから縦向きのIDカードを保存できない問題を修正しました。
+
+### ko_kr: 게임팩 퀘스트 및 ID 카드 수정
+
+- 거울전쟁, 마물의 밤, 악마성의 도입 퀘스트와 캐릭터팩 및 이전 이벤트팩의 퀘스트 연계를 복원했습니다.
+- 캐릭터팩 서브 퀘스트 미리 보기와 완료 횟수를 수정하고, 재접속 후에도 퀘스트 진행도와 스토리 체크포인트를 유지합니다.
+- 경쟁 콘텐츠 퀘스트의 재화 보상을 올바르게 지급하고, 같은 퀘스트를 다시 정산해도 보상이 중복 지급되지 않도록 했습니다.
+- 프로필에서 세로형 ID 카드를 저장하지 못하는 문제를 수정했습니다.
+
+## client 2.37.13+client.0.2.12 · 2026-10-25
+
+> type: update
+
+### en_us: Field party, item stacks and story recovery fixes
+
+- Preserve full character and costume identifiers when selecting the field party, preventing invalid selections and crashes.
+- Fix automatic item stack refresh failing to initialize after the game update.
+- Fix resuming an interrupted opening quest cutscene.
+
+### zh_cn: 跑图队伍、物品堆叠与剧情恢复修复
+
+- 修复选择跑图队伍时角色、服装编号被截断导致选择异常或卡退的问题。
+- 修复游戏更新后物品堆叠自动刷新无法初始化的问题。
+- 修复恢复未完成的开场任务剧情失败的问题。
+
+### zh_tw: 跑圖隊伍、物品堆疊與劇情恢復修正
+
+- 修正選擇跑圖隊伍時角色、服裝編號被截斷，導致選擇異常或遊戲退出的問題。
+- 修正遊戲更新後物品堆疊自動重新整理無法初始化的問題。
+- 修正恢復尚未完成的開場任務劇情失敗的問題。
+
+### ja_jp: フィールド編成、アイテムスタックとシナリオ復帰の修正
+
+- フィールド編成の選択時にキャラクターと衣装の識別番号が切り詰められ、選択異常やクラッシュが起きる問題を修正しました。
+- ゲーム更新後にアイテムスタックの自動更新を初期化できない問題を修正しました。
+- 中断した導入クエストのシナリオを再開できない問題を修正しました。
+
+### ko_kr: 필드 편성, 아이템 스택 및 스토리 복구 수정
+
+- 필드 편성을 선택할 때 캐릭터와 코스튬 식별 번호가 잘려 선택 오류나 게임 종료가 발생하는 문제를 수정했습니다.
+- 게임 업데이트 후 아이템 스택 자동 새로 고침을 초기화하지 못하는 문제를 수정했습니다.
+- 중단된 도입 퀘스트 스토리를 재개하지 못하는 문제를 수정했습니다.
+
 ## server 2.37.13+server.0.2.1 · 2026-10-24
 
 > type: update
