@@ -1,8 +1,10 @@
 package social_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -307,5 +309,117 @@ func TestVisitedRoomPresetAcceptsOnlyHiddenWallpaperSubstitution(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("visited preset was not stored in the visitor slots")
+	}
+}
+
+// MyRoomObjectDisplay sends Rotate=EDisplayDir.RIGHT_TOP(-4) and Interact=-1.
+// MyRoomItemPositionInfo encodes both as int32, using sign-extended varints.
+func TestRoomSignedPlacementsSurviveSaveReloadMoveAndPreset(t *testing.T) {
+	ctx := context.Background()
+	store := &memoryStore{rows: map[string]map[string][]byte{}}
+	design := &gamedata.RoomDesign{Defaults: []uint64{1, 2}, MyPresets: 10,
+		Limits: map[uint64]gamedata.RoomLimits{1: {Objects: 4}, 2: {Objects: 4}},
+		Items:  map[uint64]gamedata.RoomItem{201: {Kind: 1}},
+	}
+	open := func() *social.Friends {
+		t.Helper()
+		f, err := social.NewFriends(store, gamedata.FriendRules{Friends: 50, Sent: 50, Received: 50, Recommended: 10, ExpireDays: 7}, gamedata.SupporterRules{}, design, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	f := open()
+	owner := social.FriendProfile{AccountID: "1", OwnerIndex: 1, Version: 1, Snapshot: profile.Snapshot{OwnerIndex: 1}, RoomItems: []inventory.Item{{Type: 27, ID: 201, InvenIndex: 1010, Count: 1}}}
+	if err := f.Publish(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	seq := 0
+	call := func(path string, fields []byte) ([]byte, error) {
+		seq++
+		_, body, err := f.Execute(ctx, command.Identity{AccountID: "1", SessionID: "signed-room", RequestID: fmt.Sprint(seq)}, 1, path, append(wire.AppendVarint(nil, 1, uint64(seq)), fields...), 0)
+		return body, err
+	}
+	position := wire.AppendVarint(wire.AppendVarint(nil, 1, 1010), 3, 1)
+	position = append(position, []byte{0x30, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 0x38, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01}...)
+	room := wire.AppendBytes(wire.AppendVarint(nil, 1, 1), 3, position)
+	if _, err := call("/MyRoomSave", wire.AppendBytes(nil, 2, room)); err != nil {
+		t.Fatal("native signed placement rejected", err)
+	}
+	f = open()
+	assertLayout := func(roomID uint64) {
+		t.Helper()
+		raw, _, err := f.RoomProfile(ctx, 1, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matched := false
+		if err := wire.Walk(raw, func(field wire.Field) error {
+			if field.Number != 8 {
+				return nil
+			}
+			id, _, err := wire.Varint(field.Value, 1)
+			if err != nil {
+				return err
+			}
+			if id != roomID {
+				return nil
+			}
+			saved, found, err := wire.Bytes(field.Value, 3)
+			if err != nil {
+				return err
+			}
+			if !found || !bytes.Equal(saved, position) {
+				t.Fatal("signed placement changed after save or reload")
+			}
+			matched = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !matched {
+			t.Fatal("saved room missing")
+		}
+	}
+	assertLayout(1)
+	for _, invalid := range []uint64{uint64(math.MaxInt32) + 1, math.MaxUint32, uint64(1) << 63} {
+		for _, field := range []int{6, 7} {
+			changed, _, err := wire.ReplaceVarint(position, field, invalid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			badRoom := wire.AppendBytes(wire.AppendVarint(nil, 1, 1), 3, changed)
+			if _, err := call("/MyRoomSave", wire.AppendBytes(nil, 2, badRoom)); err == nil {
+				t.Fatalf("field %d accepted non-int32 value %d", field, invalid)
+			}
+			assertLayout(1)
+		}
+	}
+	if _, err := call("/MyRoomMove", wire.AppendVarint(wire.AppendVarint(nil, 2, 1), 3, 2)); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(2)
+	item := wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 1, 1010), 2, 201), 4, 1)
+	preset := wire.AppendBytes(wire.AppendVarint(nil, 1, 1), 3, item)
+	preset = wire.AppendBytes(preset, 4, wire.AppendBytes(wire.AppendVarint(nil, 1, 2), 3, position))
+	if _, err := call("/MyRoomPresetSave", wire.AppendBytes(wire.AppendVarint(nil, 2, 1), 3, preset)); err != nil {
+		t.Fatal("signed preset rejected", err)
+	}
+	f = open()
+	info, err := call("/MyRoomPresetInfo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedPreset, found, err := wire.Bytes(info, 1)
+	if err != nil || !found {
+		t.Fatalf("preset not persisted: %v", err)
+	}
+	savedRoom, found, err := wire.Bytes(savedPreset, 4)
+	if err != nil || !found {
+		t.Fatalf("preset room missing: %v", err)
+	}
+	savedPosition, found, err := wire.Bytes(savedRoom, 3)
+	if err != nil || !found || !bytes.Equal(savedPosition, position) {
+		t.Fatalf("preset changed signed placement: %v", err)
 	}
 }

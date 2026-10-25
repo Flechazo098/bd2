@@ -279,10 +279,15 @@ func (f *Friends) validatePositions(room personalRoom, self FriendProfile, limit
 		if err != nil || position > 3 {
 			return fmt.Errorf("%w: room placement location %d, want 0..3: %v", ErrInvalid, position, err)
 		}
-		for _, field := range []int{4, 5, 6, 7, 8} {
+		for _, field := range []int{4, 5, 8} {
 			n, err := p.integer(field)
 			if err != nil || n > math.MaxInt32 {
 				return fmt.Errorf("%w: room placement field %d value %d: %v", ErrInvalid, field, n, err)
+			}
+		}
+		for _, field := range []int{6, 7} {
+			if _, err := p.signedInt32(field); err != nil {
+				return fmt.Errorf("%w: room %d placement field %d: %w", ErrInvalid, room.ID, field, err)
 			}
 		}
 		wallHidden, err := p.integer(9)

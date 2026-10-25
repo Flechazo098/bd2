@@ -129,6 +129,22 @@ func (p packet) integer(field int) (uint64, error) {
 	}
 	return n, nil
 }
+func (p packet) signedInt32(field int) (int32, error) {
+	values := p[field]
+	if len(values) == 0 {
+		return 0, nil
+	}
+	if len(values) != 1 || values[0].Type != 0 {
+		return 0, fmt.Errorf("%w: field %d needs one signed int32", wire.ErrMalformed, field)
+	}
+	value, count := binary.Uvarint(values[0].Value)
+	signed := int64(value)
+	if count <= 0 || signed < math.MinInt32 || signed > math.MaxInt32 {
+		return 0, fmt.Errorf("%w: field %d signed int32 is out of range", wire.ErrMalformed, field)
+	}
+	return int32(signed), nil
+}
+
 func (p packet) text(field int) (string, error) {
 	v := p[field]
 	if len(v) == 0 {
