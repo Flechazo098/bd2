@@ -1,22 +1,24 @@
 {
   "game_version": "2.37.13",
-  "client_version": "2.37.13+client.0.2.13",
+  "client_version": "2.37.13+client.0.2.14",
   "server_version": "2.37.13+server.0.2.3",
   "game_data_version": "20261021182514",
   "bundle_version": "20261022174708",
   "seed_directory": "go/seed/v2_37_13",
   "plugins": {
-    "local_identity": "0.7.8",
+    "local_identity": "0.7.9",
     "capture_environment": "0.2.0",
     "login_ui": "0.3.6",
     "cash_shop": "0.1.2",
-    "fchat": "0.1.2"
+    "fchat": "0.1.2",
+    "fbattle": "0.1.0"
   },
   "minimum_plugins": {
     "local_identity": "0.7.3",
     "capture_environment": "0.2.0",
     "login_ui": "0.3.2",
     "cash_shop": "0.1.2",
-    "fchat": "0.1.0"
+    "fchat": "0.1.0",
+    "fbattle": "0.1.0"
   }
 }
