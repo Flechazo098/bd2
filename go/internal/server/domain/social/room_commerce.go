@@ -118,11 +118,12 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 		if err != nil {
 			return fail(err)
 		}
-		cost, known := s.Design.Expansion[room]
 		owned := append(slices.Clone(s.Rooms.Defaults), state.Rooms...)
-		slices.Sort(owned)
-		if !known || slices.Contains(owned, room) || len(owned) == 0 || room != owned[len(owned)-1]+1 {
-			return fail(fmt.Errorf("%w: room %d is not the next expansion after %v (priced=%t)", ErrIneligible, room, owned, known))
+		nextCount := uint64(len(owned)) + 1
+		cost, priced := s.Design.Expansion[nextCount]
+		_, validRoom := s.Rooms.Limits[room]
+		if !validRoom || !priced || slices.Contains(owned, room) {
+			return fail(fmt.Errorf("%w: room %d cannot be purchased with %d rooms owned (valid_room=%t, expansion_priced=%t)", ErrIneligible, room, len(owned), validRoom, priced))
 		}
 		if err := roomPayment(p, 3, []gamedata.Reward{cost}, 1, &costs); err != nil {
 			return fail(err)

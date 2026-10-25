@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -139,14 +140,55 @@ func TestNativeRoomPurchasesAndExpansionAreAtomicAndDurable(t *testing.T) {
 		slices.Sort(ids)
 		return ids
 	}
+	rejections := 0
+	reject := func(path string, fields []byte, code int, reason string) {
+		t.Helper()
+		rejections++
+		runtime, release, err := registry.Acquire(context.Background(), accounts[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		request := registryCommand(accounts[0], fmt.Sprintf("room-rejection-%d", rejections), path, append(appScalar(1, uint64(rejections)), fields...))
+		future, err := runtime.Submit(context.Background(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = future.Wait(context.Background())
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("game packet %d error 9003", code)) || !strings.Contains(err.Error(), reason) {
+			t.Fatalf("%s rejection = %v, want packet %d error 9003 containing %q", path, err, code, reason)
+		}
+		client = friendHTTPLogin(t, registry, accounts[0])
+	}
 	initialRooms := roomIDs()
-	client.send("/MyRoomExpand", wire.AppendBytes(wire.AppendVarint(nil, 2, 4), 3, payment(44, 200)), 418, 0)
-	expectedRooms := append(slices.Clone(initialRooms), 4)
+	// MyRoomPacket prices by owned count + 1; its requested ID is the clicked grid cell.
+	// Current MyRoomExpandTable stages 4/5 cost 200/350 decoration coins.
+	for _, id := range []uint64{0, 1, 10} {
+		reject("/MyRoomExpand", wire.AppendBytes(wire.AppendVarint(nil, 2, id), 3, payment(44, 200)), 418, "cannot be purchased")
+	}
+	reject("/MyRoomExpand", wire.AppendBytes(wire.AppendVarint(nil, 2, 5), 3, payment(44, 350)), 418, "matches no price")
+	if got := roomIDs(); !slices.Equal(got, initialRooms) {
+		t.Fatalf("rejected expansion changed room ownership: %v", got)
+	}
+	if got := read(); got != initial {
+		t.Fatalf("rejected expansion changed assets: %+v want%+v", got, initial)
+	}
+	expand := wire.AppendBytes(wire.AppendVarint(nil, 2, 5), 3, payment(44, 200))
+	client.send("/MyRoomExpand", expand, 418, 0)
+	client.seq--
+	client.send("/MyRoomExpand", expand, 418, 0)
+	expectedRooms := append(slices.Clone(initialRooms), 5)
 	slices.Sort(expectedRooms)
 	if got := roomIDs(); !slices.Equal(got, expectedRooms) {
 		t.Fatalf("paid room unavailable immediately: %v want%v", got, expectedRooms)
 	}
-	client.send("/MyRoomExpand", wire.AppendBytes(wire.AppendVarint(nil, 2, 4), 3, payment(44, 200)), 418, 9003)
+	reject("/MyRoomExpand", expand, 418, "cannot be purchased")
+	reject("/MyRoomExpand", wire.AppendBytes(wire.AppendVarint(nil, 2, 9), 3, payment(44, 200)), 418, "matches no price")
+	afterExpansion := initial
+	afterExpansion.coins -= 200
+	if got := read(); got != afterExpansion {
+		t.Fatalf("expansion replay or rejected purchase changed assets: %+v want%+v", got, afterExpansion)
+	}
 	client.send("/MyRoomShopBuy", buy(1, 1, 4, 500000), 246, 0)
 	client.seq--
 	client.send("/MyRoomShopBuy", buy(1, 1, 4, 500000), 246, 0)
@@ -162,7 +204,7 @@ func TestNativeRoomPurchasesAndExpansionAreAtomicAndDurable(t *testing.T) {
 	}
 	batch := wire.AppendBytes(nil, 2, row(1, 1, 4, 500000))
 	batch = wire.AppendBytes(batch, 2, row(2, 2, 44, 100))
-	client.send("/MyRoomShopMultiBuy", batch, 646, 9003)
+	reject("/MyRoomShopMultiBuy", batch, 646, "")
 	if got := read(); got != beforeFailure {
 		t.Fatalf("insufficient mixed-currency batch changed assets: %+v want%+v", got, beforeFailure)
 	}
@@ -184,7 +226,7 @@ func TestNativeRoomPurchasesAndExpansionAreAtomicAndDurable(t *testing.T) {
 	if !historyFound {
 		t.Fatal("failed batch removed previous purchase history")
 	}
-	client.send("/MyRoomShopBuy", buy(1, 1, 4, 1), 246, 9003)
+	reject("/MyRoomShopBuy", buy(1, 1, 4, 1), 246, "matches no price")
 	if got := read(); got != beforeFailure {
 		t.Fatalf("tampered price changed assets: %+v", got)
 	}
