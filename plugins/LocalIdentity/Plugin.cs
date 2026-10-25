@@ -73,6 +73,7 @@ public sealed class Plugin : BaseUnityPlugin
             TryInstall("battle checkpoint", () => BattleCheckpoint.Install(harmony, Logger));
             TryInstall("battle preparation recovery", () => BattlePreparation.Install(harmony));
             TryInstall("costume auto-mount indices", () => CostumeAutoMount.Install(harmony, Logger));
+            TryInstall("field party selection indices", () => FieldPartyIndices.Install(harmony, Logger));
             TryInstall("battle formation diagnostics", () => BattleFormationDiagnostics.Install(harmony, Logger));
             TryInstall("field transition diagnostics", () => FieldTransitionDiagnostics.Install(harmony, Logger));
             TryInstall("event hub presentation", () => EventHubPresentation.Install(harmony, Logger));
