@@ -35,7 +35,7 @@ func releaseFile(name, content string) release.File {
 	return release.File{Name: name, Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:]), URL: "/" + name}
 }
 
-func signedFixture(t *testing.T, launcher, plugins *release.Component) ([]byte, []release.TrustedKey) {
+func signedFixture(t *testing.T, launcher, plugins *release.Component, fingerprints ...*release.Fingerprint) ([]byte, []release.TrustedKey) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -43,6 +43,9 @@ func signedFixture(t *testing.T, launcher, plugins *release.Component) ([]byte, 
 	}
 	key := release.TrustedKey{ID: release.KeyID(public), PublicKey: base64.StdEncoding.EncodeToString(public)}
 	manifest := release.Manifest{Schema: release.SchemaVersion, Channel: release.BuiltinChannel().Name, PublishedAt: time.Now().UTC(), Commit: strings.Repeat("a", 40), Launcher: launcher, Plugins: plugins}
+	if len(fingerprints) != 0 {
+		manifest.Fingerprint = fingerprints[0]
+	}
 	payload, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)

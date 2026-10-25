@@ -154,7 +154,7 @@ func (f Fingerprint) Validate() error {
 	}
 	for id, version := range f.MinimumPlugins {
 		v, e := ParseVersion(version)
-		if e != nil || !knownPlayerPlugin(id) || v.HasGame {
+		if e != nil || !pluginIDPattern.MatchString(id) || v.HasGame {
 			return errors.New("release: invalid fingerprint plugin version")
 		}
 	}
@@ -180,15 +180,6 @@ func (f Fingerprint) Validate() error {
 		return errors.New("release: fingerprint identity does not match its content")
 	}
 	return nil
-}
-
-func knownPlayerPlugin(id string) bool {
-	switch id {
-	case "local_identity", "login_ui", "cash_shop", "fchat", "fbattle":
-		return true
-	default:
-		return false
-	}
 }
 
 func (f Fingerprint) digest() (string, error) {
@@ -231,8 +222,8 @@ func (f Fingerprint) MatchesVersions(v versionconfig.Config) error {
 		return errors.New("release: fingerprint does not match installed game resource versions")
 	}
 	for id, version := range f.MinimumPlugins {
-		if v.Plugins.ByID()[id] != version {
-			return fmt.Errorf("release: fingerprint plugin %s does not match installed version", id)
+		if !AtLeast(v.Plugins.ByID()[id], version) {
+			return fmt.Errorf("release: fingerprint plugin %s requires at least %s", id, version)
 		}
 	}
 	return nil

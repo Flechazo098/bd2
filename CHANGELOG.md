@@ -1,34 +1,5 @@
 # 更新日志
 
-## client 2.37.13+client.0.2.14 · 2026-10-25
-
-> type: update
-
-### en_us: Preset first-turn actions and room placement fixes
-
-- Configure each character's first-turn normal attack, knock-back or costume skill and burst level in the team preset's action editor. Choices are saved with the preset and restored after reconnecting; later turns follow the game's normal behavior.
-- Fix a crash when placing the first wallpaper on an empty wall in My Room.
-
-### zh_cn: 预设首轮出手与小屋摆放修复
-
-- 在配队预设的“出手方式”中，为每名角色选择首轮普攻、击退或服装技能及爆发等级。配置随预设保存，重连后恢复，后续回合交给游戏处理。
-- 修复小屋空墙面首次放置墙纸时崩溃的问题。
-
-### zh_tw: 預設首輪行動與小屋擺放修正
-
-- 在配隊預設的「出手方式」中，為每名角色選擇首輪普攻、擊退或服裝技能與爆發等級。設定隨預設儲存，重新連線後恢復，後續回合由遊戲處理。
-- 修正小屋空牆面首次放置壁紙時崩潰的問題。
-
-### ja_jp: プリセットの初回行動とマイルーム配置の修正
-
-- 編成プリセットの行動エディターで、各キャラクターの初回の通常攻撃、ノックバック、コスチュームスキルとバーストレベルを選べます。設定はプリセットとともに保存され、再接続後も復元されます。以降のターンは通常のゲーム動作に従います。
-- マイルームの空の壁に初めて壁紙を配置するとクラッシュする問題を修正しました。
-
-### ko_kr: 프리셋 첫 턴 행동 및 마이룸 배치 수정
-
-- 편성 프리셋의 행동 편집기에서 캐릭터별 첫 턴의 일반 공격, 넉백 또는 코스튬 스킬과 버스트 단계를 선택할 수 있습니다. 설정은 프리셋과 함께 저장되고 재접속 후 복원되며, 이후 턴은 게임의 기본 동작을 따릅니다.
-- 마이룸의 빈 벽에 처음 벽지를 배치할 때 발생하는 충돌을 수정했습니다.
-
 ## server 2.37.13+server.0.2.3 · 2026-10-25
 
 > type: update

@@ -70,8 +70,9 @@ type Migration struct {
 }
 
 var (
-	digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	pluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	digestPattern   = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	commitPattern   = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 func Platform() string { return runtime.GOOS + "-" + runtime.GOARCH }
@@ -149,7 +150,7 @@ func (c *Component) validate(name string) error {
 			return errors.New("release: server must declare its migration kind")
 		}
 		for id, minimum := range c.MinimumPlugins {
-			if _, err := ParseVersion(minimum); err != nil || id == "" {
+			if _, err := ParseVersion(minimum); err != nil || !pluginIDPattern.MatchString(id) {
 				return fmt.Errorf("release: invalid minimum plugin %s=%q", id, minimum)
 			}
 		}
