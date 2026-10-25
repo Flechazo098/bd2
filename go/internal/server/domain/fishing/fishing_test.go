@@ -8,6 +8,7 @@ import (
 	"bd2server/internal/server/storage/stateio"
 	"errors"
 	"testing"
+	"time"
 )
 
 type noEconomy struct{}
@@ -199,5 +200,62 @@ func TestVoyageFallsBackToSoloOnlyWhenNoRoomExists(t *testing.T) {
 				t.Fatal("rejected room admission started a solo voyage")
 			}
 		})
+	}
+}
+
+// The native GameScheduleManager creates cost schedules from ChargeCostInfo.
+// FishingMultiTicket is element55; FishingDefaultTable0 grants10 per UTC day.
+func TestChargeInfoPreservesSpentFishingTicketsUntilDailyReset(t *testing.T) {
+	service, ctx, design := fishingFixture(t)
+	now := time.Date(2026, 10, 25, 15, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	service.state.APDay = now.Unix() / 86400
+	service.state.MultiAP = 0
+	if _, _, _, err := service.Handle(ctx, "/FishingItemInfo", row(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	check := func(count uint64, midnight time.Time) {
+		t.Helper()
+		raw := service.ChargeInfo()
+		records := 0
+		if err := wire.Walk(raw, func(field wire.Field) error {
+			if field.Number != 1 || field.Type != 2 {
+				t.Fatal("unexpected charge field")
+			}
+			records++
+			if num(field.Value, 1) != uint64(midnight.UnixMilli()) {
+				t.Fatal("charge timestamp is not current UTC midnight in milliseconds")
+			}
+			item, found, err := wire.Bytes(field.Value, 2)
+			if err != nil {
+				return err
+			}
+			if !found || num(item, 3) != 55 || num(item, 4) != count {
+				t.Fatalf("fishing charge item=%x want type55 count%d", item, count)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if records != 1 {
+			t.Fatal("missing or duplicate fishing charge schedule")
+		}
+	}
+	midnight := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
+	check(0, midnight)
+	reopened, err := Open(ctx, design, noEconomy{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.now = service.now
+	service = reopened
+	check(0, midnight)
+	now = now.Add(24 * time.Hour)
+	check(10, midnight.Add(24*time.Hour))
+	if _, _, _, err := service.Handle(ctx, "/FishingItemInfo", row(1, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if service.state.MultiAP != 10 || service.state.APDay != now.Unix()/86400 {
+		t.Fatal("charge view disagrees with persisted daily allowance")
 	}
 }

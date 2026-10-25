@@ -258,6 +258,14 @@ func (s *Service) Profile() Profile {
 	p.FishSlots, p.RodSlots, p.ItemSlots = s.state.FishSlots, s.state.RodSlots, s.state.ItemSlots
 	return p
 }
+func (s *Service) ChargeInfo() []byte {
+	profile := s.Profile()
+	item := wire.AppendVarint(nil, 3, 55)
+	item = wire.AppendVarint(item, 4, profile.MultiAP)
+	info := wire.AppendVarint(nil, 1, uint64(profile.ResetTime-86400)*1000)
+	return wire.AppendBytes(nil, 1, wire.AppendBytes(info, 2, item))
+}
+
 func (s *Service) AttachRooms(rooms eventplay.RoomRuntime)         { s.rooms = rooms }
 func (s *Service) CollectionCount() uint64                         { return uint64(len(s.state.Collection)) }
 func (s *Service) AttachPublicProfiles(lookup PublicProfileLookup) { s.publicProfile = lookup }

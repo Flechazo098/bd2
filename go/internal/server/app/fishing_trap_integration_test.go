@@ -112,3 +112,43 @@ func TestFishingTrapAutoSaleUsesNativeCurrencyAndAtomicSettlement(t *testing.T) 
 		t.Fatal("reopened fishing experience lost")
 	}
 }
+
+func TestFishingChargeScheduleIsIncludedBeforeOpeningHarbor(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	g := newSquareGameplay(t, factory, accounts[0])
+	login := g.call("/LoginUser", nil)
+	users := appRows(login, 1)
+	if len(users) != 1 {
+		t.Fatal("missing player")
+	}
+	// UserDBInfo.fishing_multi_ap=62; EElementType.FishingMultiTicket=55.
+	tickets := appValue(users[0], 62)
+	if tickets != 10 {
+		t.Fatalf("current FishingDefaultTable0 actionPointCount=%d want10", tickets)
+	}
+	charge := g.call("/ChargeCostInfo", nil)
+	matches := 0
+	for _, info := range appRows(charge, 1) {
+		items := appRows(info, 2)
+		if len(items) != 1 {
+			t.Fatal("invalid cost item")
+		}
+		if appValue(items[0], 3) != 55 {
+			continue
+		}
+		matches++
+		if appValue(items[0], 4) != tickets {
+			t.Fatal("fishing charge balance disagrees with login")
+		}
+		stamp := time.UnixMilli(int64(appValue(info, 1))).UTC()
+		now := time.Now().UTC()
+		if stamp.Hour() != 0 || stamp.Minute() != 0 || stamp.Second() != 0 || now.Sub(stamp) < 0 || now.Sub(stamp) >= 24*time.Hour {
+			t.Fatalf("invalid last charge timestamp %v", stamp)
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("fishing schedules=%d want1", matches)
+	}
+	g.call("/FishingItemInfo", nil)
+	g.call("/FishingInfo", nil)
+}

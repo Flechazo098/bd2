@@ -103,6 +103,7 @@ func (p *playerAssembly) events(ctx command.Context) error {
 			return nil, err
 		}
 		rows = append(rows, huntingRows...)
+		rows = append(rows, p.fishingService.ChargeInfo()...)
 		if p.pvpService != nil {
 			pvpRows, err := p.pvpService.ChargeInfo(ctx)
 			if err != nil {
