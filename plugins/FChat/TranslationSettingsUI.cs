@@ -14,6 +14,7 @@ internal static class TranslationSettingsUI
     private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private static AddressableAsset<GameObject> controlsAsset;
     private static bool loadingControls, quitting;
+    private static UIBase opener;
 
     internal static void Install(Harmony harmony)
     {
@@ -38,6 +39,14 @@ internal static class TranslationSettingsUI
         {
             object field = __instance.GetType().GetGameField("_objAutoTranslateButton", Fields)?.GetValue(__instance) ??
                 __instance.GetType().GetGameField("_objAutoTranslationButton", Fields)?.GetValue(__instance);
+            // The main chat's chat settings popup already carries the auto-translate
+            // switch and the AI settings entry, so the chat bar keeps neither.
+            if (__instance is MainChat)
+            {
+                if (field is ButtonOnOffComponent[] all) foreach (ButtonOnOffComponent item in all) TranslationEntryLayout.Remove(item);
+                else if (field is ButtonOnOffComponent single) TranslationEntryLayout.Remove(single);
+                return;
+            }
             if (field is ButtonOnOffComponent[] buttons) foreach (ButtonOnOffComponent button in buttons) TranslationEntryLayout.Ensure(button, __instance is GuildChat);
             else if (field is ButtonOnOffComponent button) TranslationEntryLayout.Ensure(button, false);
             else throw new MissingMemberException(__instance.GetType().Name, "translation button");
@@ -76,7 +85,8 @@ internal static class TranslationSettingsUI
             NativeTranslationControls.SetText(entry, TextComponent.Translatable("fchat.ai_settings").GetString());
             Button button = entry.GetComponent<Button>();
             button.onClick = new Button.ButtonClickedEvent();
-            button.onClick.AddListener(Open);
+            ChatSettingPopupUI settings = __instance;
+            button.onClick.AddListener(() => Open(settings));
             button.interactable = true;
             entry.SetActive(true);
         }
@@ -86,9 +96,11 @@ internal static class TranslationSettingsUI
         }
     }
 
-    internal static void Open()
+    // over is the UI the player clicked in; the settings popup must sit above it.
+    internal static void Open(Component over)
     {
         if (ClientSession.ServerOrigin == null || quitting || loadingControls || UIManager.IsShowingNetworkErrorPopup) return;
+        opener = over == null ? null : over as UIBase ?? over.GetComponentInParent<UIBase>();
         if (controlsAsset != null) { OpenPrepared(); return; }
         loadingControls = true;
         try
@@ -109,6 +121,8 @@ internal static class TranslationSettingsUI
         UIManager.AddUI<GreetingPopupUI>(popup =>
         {
             if (quitting || ClientSession.ServerOrigin == null) { popup.CloseForceUI(true); return; }
+            if (opener != null) popup.SetSortingOrder(Math.Max(popup.SortingOrder, opener.SortingOrder + 1));
+            opener = null;
             try { popup.gameObject.AddComponent<TranslationSettingsPanel>().Initialize(popup, controlsAsset.Asset); }
             catch (Exception error)
             {

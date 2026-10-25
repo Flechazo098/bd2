@@ -9,6 +9,17 @@ internal static class TranslationEntryLayout
 {
     private const string EntryName = "BD2 AI Translation Settings";
 
+    // Hides the chat bar's switch and any entry added beside it earlier; the
+    // game re-shows the switch on refresh, so this runs after every refresh.
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
+    internal static void Remove(ButtonOnOffComponent toggle)
+    {
+        if (toggle == null) return;
+        toggle.gameObject.SetActive(false);
+        Transform existing = toggle.transform.parent.Find(EntryName);
+        if (existing != null) Object.Destroy(existing.gameObject);
+    }
+
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0031", Justification = "UnityEngine.Object null checks also detect destroyed native objects.")]
     internal static void Ensure(ButtonOnOffComponent toggle, bool guild)
     {
@@ -33,7 +44,7 @@ internal static class TranslationEntryLayout
         canvas.interactable = canvas.blocksRaycasts = true;
         Button click = entry.GetComponent<Button>() ?? entry.AddComponent<Button>();
         click.onClick = new Button.ButtonClickedEvent();
-        click.onClick.AddListener(TranslationSettingsUI.Open);
+        click.onClick.AddListener(() => TranslationSettingsUI.Open(entry.transform));
         click.interactable = true;
         if (guild)
         {
