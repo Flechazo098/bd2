@@ -1,5 +1,79 @@
 # 更新日志
 
+## client 2.37.13+client.0.2.17 · 2026-10-25
+
+> type: update
+
+### en_us: AI translation settings and PvP battle reports
+
+- Keep the main chat’s translation switch and AI configuration entry in Chat Settings, removing duplicate controls from the chat bar. Open AI settings above the window that launched it so its controls remain accessible.
+- Add PvP battle reports with remaining team health, survivors and turn count for matchmaking analysis. Existing battle results continue to work when no report is available.
+
+### zh_cn: AI 翻译设置与 PvP 战斗统计
+
+- 主聊天的自动翻译开关和 AI 设置统一保留在聊天设置中，移除聊天栏的重复入口；AI 设置面板显示在打开它的窗口上方，避免被遮挡而无法操作。
+- 补充 PvP 双方剩余生命、存活人数和回合数统计，为匹配分析提供数据；无法取得统计时仍正常提交原有战斗结果。
+
+### zh_tw: AI 翻譯設定與 PvP 戰鬥統計
+
+- 主聊天的自動翻譯開關與 AI 設定統一保留在聊天設定中，移除聊天列的重複入口；AI 設定面板顯示於開啟它的視窗上方，避免遭遮擋而無法操作。
+- 補充 PvP 雙方剩餘生命、存活人數與回合數統計，提供配對分析資料；無法取得統計時仍正常提交原有戰鬥結果。
+
+### ja_jp: AI翻訳設定とPvP戦闘統計
+
+- メインチャットの自動翻訳スイッチとAI設定をチャット設定にまとめ、チャットバーの重複した入口を削除しました。AI設定は呼び出し元のウィンドウより手前に表示し、操作できるようにしました。
+- PvPの両チームの残りHP、生存人数、ターン数をマッチング分析用に報告します。統計を取得できなくても通常の戦闘結果は送信します。
+
+### ko_kr: AI 번역 설정 및 PvP 전투 통계
+
+- 메인 채팅의 자동 번역 스위치와 AI 설정을 채팅 설정에 모으고 채팅 바의 중복 진입 버튼을 제거했습니다. AI 설정 창을 호출한 창보다 앞에 표시하여 가려지지 않고 조작할 수 있습니다.
+- PvP 양 팀의 남은 체력, 생존 인원과 턴 수를 매칭 분석에 보고합니다. 통계를 얻지 못하더라도 기존 전투 결과는 정상 전송합니다.
+
+## server 2.37.13+server.0.2.4 · 2026-10-25
+
+> type: update
+> migration: none
+
+### en_us: PvP matchmaking and gameplay fixes
+
+- Choose Mirror War and Golden Colosseum opponents using skill ratings and a learned win-probability model that accounts for available team power, account experience, team size and turn order. Matchmaking ratings persist across seasons; existing season scores and rewards keep their rules.
+- When no opponent is available, show the game’s native message and end matching without retrying until a network timeout or consuming a challenge ticket.
+- Keep active sessions alive during long battles so retrying a tower battle does not reconnect after an idle timeout.
+- Accept native negative furniture rotation and interaction values when saving My Room layouts and presets.
+- Initialize multiplayer fishing ticket recharge information when logging in, fixing the missing-schedule exception when opening fishing.
+
+### zh_cn: PvP 匹配优化与玩法修复
+
+- 镜中之战和黄金竞技场按隐藏实力评分与学习得到的胜率选择对手，结合可用的队伍战力、账号经验、队伍人数和先后手信息。匹配评分跨赛季保留，赛季积分和奖励仍遵循原有规则。
+- 没有可匹配对手时使用游戏原生提示并结束匹配，不再重试到网络超时，也不消耗挑战门票。
+- 长时间战斗期间正确维持活跃会话，修复塔内重来因闲置超时而重连的问题。
+- 修复小屋布局和预设保存错误拒绝家具负数朝向、互动状态而断联的问题。
+- 补齐登录时的多人钓鱼门票充能信息，修复打开钓鱼界面时缺少计时记录的异常。
+
+### zh_tw: PvP 配對最佳化與玩法修正
+
+- 鏡中之戰與黃金競技場依隱藏實力評分及學習得到的勝率選擇對手，結合可用的隊伍戰力、帳號經驗、隊伍人數與先後手資訊。配對評分跨賽季保留，賽季積分與獎勵仍遵循原有規則。
+- 沒有可配對對手時顯示遊戲原生提示並結束配對，不再重試至網路逾時，也不消耗挑戰門票。
+- 長時間戰鬥期間正確維持活躍連線，修正塔內重試因閒置逾時而重新連線的問題。
+- 修正儲存小屋配置與預設時，錯誤拒絕家具負數朝向及互動狀態而斷線的問題。
+- 補齊登入時的多人釣魚門票充能資訊，修正開啟釣魚介面時缺少計時記錄的異常。
+
+### ja_jp: PvPマッチングの改善と不具合修正
+
+- 鏡戦争と黄金の闘技場で、内部レーティングと学習した勝率を使って対戦相手を選択します。取得できる編成戦闘力、アカウント経験値、人数、先攻・後攻を考慮します。レーティングはシーズンをまたいで保持し、シーズン得点と報酬のルールは維持します。
+- 対戦相手がいない場合はゲーム標準のメッセージを表示してマッチングを終了します。通信タイムアウトまで再試行せず、挑戦チケットも消費しません。
+- 長時間の戦闘中もセッションを維持し、塔で再挑戦すると待機タイムアウトにより再接続する問題を修正しました。
+- マイルームの配置やプリセット保存時に、家具の負数の向き・インタラクション値が拒否されて切断する問題を修正しました。
+- ログイン時にマルチ釣りチケットの回復情報を初期化し、釣り画面を開くとスケジュール情報不足で例外が発生する問題を修正しました。
+
+### ko_kr: PvP 매칭 개선 및 플레이 오류 수정
+
+- 거울전쟁과 황금 투기장은 숨겨진 실력 평점과 학습된 승률로 상대를 선택하며, 사용 가능한 편성 전투력, 계정 경험치, 팀 인원과 선후공 정보를 반영합니다. 평점은 시즌이 바뀌어도 유지되고 시즌 점수와 보상 규칙은 그대로 적용됩니다.
+- 매칭할 상대가 없으면 게임 기본 안내를 표시하고 매칭을 종료합니다. 네트워크 시간 초과까지 재시도하거나 도전권을 소모하지 않습니다.
+- 장시간 전투 중에도 세션을 유지하여 탑에서 재도전할 때 유휴 시간 초과로 재접속되던 문제를 수정했습니다.
+- 마이룸 배치와 프리셋 저장 시 가구의 음수 방향 및 상호작용 값이 잘못 거부되어 연결이 끊기는 문제를 수정했습니다.
+- 로그인 시 멀티 낚시 도전권 충전 정보를 초기화하여 낚시 화면을 열 때 시간표 정보 누락으로 예외가 발생하는 문제를 수정했습니다.
+
 ## client 2.37.13+client.0.2.16 · 2026-10-25
 
 > type: update
