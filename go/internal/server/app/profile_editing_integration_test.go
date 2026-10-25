@@ -335,6 +335,12 @@ func TestIdCardRecoveryShopLayoutsAndPresetsUseRealPersistentOwnership(t *testin
 	card := wire.AppendBytes(nil, 1, profileCardItem(0, 10101, -123, 45, 1, ""))
 	card = wire.AppendBytes(card, 4, profileCardItem(0, 30001, 12, -34, 0.5, ""))
 	card = wire.AppendBytes(card, 5, profileCardItem(0, 0, -218, 156, 0.75, "FFFFFF80"))
+	// UserInfoRotatePanel saves portrait as its ERotateType value, 1; the
+	// server keeps the card editor's 90 for it.
+	g.call("/IdCardSave", wire.AppendBytes(nil, 2, wire.AppendVarint(card, 6, 1)))
+	if rotate := profileVarint(t, profileBytes(t, profileSelf(g), 28), 6); rotate != 90 {
+		t.Fatalf("portrait card saved with rotate 1 reads back %d, want 90", rotate)
+	}
 	card = wire.AppendVarint(card, 6, 90)
 	g.call("/IdCardSave", wire.AppendBytes(nil, 2, card))
 	for index := range uint64(5) {
@@ -375,7 +381,7 @@ func TestIdCardRecoveryShopLayoutsAndPresetsUseRealPersistentOwnership(t *testin
 		}
 	}
 	badCards := [][]byte{
-		wire.AppendVarint(wire.AppendBytes(nil, 1, background), 6, 1),
+		wire.AppendVarint(wire.AppendBytes(nil, 1, background), 6, 45),
 		wire.AppendBytes(nil, 1, profileCardItem(999999999, 10101, 0, 0, 1, "")),
 		wire.AppendBytes(nil, 4, profileCardItem(0, 30002, 0, 0, 1, "")),
 		wire.AppendBytes(nil, 1, profileCardItem(0, 10101, 0, 0, float32(math.NaN()), "")),

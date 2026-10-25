@@ -118,8 +118,13 @@ func parseCardItem(raw []byte) (CardItem, error) {
 }
 
 func (s *Service) validateCard(ctx command.Context, card *Card, bind bool) error {
+	// IDCard writes portrait as 90; UserInfoRotatePanel writes the
+	// ERotateType value, 1. The client reads anything but 0 as portrait.
+	if card.Rotate == 1 {
+		card.Rotate = 90
+	}
 	if card.Rotate != 0 && card.Rotate != 90 {
-		return fmt.Errorf("profile: invalid card orientation")
+		return fmt.Errorf("profile: card orientation %d, want 0 (landscape) or 90 (portrait)", card.Rotate)
 	}
 	counts := map[uint64]uint64{}
 	placed := map[uint64]uint64{}
