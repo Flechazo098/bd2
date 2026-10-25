@@ -20,9 +20,10 @@ type RoomEconomy interface {
 }
 
 type RoomCommerce struct {
-	Design  *gamedata.RoomCommerceDesign
-	Rooms   *gamedata.RoomDesign
-	Economy RoomEconomy
+	Design      *gamedata.RoomCommerceDesign
+	Rooms       *gamedata.RoomDesign
+	Economy     RoomEconomy
+	PackCleared func(uint64, uint64) bool
 }
 
 type roomCommerceState struct {
@@ -162,6 +163,13 @@ func (s RoomCommerce) Handle(ctx command.Context, path string, raw []byte) (int,
 				return fail(fmt.Errorf("%w: room product %d count %d exceeds its limit (known=%t, repeated=%t, bought %d)", ErrCapacity, id, n, known, seen[id], state.Bought[id]))
 			}
 			seen[id] = true
+			item, known := s.Rooms.Items[product.Reward.ID]
+			if !known || product.Reward.Type != 27 {
+				return fail(fmt.Errorf("%w: room product %d has an unknown furnishing %d", ErrInvalid, id, product.Reward.ID))
+			}
+			if item.PackID != 0 && (s.PackCleared == nil || !s.PackCleared(item.PackID, item.QuestLevel)) {
+				return fail(fmt.Errorf("%w: room product %d requires pack %d difficulty %d", ErrIneligible, id, item.PackID, item.QuestLevel))
+			}
 			if err := roomPayment(row, paymentField, product.Prices, n, &costs); err != nil {
 				return fail(err)
 			}

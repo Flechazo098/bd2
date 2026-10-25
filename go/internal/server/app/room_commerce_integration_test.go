@@ -4,7 +4,9 @@ package app
 
 import (
 	"context"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,15 @@ func TestNativeRoomPurchasesAndExpansionAreAtomicAndDurable(t *testing.T) {
 	tx, err := actor.repository.BeginCommand(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	fixtureCtx := command.Context{State: tx}
+	for _, pack := range []int{1, 2} {
+		for _, quest := range factory.design.world.Story.Packs[pack].MainQuestIDs {
+			if err := actor.assembly.progressState.ClearQuest(fixtureCtx, quest, pack, 0); err != nil {
+				_ = tx.Rollback()
+				t.Fatal(err)
+			}
+		}
 	}
 	_, err = actor.assembly.eventEconomy.Apply(command.Context{State: tx}, "room-commerce-fixture", nil, []gamedata.Reward{{Type: 4, Count: 3000000}, {Type: 44, Count: 300}})
 	if err != nil {
@@ -208,4 +219,79 @@ func TestNativeRoomPurchasesAndExpansionAreAtomicAndDurable(t *testing.T) {
 	if got := read(); got != committed {
 		t.Fatalf("purchase assets changed after restart: %+v want%+v", got, committed)
 	}
+}
+
+// Current MyRoomItemTable 101 has packId=1, questLevel=0; LocalText140059
+// requires Knight of Blood Normal. MyRoomShopScrollItem uses that same gate.
+func TestNativeRoomShopRequiresCompletedPackBeforeCharging(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	s := &trapPlayerScenario{factory: factory, account: accounts[0], owner: openNicknamePlayer(t, factory, accounts[0])}
+	t.Cleanup(func() { closeNicknamePlayer(t, s.owner) })
+	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
+		if _, err := p.eventEconomy.Apply(ctx, "locked-room-shop-fixture", nil, []gamedata.Reward{{Type: 4, Count: 3000000}, {Type: 44, Count: 300}}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	payment := func(typ, id, n uint64) []byte {
+		return wire.AppendVarint(wire.AppendVarint(wire.AppendVarint(nil, 3, typ), 2, id), 4, n)
+	}
+	buy := wire.AppendVarint(wire.AppendVarint(nil, 2, 1), 3, 1)
+	buy = wire.AppendBytes(buy, 4, payment(4, 0, 500000))
+	var beforeItems any
+	var beforeGold uint64
+	s.run(t, false, func(ctx command.Context, p *playerAssembly) {
+		beforeGold = p.wallet.Snapshot(ctx).Gold
+		beforeItems = p.ownedItems.All(ctx)
+	})
+	if _, err := s.execute("/MyRoomShopBuy", append(appScalar(1, 10), buy...)); err == nil || !strings.Contains(err.Error(), "requires pack 1 difficulty 0") {
+		t.Fatalf("locked purchase: %v", err)
+	}
+	s.reopen(t)
+	s.run(t, false, func(ctx command.Context, p *playerAssembly) {
+		if p.wallet.Snapshot(ctx).Gold != beforeGold || !reflect.DeepEqual(p.ownedItems.All(ctx), beforeItems) {
+			t.Fatal("locked single purchase changed currency or inventory")
+		}
+	})
+	s.run(t, true, func(ctx command.Context, p *playerAssembly) {
+		for _, quest := range factory.design.world.Story.Packs[1].MainQuestIDs {
+			if err := p.progressState.ClearQuest(ctx, quest, 1, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	var lockedID uint64
+	for id, product := range factory.design.roomCommerce.Products {
+		if item := factory.design.rooms.Items[product.Reward.ID]; item.PackID > 1 && (lockedID == 0 || id < lockedID) {
+			lockedID = id
+		}
+	}
+	if lockedID == 0 {
+		t.Fatal("GameData fixture lacks another locked pack furnishing")
+	}
+	product := factory.design.roomCommerce.Products[lockedID]
+	price := product.Prices[0]
+	first := wire.AppendBytes(wire.AppendVarint(wire.AppendVarint(nil, 1, 1), 2, 1), 3, payment(4, 0, 500000))
+	second := wire.AppendBytes(wire.AppendVarint(wire.AppendVarint(nil, 1, lockedID), 2, 1), 3, payment(price.Type, price.ID, price.Count))
+	batch := wire.AppendBytes(wire.AppendBytes(appScalar(1, 11), 2, first), 2, second)
+	if _, err := s.execute("/MyRoomShopMultiBuy", batch); err == nil || !strings.Contains(err.Error(), "requires pack") {
+		t.Fatalf("mixed unlocked/locked purchase: %v", err)
+	}
+	s.reopen(t)
+	s.run(t, false, func(ctx command.Context, p *playerAssembly) {
+		if got := p.wallet.Snapshot(ctx).Gold; got != beforeGold {
+			t.Fatalf("locked batch charged gold: %d want %d", got, beforeGold)
+		}
+		if !reflect.DeepEqual(p.ownedItems.All(ctx), beforeItems) {
+			t.Fatal("locked purchase changed inventory")
+		}
+	})
+	if got := s.protocol(t, "/MyRoomShopInfo", appScalar(1, 12)); len(appRows(got, 1)) != 0 {
+		t.Fatal("locked purchase recorded a purchase count")
+	}
+	s.protocol(t, "/MyRoomShopBuy", append(appScalar(1, 13), buy...))
+	s.run(t, false, func(ctx command.Context, p *playerAssembly) {
+		if got := p.wallet.Snapshot(ctx).Gold; got != beforeGold-500000 {
+			t.Fatalf("completed pack purchase gold=%d want %d", got, beforeGold-500000)
+		}
+	})
 }

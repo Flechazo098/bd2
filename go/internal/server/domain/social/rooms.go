@@ -154,6 +154,10 @@ func (f *Friends) roomUser(tx Tx, viewer, owner FriendProfile, state personalRoo
 	if !visible {
 		return nil, fmt.Errorf("%w: rooms of owner %d are not visible to owner %d", ErrPermission, owner.OwnerIndex, viewer.OwnerIndex)
 	}
+	usage, err := roomUsage(state)
+	if err != nil {
+		return nil, err
+	}
 	out := wire.AppendVarint(nil, 1, owner.OwnerIndex)
 	out = wire.AppendString(out, 2, owner.Snapshot.UserID)
 	out = wire.AppendVarint(out, 3, owner.Snapshot.PortraitCostumeID)
@@ -161,15 +165,18 @@ func (f *Friends) roomUser(tx Tx, viewer, owner FriendProfile, state personalRoo
 	for _, item := range owner.RoomItems {
 		switch item.Type {
 		case 27:
+			item.UseCount = usage[[2]uint64{0, item.InvenIndex}]
 			out = wire.AppendBytes(out, 5, inventory.ItemWire(item))
 		case 28:
 			v := wire.AppendVarint(nil, 1, item.InvenIndex)
 			v = wire.AppendVarint(v, 2, item.ID)
+			v = wire.AppendVarint(v, 5, usage[[2]uint64{2, item.InvenIndex}])
 			out = wire.AppendBytes(out, 7, v)
 		}
 	}
 	for _, costume := range owner.RoomCostumes {
-		out = wire.AppendBytes(out, 6, roster.CostumeWire(costume))
+		v := wire.AppendVarint(roster.CostumeWire(costume), 7, usage[[2]uint64{1, costume.InvenIndex}])
+		out = wire.AppendBytes(out, 6, v)
 	}
 	primaryVisible := false
 	for _, room := range state.Rooms {
@@ -258,7 +265,11 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 			if err != nil {
 				return fail("Room is unavailable")
 			}
-			return wire.AppendBytes(nil, 1, out), nil
+			response := wire.AppendBytes(nil, 1, out)
+			if target == self.OwnerIndex {
+				response = wire.AppendVarint(response, 2, 1)
+			}
+			return response, nil
 		}
 		if target == self.OwnerIndex {
 			return fail("Cannot like your own room")
@@ -302,11 +313,16 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 		return f.searchRooms(tx, self, path, p, now)
 	}
 	if path == "/MyRoomItemInfo" {
+		usage, err := roomUsage(state)
+		if err != nil {
+			return nil, err
+		}
 		var out []byte
 		for _, item := range self.RoomItems {
 			if item.Type == 28 {
 				v := wire.AppendVarint(nil, 1, item.InvenIndex)
 				v = wire.AppendVarint(v, 2, item.ID)
+				v = wire.AppendVarint(v, 5, usage[[2]uint64{2, item.InvenIndex}])
 				out = wire.AppendBytes(out, 1, v)
 			}
 		}
@@ -316,4 +332,22 @@ func (f *Friends) room(tx Tx, self FriendProfile, path string, p packet, now int
 		return fail(err.Error())
 	}
 	return nil, save(tx, "friend.rooms", numberKey(self.OwnerIndex), state)
+}
+
+func roomUsage(state personalRooms) (map[[2]uint64]uint64, error) {
+	used := map[[2]uint64]uint64{}
+	for _, room := range state.Rooms {
+		for _, position := range room.Positions {
+			index, _, err := wire.Varint(position, 1)
+			if err != nil {
+				return nil, err
+			}
+			typ, _, err := wire.Varint(position, 2)
+			if err != nil {
+				return nil, err
+			}
+			used[[2]uint64{typ, index}]++
+		}
+	}
+	return used, nil
 }

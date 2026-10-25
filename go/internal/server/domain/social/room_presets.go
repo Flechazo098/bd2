@@ -3,6 +3,7 @@ package social
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"bd2server/internal/server/protocol/wire"
 )
@@ -106,7 +107,7 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 		if !visible {
 			return nil, fmt.Errorf("%w: rooms of owner %d are not visible to owner %d", ErrPermission, sourceOwner, self.OwnerIndex)
 		}
-		if err := f.validateRoomPreset(source, self.OwnerIndex == sourceOwner, state, row, &preset); err != nil {
+		if err := f.validateRoomPreset(source, self, state, row, &preset); err != nil {
 			return nil, err
 		}
 	}
@@ -140,11 +141,22 @@ func (f *Friends) roomPreset(tx Tx, self FriendProfile, path string, p packet) (
 	return nil, save(tx, "friend.room_presets", key, preset)
 }
 
-func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state personalRooms, row packet, result *roomPreset) error {
+func (f *Friends) validateRoomPreset(source, viewer FriendProfile, state personalRooms, row packet, result *roomPreset) error {
+	own := source.OwnerIndex == viewer.OwnerIndex
+	validationSource := source
+	validationSource.RoomItems = slices.Clone(source.RoomItems)
+	if !own {
+		for _, item := range viewer.RoomItems {
+			if item.Type == 27 && item.ID == f.rooms.HiddenWallItemID {
+				validationSource.RoomItems = append(validationSource.RoomItems, item)
+			}
+		}
+	}
 	if len(row[4]) == 0 || len(row[4]) > len(f.rooms.Limits) || len(row[3]) > 256 {
 		return fmt.Errorf("%w: room preset carries %d rooms and %d items", ErrInvalid, len(row[4]), len(row[3]))
 	}
 	items := map[uint64]uint64{}
+	itemIDs := map[uint64]uint64{}
 	seen := map[uint64]bool{}
 	for _, field := range row[3] {
 		if field.Type != 2 {
@@ -168,7 +180,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 		}
 		seen[index] = true
 		owned := false
-		for _, v := range source.RoomItems {
+		for _, v := range validationSource.RoomItems {
 			if v.Type == 27 && v.InvenIndex == index && v.ID == id && v.Count >= count {
 				owned = true
 				break
@@ -178,6 +190,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			return fmt.Errorf("%w: owner %d lacks %d of room item %d at index %d", ErrPermission, source.OwnerIndex, count, id, index)
 		}
 		items[index] = count
+		itemIDs[index] = id
 		out := wire.AppendVarint(nil, 1, index)
 		out = wire.AppendVarint(out, 2, id)
 		out = wire.AppendVarint(out, 4, count)
@@ -248,7 +261,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			if !own {
 				matched := false
 				for _, raw := range original.Positions {
-					if bytes.Equal(raw, position.Value) {
+					if bytes.Equal(raw, position.Value) || !own && itemIDs[index] == f.rooms.HiddenWallItemID && roomPresetHiddenWallMatches(raw, position.Value, source, f.rooms.HiddenWallItemID) {
 						matched = true
 						break
 					}
@@ -259,7 +272,7 @@ func (f *Friends) validateRoomPreset(source FriendProfile, own bool, state perso
 			}
 			v.Positions = append(v.Positions, append([]byte(nil), position.Value...))
 		}
-		if err := f.validatePositions(v, source, limits); err != nil {
+		if err := f.validatePositions(v, validationSource, limits); err != nil {
 			return err
 		}
 		result.Rooms = append(result.Rooms, roomWire(v))
@@ -299,4 +312,36 @@ func (f *Friends) presetText(p packet, path string) ([]string, error) {
 		texts = append(texts, name)
 	}
 	return texts, nil
+}
+
+func roomPresetHiddenWallMatches(original, transformed []byte, source FriendProfile, hiddenWallID uint64) bool {
+	originalIndex, _, err := wire.Varint(original, 1)
+	if err != nil {
+		return false
+	}
+	hidden, _, err := wire.Varint(original, 9)
+	if err != nil {
+		return false
+	}
+	allowed := hidden == 1
+	for _, item := range source.RoomItems {
+		if item.Type == 27 && item.InvenIndex == originalIndex && item.ID == hiddenWallID {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return false
+	}
+	for field := 2; field <= 9; field++ {
+		a, _, err := wire.Varint(original, field)
+		if err != nil {
+			return false
+		}
+		b, _, err := wire.Varint(transformed, field)
+		if err != nil || a != b {
+			return false
+		}
+	}
+	return true
 }

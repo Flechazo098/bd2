@@ -76,7 +76,7 @@ func (p *playerAssembly) session(ctx command.Context) error {
 			return published.SupporterDetails, err
 		}},
 		p.profileService,
-		social.RoomCommerce{Design: p.design.roomCommerce, Rooms: p.design.rooms, Economy: p.eventEconomy},
+		social.RoomCommerce{Design: p.design.roomCommerce, Rooms: p.design.rooms, Economy: p.eventEconomy, PackCleared: p.worldService.CashPackagePackCleared},
 		commerce.PackInfoHandler{World: p.worldService, Claims: p.clearPackages},
 		p.worldService,
 		p.progressState,

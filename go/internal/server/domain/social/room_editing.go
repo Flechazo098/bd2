@@ -204,6 +204,12 @@ func (f *Friends) editRooms(state *personalRooms, self FriendProfile, path strin
 		state.Rooms[index], state.Rooms[other] = state.Rooms[other], state.Rooms[index]
 		state.Rooms[index].ID = id
 		state.Rooms[other].ID = target
+		switch state.Primary {
+		case id:
+			state.Primary = target
+		case target:
+			state.Primary = id
+		}
 		if err := f.validatePositions(state.Rooms[index], self, f.rooms.Limits[id]); err != nil {
 			return err
 		}
