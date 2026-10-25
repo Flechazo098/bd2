@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Service) questDifficultyFor(packID, questID int) int {
-	if s.storyCatalog != nil && s.storyCatalog.Packs[packID].Quests[questID].Type != 0 {
+	if s.packQuestDesigns(packID)[questID].Type != 0 {
 		return 0
 	}
 	return s.questDifficulty(packID)
@@ -44,7 +44,7 @@ func (s *Service) visibleOwnedCharacters(characters []roster.Character) []roster
 }
 
 func (s *Service) ensureQuestItems(ctx command.Context, packID, questID int) ([]assets.Item, error) {
-	ids := s.storyCatalog.Packs[packID].Quests[questID].GiveQuestItemIDs
+	ids := s.packQuestDesigns(packID)[questID].GiveQuestItemIDs
 	if len(ids) == 0 {
 		return nil, nil
 	}

@@ -15,9 +15,9 @@ type FieldPack struct {
 	HasOpenRule                     bool
 	MapIDs                          map[int]bool
 	IntroQuest                      *QuestDesign
-	// LifeQuests is a Life pack's quest chain: QuestTable rows of
-	// EQuestType.Life, ordered by their prior/next links.
-	LifeQuests []QuestDesign
+	Quests                          map[int]QuestDesign
+	MainQuestIDs                    []int
+	LifeQuestIDs                    []int
 }
 
 // Define_PackType.PackLife and EQuestType.Life.
@@ -149,25 +149,28 @@ func loadFieldPacks(db *sql.DB) (map[int]FieldPack, error) {
 		if len(pack.MapIDs) == 0 {
 			return nil, fmt.Errorf("gamedata: arena pack %d has no map", id)
 		}
-		intro, err := loadFieldIntroduction(db, id)
+		pack.Quests, err = loadOptionalPackQuests(db, id)
 		if err != nil {
 			return nil, err
 		}
-		pack.IntroQuest = intro
-		if pack.Type == LifePackType {
-			if pack.LifeQuests, err = loadLifeQuests(db, id); err != nil {
+		pack.IntroQuest = fieldIntroduction(pack.Quests)
+		if pack.IntroQuest == nil {
+			pack.MainQuestIDs, err = orderedQuestIDs(id, pack.Quests, 0)
+			if err != nil {
+				return nil, err
+			}
+			pack.LifeQuestIDs, err = orderedQuestIDs(id, pack.Quests, LifeQuestType)
+			if err != nil {
 				return nil, err
 			}
 		}
+
 		result[id] = pack
 	}
 	return result, nil
 }
 
-// Standalone field introductions have one accept movie and no quest chain,
-// completion movie or rewards. Ordinary field quest chains retain their own
-// acceptance and settlement rules, even when their first quest has a movie.
-func loadFieldIntroduction(db *sql.DB, packID int) (*QuestDesign, error) {
+func loadOptionalPackQuests(db *sql.DB, packID int) (map[int]QuestDesign, error) {
 	var exists bool
 	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", fmt.Sprintf("QuestTable%d", packID)).Scan(&exists); err != nil {
 		return nil, err
@@ -175,61 +178,24 @@ func loadFieldIntroduction(db *sql.DB, packID int) (*QuestDesign, error) {
 	if !exists {
 		return nil, nil
 	}
-	quests, err := loadQuestDesignDB(db, packID)
-	if err != nil || len(quests) != 1 {
-		return nil, err
+	return loadQuestDesignDB(db, packID)
+}
+
+// Standalone introductions are watched locally and never send QuestClear.
+func fieldIntroduction(quests map[int]QuestDesign) *QuestDesign {
+	if len(quests) != 1 {
+		return nil
 	}
 	for _, quest := range quests {
 		if quest.Type != 0 || quest.PriorQuestID != 0 || quest.NextQuestID != 0 || quest.AcceptCinemaName == "" || quest.CompleteCinemaName != "" || len(quest.GiveQuestItemIDs) != 0 || len(quest.CollectionRewards) != 0 {
-			return nil, nil
+			return nil
 		}
 		for _, rewards := range quest.Rewards {
 			if len(rewards) != 0 {
-				return nil, nil
+				return nil
 			}
 		}
-		return &quest, nil
+		return &quest
 	}
-	return nil, nil
-}
-
-// loadLifeQuests returns the single chain of Life quests, head first. The
-// client advances it with QuestUpdate and QuestClear like any active quest.
-func loadLifeQuests(db *sql.DB, packID int) ([]QuestDesign, error) {
-	var exists bool
-	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", fmt.Sprintf("QuestTable%d", packID)).Scan(&exists); err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, nil
-	}
-	quests, err := loadQuestDesignDB(db, packID)
-	if err != nil {
-		return nil, err
-	}
-	head := 0
-	for id, quest := range quests {
-		if quest.Type != LifeQuestType {
-			return nil, fmt.Errorf("gamedata: life pack %d quest %d has type %d", packID, id, quest.Type)
-		}
-		if quest.PriorQuestID == 0 {
-			if head != 0 {
-				return nil, fmt.Errorf("gamedata: life pack %d has two quest chains", packID)
-			}
-			head = id
-		}
-	}
-	var chain []QuestDesign
-	for id, seen := head, map[int]bool{}; id != 0; id = quests[id].NextQuestID {
-		quest, found := quests[id]
-		if !found || seen[id] || (len(chain) > 0 && quest.PriorQuestID != chain[len(chain)-1].ID) {
-			return nil, fmt.Errorf("gamedata: life pack %d quest chain breaks at %d", packID, id)
-		}
-		seen[id] = true
-		chain = append(chain, quest)
-	}
-	if len(chain) != len(quests) {
-		return nil, fmt.Errorf("gamedata: life pack %d chain covers %d of %d quests", packID, len(chain), len(quests))
-	}
-	return chain, nil
+	return nil
 }

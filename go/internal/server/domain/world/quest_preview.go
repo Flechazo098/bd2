@@ -40,12 +40,9 @@ func (s *Service) packSubQuestClearInfo(request []byte) (int, []byte, bool, erro
 	}
 	var response []byte
 	for _, id := range packs {
-		if s.storyCatalog == nil {
-			return 227, nil, true, fmt.Errorf("%w: sub-quest clear info requested without a story catalog", ErrInvalidRequest)
-		}
-		pack, ok := s.storyCatalog.Packs[id]
-		if !ok {
-			return 227, nil, true, fmt.Errorf("%w: pack %d is not a story pack", ErrInvalidRequest, id)
+		quests := s.packQuestDesigns(id)
+		if len(quests) == 0 {
+			return 227, nil, true, fmt.Errorf("%w: pack %d has no quest catalog", ErrInvalidRequest, id)
 		}
 		titles, err := s.presentationSource.QuestTitles(id)
 		if err != nil {
@@ -53,7 +50,7 @@ func (s *Service) packSubQuestClearInfo(request []byte) (int, []byte, bool, erro
 		}
 		var count uint64
 		for _, title := range titles {
-			if pack.Quests[title.LastQuest].Type == 1 && s.state.QuestCleared(title.LastQuest, id, 0) {
+			if quests[title.LastQuest].Type == 1 && s.state.QuestCleared(title.LastQuest, id, 0) {
 				count++
 			}
 		}

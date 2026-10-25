@@ -67,7 +67,7 @@ func (s *Service) basePackInfoFor(ctx command.Context, packID int) ([]byte, erro
 	for _, quest := range s.activeSideQuestWires(packID) {
 		out = wire.AppendBytes(out, 2, quest)
 	}
-	for _, quest := range s.lifeQuestWires(packID) {
+	for _, quest := range s.activeLifeQuestWires(packID) {
 		out = wire.AppendBytes(out, 2, quest)
 	}
 	cleared := s.completedQuestIDs(packID)

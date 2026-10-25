@@ -1,6 +1,7 @@
 package world
 
 import (
+	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/command"
 	assets "bd2server/internal/server/domain/inventory"
 	"bd2server/internal/server/domain/world/progress"
@@ -55,14 +56,21 @@ func (s *Service) appendCurrentBattleDeck(response []byte, field int) []byte {
 func (s *Service) questInfoWire(packID, questID int) []byte {
 	out := wire.AppendVarint(nil, 1, uint64(questID))
 	selection, _ := s.state.Selection(packID)
-	if s.storyCatalog != nil && s.storyCatalog.Packs[packID].Quests[questID].Type != 0 {
+	if s.packQuestDesigns(packID)[questID].Type != 0 {
 		selection = progress.QuestSelection{}
 	}
 	if current, ok := s.state.QuestInPack(questID, packID, selection.Difficulty); ok {
-		for _, value := range current.Values {
-			out = wire.AppendVarint(out, 3, uint64(value))
+		if s.packQuestDesigns(packID)[questID].Type == gamedata.LifeQuestType {
+			if len(current.Values) > 0 {
+				out = wire.AppendVarint(out, 2, uint64(current.Values[0]))
+			}
+		} else {
+			for _, value := range current.Values {
+				out = wire.AppendVarint(out, 3, uint64(value))
+			}
 		}
 	}
+
 	if selection.Difficulty != 0 {
 		out = wire.AppendVarint(out, 4, uint64(selection.Difficulty))
 	}
@@ -77,8 +85,8 @@ func (s *Service) questLevelInfoWire(packID, difficulty int) []byte {
 	out = wire.AppendVarint(out, 2, uint64(difficulty))
 	last := 0
 	complete := true
-	pack := s.storyCatalog.Packs[packID]
-	for _, id := range pack.MainQuestIDs {
+	ids := s.mainQuestIDs(packID)
+	for _, id := range ids {
 		if !s.state.QuestCleared(id, packID, difficulty) {
 			complete = false
 			break
@@ -90,7 +98,7 @@ func (s *Service) questLevelInfoWire(packID, difficulty int) []byte {
 	if selection.Difficulty == difficulty {
 		out = wire.AppendVarint(out, 4, uint64(selection.Option))
 	}
-	if complete && len(pack.MainQuestIDs) > 0 {
+	if complete && len(ids) > 0 {
 		out = wire.AppendVarint(out, 5, 1)
 	}
 	return out
@@ -104,7 +112,7 @@ func (s *Service) completedQuestIDs(pack int) []int {
 		return ids
 	}
 	for _, id := range s.state.ClearedQuests(pack, 0) {
-		if s.storyCatalog.Packs[pack].Quests[id].Type == 1 {
+		if s.packQuestDesigns(pack)[id].Type == 1 {
 			ids = append(ids, id)
 		}
 	}
@@ -125,7 +133,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 		if active := s.firstUnclearedQuestFor(pack); active != 0 {
 			out = wire.AppendBytes(out, 1, s.questInfoWire(pack, active))
 		}
-		for _, quest := range s.activeSideQuestWires(pack) {
+		for _, quest := range append(s.activeSideQuestWires(pack), s.activeLifeQuestWires(pack)...) {
 			out = wire.AppendBytes(out, 1, quest)
 		}
 		var todayCleared []int
@@ -231,7 +239,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 		return 17, out, true, nil
 	}
 	if level > 0 {
-		ids := s.storyCatalog.Packs[pack].MainQuestIDs
+		ids := s.mainQuestIDs(pack)
 		for _, id := range ids {
 			if !s.state.QuestCleared(id, pack, int(level)-1) {
 				return 0, nil, true, fmt.Errorf("%w: previous difficulty is incomplete", ErrInvalidRequest)
@@ -241,7 +249,7 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 	// Accept only the first unfinished main quest in this difficulty, using
 	// authoritative links rather than permitting an arbitrary reward jump.
 	first := 0
-	for _, id := range s.storyCatalog.Packs[pack].MainQuestIDs {
+	for _, id := range s.mainQuestIDs(pack) {
 		if !s.state.QuestCleared(id, pack, int(level)) {
 			first = id
 			break
@@ -280,12 +288,19 @@ func (s *Service) handleQuestSelection(ctx command.Context, path string, request
 
 func (s *Service) activeSideQuestWires(packID int) [][]byte {
 	var out [][]byte
-	if s.storyCatalog == nil {
-		return nil
-	}
 	for _, quest := range s.state.QuestsInPack(packID, 0) {
-		if s.storyCatalog.Packs[packID].Quests[quest.QuestID].Type == 1 && !s.state.QuestCleared(quest.QuestID, packID) {
+		if s.packQuestDesigns(packID)[quest.QuestID].Type == 1 && !s.state.QuestCleared(quest.QuestID, packID) {
 			out = append(out, s.questInfoWire(packID, quest.QuestID))
+		}
+	}
+	return out
+}
+
+func (s *Service) activeLifeQuestWires(packID int) [][]byte {
+	var out [][]byte
+	for _, id := range s.fieldPacks[packID].LifeQuestIDs {
+		if _, active := s.state.QuestInPack(id, packID, 0); active && !s.state.QuestCleared(id, packID, 0) {
+			out = append(out, s.questInfoWire(packID, id))
 		}
 	}
 	return out

@@ -29,11 +29,18 @@ func LoadWorldRules(root, version string, placeholder uint64) (*WorldRules, erro
 		rules.Transitions[id] = PackTransition{PackID: id, NextPackID: pack.NextPackID}
 		packs = append(packs, id)
 	}
-	rules.QuestCostumes, err = LoadQuestCostumes(root, version, rules.Packs, story)
+	rules.FieldPacks, err = LoadFieldPacks(root, version)
 	if err != nil {
 		return nil, err
 	}
-	rules.FieldPacks, err = LoadFieldPacks(root, version)
+	for id, pack := range rules.FieldPacks {
+		if _, exists := rules.Packs[id]; exists || len(pack.MainQuestIDs) == 0 {
+			continue
+		}
+		rules.Packs[id] = pack.Quests
+		packs = append(packs, id)
+	}
+	rules.QuestCostumes, err = LoadQuestCostumes(root, version, rules.Packs, story)
 	if err != nil {
 		return nil, err
 	}
@@ -60,31 +67,44 @@ func LoadWorldRules(root, version string, placeholder uint64) (*WorldRules, erro
 // a predecessor merely because their numeric ID lies between two main quests.
 func orderMainQuests(story *StoryCatalog) error {
 	for id, pack := range story.Packs {
-		start := 0
-		for _, qid := range pack.MainQuestIDs {
-			if pack.Quests[qid].PriorQuestID == 0 {
-				if start != 0 {
-					return fmt.Errorf("world: pack %d has multiple main quest roots", id)
-				}
-				start = qid
-			}
+		ids, err := orderedQuestIDs(id, pack.Quests, 0)
+		if err != nil {
+			return err
 		}
-		var ordered []int
-		seen := map[int]bool{}
-		for qid := start; qid != 0; {
-			q, exists := pack.Quests[qid]
-			if !exists || q.Type != 0 || seen[qid] {
-				return fmt.Errorf("world: invalid main quest chain pack %d quest %d", id, qid)
-			}
-			seen[qid] = true
-			ordered = append(ordered, qid)
-			qid = q.NextQuestID
-		}
-		if len(ordered) != len(pack.MainQuestIDs) {
-			return fmt.Errorf("world: disconnected main quest chain pack %d", id)
-		}
-		pack.MainQuestIDs = ordered
+		pack.MainQuestIDs = ids
 		story.Packs[id] = pack
 	}
 	return nil
+}
+
+func orderedQuestIDs(packID int, quests map[int]QuestDesign, questType int) ([]int, error) {
+	start, count := 0, 0
+	for id, quest := range quests {
+		if quest.Type != questType {
+			continue
+		}
+		count++
+		if quest.PriorQuestID == 0 {
+			if start != 0 {
+				return nil, fmt.Errorf("world: pack %d has multiple quest roots", packID)
+			}
+			start = id
+		}
+	}
+	var ordered []int
+	seen := map[int]bool{}
+	previous := 0
+	for id := start; id != 0; {
+		quest, exists := quests[id]
+		if !exists || quest.Type != questType || seen[id] || quest.PriorQuestID != previous {
+			return nil, fmt.Errorf("world: invalid quest chain pack %d quest %d", packID, id)
+		}
+		seen[id] = true
+		ordered = append(ordered, id)
+		previous, id = id, quest.NextQuestID
+	}
+	if len(ordered) != count {
+		return nil, fmt.Errorf("world: disconnected quest chain pack %d", packID)
+	}
+	return ordered, nil
 }

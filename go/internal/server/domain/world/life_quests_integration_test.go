@@ -45,12 +45,12 @@ func TestLifeQuestChainActivatesAdvancesAndPaysLifeRewards(t *testing.T) {
 		t.Fatal(err)
 	}
 	farm := packs[3011]
-	if farm.Type != gamedata.LifePackType || len(farm.LifeQuests) != 15 {
-		t.Fatalf("pack 3011 type=%d life quests=%d, want the 15-quest farm chain", farm.Type, len(farm.LifeQuests))
+	if farm.Type != gamedata.LifePackType || len(farm.LifeQuestIDs) != 15 {
+		t.Fatalf("pack 3011 type=%d life quests=%d, want the 15-quest farm chain", farm.Type, len(farm.LifeQuestIDs))
 	}
-	for i, quest := range farm.LifeQuests {
-		if quest.ID != i+1 {
-			t.Fatalf("chain position %d is quest %d", i, quest.ID)
+	for i, questID := range farm.LifeQuestIDs {
+		if questID != i+1 {
+			t.Fatalf("chain position %d is quest %d", i, questID)
 		}
 	}
 
@@ -83,7 +83,7 @@ func TestLifeQuestChainActivatesAdvancesAndPaysLifeRewards(t *testing.T) {
 	active := func() []int {
 		t.Helper()
 		var ids []int
-		for _, row := range service.lifeQuestWires(3011) {
+		for _, row := range service.activeLifeQuestWires(3011) {
 			id, _, _ := wire.Varint(row, 1)
 			ids = append(ids, int(id))
 		}
@@ -91,7 +91,7 @@ func TestLifeQuestChainActivatesAdvancesAndPaysLifeRewards(t *testing.T) {
 	}
 	value := func(quest int) uint64 {
 		t.Helper()
-		for _, row := range service.lifeQuestWires(3011) {
+		for _, row := range service.activeLifeQuestWires(3011) {
 			if id, _, _ := wire.Varint(row, 1); int(id) == quest {
 				v, _, _ := wire.Varint(row, 2)
 				return v
@@ -125,6 +125,17 @@ func TestLifeQuestChainActivatesAdvancesAndPaysLifeRewards(t *testing.T) {
 	call("/QuestUpdate", 1, 1)
 	if got := value(1); got != 1 {
 		t.Fatalf("quest 1 progress=%d, want 1", got)
+	}
+	_, info, handled, err := service.Handle(ctx, "/QuestInfo", wire.AppendVarint(wire.AppendVarint(nil, 1, 2), 2, 3011))
+	if err != nil || !handled {
+		t.Fatalf("life QuestInfo: handled=%t err=%v", handled, err)
+	}
+	rows, err := nestedMessages(info, 1)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("life QuestInfo rows=%d err=%v", len(rows), err)
+	}
+	if got, _, _ := wire.Varint(rows[0], 2); got != 1 {
+		t.Fatalf("life QuestInfo.value=%d, want 1", got)
 	}
 
 	body := call("/QuestClear", 1)

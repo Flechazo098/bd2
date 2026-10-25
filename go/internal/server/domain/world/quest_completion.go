@@ -40,10 +40,7 @@ func (s *Service) questMaxClearInfo(request []byte) (int, []byte, bool, error) {
 }
 
 func (s *Service) questTitleInfo(pack int) ([][]byte, error) {
-	if s.storyCatalog == nil {
-		return nil, nil
-	}
-	if _, found := s.storyCatalog.Packs[pack]; !found {
+	if len(s.packQuestDesigns(pack)) == 0 {
 		return nil, nil
 	}
 	titles, err := s.presentationSource.QuestTitles(pack)

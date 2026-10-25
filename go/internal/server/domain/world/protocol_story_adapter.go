@@ -100,7 +100,7 @@ func (s *Service) clearResponse(ctx command.Context, packID, quest int, rewards 
 	for _, item := range nextItems {
 		out = wire.AppendBytes(out, 6, assets.ItemWire(item))
 	}
-	if s.storyCatalog.Packs[packID].Quests[quest].Type == 0 && next == 0 && s.packCompleteFor(packID) {
+	if s.packQuestDesigns(packID)[quest].Type == 0 && next == 0 && s.packCompleteFor(packID) {
 		// The final normal quest unlocks PackTable.NextPackId. Without these
 		// PackDBInfo updates the client cannot find the next story pack and
 		// falls back to presenting the hard-difficulty objective.
@@ -540,6 +540,10 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 		if err != nil {
 			return 0, nil, true, err
 		}
+		currencyRewards, err := s.grantAdditionalQuestCurrencies(ctx, pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)])
+		if err != nil {
+			return 0, nil, true, err
+		}
 		if err := s.state.ClearQuest(ctx, quest, pack, s.questDifficultyFor(pack, quest)); err != nil {
 			return 0, nil, true, fmt.Errorf("world: clear quest: %w", err)
 		}
@@ -589,6 +593,7 @@ func (s *Service) Handle(ctx command.Context, path string, request []byte) (int,
 			"timeline_map", design.TimelineStartMapID, "position_found", positionFound,
 			"saved_position", saved.Position, "party_changes", len(nextChars), "items", len(items))
 		rewards := append(s.questClearRewards(pack, quest, design.Rewards[s.questDifficultyFor(pack, quest)], items, questEquipment), lifeRewards...)
+		rewards = append(rewards, currencyRewards...)
 		out, err := s.clearResponse(ctx, pack, quest, rewards, nextItems, nextChars)
 		if err != nil {
 			return 0, nil, true, err

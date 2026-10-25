@@ -25,6 +25,18 @@ func (s *Service) fieldPackDBInfo(pack gamedata.FieldPack) []byte {
 			row = wire.AppendVarint(row, 8, 1)
 		}
 	}
+	cleared := 0
+	for _, id := range pack.MainQuestIDs {
+		if s.state.QuestCleared(id, int(pack.ID), s.questDifficulty(int(pack.ID))) {
+			cleared++
+		}
+	}
+	if cleared > 0 {
+		row = wire.AppendVarint(row, 2, uint64(cleared))
+	}
+	if len(pack.MainQuestIDs) > 0 && cleared == len(pack.MainQuestIDs) {
+		row = wire.AppendVarint(row, 3, 1)
+	}
 	return row
 }
 

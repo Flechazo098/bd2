@@ -243,12 +243,7 @@ func (s *Service) questsFor(ctx command.Context, packID int) (map[int]gamedata.Q
 	if pack.kind == eventCard {
 		return nil, true
 	}
-	if s.storyCatalog != nil {
-		if story, found := s.storyCatalog.Packs[packID]; found {
-			return story.Quests, true
-		}
-	}
-	return s.lifeQuestDesigns(packID), true
+	return s.packQuestDesigns(packID), true
 }
 
 // packUnlocked uses installed ContentOpen rules and real account tickets.
@@ -262,7 +257,7 @@ func (s *Service) canClear(ctx command.Context, packID, quest int) bool {
 		return true
 	}
 	quests, found := s.questsFor(ctx, packID)
-	if !found || s.storyCatalog == nil {
+	if !found {
 		return false
 	}
 	design, found := quests[quest]
@@ -313,8 +308,8 @@ func (s *Service) grantQuestRewards(ctx command.Context, packID, quest int, desi
 				return nil, nil, fmt.Errorf("world: missing quest costume %d", reward.ID)
 			}
 		default:
-			if lifeReward(reward) {
-				continue // grantLifeQuestRewards
+			if lifeReward(reward) || additionalQuestCurrency(reward) {
+				continue
 			}
 			if reward.ID == 0 || reward.Count == 0 {
 				return nil, nil, fmt.Errorf("world: invalid item reward type=%d id=%d count=%d", reward.Type, reward.ID, reward.Count)
@@ -387,10 +382,7 @@ func (s *Service) grantQuestRewards(ctx command.Context, packID, quest int, desi
 }
 
 func (s *Service) firstUnclearedQuestFor(packID int) int {
-	if s.storyCatalog == nil {
-		return 0
-	}
-	for _, id := range s.storyCatalog.Packs[packID].MainQuestIDs {
+	for _, id := range s.mainQuestIDs(packID) {
 		if !s.state.QuestCleared(id, packID, s.questDifficulty(packID)) {
 			return id
 		}
@@ -399,10 +391,7 @@ func (s *Service) firstUnclearedQuestFor(packID int) int {
 }
 
 func (s *Service) packCompleteFor(packID int) bool {
-	if s.storyCatalog == nil {
-		return false
-	}
-	ids := s.storyCatalog.Packs[packID].MainQuestIDs
+	ids := s.mainQuestIDs(packID)
 	if len(ids) == 0 {
 		return false
 	}

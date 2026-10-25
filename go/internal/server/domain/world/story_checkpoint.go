@@ -118,7 +118,7 @@ func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryC
 	if field, exists := s.fieldPacks[checkpoint.PackID]; exists && field.IntroQuest != nil {
 		return s.validateFieldIntroCheckpoint(ctx, checkpoint, field)
 	}
-	pack, exists := s.storyCatalog.Packs[checkpoint.PackID]
+	quests, exists := s.questsFor(ctx, checkpoint.PackID)
 	if !exists || !s.packUnlocked(ctx, checkpoint.PackID) || checkpoint.Difficulty != s.questDifficultyFor(checkpoint.PackID, checkpoint.QuestID) {
 		return fmt.Errorf("%w: checkpoint pack or difficulty unavailable", ErrInvalidRequest)
 	}
@@ -132,7 +132,7 @@ func (s *Service) validateStoryCheckpoint(ctx command.Context, checkpoint StoryC
 	if !slices.Contains(maps.MapIDs, checkpoint.MapID) {
 		return fmt.Errorf("%w: checkpoint map outside pack", ErrInvalidRequest)
 	}
-	quest, exists := pack.Quests[checkpoint.QuestID]
+	quest, exists := quests[checkpoint.QuestID]
 	if !exists {
 		return fmt.Errorf("%w: pack %d has no quest %d for checkpoint %q", ErrInvalidRequest, checkpoint.PackID, checkpoint.QuestID, checkpoint.ID)
 	}
@@ -178,7 +178,7 @@ func (s *Service) validateFieldIntroCheckpoint(ctx command.Context, checkpoint S
 }
 
 func (s *Service) beginQuestCompletionPresentation(ctx command.Context, pack, quest, difficulty int) error {
-	design := s.storyCatalog.Packs[pack].Quests[quest]
+	design := s.packQuestDesigns(pack)[quest]
 	if design.CompleteCinemaName == "" {
 		return nil
 	}
@@ -186,8 +186,14 @@ func (s *Service) beginQuestCompletionPresentation(ctx command.Context, pack, qu
 	if saved, found := s.state.Position(); found && saved.PackID == pack {
 		mapID = saved.Position.MapID
 	}
-	if mapID == 0 && len(s.storyCatalog.Packs[pack].MapIDs) > 0 {
-		mapID = s.storyCatalog.Packs[pack].MapIDs[0]
+	if mapID == 0 {
+		maps, err := s.packDetailDesign(pack)
+		if err != nil {
+			return err
+		}
+		if len(maps.MapIDs) > 0 {
+			mapID = maps.MapIDs[0]
+		}
 	}
 	checkpoint := StoryCheckpoint{ID: fmt.Sprintf("quest-complete:%d:%d:%d", pack, difficulty, quest), PackID: pack, QuestID: quest, Difficulty: difficulty, Phase: "complete", Timeline: design.CompleteCinemaName, MapID: mapID}
 	pending, err := loadStoryCheckpoint(ctx)
