@@ -35,6 +35,9 @@ func TestPresenceExpiresWithoutActivityAndOnlyValidSessionsRenewIt(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	server.TouchPlayer = func(account string, generation uint64) bool {
+		return account == "present-player" && generation == runtime.Generation()
+	}
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	server.now = func() time.Time { return now }
 	game, token, err := newGameSession("present-player", now, 24*time.Hour)
@@ -82,5 +85,61 @@ func TestPresenceExpiresWithoutActivityAndOnlyValidSessionsRenewIt(t *testing.T)
 	now = game.expiresAt
 	if server.AccountOnline("present-player") {
 		t.Fatal("expired game session retained presence")
+	}
+}
+
+func TestCookieHeartbeatRequiresCurrentResidentSession(t *testing.T) {
+	server, err := NewServer(presenceRouter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	server.now = func() time.Time { return now }
+	game, token, err := newGameSession("heartbeat-player", now, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	game.generation = 7
+	server.sessions[sessionTokenKey(token)] = game
+	resident := true
+	calls := 0
+	server.TouchPlayer = func(account string, generation uint64) bool {
+		calls++
+		if account != game.accountID || generation != 7 {
+			t.Fatalf("wrong identity: %s/%d", account, generation)
+		}
+		return resident
+	}
+	now = now.Add(2 * time.Minute)
+	for _, cookie := range []string{"", "s=invalid", "s=" + token + "; s=" + token} {
+		server.RecordCookieActivity(cookie)
+	}
+	if calls != 0 || server.AccountOnline(game.accountID) {
+		t.Fatal("invalid cookies renewed activity")
+	}
+	server.RecordCookieActivity("s=" + token)
+	if calls != 1 || !server.AccountOnline(game.accountID) {
+		t.Fatal("valid cookie did not renew presence")
+	}
+	now = now.Add(2 * time.Minute)
+	resident = false
+	previous := game.lastUsed
+	server.RecordCookieActivity("s=" + token)
+	server.RecordActivity(Principal{AccountID: game.accountID, SessionID: game.id, Generation: game.generation})
+	if !game.lastUsed.Equal(previous) || server.AccountOnline(game.accountID) {
+		t.Fatal("absent or replaced runtime renewed activity")
+	}
+	resident = true
+	delete(server.sessions, sessionTokenKey(token))
+	calls = 0
+	server.RecordCookieActivity("s=" + token)
+	if calls != 0 {
+		t.Fatal("superseded cookie reached player")
+	}
+	server.sessions[sessionTokenKey(token)] = game
+	now = game.expiresAt
+	server.RecordCookieActivity("s=" + token)
+	if calls != 0 || !game.lastUsed.Equal(previous) {
+		t.Fatal("expired cookie renewed activity")
 	}
 }

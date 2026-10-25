@@ -304,3 +304,59 @@ func TestRegistryShutdownClosesLoadingAndLeasedAccountWriters(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryHeartbeatKeepsGenerationUntilTrafficStops(t *testing.T) {
+	factory, accounts := newIntegrationFactory(t)
+	registry := newPlayerRegistry(factory, 15*time.Minute)
+	t.Cleanup(func() {
+		if err := registry.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	runtime, release, err := registry.Acquire(context.Background(), accounts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := runtime.Generation()
+	release()
+	registry.mu.Lock()
+	slot := registry.players[accounts[0]]
+	slot.lastUsed = time.Now().Add(-21 * time.Minute)
+	stale := slot.lastUsed
+	registry.mu.Unlock()
+	if registry.Touch("absent-player", generation) || registry.Touch(accounts[0], generation+1) {
+		t.Fatal("unknown player or stale generation accepted")
+	}
+	registry.mu.Lock()
+	unchanged := slot.lastUsed.Equal(stale) && slot.leases == 0 && len(registry.players) == 1
+	registry.mu.Unlock()
+	if !unchanged {
+		t.Fatal("invalid heartbeat loaded or renewed a player")
+	}
+	if !registry.Touch(accounts[0], generation) {
+		t.Fatal("current resident heartbeat rejected")
+	}
+	registry.expire(time.Now())
+	current, release, err := registry.Acquire(context.Background(), accounts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current != runtime || current.Generation() != generation {
+		release()
+		t.Fatal("active game replaced during local battle")
+	}
+	registryExecute(t, current, registryCommand(accounts[0], "after-long-local-battle", "/EquipInfo", appScalar(1, 1)))
+	release()
+	registry.expire(time.Now().Add(16 * time.Minute))
+	if registry.Touch(accounts[0], generation) {
+		t.Fatal("expired player resurrected")
+	}
+	replacement, release, err := registry.Acquire(context.Background(), accounts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if replacement.Generation() == generation || registry.Touch(accounts[0], generation) {
+		t.Fatal("old generation accepted after reload")
+	}
+}

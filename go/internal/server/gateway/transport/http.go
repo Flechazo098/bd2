@@ -132,6 +132,7 @@ func (b Bootstrap) now() time.Time {
 type HTTP struct {
 	Dispatcher            Dispatcher
 	Raw                   RawDispatcher
+	SessionActivity       func(cookie string)
 	Logger                *slog.Logger
 	Now                   func() time.Time
 	Authentication        authconfig.Config
@@ -451,6 +452,9 @@ func (h HTTP) game(w http.ResponseWriter, r *http.Request) {
 			Name: "s", Value: reply.Cookie, Path: "/game/", HttpOnly: true,
 			Secure: h.secureCookies(), SameSite: http.SameSiteLaxMode,
 		})
+	}
+	if path == "/ServerNowTime" && h.SessionActivity != nil {
+		h.SessionActivity(r.Header.Get("Cookie"))
 	}
 	answer := Envelope{PacketCode: reply.PacketCode, Data: base64.StdEncoding.EncodeToString(reply.Data), ServerNowTime: h.now().UnixMilli(), Notify: reply.Notify}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

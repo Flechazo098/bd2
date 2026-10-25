@@ -141,6 +141,26 @@ func (r *playerRegistry) Acquire(ctx context.Context, accountID string) (*player
 	}
 }
 
+// Touch records authenticated traffic without loading an absent player.
+func (r *playerRegistry) Touch(accountID string, generation uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	slot := r.players[accountID]
+	if r.closing || slot == nil || slot.retiring {
+		return false
+	}
+	select {
+	case <-slot.ready:
+		if slot.err != nil || slot.runtime == nil || slot.runtime.Generation() != generation {
+			return false
+		}
+		slot.lastUsed = time.Now()
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *playerRegistry) load(accountID string, slot *playerSlot) {
 	r.mu.Lock()
 	if r.closing {

@@ -58,6 +58,7 @@ type Server struct {
 	now         func() time.Time
 	sessionTTL  time.Duration
 	maxSessions int
+	TouchPlayer func(accountID string, generation uint64) bool
 	// Broadcast returns Notify fields appended to every game response.
 	Broadcast func() []byte
 	// LoggedIn receives an account's LoginUserRequest.language_type.

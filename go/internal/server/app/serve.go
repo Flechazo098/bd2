@@ -102,6 +102,7 @@ func Serve(args []string) (serveErr error) {
 	if err != nil {
 		return err
 	}
+	game.TouchPlayer = registry.Touch
 	shared.friends.AttachPresence(game.AccountOnline)
 
 	var authHandler http.Handler
@@ -167,7 +168,7 @@ func Serve(args []string) (serveErr error) {
 	}
 	dispatcher := transport.Bootstrap{Config: c.bootstrap, Notices: c.notices, LoginsClosed: loginsClosed, Broadcast: game.Broadcast}
 	handler := transport.HTTP{
-		Dispatcher: dispatcher, Raw: game, Authentication: c.authentication,
+		Dispatcher: dispatcher, Raw: game, SessionActivity: game.RecordCookieActivity, Authentication: c.authentication,
 		AuthenticationHandler: authHandler, ResourcePolicy: c.publicResources,
 		CommerceManifest: func() any { return design.cashCatalog.Manifest() }, Availability: availability, InstanceID: instanceID, RealtimeTickets: realtimeTickets,
 		StoryCheckpoints: storyCheckpoints{game: game, players: registry}, Console: console.Handler(),

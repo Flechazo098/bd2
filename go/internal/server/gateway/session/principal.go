@@ -49,7 +49,27 @@ func (s *Server) ValidatePrincipal(ctx context.Context, p Principal) error {
 	return nil
 }
 
+func (s *Server) RecordCookieActivity(cookie string) {
+	token, err := parseSessionCookie(cookie)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	game := s.sessions[sessionTokenKey(token)]
+	var p Principal
+	if game != nil && s.now().Before(game.expiresAt) {
+		p = Principal{AccountID: game.accountID, SessionID: game.id, Generation: game.generation}
+	}
+	s.mu.Unlock()
+	if p.SessionID != "" {
+		s.RecordActivity(p)
+	}
+}
+
 func (s *Server) RecordActivity(p Principal) {
+	if !s.containsPrincipal(p) || s.TouchPlayer == nil || !s.TouchPlayer(p.AccountID, p.Generation) {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
