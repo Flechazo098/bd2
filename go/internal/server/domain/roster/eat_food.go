@@ -67,7 +67,8 @@ func (s *CharacterStore) MaxHealth(ctx command.Context, index uint64) (uint64, e
 
 // CurrentHealth resolves persisted current HP independently from maximum HP.
 // A missing current_hp entry retains the owned character record's HP, including
-// zero. Recomputing equipment or other maximum-health stats must never heal it.
+// zero. Equipment changes preserve the HP ratio separately; reading stats alone
+// never changes current health or revives an exhausted character.
 func (s *CharacterStore) CurrentHealth(ctx command.Context, index uint64) (uint64, error) {
 	var saved Character
 	for _, character := range s.RawAll() {

@@ -20,6 +20,20 @@ func (s *CharacterStore) EquipmentCharacter(ctx command.Context, index uint64) (
 	c, found := s.Find(ctx, index)
 	return equipmentCharacter(c), found
 }
+
+// EquipmentHealth lets an equipment transaction preserve the current HP ratio
+// using the same maximum-health calculator as battle and recovery.
+func (s *CharacterStore) EquipmentHealth(ctx command.Context, index uint64) (uint64, uint64, error) {
+	if s.maxHealth == nil {
+		return 0, 0, nil
+	}
+	maximum, err := s.MaxHealth(ctx, index)
+	if err != nil {
+		return 0, 0, err
+	}
+	current, err := s.CurrentHealth(ctx, index)
+	return current, maximum, err
+}
 func (s *CharacterStore) AddEquipmentTalentExperience(ctx command.Context, index, gain, maximum uint64) (assets.EquipmentCharacter, error) {
 	c, err := s.AddTalentExperience(ctx, index, gain, maximum)
 	return equipmentCharacter(c), err

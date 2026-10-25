@@ -1,5 +1,59 @@
 # 更新日志
 
+## server 2.37.13+server.0.2.3 · 2026-10-25
+
+> type: update
+> migration: none
+
+### en_us: Preserve health when changing equipment
+
+- Equipping, removing or upgrading gear and switching presets now preserve the character's health percentage. Full health stays full, injured characters retain their health ratio, and defeated characters remain defeated.
+- Transferring equipped gear updates both characters' health together with the equipment change.
+
+### zh_cn: 换装与切换预设保留生命比例
+
+- 穿戴、卸下、强化装备或切换预设时，当前生命按新生命上限同比换算：满血保持满血，受伤保留比例，阵亡角色不会复活。
+- 转移已穿戴装备时，装备原持有者与接收者的生命会随装备一同保存。
+
+### zh_tw: 換裝與切換預設保留生命比例
+
+- 穿戴、卸下、強化裝備或切換預設時，目前生命會依新生命上限同比換算：滿血維持滿血，受傷保留比例，陣亡角色不會復活。
+- 轉移已穿戴裝備時，裝備原持有者與接收者的生命會隨裝備一同儲存。
+
+### ja_jp: 装備変更時のHP割合を保持
+
+- 装備の着脱・強化やプリセットの切り替え時に、変更後の最大HPに合わせて現在HPの割合を維持します。満タンなら満タンを維持し、戦闘不能のキャラクターは復活しません。
+- 装備を他のキャラクターへ移す際、両者のHPを装備変更と同時に保存します。
+
+### ko_kr: 장비 변경 시 체력 비율 유지
+
+- 장비 착용, 해제, 강화 및 프리셋 변경 시 새로운 최대 체력에 맞춰 현재 체력 비율을 유지합니다. 최대 체력은 그대로 유지되고, 부상 비율도 유지되며, 전투 불능 캐릭터는 부활하지 않습니다.
+- 착용한 장비를 옮기면 기존 착용자와 새 착용자의 체력을 장비 변경과 함께 저장합니다.
+
+## client 2.37.13+client.0.2.13 · 2026-10-25
+
+> type: update
+
+### en_us: Fix health display after switching presets
+
+- Prevent intermediate equipment changes while applying a preset from reducing a full-health character's HP. After all slots are applied, retain the server's final health value and refresh the display.
+
+### zh_cn: 修复切换预设后的生命显示
+
+- 修复应用预设时逐件替换装备导致满血角色变为受伤状态的问题；全部装备应用后保留服务端最终生命值，并刷新界面。
+
+### zh_tw: 修正切換預設後的生命顯示
+
+- 修正套用預設時逐件替換裝備，導致滿血角色變為受傷狀態的問題；全部裝備套用後保留伺服器最終生命值，並更新介面。
+
+### ja_jp: プリセット切り替え後のHP表示を修正
+
+- プリセット適用中の一時的な装備変更で満タンのHPが減る問題を修正しました。全スロットの適用後にサーバーの最終HPを保持し、表示を更新します。
+
+### ko_kr: 프리셋 변경 후 체력 표시 수정
+
+- 프리셋 적용 중 장비가 하나씩 바뀌면서 최대 체력 상태의 캐릭터 체력이 줄어드는 문제를 수정했습니다. 모든 장비 적용 후 서버의 최종 체력을 유지하고 화면을 갱신합니다.
+
 ## server 2.37.13+server.0.2.2 · 2026-10-25
 
 > type: update

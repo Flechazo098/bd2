@@ -922,6 +922,9 @@ func (s *EquipmentInventory) persistEquipmentState(ctx command.Context, next equ
 	if s.corePresent && next.Version == s.persisted.Version {
 		data = nil
 	}
+	if err := s.preserveEquipmentHealth(ctx, next); err != nil {
+		return err
+	}
 	if err := s.store.SaveWithEntries(ctx.State, "equipment", data, changes); err != nil {
 		return fmt.Errorf("player: persist equipment %s: %w", operation, err)
 	}
