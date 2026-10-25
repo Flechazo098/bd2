@@ -27,19 +27,22 @@ type FullSnapshot struct {
 	Contents [][]byte
 }
 type PublishedSnapshot struct {
-	Profile                   Profile
-	Mode                      Mode
-	Season, Version, VP, Rank uint64
-	TopPercent                float64
-	Snapshot                  FullSnapshot
+	Profile                          Profile
+	Mode                             Mode
+	Season, Version, VP, Rank, Power uint64
+	TopPercent                       float64
+	Snapshot                         FullSnapshot
 }
+
+// CandidateQuery asks for the opponents whose contest with Attacker is
+// predicted to be the most even. FirstAttack is 0 when it is still random.
 type CandidateQuery struct {
-	Mode    Mode
-	Season  uint64
-	Owner   string
-	VP      uint64
-	Exclude []string
-	Limit   int
+	Mode                Mode
+	Season, FirstAttack uint64
+	At                  uint64
+	Attacker            PublishedSnapshot
+	Exclude             []string
+	Limit               int
 }
 type RankQuery struct {
 	Mode         Mode
@@ -138,6 +141,8 @@ type BattleSettled struct {
 	Attacker, Defender                               PublishedSnapshot
 	Result, Multiplier, Seed, FirstAttack, Timestamp uint64
 	AttackerChange, DefenderChange                   int64
+	// Stats is the FBattle plugin's end-of-battle report, nil without it.
+	Stats *BattleStats `json:",omitempty"`
 }
 type SeasonClaimed struct {
 	Version                int

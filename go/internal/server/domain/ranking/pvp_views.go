@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"bd2server/internal/server/domain/battle/pvp"
+	"bd2server/internal/server/domain/matchmaking"
 )
 
 func copyPublished(snapshot pvp.PublishedSnapshot) pvp.PublishedSnapshot {
@@ -31,45 +32,60 @@ func (p *PVP) publishedRank(board *pvpBoard, owner string) pvp.PublishedSnapshot
 	return snapshot
 }
 
+// Candidates ranks published defenses by how even the contextual
+// Bradley–Terry model predicts the contest to be; equally even defenses fall
+// back to the nearest season score, then the lower owner index.
 func (p *PVP) Candidates(query pvp.CandidateQuery) ([]pvp.PublishedSnapshot, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if query.Owner == "" || query.Season == 0 || query.Limit < 1 || query.Limit > 256 {
+	owner := query.Attacker.Profile.OwnerID
+	if owner == "" || query.Season == 0 || query.FirstAttack > 2 || query.Limit < 1 || query.Limit > 256 {
 		return nil, errors.New("invalid PVP candidate query")
 	}
 	board := p.board(query.Mode, query.Season)
 	if board.Frozen {
 		return nil, nil
 	}
-	excluded := map[string]bool{query.Owner: true}
+	excluded := map[string]bool{owner: true}
 	for _, id := range query.Exclude {
 		excluded[id] = true
 	}
-	// Walk the sorted score index from its insertion point; only excluded or
-	// selected rows are visited, and snapshots are copied only after selection.
-	at := sort.Search(len(board.Candidates), func(i int) bool { return p.score(board.Members[board.Candidates[i]]) <= query.VP })
-	left, right := at-1, at
-	var candidates []pvp.PublishedSnapshot
-	distance := func(owner string) uint64 {
-		vp := p.score(board.Members[owner])
-		if vp > query.VP {
-			return vp - query.VP
-		}
-		return query.VP - vp
+	type ranked struct {
+		snapshot pvp.PublishedSnapshot
+		quality  float64
+		distance uint64
 	}
-	for len(candidates) < query.Limit && (left >= 0 || right < len(board.Candidates)) {
-		var owner string
-		if right >= len(board.Candidates) || left >= 0 && (distance(board.Candidates[left]) < distance(board.Candidates[right]) || distance(board.Candidates[left]) == distance(board.Candidates[right]) && board.Members[board.Candidates[left]].Defense.Profile.OwnerIndex < board.Members[board.Candidates[right]].Defense.Profile.OwnerIndex) {
-			owner = board.Candidates[left]
-			left--
-		} else {
-			owner = board.Candidates[right]
-			right++
-		}
-		if excluded[owner] {
+	attacker := p.rating(query.Mode, owner)
+	model := p.models[query.Mode]
+	var options []ranked
+	for _, candidate := range board.Candidates {
+		if excluded[candidate] {
 			continue
 		}
-		candidates = append(candidates, copyPublished(p.publishedRank(board, owner)))
+		snapshot := p.publishedRank(board, candidate)
+		win, err := p.rater.Predict(model, attacker, p.rating(query.Mode, candidate), pvp.RatingContest(query.Attacker, snapshot, query.FirstAttack), query.At)
+		if err != nil {
+			return nil, err
+		}
+		distance := snapshot.VP - query.Attacker.VP
+		if snapshot.VP < query.Attacker.VP {
+			distance = query.Attacker.VP - snapshot.VP
+		}
+		options = append(options, ranked{snapshot, matchmaking.Quality(win), distance})
+	}
+	sort.Slice(options, func(i, j int) bool {
+		a, b := options[i], options[j]
+		if a.quality != b.quality {
+			return a.quality > b.quality
+		}
+		if a.distance != b.distance {
+			return a.distance < b.distance
+		}
+		return a.snapshot.Profile.OwnerIndex < b.snapshot.Profile.OwnerIndex
+	})
+	candidates := make([]pvp.PublishedSnapshot, 0, min(len(options), query.Limit))
+	for _, option := range options[:min(len(options), query.Limit)] {
+		candidates = append(candidates, copyPublished(option.snapshot))
 	}
 	return candidates, nil
 }

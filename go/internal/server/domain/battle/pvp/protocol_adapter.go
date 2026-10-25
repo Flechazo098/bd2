@@ -101,14 +101,18 @@ func (s *Service) handle(ctx command.Context, mode Mode, path string, request []
 		return addMessages(addMessages(nil, 1, m.Attack.Deck), 2, m.Attack.Snapshot.Contents), nil
 	case "/PvpBattleDeckSave", "/ColosseumDeckSave":
 		side := uint64(0)
-		deckField, contentsField := 2, 3
+		deckField, contentsField, powerField := 2, 3, 4
 		if mode == Mirror {
 			var e error
 			side, e = scalar(request, 2)
 			if e != nil {
 				return nil, e
 			}
-			deckField, contentsField = 3, 4
+			deckField, contentsField, powerField = 3, 4, 5
+		}
+		power, e := scalar(request, powerField)
+		if e != nil || power > math.MaxInt32 {
+			return nil, fmt.Errorf("pvp: invalid deck battle power")
 		}
 		deck, e := messages(request, deckField)
 		if e != nil {
@@ -118,7 +122,7 @@ func (s *Service) handle(ctx command.Context, mode Mode, path string, request []
 		if e != nil {
 			return nil, e
 		}
-		return nil, s.saveFormation(ctx, mode, side, deck, contents, false)
+		return nil, s.saveFormation(ctx, mode, side, deck, contents, false, &power)
 	case "/PvpContentsItemRenew", "/ColosseumContentsItemRenew":
 		side := uint64(0)
 		if mode == Mirror {
@@ -128,7 +132,7 @@ func (s *Service) handle(ctx command.Context, mode Mode, path string, request []
 				return nil, e
 			}
 		}
-		if e := s.saveFormation(ctx, mode, side, nil, nil, true); e != nil {
+		if e := s.saveFormation(ctx, mode, side, nil, nil, true, nil); e != nil {
 			return nil, e
 		}
 		f := m.Attack
@@ -499,7 +503,7 @@ func (s *Service) saveBless(ctx command.Context, request []byte) error {
 	}
 	m.AttackBless, m.DefenseBless = attack, defense
 	if len(m.Attack.Deck) > 0 {
-		return s.saveFormation(ctx, Colosseum, 0, m.Attack.Deck, m.Attack.Snapshot.Contents, false)
+		return s.saveFormation(ctx, Colosseum, 0, m.Attack.Deck, m.Attack.Snapshot.Contents, false, nil)
 	}
 	return s.save(ctx)
 }

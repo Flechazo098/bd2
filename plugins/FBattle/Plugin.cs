@@ -25,8 +25,9 @@ public sealed class Plugin : BaseUnityPlugin
         {
             PresetPlans.Install(harmony);
             BattleExecution.Install(harmony);
+            BattleStatistics.Install(harmony);
             PresetEditorEntry.Install(harmony);
-            Logger.LogInfo("Preset action editor and first-turn battle plans installed");
+            Logger.LogInfo("Preset action editor, first-turn battle plans and PVP battle statistics installed");
         }
         catch (Exception error)
         {

@@ -18,6 +18,7 @@ import (
 	"bd2server/internal/server/design/gamedata"
 	"bd2server/internal/server/domain/battle/pvp"
 	"bd2server/internal/server/domain/command"
+	"bd2server/internal/server/domain/matchmaking"
 	"bd2server/internal/server/protocol/wire"
 )
 
@@ -49,6 +50,9 @@ type PVP struct {
 	mu      sync.RWMutex
 	writer  sync.Mutex
 	boards  map[string]*pvpBoard
+	rater   matchmaking.System
+	ratings map[pvp.Mode]map[string]matchmaking.Rating
+	models  map[pvp.Mode]matchmaking.Model
 }
 
 func pvpBoardKey(mode pvp.Mode, season uint64) string { return fmt.Sprintf("%s:%020d", mode, season) }
@@ -74,11 +78,18 @@ func NewPVP(ctx context.Context, store Store, design *gamedata.PvpDesign, season
 	if store == nil || design == nil || len(seasons) == 0 {
 		return nil, errors.New("shared PVP requires persistence, design and seasons")
 	}
-	p := &PVP{store: store, design: design, seasons: slices.Clone(seasons), boards: map[string]*pvpBoard{}}
+	rater, err := newPVPRater()
+	if err != nil {
+		return nil, err
+	}
+	p := &PVP{store: store, design: design, seasons: slices.Clone(seasons), boards: map[string]*pvpBoard{}, rater: rater, ratings: map[pvp.Mode]map[string]matchmaking.Rating{}, models: map[pvp.Mode]matchmaking.Model{}}
 	for _, s := range seasons {
 		p.boards[pvpBoardKey(s.Mode, s.ID)] = emptyPVPBoard()
 	}
-	err := store.View(ctx, func(tx Tx) error {
+	err = store.View(ctx, func(tx Tx) error {
+		if err := p.loadRatings(tx); err != nil {
+			return err
+		}
 		for cursor := ""; ; {
 			page, err := tx.Scan("pvp.members", "", cursor, 256)
 			if err != nil {
@@ -407,6 +418,10 @@ func (p *PVP) Consume(ctx context.Context, source string, event command.Event) e
 				}
 				updates[owner] = row
 			}
+			rated, err := p.settleRatings(tx, battle)
+			if err != nil {
+				return err
+			}
 			if err := tx.Put("pvp.battles", battleKey, []byte(receipt)); err != nil {
 				return err
 			}
@@ -414,6 +429,7 @@ func (p *PVP) Consume(ctx context.Context, source string, event command.Event) e
 				for owner, row := range updates {
 					p.updateRow(b, owner, row)
 				}
+				rated()
 			}
 			return nil
 		case "pvp.season.closed":

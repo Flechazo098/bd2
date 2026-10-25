@@ -63,7 +63,15 @@ func (s *Service) matching(ctx command.Context, mode Mode, request []byte) ([]by
 	if count == 0 || count > 100 {
 		return nil, fmt.Errorf("pvp: unsupported matching count")
 	}
-	candidates, e := s.source.Candidates(CandidateQuery{Mode: mode, Season: season.ID, Owner: s.profile.OwnerID, VP: p.VP, Exclude: append([]string(nil), m.Recent...), Limit: int(count)})
+	firstAttack := uint64(1)
+	if mode == Colosseum {
+		values, e := s.rules.Design.ColosseumRule(season.ID, 13)
+		if e != nil || len(values) != 1 || values[0] > 2 {
+			return nil, fmt.Errorf("pvp: invalid first attack rule")
+		}
+		firstAttack = values[0]
+	}
+	candidates, e := s.source.Candidates(CandidateQuery{Mode: mode, Season: season.ID, FirstAttack: firstAttack, At: uint64(s.now().UnixMilli()), Attacker: cloneSnapshot(own), Exclude: append([]string(nil), m.Recent...), Limit: int(count)})
 	if e != nil {
 		return nil, e
 	}
@@ -102,18 +110,10 @@ func (s *Service) matching(ctx command.Context, mode Mode, request []byte) ([]by
 	if mode == Mirror {
 		c.Selected = accepted[0].Profile.OwnerIndex
 		c.Started = false
+	} else if firstAttack == 0 {
+		c.FirstAttack = 1 + seed%2
 	} else {
-		values, e := s.rules.Design.ColosseumRule(season.ID, 13)
-		if e != nil || len(values) != 1 {
-			return nil, fmt.Errorf("pvp: invalid first attack rule")
-		}
-		if values[0] == 0 {
-			c.FirstAttack = 1 + seed%2
-		} else if values[0] <= 2 {
-			c.FirstAttack = values[0]
-		} else {
-			return nil, fmt.Errorf("pvp: unsupported first attack rule")
-		}
+		c.FirstAttack = firstAttack
 	}
 	if e = s.spendTickets(ctx, mode, season.ID, "pvp:challenge:"+c.ID, multiplier); e != nil {
 		return nil, e
@@ -208,6 +208,11 @@ func (s *Service) finish(ctx command.Context, mode Mode, request []byte) ([]byte
 	if e != nil || result < 1 || result > 3 {
 		return nil, fmt.Errorf("pvp: invalid battle result")
 	}
+	// Statistics only refine ratings; a malformed report never blocks the result.
+	stats, statsErr := parseBattleStats(request, result)
+	if statsErr != nil {
+		stats = nil
+	}
 	if mode == Mirror {
 		survivors, e := ints(request, 3)
 		if e != nil {
@@ -274,7 +279,7 @@ func (s *Service) finish(ctx command.Context, mode Mode, request []byte) ([]byte
 	if e != nil {
 		return nil, e
 	}
-	settled := BattleSettled{Seeds: append([]uint64(nil), c.Seeds...), Version: 1, ChallengeID: c.ID, BattleIndex: c.BattleIndex, Mode: mode, Season: season.ID, Attacker: c.Attacker, Defender: enemy, Result: result, Multiplier: c.Multiplier, Seed: c.Seed, FirstAttack: c.FirstAttack, Timestamp: acceptedAt, AttackerChange: change.Attacker, DefenderChange: change.Defender}
+	settled := BattleSettled{Seeds: append([]uint64(nil), c.Seeds...), Version: 1, ChallengeID: c.ID, BattleIndex: c.BattleIndex, Mode: mode, Season: season.ID, Attacker: c.Attacker, Defender: enemy, Result: result, Multiplier: c.Multiplier, Seed: c.Seed, FirstAttack: c.FirstAttack, Timestamp: acceptedAt, AttackerChange: change.Attacker, DefenderChange: change.Defender, Stats: stats}
 	raw, e := json.Marshal(settled)
 	if e != nil {
 		return nil, e

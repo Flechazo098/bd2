@@ -63,6 +63,8 @@ type formation struct {
 	Version  uint64
 	Deck     [][]byte
 	Snapshot FullSnapshot
+	// Power is the client's official deck battle power sent with the save.
+	Power uint64
 }
 type progress struct {
 	AttackBaseWins, AttackBaseLosses, DefenseBaseWins, DefenseBaseLosses                                                                       uint64
@@ -311,9 +313,11 @@ func (s *Service) own(mode Mode, season uint64, f formation, p progress) (Publis
 	if e != nil {
 		return PublishedSnapshot{}, e
 	}
-	return PublishedSnapshot{Profile: s.profile, Mode: mode, Season: season, Version: f.Version, VP: p.VP, Rank: rank.Rank, TopPercent: rank.TopPercent, Snapshot: f.Snapshot}, nil
+	return PublishedSnapshot{Profile: s.profile, Mode: mode, Season: season, Version: f.Version, VP: p.VP, Rank: rank.Rank, TopPercent: rank.TopPercent, Power: f.Power, Snapshot: f.Snapshot}, nil
 }
-func (s *Service) saveFormation(ctx command.Context, mode Mode, side uint64, deck, contents [][]byte, renew bool) error {
+
+// saveFormation keeps the previous battle power when power is nil.
+func (s *Service) saveFormation(ctx command.Context, mode Mode, side uint64, deck, contents [][]byte, renew bool, power *uint64) error {
 	if side > 1 {
 		return fmt.Errorf("pvp: invalid deck type")
 	}
@@ -339,7 +343,10 @@ func (s *Service) saveFormation(ctx command.Context, mode Mode, side uint64, dec
 	if e = validateFullDeck(deck, frozen.FullDeck); e != nil {
 		return e
 	}
-	next := formation{Version: old.Version + 1, Deck: cloneMessages(deck), Snapshot: FullSnapshot{FullDeck: append([]byte(nil), frozen.FullDeck...), Contents: cloneMessages(frozen.Contents)}}
+	next := formation{Version: old.Version + 1, Deck: cloneMessages(deck), Snapshot: FullSnapshot{FullDeck: append([]byte(nil), frozen.FullDeck...), Contents: cloneMessages(frozen.Contents)}, Power: old.Power}
+	if power != nil {
+		next.Power = *power
+	}
 	if side == 1 {
 		m.Defense = next
 	} else {
